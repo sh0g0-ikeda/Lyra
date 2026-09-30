@@ -867,6 +867,8 @@ export const entityStateSchema = z.object({
   id: idSchema,
   entity_id: idSchema,
   scene_id: nullableStringSchema,
+  name: nullableStringSchema.optional(),
+  description: nullableStringSchema.optional(),
   costume_note: nullableStringSchema,
   costume_ref_id: nullableStringSchema,
   condition_note: nullableStringSchema,
@@ -874,6 +876,7 @@ export const entityStateSchema = z.object({
   expression_default: z.string().min(1).max(100),
   extra_note: nullableStringSchema,
   created_at: timestampSchema,
+  updated_at: timestampSchema.optional(),
 });
 
 export const entityStatesResponseSchema = z.object({

@@ -35,6 +35,8 @@ export interface PageGenerationContext {
   status: PageStatus;
   frameCount: number;
   panels: PageGenerationPanelContext[];
+  /** True while a page uses a new image variant that cannot yet be rendered. */
+  hasVariantState?: boolean;
 }
 
 export interface PagePromptContext {

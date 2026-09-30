@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 const nullableText200 = z.string().trim().min(1).max(200).nullable();
 const nullableText2000 = z.string().trim().min(1).max(2000).nullable();
+const variantName = z.string().trim().min(1).max(100);
+const variantDescription = z.string().trim().min(1).max(2000);
 const uuidArray = z.array(z.string().uuid()).max(100);
 const statusSchema = z.enum(['draft', 'reviewing', 'ready']);
 
@@ -30,6 +32,8 @@ export const updateSceneBodySchema = z
   });
 
 export const createEntityStateBodySchema = z.object({
+  name: variantName.optional(),
+  description: variantDescription.optional(),
   scene_id: z.string().uuid().nullable().optional(),
   costume_note: nullableText2000.optional(),
   costume_ref_id: nullableText200.optional(),
@@ -37,10 +41,15 @@ export const createEntityStateBodySchema = z.object({
   hair_note: nullableText2000.optional(),
   expression_default: z.string().trim().min(1).max(100).default('neutral'),
   extra_note: nullableText2000.optional(),
-}).strict();
+}).strict().refine(
+  (body) => (body.name === undefined) === (body.description === undefined),
+  { message: 'name and description must be provided together for a reusable variant' },
+);
 
 export const updateEntityStateBodySchema = z
   .object({
+    name: variantName.optional(),
+    description: variantDescription.optional(),
     scene_id: z.string().uuid().nullable().optional(),
     costume_note: nullableText2000.optional(),
     costume_ref_id: nullableText200.optional(),

@@ -15,6 +15,7 @@ export interface BuildPageGenerationInputImagesInput {
 }
 
 export interface PageGenerationInputImageBuilderPort {
+  assertRenderableState(input: BuildPageGenerationInputImagesInput): Promise<void>;
   buildInputImages(input: BuildPageGenerationInputImagesInput): Promise<PageGenerationInputImage[]>;
 }
 
@@ -26,6 +27,20 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     private readonly layoutGuideImageRenderer: LayoutGuideImageRendererPort,
   ) {}
 
+  public async assertRenderableState(input: BuildPageGenerationInputImagesInput): Promise<void> {
+    const page = await this.pageRepository.findGenerationContextByIdAndUserId(
+      input.pageId,
+      input.userId,
+      input.organizationId ?? null,
+    );
+    if (page === null) {
+      throw new NotFoundError('Page not found');
+    }
+    if (page.hasVariantState === true) {
+      throw new ValidationError('Assigned character state requires a confirmed reference image before page generation');
+    }
+  }
+
   public async buildInputImages(
     input: BuildPageGenerationInputImagesInput,
   ): Promise<PageGenerationInputImage[]> {
@@ -36,6 +51,9 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     );
     if (page === null) {
       throw new NotFoundError('Page not found');
+    }
+    if (page.hasVariantState === true) {
+      throw new ValidationError('Assigned character state requires a confirmed reference image before page generation');
     }
 
     const organizationId = page.organizationId ?? input.organizationId ?? null;

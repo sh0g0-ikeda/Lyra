@@ -74,6 +74,9 @@ export class PageGenerationService implements PageGenerationServicePort {
 
     const pageOrganizationId = page.organizationId ?? null;
     this.ensurePageCanGenerate(page);
+    if (page.hasVariantState === true) {
+      throw new ValidationError('Assigned character state requires a confirmed reference image before page generation');
+    }
     const billableReferenceCount = await this.ensureAssignedReferencesAndCountBillableReferences(userId, page);
     await this.ensureNoActiveGenerationJob(userId, page.pageId, pageOrganizationId);
 

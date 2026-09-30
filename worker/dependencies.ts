@@ -536,6 +536,10 @@ function resolveS3ImageStorageCdnBaseUrl(): string | undefined {
 }
 
 class UnconfiguredPageGenerationInputImageBuilder implements PageGenerationInputImageBuilderPort {
+  public async assertRenderableState(): Promise<void> {
+    return;
+  }
+
   public async buildInputImages(): Promise<[]> {
     return [];
   }

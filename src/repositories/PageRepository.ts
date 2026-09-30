@@ -94,6 +94,7 @@ interface GenerationContextRow extends QueryResultRow {
   status: PageStatus;
   frame_count: number;
   panel_entities: unknown;
+  has_variant_state: boolean;
 }
 
 interface PromptContextRow extends QueryResultRow {
@@ -468,7 +469,20 @@ export class PostgresPageRepository
                  ORDER BY panels."order"
                ) FILTER (WHERE panels.id IS NOT NULL),
                '[]'::jsonb
-             ) AS panel_entities
+             ) AS panel_entities,
+             EXISTS (
+               SELECT 1
+               FROM panels AS state_panels
+               CROSS JOIN LATERAL jsonb_array_elements(
+                 CASE WHEN jsonb_typeof(state_panels.entities) = 'array'
+                   THEN state_panels.entities ELSE '[]'::jsonb END
+               ) AS assigned(value)
+               INNER JOIN entity_states AS variant_states
+                 ON variant_states.id::text = assigned.value->>'state_id'
+                AND variant_states.entity_id::text = assigned.value->>'entity_id'
+               WHERE state_panels.page_id = pages.id
+                 AND variant_states.description IS NOT NULL
+             ) AS has_variant_state
       FROM pages
       INNER JOIN episodes ON episodes.id = pages.episode_id
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -507,6 +521,7 @@ export class PostgresPageRepository
           status: row.status,
           frameCount: row.frame_count,
           panels: toPageGenerationPanels(row.panel_entities),
+          hasVariantState: row.has_variant_state,
         };
   }
 

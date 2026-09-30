@@ -256,6 +256,31 @@ function buildTestPanel(entityId: string): PageGenerationContext['panels'][numbe
 }
 
 describe('PageGenerationInputImageBuilder', () => {
+  it('新しい派生状態が途中で割り当てられた場合は画像をproviderへ渡さない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.generationContext = {
+      ...pageRepository.generationContext!,
+      hasVariantState: true,
+      panels: [{
+        ...buildTestPanel('entity-1'),
+        entities: [{ ...buildTestPanel('entity-1').entities[0]!, stateId: 'state-1' }],
+      }],
+    };
+    const loader = new FakeStoredImageLoader();
+    const builder = new PageGenerationInputImageBuilder(
+      pageRepository,
+      new FakeEntityRepository(),
+      loader,
+      new FakeLayoutGuideImageRenderer(),
+    );
+
+    await expect(builder.buildInputImages({ userId: 'user-1', pageId: 'page-1' })).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('state'),
+    });
+    expect(loader.calls).toEqual([]);
+  });
+
   it('panel順の一意entityに対してreference画像をdataUrl化する', async () => {
     const loader = new FakeStoredImageLoader();
     const entityRepository = new FakeEntityRepository();

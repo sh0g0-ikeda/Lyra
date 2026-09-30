@@ -134,6 +134,15 @@ class FakePromptCompiler implements PagePromptCompilerPort {
 
 class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
   public calls = 0;
+  public preflightCalls = 0;
+  public rejectState = false;
+
+  public async assertRenderableState(): Promise<void> {
+    this.preflightCalls += 1;
+    if (this.rejectState) {
+      throw new Error('Assigned character state requires a confirmed reference image before page generation');
+    }
+  }
 
   public async buildInputImages(_input: { userId: string; pageId: string }): Promise<PageGenerationInputImage[]> {
     this.calls += 1;
@@ -246,6 +255,34 @@ class FakeOrganizationService {
 }
 
 describe('PageGenerationWorkerService', () => {
+  it('受付後に派生状態が割り当てられた場合はpromptと画像生成前に失敗・返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptBuilder = new FakePromptBuilder();
+    const promptCompiler = new FakePromptCompiler();
+    const inputImageBuilder = new FakeInputImageBuilder();
+    inputImageBuilder.rejectState = true;
+    const renderer = new FakeRenderer();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      promptBuilder,
+      promptCompiler,
+      inputImageBuilder,
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      creditService,
+    );
+
+    await expect(service.processJob('job-1')).resolves.toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(inputImageBuilder.preflightCalls).toBe(1);
+    expect(promptBuilder.calls).toEqual([]);
+    expect(promptCompiler.calls).toBe(0);
+    expect(renderer.calls).toEqual([]);
+    expect(executionRepository.failureInput).toMatchObject({ jobId: 'job-1' });
+    expect(creditService.refunds).toHaveLength(1);
+  });
+
   it('queued job を processing から completed まで進めて generated_image を保存する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const planner = new FakePlanner();

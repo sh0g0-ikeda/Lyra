@@ -113,6 +113,7 @@ export interface BuildPageGenerationInputImagesInput {
 }
 
 export interface PageGenerationInputImageBuilderPort {
+  assertRenderableState(input: BuildPageGenerationInputImagesInput): Promise<void>;
   buildInputImages(input: BuildPageGenerationInputImagesInput): Promise<PageGenerationInputImage[]>;
 }
 
@@ -154,6 +155,11 @@ export class PageGenerationWorkerService {
     try {
       const startedAtMs = Date.now();
       const stageTimingsMs = createEmptyPageGenerationStageTimings();
+      await this.inputImageBuilder.assertRenderableState({
+        userId: job.userId,
+        organizationId: job.organizationId ?? null,
+        pageId: params.page_id,
+      });
       await this.touchJobProgress(job, 'Building page prompt.');
       const builtPrompt = await measurePageGenerationStage(stageTimingsMs, 'prompt_build', () =>
         this.promptBuilder.buildPagePrompt({

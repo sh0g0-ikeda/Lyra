@@ -24,6 +24,8 @@ const validEntityState = {
   id: '66666666-6666-4666-8666-666666666666',
   entity_id: '55555555-5555-4555-8555-555555555555',
   scene_id: null,
+  name: '外傷',
+  description: '左頬に傷がある',
   costume_note: null,
   costume_ref_id: null,
   condition_note: null,
@@ -31,6 +33,7 @@ const validEntityState = {
   expression_default: 'neutral',
   extra_note: null,
   created_at: '2026-04-22T00:00:00.000Z',
+  updated_at: '2026-04-22T00:00:00.000Z',
 };
 
 describe('Scene response contract', () => {
@@ -41,6 +44,19 @@ describe('Scene response contract', () => {
 
   it('scene未選択とnullable noteを持つEntity stateを受理する', () => {
     expect(entityStateSchema.safeParse(validEntityState).success).toBe(true);
+  });
+
+  it('Entity stateの追加フィールドを返却契約として保持する', () => {
+    const result = entityStateSchema.safeParse(validEntityState);
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.data).toMatchObject({
+      name: '外傷',
+      description: '左頬に傷がある',
+      updated_at: '2026-04-22T00:00:00.000Z',
+    });
   });
 
   it('Entity stateが0件の一覧wrapperを受理する', () => {

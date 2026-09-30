@@ -827,6 +827,60 @@ it('assigned character reference が未確定なら VALIDATION_ERROR になる',
   });
 });
 
+it('新しい派生状態がページに含まれる場合はjob作成とクレジット消費前に停止する', async () => {
+  const pageRepository = new FakePageRepository();
+  pageRepository.context = buildPageContext({
+    hasVariantState: true,
+    panels: [{
+      ...buildPanelContext('entity-1'),
+      entities: [{ ...buildPanelContext('entity-1').entities[0]!, stateId: 'state-1' }],
+    }],
+  });
+  const jobRepository = new FakeGenerationJobRepository();
+  const creditService = new FakeCreditService();
+  const queue = new FakeQueue();
+  const service = new PageGenerationService(
+    pageRepository,
+    new FakeEntityRepository(),
+    jobRepository,
+    creditService,
+    queue,
+    new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+    code: 'VALIDATION_ERROR',
+    message: expect.stringContaining('state'),
+  });
+  expect(jobRepository.created).toBeNull();
+  expect(creditService.consumed).toEqual([]);
+});
+
+it('従来の注記だけの状態は既存の参照画像と料金で生成を続ける', async () => {
+  const pageRepository = new FakePageRepository();
+  pageRepository.context = buildPageContext({
+    hasVariantState: false,
+    panels: [{
+      ...buildPanelContext('entity-1'),
+      entities: [{ ...buildPanelContext('entity-1').entities[0]!, stateId: 'legacy-state-1' }],
+    }],
+  });
+  const jobRepository = new FakeGenerationJobRepository();
+  const creditService = new FakeCreditService();
+  const service = new PageGenerationService(
+    pageRepository,
+    new FakeEntityRepository(),
+    jobRepository,
+    creditService,
+    new FakeQueue(),
+    new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).resolves.toMatchObject({ jobId: expect.any(String) });
+  expect(jobRepository.created).not.toBeNull();
+  expect(creditService.consumed).toHaveLength(1);
+});
+
 it('page generation reference image count が上限を超えるとクレジット消費前に VALIDATION_ERROR になる', async () => {
   const entityCount = PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES + 1;
   const pageRepository = new FakePageRepository();
