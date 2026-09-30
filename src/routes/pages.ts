@@ -46,6 +46,16 @@ const languageBodySchema = z
     language: z.enum(APP_LANGUAGES).optional().default('ja'),
   })
   .strict();
+const episodeStoryAutofillBodySchema = languageBodySchema.extend({
+  state_autofill_version: z.literal('v1').optional(),
+  state_assignment_policy: z.enum(['preserve_existing', 'overwrite_existing']).optional(),
+}).strict().refine(
+  (body) => body.state_assignment_policy === undefined || body.state_autofill_version === 'v1',
+  {
+    message: 'state_assignment_policy requires state_autofill_version=v1',
+    path: ['state_assignment_policy'],
+  },
+);
 
 export interface PageRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -103,7 +113,7 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const hasBody = (c.req.header('content-type') ?? '').includes('application/json');
-    const body = languageBodySchema.safeParse(
+    const body = episodeStoryAutofillBodySchema.safeParse(
       hasBody
         ? await readOptionalJsonBody(c, {
             maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
@@ -119,6 +129,12 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       episodeId,
       body.data.language,
       organizationId,
+      body.data.state_autofill_version === undefined
+        ? undefined
+        : {
+            stateAutofillVersion: 'v1',
+            stateAssignmentPolicy: body.data.state_assignment_policy ?? 'preserve_existing',
+          },
     );
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.story_autofill_queued', 'episode', episodeId, {
       job_id: result.jobId,

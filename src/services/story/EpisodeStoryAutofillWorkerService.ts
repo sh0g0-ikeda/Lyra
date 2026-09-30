@@ -4,9 +4,15 @@ import type {
   EpisodeStoryAutofillExecutionRepository,
 } from '../../repositories/EpisodeStoryAutofillExecutionRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
+import {
+  MAX_EPISODE_STATE_JOB_BLOCKER_CANDIDATES,
+  MAX_EPISODE_STATE_JOB_BLOCKER_DESCRIPTION_CHARS,
+} from '../../domain/constants/storyState.js';
+import { EpisodeStatePlanError } from '../page/EpisodeStateAssignmentResolver.js';
 import type {
   EpisodePagePlanExecutionControl,
   EpisodePagePlanProgress,
+  EpisodeStateAutofillOptions,
   PageServicePort,
 } from '../page/PageService.js';
 
@@ -47,6 +53,15 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
       });
       return { status: 'processed', jobStatus: 'failed' };
     }
+    const stateOptions = readStateAutofillOptions(job.params);
+    if (stateOptions === null) {
+      await this.repository.failEpisodeStoryAutofill({
+        jobId: job.id,
+        userId: job.userId,
+        errorMessage: 'Episode story autofill job has invalid state options',
+      });
+      return { status: 'processed', jobStatus: 'failed' };
+    }
 
     try {
       await this.recordProgress(job.id, job.userId, {
@@ -72,6 +87,7 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         },
         job.organizationId,
         executionControl,
+        stateOptions,
       );
       if (!result.compilerUsed) {
         throw new ValidationError(
@@ -80,11 +96,19 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         );
       }
 
-      const completed = await this.repository.completeEpisodeStoryAutofill({
-        jobId: job.id,
-        userId: job.userId,
-        result,
-      });
+      if (stateOptions !== undefined && (
+        result.statePlanVersion !== 'episode_state_plan_v1'
+        || result.stateAssignmentPolicy !== stateOptions.stateAssignmentPolicy
+      )) {
+        throw new ValidationError('Episode state autofill did not finish its atomic save');
+      }
+      const completed = stateOptions === undefined
+        ? await this.repository.completeEpisodeStoryAutofill({
+            jobId: job.id,
+            userId: job.userId,
+            result,
+          })
+        : true;
       if (!completed) {
         throw new ValidationError('Episode story autofill result could not be committed');
       }
@@ -120,6 +144,20 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         jobId: job.id,
         userId: job.userId,
         errorMessage: sanitizePersistedErrorMessage(error, 'Episode story autofill failed'),
+        ...(error instanceof EpisodeStatePlanError
+          ? {
+              stateBlocker: {
+                code: error.code,
+                candidates: error.candidates
+                  .slice(0, MAX_EPISODE_STATE_JOB_BLOCKER_CANDIDATES)
+                  .map((candidate) => ({
+                    ...candidate,
+                    suggestedDescription: candidate.suggestedDescription
+                      .slice(0, MAX_EPISODE_STATE_JOB_BLOCKER_DESCRIPTION_CHARS),
+                  })),
+              },
+            }
+          : {}),
       });
       return { status: 'processed', jobStatus: 'failed' };
     }
@@ -127,6 +165,7 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
 
   private createExecutionControl(jobId: string, userId: string): EpisodePagePlanExecutionControl {
     return {
+      jobId,
       checkpoint: async () => {
         if (
           this.cancellationEnabled &&
@@ -177,6 +216,20 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
       });
     }
   }
+}
+
+function readStateAutofillOptions(
+  params: Record<string, unknown>,
+): EpisodeStateAutofillOptions | undefined | null {
+  const version = params.state_autofill_version;
+  const policy = params.state_assignment_policy;
+  if (version === undefined) {
+    return policy === undefined ? undefined : null;
+  }
+  if (version !== 'v1' || (policy !== 'preserve_existing' && policy !== 'overwrite_existing')) {
+    return null;
+  }
+  return { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: policy };
 }
 
 class EpisodeStoryAutofillCancelledError extends Error {

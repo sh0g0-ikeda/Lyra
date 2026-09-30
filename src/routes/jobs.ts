@@ -28,6 +28,44 @@ import { assertMobileResponseContract } from './mobileResponseContract.js';
 const uuidParamSchema = z.string().uuid();
 const DEFAULT_JOB_HISTORY_LIMIT = 25;
 const MAX_JOB_HISTORY_LIMIT = 100;
+const episodeStateSourceFieldSchema = z.enum([
+  'story_full_draft', 'introduction', 'middle', 'climax', 'ending_hook',
+  'scene_location', 'scene_time', 'scene_atmosphere',
+]);
+const episodeStateTransitionResponseSchema = z.object({
+  entity_id: z.string().uuid(),
+  state_id: z.string().uuid().nullable(),
+  starts_at_panel_id: z.string().uuid(),
+  source_scene_id: z.string().uuid().nullable(),
+  source_field: episodeStateSourceFieldSchema,
+  source_quote: z.string().trim().min(1).max(300),
+}).strict();
+const episodeStateBlockerResponseSchema = z.object({
+  code: z.enum([
+    'STATE_PLAN_INVALID', 'STATE_ASSIGNMENT_CONFLICT', 'STATE_REFERENCE_REQUIRED',
+    'STATE_MAPPING_AMBIGUOUS', 'LIMIT_EXCEEDED',
+  ]),
+  candidates: z.array(z.object({
+    entity_id: z.string().uuid(),
+    candidate_state_id: z.string().uuid().nullable(),
+    starts_at_panel_id: z.string().uuid(),
+    suggested_name: z.string().trim().min(1).max(100),
+    suggested_description: z.string().trim().min(1).max(500),
+    source_scene_id: z.string().uuid().nullable(),
+    source_field: episodeStateSourceFieldSchema,
+    source_quote: z.string().trim().min(1).max(300),
+    reason: z.enum(['missing_reference', 'ambiguous_mapping']),
+  }).strict()).max(20),
+}).strict();
+const episodeStatePlanResultResponseSchema = z.object({
+  state_plan_version: z.literal('episode_state_plan_v1'),
+  state_assignment_policy: z.enum(['preserve_existing', 'overwrite_existing']),
+  state_transitions: z.array(episodeStateTransitionResponseSchema).max(512),
+}).strict();
+const episodeStoryAutofillV1ParamsSchema = z.object({
+  state_autofill_version: z.literal('v1'),
+  state_assignment_policy: z.enum(['preserve_existing', 'overwrite_existing']),
+}).strict();
 
 export interface JobRouteDependencies extends OrganizationRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -159,7 +197,12 @@ function toJobParamsResponse(job: GenerationJob): Record<string, unknown> {
   }
 
   if (job.jobType === 'episode_story_autofill') {
-    return pickKnownFields(job.params, ['episode_id', 'language']);
+    const legacyParams = pickKnownFields(job.params, ['episode_id', 'language']);
+    const v1Params = episodeStoryAutofillV1ParamsSchema.safeParse({
+      state_autofill_version: job.params.state_autofill_version,
+      state_assignment_policy: job.params.state_assignment_policy,
+    });
+    return v1Params.success ? { ...legacyParams, ...v1Params.data } : legacyParams;
   }
 
   if (job.jobType === 'episode_page_skeleton') {
@@ -201,7 +244,7 @@ async function toJobResultResponse(job: GenerationJob): Promise<Record<string, u
 }
 
 function toEpisodeStoryAutofillResultResponse(result: Record<string, unknown>): Record<string, unknown> {
-  return pickKnownFields(result, [
+  const response = pickKnownFields(result, [
     'updated_page_count',
     'updated_panel_count',
     'updated_assignment_count',
@@ -218,6 +261,19 @@ function toEpisodeStoryAutofillResultResponse(result: Record<string, unknown>): 
     'progress_started_at',
     'progress_updated_at',
   ]);
+  const statePlan = episodeStatePlanResultResponseSchema.safeParse({
+    state_plan_version: result.state_plan_version,
+    state_assignment_policy: result.state_assignment_policy,
+    state_transitions: result.state_transitions,
+  });
+  if (statePlan.success) {
+    Object.assign(response, statePlan.data);
+  }
+  const stateBlocker = episodeStateBlockerResponseSchema.safeParse(result.state_blocker);
+  if (stateBlocker.success) {
+    response.state_blocker = stateBlocker.data;
+  }
+  return response;
 }
 
 function toEpisodePageSkeletonResultResponse(result: Record<string, unknown>): Record<string, unknown> {

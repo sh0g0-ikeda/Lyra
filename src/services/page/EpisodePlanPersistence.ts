@@ -1,4 +1,4 @@
-import type { EpisodePagePlanContext } from '../../domain/types/page.js';
+import type { EpisodePagePlanApplyResult, EpisodePagePlanContext } from '../../domain/types/page.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
@@ -7,6 +7,11 @@ export interface EpisodePlanPersistenceResources {
   pageRepository: PageRepository;
   panelRepository: PanelRepository;
   panelEntityAssignmentService: PanelEntityAssignmentServicePort;
+  completeStoryAutofillJob?: (
+    jobId: string,
+    userId: string,
+    result: EpisodePagePlanApplyResult,
+  ) => Promise<boolean>;
 }
 
 export interface EpisodePlanPersistenceInput {

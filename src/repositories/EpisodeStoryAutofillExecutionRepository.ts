@@ -1,5 +1,6 @@
 import type { QueryResultRow } from 'pg';
 import type { EpisodePagePlanApplyResult } from '../domain/types/page.js';
+import type { EpisodeUnresolvedStateTransition } from '../domain/types/episodeStateTransition.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
@@ -34,8 +35,21 @@ export interface EpisodeStoryAutofillExecutionRepository {
     jobId: string;
     userId: string;
     errorMessage: string;
+    stateBlocker?: EpisodeStoryAutofillStateBlocker;
   }): Promise<boolean>;
 }
+
+export interface EpisodeStoryAutofillStateBlocker {
+  code: EpisodeStatePlanErrorCode;
+  candidates: EpisodeUnresolvedStateTransition[];
+}
+
+type EpisodeStatePlanErrorCode =
+  | 'STATE_PLAN_INVALID'
+  | 'STATE_ASSIGNMENT_CONFLICT'
+  | 'STATE_REFERENCE_REQUIRED'
+  | 'STATE_MAPPING_AMBIGUOUS'
+  | 'LIMIT_EXCEEDED';
 
 interface GenerationJobRow extends QueryResultRow {
   id: string;
@@ -220,6 +234,7 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
             progress_stage: 'completed',
             progress_message: 'Story plan applied to pages and panels.',
             progress_updated_at: new Date().toISOString(),
+            ...toPersistedStatePlanResult(input.result),
           }),
         ],
       );
@@ -241,6 +256,7 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
     jobId: string;
     userId: string;
     errorMessage: string;
+    stateBlocker?: EpisodeStoryAutofillStateBlocker;
   }): Promise<boolean> {
     const persistedErrorMessage = sanitizePersistedErrorMessage(
       input.errorMessage,
@@ -270,6 +286,7 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
             progress_stage: 'failed',
             progress_message: 'Story plan autofill failed.',
             progress_updated_at: new Date().toISOString(),
+            ...toPersistedStateBlocker(input.stateBlocker),
           }),
         ],
       );
@@ -286,6 +303,97 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
       return true;
     });
   }
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const STATE_SOURCE_FIELDS = new Set([
+  'story_full_draft', 'introduction', 'middle', 'climax', 'ending_hook',
+  'scene_location', 'scene_time', 'scene_atmosphere',
+]);
+const STATE_BLOCKER_CODES = new Set<EpisodeStatePlanErrorCode>([
+  'STATE_PLAN_INVALID', 'STATE_ASSIGNMENT_CONFLICT', 'STATE_REFERENCE_REQUIRED',
+  'STATE_MAPPING_AMBIGUOUS', 'LIMIT_EXCEEDED',
+]);
+const STATE_BLOCKER_REASONS = new Set(['missing_reference', 'ambiguous_mapping']);
+
+function toPersistedStatePlanResult(result: EpisodePagePlanApplyResult): Record<string, unknown> {
+  if (
+    result.statePlanVersion !== 'episode_state_plan_v1'
+    || (result.stateAssignmentPolicy !== 'preserve_existing'
+      && result.stateAssignmentPolicy !== 'overwrite_existing')
+  ) {
+    return {};
+  }
+  const stateTransitions = (result.stateTransitions ?? [])
+    .slice(0, 512)
+    .flatMap((transition) => {
+      if (
+        !isUuid(transition.entityId)
+        || !isUuid(transition.startsAtPanelId)
+        || (transition.stateId !== null && !isUuid(transition.stateId))
+        || (transition.sourceSceneId !== null && !isUuid(transition.sourceSceneId))
+        || !STATE_SOURCE_FIELDS.has(transition.sourceField)
+        || !isBoundedString(transition.sourceQuote, 300)
+      ) {
+        return [];
+      }
+      return [{
+        entity_id: transition.entityId,
+        state_id: transition.stateId,
+        starts_at_panel_id: transition.startsAtPanelId,
+        source_scene_id: transition.sourceSceneId,
+        source_field: transition.sourceField,
+        source_quote: transition.sourceQuote,
+      }];
+    });
+  return {
+    state_plan_version: 'episode_state_plan_v1',
+    state_assignment_policy: result.stateAssignmentPolicy,
+    state_transitions: stateTransitions,
+  };
+}
+
+function toPersistedStateBlocker(
+  stateBlocker: EpisodeStoryAutofillStateBlocker | undefined,
+): Record<string, unknown> {
+  if (stateBlocker === undefined || !STATE_BLOCKER_CODES.has(stateBlocker.code)) {
+    return {};
+  }
+  const candidates = stateBlocker.candidates.slice(0, 20).flatMap((candidate) => {
+    if (
+      !isUuid(candidate.entityId)
+      || !isUuid(candidate.startsAtPanelId)
+      || (candidate.candidateStateId !== null && !isUuid(candidate.candidateStateId))
+      || (candidate.sourceSceneId !== null && !isUuid(candidate.sourceSceneId))
+      || !STATE_SOURCE_FIELDS.has(candidate.sourceField)
+      || !STATE_BLOCKER_REASONS.has(candidate.reason)
+      || !isBoundedString(candidate.suggestedName, 100)
+      || !isBoundedString(candidate.suggestedDescription, 500)
+      || !isBoundedString(candidate.sourceQuote, 300)
+    ) {
+      return [];
+    }
+    return [{
+      entity_id: candidate.entityId,
+      candidate_state_id: candidate.candidateStateId,
+      starts_at_panel_id: candidate.startsAtPanelId,
+      suggested_name: candidate.suggestedName,
+      suggested_description: candidate.suggestedDescription,
+      source_scene_id: candidate.sourceSceneId,
+      source_field: candidate.sourceField,
+      source_quote: candidate.sourceQuote,
+      reason: candidate.reason,
+    }];
+  });
+  return { state_blocker: { code: stateBlocker.code, candidates } };
+}
+
+function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value);
+}
+
+function isBoundedString(value: string, maxLength: number): boolean {
+  return value.trim().length > 0 && value.length <= maxLength;
 }
 
 function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {

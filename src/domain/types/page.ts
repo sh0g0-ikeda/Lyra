@@ -9,6 +9,12 @@ import type {
   PanelSize,
 } from './panel.js';
 import type { SceneEntityStateReference } from './scene.js';
+import type {
+  EpisodeStartingEntityState,
+  EpisodeStateTransition,
+  StateAssignmentPolicy,
+} from './episodeStateTransition.js';
+import type { EntityStateReferenceDescriptor } from './entityStateReference.js';
 
 export type PageStatus = 'designing' | 'generating' | 'generated' | 'editing' | 'confirmed';
 export type PageDialogueMode = 'image_baked' | 'balloon_only' | 'mixed';
@@ -146,11 +152,13 @@ export interface EpisodePagePlanContext {
   episode: {
     title: string | null;
     purpose: string | null;
+    storyFullDraft?: string | null;
     introduction: string | null;
     middle: string | null;
     climax: string | null;
     endingHook: string | null;
     estimatedPages: number;
+    startingEntityStates?: EpisodeStartingEntityState[];
   };
   scenes: Array<
     Omit<PageAutofillSceneContext, 'entityStates'> & {
@@ -158,6 +166,17 @@ export interface EpisodePagePlanContext {
     }
   >;
   entities: PageAutofillEntityContext[];
+  stateLibrary?: Array<{
+    entityId: string;
+    stateId: string;
+    name: string | null;
+    description: string | null;
+    revision: string | null;
+    baseRefId: string | null;
+    baseRefUpdatedAt: string | null;
+    referenceImage: EntityStateReferenceDescriptor | null;
+    referenceReady: boolean;
+  }>;
   pages: Array<{
     pageId: string;
     pageNumber: number;
@@ -272,4 +291,7 @@ export interface EpisodePagePlanApplyResult {
   compilerModel: string | null;
   compilerPromptVersion: string | null;
   compilerError: string | null;
+  stateTransitions?: EpisodeStateTransition[];
+  statePlanVersion?: 'episode_state_plan_v1';
+  stateAssignmentPolicy?: StateAssignmentPolicy;
 }

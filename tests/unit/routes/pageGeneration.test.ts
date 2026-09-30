@@ -166,13 +166,18 @@ class FakePageService implements PageServicePort {
 
 class FakeEpisodeStoryAutofillService implements EpisodeStoryAutofillServicePort {
   public autofilledEpisodeId: string | null = null;
+  public options: unknown = null;
   public shouldThrow = false;
 
   public async enqueueEpisodeStoryAutofill(
     _userId: string,
     episodeId: string,
+    _language?: 'ja' | 'en',
+    _organizationId?: string | null,
+    options?: unknown,
   ): Promise<EnqueueEpisodeStoryAutofillResult> {
     this.autofilledEpisodeId = episodeId;
+    this.options = options ?? null;
     if (this.shouldThrow) {
       throw new NotFoundError('Story autofill is not available');
     }
@@ -571,6 +576,45 @@ describe('page generation routes', () => {
     });
     expect(pageService.autofilledEpisodeId).toBeNull();
     expect(episodeStoryAutofillService.autofilledEpisodeId).toBe('33333333-3333-4333-8333-333333333333');
+    expect(episodeStoryAutofillService.options).toBeNull();
+  });
+
+  it('episode story autofillのv1指定はpolicyをserviceへ渡し、未指定policyはpreserveにする', async () => {
+    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
+    const app = createTestApp(
+      new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService(),
+      new FakePageQueryService(), new FakePageService(), new FakePageExportService(), episodeStoryAutofillService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/episodes/33333333-3333-4333-8333-333333333333/autofill-pages-from-story', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state_autofill_version: 'v1' }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(episodeStoryAutofillService.options).toEqual({
+      stateAutofillVersion: 'v1', stateAssignmentPolicy: 'preserve_existing',
+    });
+  });
+
+  it('episode story autofillはversionなしのstate assignment policyを422で拒否する', async () => {
+    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
+    const app = createTestApp(
+      new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService(),
+      new FakePageQueryService(), new FakePageService(), new FakePageExportService(), episodeStoryAutofillService,
+    );
+    const token = await createToken();
+
+    const response = await app.request('/api/episodes/33333333-3333-4333-8333-333333333333/autofill-pages-from-story', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state_assignment_policy: 'overwrite_existing' }),
+    });
+
+    expect(response.status).toBe(422);
+    expect(episodeStoryAutofillService.autofilledEpisodeId).toBeNull();
   });
 
   it('episode 全体の story plan autofill は enqueue 失敗時に成功扱いしない', async () => {
@@ -1089,6 +1133,79 @@ describe('page generation routes', () => {
     expect(params).not.toHaveProperty('source_s3_key');
     expect(params).not.toHaveProperty('previous_entity_status');
     expect(params).not.toHaveProperty('draft_prompt');
+  });
+
+  it('jobs endpoint は検証済みstate planとblockerだけをepisode autofill jobへ公開する', async () => {
+    const jobService = new FakeJobService();
+    jobService.job = {
+      ...buildJob(), jobType: 'episode_story_autofill', generationMode: null, creditCost: 0,
+      params: { episode_id: '44444444-4444-4444-8444-444444444444', language: 'ja' },
+      result: {
+        state_plan_version: 'episode_state_plan_v1', state_assignment_policy: 'preserve_existing',
+        state_transitions: [{
+          entity_id: '11111111-1111-4111-8111-111111111111', state_id: null,
+          starts_at_panel_id: '22222222-2222-4222-8222-222222222222', source_scene_id: null,
+          source_field: 'middle', source_quote: '腕を負傷した',
+        }],
+        state_blocker: {
+          code: 'STATE_REFERENCE_REQUIRED',
+          candidates: [{
+            entity_id: '11111111-1111-4111-8111-111111111111', candidate_state_id: null,
+            starts_at_panel_id: '22222222-2222-4222-8222-222222222222', suggested_name: '負傷',
+            suggested_description: '腕に包帯', source_scene_id: null, source_field: 'middle',
+            source_quote: '腕を負傷した', reason: 'missing_reference',
+          }],
+        },
+        s3_key: 'must-not-leak',
+      },
+    };
+    const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), jobService);
+    const token = await createToken();
+
+    const response = await app.request('/api/jobs/22222222-2222-4222-8222-222222222222', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    const result = ((await response.json()) as { result: Record<string, unknown> }).result;
+    expect(result.state_plan_version).toBe('episode_state_plan_v1');
+    expect(result.state_transitions).toEqual([{
+      entity_id: '11111111-1111-4111-8111-111111111111', state_id: null,
+      starts_at_panel_id: '22222222-2222-4222-8222-222222222222', source_scene_id: null,
+      source_field: 'middle', source_quote: '腕を負傷した',
+    }]);
+    expect(result).not.toHaveProperty('s3_key');
+    expect((result.state_blocker as Record<string, unknown>).candidates).toEqual([{
+      entity_id: '11111111-1111-4111-8111-111111111111', candidate_state_id: null,
+      starts_at_panel_id: '22222222-2222-4222-8222-222222222222', suggested_name: '負傷',
+      suggested_description: '腕に包帯', source_scene_id: null, source_field: 'middle',
+      source_quote: '腕を負傷した', reason: 'missing_reference',
+    }]);
+  });
+
+  it('jobs endpoint はv1 episode autofill paramsだけを公開しlegacy paramsを増やさない', async () => {
+    const jobService = new FakeJobService();
+    jobService.job = {
+      ...buildJob(), jobType: 'episode_story_autofill', generationMode: null, creditCost: 0,
+      params: {
+        episode_id: '44444444-4444-4444-8444-444444444444', language: 'ja',
+        state_autofill_version: 'v1', state_assignment_policy: 'overwrite_existing',
+        organization_id: 'private', internal: 'must-not-leak',
+      },
+    };
+    const app = createTestApp(new FakePageGenerationService(), new FakePageFinalizeService(), jobService);
+    const token = await createToken();
+
+    const response = await app.request('/api/jobs/22222222-2222-4222-8222-222222222222', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as { params: Record<string, unknown> };
+    expect(payload.params).toEqual({
+      episode_id: '44444444-4444-4444-8444-444444444444', language: 'ja',
+      state_autofill_version: 'v1', state_assignment_policy: 'overwrite_existing',
+    });
   });
 
   it('jobs endpoint はstate候補tokenをtarget/state/job/tenantへ束縛する', async () => {
