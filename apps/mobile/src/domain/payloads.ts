@@ -108,6 +108,10 @@ export interface CreateEpisodePayload {
 
 export type UpdateEpisodePayload = Partial<CreateEpisodePayload> & {
   expected_updated_at: string;
+  starting_entity_states?: Array<{
+    entity_id: string;
+    state_id: string | null;
+  }>;
   status?: 'draft' | 'reviewing' | 'ready';
 };
 

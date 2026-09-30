@@ -53,12 +53,20 @@ export interface Episode {
   endingHook: string | null;
   estimatedPages: number;
   entitiesInvolved: string[];
+  /** Undefined is tolerated while reading rows created before migration 041. */
+  startingEntityStates?: EpisodeStartingEntityState[];
   pageSkeletonGenerated: boolean;
   version: number;
   editHistory: Record<string, unknown>[];
   status: StoryStatus;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface EpisodeStartingEntityState {
+  entityId: string;
+  /** null explicitly selects the entity's default reference. */
+  stateId: string | null;
 }
 
 export interface CreateWorkInput {
@@ -134,5 +142,6 @@ export interface UpdateEpisodeInput {
   endingHook?: string | null;
   estimatedPages?: number;
   entitiesInvolved?: string[];
+  startingEntityStates?: EpisodeStartingEntityState[];
   status?: StoryStatus;
 }

@@ -98,6 +98,7 @@ class FakeStoryService implements StoryServicePort {
   public moveEpisodeCrossChapter: boolean | undefined = undefined;
   public workPage: WorkListPage = { works: [], nextCursor: null };
   public deleteEpisodeError: Error | null = null;
+  public lastEpisodeUpdate: UpdateEpisodeRequest | null = null;
   public workPageCalls: Array<{
     userId: string;
     limit: number;
@@ -183,7 +184,13 @@ class FakeStoryService implements StoryServicePort {
     requestedEpisodeId: string,
     input: UpdateEpisodeRequest,
   ): Promise<Episode> {
-    return buildEpisode({ id: requestedEpisodeId, title: input.title ?? '第一話', version: 2 });
+    this.lastEpisodeUpdate = input;
+    return buildEpisode({
+      id: requestedEpisodeId,
+      title: input.title ?? '第一話',
+      startingEntityStates: input.startingEntityStates,
+      version: 2,
+    });
   }
 
   public async deleteEpisode(_userId: string, _requestedEpisodeId: string): Promise<void> {
@@ -1262,6 +1269,30 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(422);
+  });
+
+  it('episode PUTの開始状態をsnake caseでServiceへ渡し、responseへ返す', async () => {
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const entityId = '44444444-4444-4444-8444-444444444444';
+    const stateId = '55555555-5555-4555-8555-555555555555';
+
+    const response = await app.request(`/api/episodes/${episodeId}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        starting_entity_states: [{ entity_id: entityId, state_id: stateId }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(storyService.lastEpisodeUpdate?.startingEntityStates).toEqual([
+      { entityId, stateId },
+    ]);
+    await expect(response.json()).resolves.toMatchObject({
+      starting_entity_states: [{ entity_id: entityId, state_id: stateId }],
+    });
   });
 });
 

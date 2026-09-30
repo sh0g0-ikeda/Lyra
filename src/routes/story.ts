@@ -406,6 +406,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       endingHook: body.data.ending_hook,
       estimatedPages: body.data.estimated_pages,
       entitiesInvolved: body.data.entities_involved,
+      startingEntityStates: body.data.starting_entity_states?.map((state) => ({
+        entityId: state.entity_id,
+        stateId: state.state_id,
+      })),
       status: body.data.status,
     }, organizationId);
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.updated', 'episode', episodeId);
@@ -659,6 +663,10 @@ function toEpisodeResponse(episode: Episode): Record<string, unknown> {
     ending_hook: episode.endingHook,
     estimated_pages: episode.estimatedPages,
     entities_involved: episode.entitiesInvolved,
+    starting_entity_states: (episode.startingEntityStates ?? []).map((state) => ({
+      entity_id: state.entityId,
+      state_id: state.stateId,
+    })),
     page_skeleton_generated: episode.pageSkeletonGenerated,
     version: episode.version,
     status: episode.status,

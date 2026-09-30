@@ -27,7 +27,7 @@ describePostgres('story deletion safety', () => {
       new PoolTransactionDatabase(pool),
       { migrationLockPollMs: 1, migrationLockMaxAttempts: 10 },
     ));
-    expect(applied.at(-1)).toBe('040_add_entity_state_variants.sql');
+    expect(applied.at(-1)).toBe('041_add_episode_starting_entity_states.sql');
   }, 120_000);
 
   afterAll(async () => {

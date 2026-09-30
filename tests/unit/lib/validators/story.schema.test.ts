@@ -21,4 +21,18 @@ describe('story schema', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('開始状態はentity重複を拒否し、明示空配列は許可する', () => {
+    const entityId = '11111111-1111-4111-8111-111111111111';
+    const stateId = '22222222-2222-4222-8222-222222222222';
+
+    expect(updateEpisodeBodySchema.safeParse({
+      starting_entity_states: [
+        { entity_id: entityId, state_id: stateId },
+        { entity_id: entityId, state_id: null },
+      ],
+    }).success).toBe(false);
+    expect(updateEpisodeBodySchema.safeParse({ starting_entity_states: [] }).success).toBe(true);
+    expect(updateEpisodeBodySchema.safeParse({ starting_entity_states: null }).success).toBe(false);
+  });
 });

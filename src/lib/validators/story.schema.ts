@@ -10,6 +10,25 @@ const keyBeatsArray = z.array(z.string().trim().min(1).max(500)).max(50);
 const statusSchema = z.enum(['draft', 'reviewing', 'ready']);
 const episodeStoryInputModeSchema = z.enum(['structured', 'full']);
 const storyItemMoveDirectionSchema = z.enum(['up', 'down']);
+const episodeStartingEntityStatesSchema = z
+  .array(z.object({
+    entity_id: z.string().uuid(),
+    state_id: z.string().uuid().nullable(),
+  }).strict())
+  .max(100)
+  .superRefine((states, context) => {
+    const seenEntityIds = new Set<string>();
+    for (const [index, state] of states.entries()) {
+      if (seenEntityIds.has(state.entity_id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'entity_id must be unique',
+          path: [index, 'entity_id'],
+        });
+      }
+      seenEntityIds.add(state.entity_id);
+    }
+  });
 
 export const storyUuidParamSchema = z.string().uuid();
 
@@ -103,6 +122,7 @@ export const updateEpisodeBodySchema = z
     ending_hook: nullableText2000.optional(),
     estimated_pages: z.number().int().min(1).max(STORY_AI_LIMITS.maxSkeletonPages).optional(),
     entities_involved: uuidArray.optional(),
+    starting_entity_states: episodeStartingEntityStatesSchema.optional(),
     status: statusSchema.optional(),
   })
   .strict()

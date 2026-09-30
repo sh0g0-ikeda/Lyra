@@ -29,7 +29,7 @@ describePostgres('generation job cancellation settlement', () => {
         migrationLockMaxAttempts: 10,
       },
     ));
-    expect(applied.at(-1)).toBe('040_add_entity_state_variants.sql');
+    expect(applied.at(-1)).toBe('041_add_episode_starting_entity_states.sql');
   }, 120_000);
 
   afterAll(async () => {

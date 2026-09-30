@@ -696,6 +696,10 @@ export const episodeSchema = z.object({
   ending_hook: nullableStringSchema,
   estimated_pages: z.number().int().positive(),
   entities_involved: z.array(idSchema),
+  starting_entity_states: z.array(z.object({
+    entity_id: idSchema,
+    state_id: idSchema.nullable(),
+  })).optional(),
   page_skeleton_generated: z.boolean(),
   version: z.number().int().nonnegative(),
   status: storyStatusSchema,
