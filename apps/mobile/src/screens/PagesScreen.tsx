@@ -1784,6 +1784,35 @@ export function PagesScreen(): React.JSX.Element {
     }
   });
 
+  const generateMonochromePageMutation = useMutation({
+    mutationFn: async () => {
+      if (selectedPage === null) {
+        throw new Error(t(language, "generated.screens.PagesScreen.select.a.page.first.390bc86e"));
+      }
+      await saveAllPageDrafts();
+      return api.generatePage(selectedPage.id, organizationId, 'monochrome');
+    },
+    onSuccess: async (result) => {
+      generationAttemptRef.current = null;
+      setPageStale(false);
+      setLocalJob({
+        id: result.job_id,
+        resourceId: selectedPage?.id ?? '',
+      });
+      await trackJob(result.job_id);
+      await invalidatePages();
+      await invalidatePanels();
+      await invalidateFrames();
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === 'PAGE_STALE') {
+        setPageStale(true);
+      }
+    }
+  });
+
+  const pageGenerationPending = generatePageMutation.isPending || generateMonochromePageMutation.isPending;
+
   const confirmPageMutation = useMutation({
     mutationFn: async () => {
       await saveAllPageDrafts();
@@ -1908,6 +1937,7 @@ export function PagesScreen(): React.JSX.Element {
     pageStoryAutofillMutation.reset,
     cancelPageDesignJobMutation.reset,
     generatePageMutation.reset,
+    generateMonochromePageMutation.reset,
     confirmPageMutation.reset,
     reopenPageMutation.reset,
     exportPagesMutation.reset,
@@ -2181,6 +2211,22 @@ export function PagesScreen(): React.JSX.Element {
       ),
       confirmLabel: t(language, 'generate'),
       onConfirm: () => generatePageMutation.mutate()
+    });
+  };
+
+  const confirmGenerateMonochromePage = (): void => {
+    confirmAction({
+      language,
+      title: t(language, "generated.screens.PagesScreen.generate.page.image.a3a86143"),
+      message: appendAiProviderDisclosure(
+        `${t(language, 'screen.pages.generatePageConfirmation', {
+          creditCost: readiness?.estimated_credit_cost ?? '3+'
+        })}\n\n${t(language, 'component.jobStatusCard.imageDurationEstimate')}`,
+        language,
+        'text'
+      ),
+      confirmLabel: t(language, 'generateMonochrome'),
+      onConfirm: () => generateMonochromePageMutation.mutate()
     });
   };
 
@@ -3045,7 +3091,8 @@ export function PagesScreen(): React.JSX.Element {
             serverGenerationBlocked ||
             framePanelMismatch ||
             frameDraftsInvalid ||
-            panelPayloadInvalid
+            panelPayloadInvalid ||
+            pageGenerationPending
           }
           generateDisabledReason={
             !canGenerate
@@ -3069,9 +3116,11 @@ export function PagesScreen(): React.JSX.Element {
                               : undefined
           }
           generateLoading={generatePageMutation.isPending}
+          generateMonochromeLoading={generateMonochromePageMutation.isPending}
           language={language}
           onConfirm={confirmConfirmPage}
           onGenerate={confirmGeneratePage}
+          onGenerateMonochrome={confirmGenerateMonochromePage}
           onReopen={confirmReopenPage}
           reopenLoading={reopenPageMutation.isPending}
         />

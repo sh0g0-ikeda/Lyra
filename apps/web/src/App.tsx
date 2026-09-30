@@ -644,6 +644,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Create character': 'キャラを作成',
   'Save character': 'キャラを保存',
   'Generate page': 'ページ生成',
+  'Generate monochrome page': '白黒で生成',
   'Confirm page': 'ページ確定',
   'Reopen page': '再編集',
   'Apply frame template': 'テンプレートを適用',
@@ -1367,6 +1368,7 @@ function formatShortId(id: string): string {
 function formatActionSuccessMessage(language: UiLanguage, actionLabel: string, translatedLabel: string): string {
   const isAsyncGenerationAction =
     actionLabel === 'Generate page' ||
+    actionLabel === 'Generate monochrome page' ||
     actionLabel === 'Generate reference' ||
     actionLabel === 'Generate page skeleton' ||
     actionLabel === 'Apply story plan';
@@ -2942,7 +2944,7 @@ function StudioShell(props: {
     setActiveTab('story');
   }, []);
   const generatePageDisabled =
-    busyAction === 'Generate page' || pageGenerationBlocked;
+    busyAction === 'Generate page' || busyAction === 'Generate monochrome page' || pageGenerationBlocked;
   const entityPreviewGenerationMessage =
     selectedEntityGenerationJob !== null
       ? selectedEntityGenerationJob.status === 'queued'
@@ -2956,7 +2958,7 @@ function StudioShell(props: {
       ? selectedPageGenerationJob.status === 'queued'
         ? 'Queued. Starts soon.'
         : 'Generating page. It updates when finished.'
-      : busyAction === 'Generate page'
+      : busyAction === 'Generate page' || busyAction === 'Generate monochrome page'
         ? 'Generating page. It updates when finished.'
         : null;
 
@@ -6662,6 +6664,24 @@ function StudioShell(props: {
                             >
                               <Play size={16} />
                               {translateUiString(uiLanguage, 'Generate page')}
+                            </button>
+                            <button
+                              className="secondary-button"
+                              disabled={generatePageDisabled}
+                              onClick={() =>
+                                void runAction('Generate monochrome page', async () => {
+                                  if (selectedPageHasFramePanelMismatch) {
+                                    throw new Error(translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.'));
+                                  }
+                                  await saveCurrentPageGenerationContext();
+                                  const result = await api.generatePage(selectedPage.id, activeOrganizationId, 'monochrome');
+                                  trackJob(result.job_id);
+                                })
+                              }
+                              type="button"
+                            >
+                              <Play size={16} />
+                              {translateUiString(uiLanguage, 'Generate monochrome page')}
                             </button>
                             <button
                               className="ghost-button"

@@ -346,6 +346,7 @@ describe('PageGenerationService', () => {
       requires_planner: false,
       previous_page_status: 'designing',
       previous_generation_mode: null,
+      render_style: 'color',
     });
     expect(pageRepository.updates[0]).toEqual({
       status: 'generating',
@@ -363,6 +364,20 @@ describe('PageGenerationService', () => {
       previousPageStatus: 'designing',
       previousGenerationMode: null,
     });
+  });
+
+  it('白黒生成の場合に通常料金を維持してstyleをjobに固定する', async () => {
+    const jobRepository = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationService(
+      new FakePageRepository(), new FakeEntityRepository(), jobRepository,
+      creditService, new FakeQueue(), new ModeSelector(),
+    );
+
+    await service.enqueuePageGeneration(userId, pageId, null, 'monochrome');
+
+    expect(jobRepository.created?.params).toMatchObject({ render_style: 'monochrome' });
+    expect(creditService.consumed[0]?.cost).toBe(3);
   });
 
   it('pageをgeneratingへ予約してからcreditを消費する', async () => {

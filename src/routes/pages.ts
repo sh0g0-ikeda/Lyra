@@ -56,6 +56,9 @@ const episodeStoryAutofillBodySchema = languageBodySchema.extend({
     path: ['state_assignment_policy'],
   },
 );
+const generatePageBodySchema = z.object({
+  render_style: z.enum(['color', 'monochrome']).optional().default('color'),
+}).strict();
 
 export interface PageRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -267,9 +270,19 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     const pageId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
-    const result = await dependencies.pageGenerationService.enqueuePageGeneration(user.id, pageId, organizationId);
+    const body = generatePageBodySchema.safeParse(await readOptionalJsonBody(c, {
+      maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+      description: 'Page generation request',
+    }));
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+    const result = await dependencies.pageGenerationService.enqueuePageGeneration(
+      user.id, pageId, organizationId, body.data.render_style,
+    );
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'page.generation_queued', 'page', pageId, {
       job_id: result.jobId,
+      render_style: body.data.render_style,
     });
 
     const payload = { job_id: result.jobId };
