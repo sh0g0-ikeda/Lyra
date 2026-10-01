@@ -18,13 +18,14 @@ describePostgres('forward-only production lineage bridge', () => {
     const pools: Pool[] = [];
     const schemas: string[] = [];
     beforeAll(() => { admin = new Pool({ connectionString: process.env.DATABASE_URL }); });
+    // This hook drops 26 full fixture schemas; allow bounded DDL cleanup on busy CI runners.
     afterAll(async () => {
         for (const pool of pools)
             await pool.end();
         for (const schema of schemas)
             await admin.query(`DROP SCHEMA ${schema} CASCADE`);
         await admin.end();
-    });
+    }, 60_000);
     async function database(production = true): Promise<{
         pool: Pool;
         db: DatabaseClient & TransactionRunner;

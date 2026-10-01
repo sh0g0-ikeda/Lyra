@@ -53,3 +53,11 @@ the stored subject exactly before reusing a concurrently created account.
 Different-subject email collisions still require explicit linking, and this path
 must not grant another signup bonus. Final CI evidence belongs to the latest
 exact PR head, not this failed initial run.
+
+The next run [36904280774](https://github.com/sh0g0-ikeda/Lyra/actions/runs/36904280774)
+passed all 2,519 Vitest tests, all 197 PostgreSQL 18.3 integration tests and the
+complete Mobile job. Bun 1.4.2 passed all 2,519 test assertions, but the lineage
+fixture suite's final cleanup hit its default five-second hook limit while
+closing and dropping the accumulated test schemas. The resulting hook failure
+kept CI red and skipped the later build/browser stages. Its bounded test-only
+cleanup correction must not change migration checks or production lock limits.
