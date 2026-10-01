@@ -1,3 +1,17 @@
+import { TransactionalUserProvisioningService } from './services/auth/TransactionalUserProvisioningService.js';
+import { resolveEpisodeOpenAIModelProfile } from './infrastructure/openai/EpisodeOpenAIModelProfile.js';
+import { resolveEpisodeExportQueueConfig } from './lib/episodeExportRuntime.js';
+import { PageThumbnailService, type PageThumbnailServicePort } from './services/page/PageThumbnailService.js';
+import { SharpPageThumbnailRenderer } from './infrastructure/image/SharpPageThumbnailRenderer.js';
+import { createPushTokenRoutes } from './routes/pushTokens.js';
+import { PushTokenRegistryService, type PushTokenRegistryServicePort } from './services/notification/PushTokenRegistryService.js';
+import { PostgresPushTokenRepository } from './repositories/PushTokenRepository.js';
+import { AesGcmPushTokenCipher } from './infrastructure/crypto/AesGcmPushTokenCipher.js';
+import { createGoogleIdentityLinkRoutes } from './routes/googleIdentityLinks.js';
+import { GoogleIdentityLinkService, type GoogleIdentityLinkServicePort } from './services/auth/GoogleIdentityLinkService.js';
+import { PostgresGoogleIdentityLinkRepository } from './repositories/GoogleIdentityLinkRepository.js';
+import { createGoogleIdentityLinkGateway } from './infrastructure/auth/GoogleIdentityLinkGateway.js';
+import { resolveGoogleIdentityLinkConfig } from './infrastructure/auth/GoogleIdentityLinkConfig.js';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { organizationInvitationPreviewResponseSchema } from '../packages/api-contract/src/mobileApiSchemas.js';
@@ -13,7 +27,7 @@ import {
 } from './domain/constants/entityReferenceUpload.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
-import { S3EntityImageStorage, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
+import { S3EntityImageStorage, createStateReferenceCopyClient, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
 import {
   S3EntityReferenceUploadStorage,
 } from './infrastructure/aws/S3EntityReferenceUploadStorage.js';
@@ -106,7 +120,6 @@ import { PostgresPageRepository } from './repositories/PageRepository.js';
 import { PostgresRateLimitStore } from './repositories/RateLimitStore.js';
 import { PostgresSceneRepository } from './repositories/SceneRepository.js';
 import { PostgresStoryRepository } from './repositories/StoryRepository.js';
-import { PostgresUserRepository } from './repositories/UserRepository.js';
 import { PostgresWorkRepository } from './repositories/WorkRepository.js';
 import { createBillingRoutes } from './routes/billing.js';
 import { createAccountDeletionRoutes } from './routes/accountDeletion.js';
@@ -125,6 +138,11 @@ import { createPanelRoutes } from './routes/panels.js';
 import { createPanelEntityAssignmentRoutes } from './routes/panelEntityAssignments.js';
 import { createPanelFrameRoutes } from './routes/panelFrames.js';
 import { createPagePanelStructureRoutes } from './routes/pagePanelStructure.js';
+import { createGenerationQuoteRoutes, type GenerationQuoteServicePort } from './routes/generationQuotes.js';
+import { GenerationQuoteService } from './services/generation/GenerationQuoteService.js';
+import { GenerationQuoteDispatcher } from './services/generation/GenerationQuoteDispatcher.js';
+import { PostgresGenerationQuotePlanResolver } from './repositories/GenerationQuotePlanResolver.js';
+import { PostgresQuotedImportExecutionRepository } from './repositories/QuotedImportExecutionRepository.js';
 import { createPageRoutes } from './routes/pages.js';
 import { createAdminOrganizationRoutes } from './routes/adminOrganizations.js';
 import { createAiContentReportRoutes } from './routes/aiContentReports.js';
@@ -134,14 +152,11 @@ import { createSceneRoutes } from './routes/scenes.js';
 import { createStoryRoutes } from './routes/story.js';
 import { createRootWebhookCompatibilityRoutes, createWebhookRoutes } from './routes/webhooks.js';
 import { assertMobileResponseContract } from './routes/mobileResponseContract.js';
-import { UserProvisioningService, type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
+import { type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
 import {
   AccountDeletionService,
   type AccountDeletionServicePort,
 } from './services/account/AccountDeletionService.js';
-import {
-  AccountDeletionIdentityGuard,
-} from './services/account/AccountDeletionIdentityGuard.js';
 import {
   BillingService,
   assertBillingConfig,
@@ -251,6 +266,7 @@ import {
   type PageBalloonComposerPort,
 } from './services/page/PageBalloonComposer.js';
 import { PageQueryService, type PageQueryServicePort } from './services/page/PageQueryService.js';
+import { PageAtomicGenerationService, type PageAtomicGenerationServicePort } from './services/page/PageAtomicGenerationService.js';
 import { ModeSelector } from './services/page/ModeSelector.js';
 import {
   PanelService,
@@ -340,15 +356,20 @@ export interface AppDependencies {
   organizationService?: OrganizationServicePort;
   organizationBillingService?: OrganizationBillingServicePort;
   pageExportService?: PageExportServicePort;
+  pageThumbnailService?: PageThumbnailServicePort;
   pageFinalizeService?: PageFinalizeServicePort;
   pageService?: PageServicePort;
   pageQueryService?: PageQueryServicePort;
   pageSkeletonService?: PageSkeletonServicePort;
   pageGenerationQueue?: PageGenerationQueuePort;
   pageGenerationService?: PageGenerationServicePort;
+  pageAtomicGenerationService?: PageAtomicGenerationServicePort;
   pageGenerationRecoveryService?: PageGenerationRecoveryServicePort;
   pageLayoutService?: PageLayoutServicePort;
   pagePanelStructureService?: PagePanelStructureServicePort;
+  generationQuoteService?: GenerationQuoteServicePort;
+  pushTokenRegistryService?: PushTokenRegistryServicePort;
+  googleIdentityLinkService?: GoogleIdentityLinkServicePort;
   panelService?: PanelServicePort;
   panelEntityAssignmentService?: PanelEntityAssignmentServicePort;
   panelFrameService?: PanelFrameServicePort;
@@ -434,6 +455,15 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
         }),
     }),
   );
+  if (resolvedDependencies.pushTokenRegistryService !== undefined) {
+    app.route('/api', createPushTokenRoutes({ authMiddleware, rateLimitMiddleware,
+      pushTokenRegistryService: resolvedDependencies.pushTokenRegistryService }));
+  }
+  app.route('/api/auth', createGoogleIdentityLinkRoutes({
+    service: resolvedDependencies.googleIdentityLinkService,
+    signInEnabled: env.GOOGLE_SIGN_IN_ENABLED,
+    authMiddleware, rateLimitMiddleware, publicRateLimitMiddleware: publicReadRateLimitMiddleware,
+  }));
   if (localAssetConfig !== null) {
     app.route('/', createLocalAssetRoutes(localAssetConfig.rootDir));
   }
@@ -553,6 +583,11 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       organizationService: resolvedDependencies.organizationService,
     }),
   );
+  app.route('/api', createGenerationQuoteRoutes({
+    authMiddleware, rateLimitMiddleware,
+    generationQuoteService: resolvedDependencies.generationQuoteService,
+    organizationService: resolvedDependencies.organizationService,
+  }));
   if (resolvedDependencies.entityReferenceUploadService !== undefined) {
     app.route(
       '/api',
@@ -597,8 +632,14 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   app.route(
     '/api',
     createMeRoutes({
+      generationQuotesEnabled: env.GENERATION_QUOTES_ENABLED,
+      pushNotificationsEnabled: resolvedDependencies.pushTokenRegistryService !== undefined,
       authMiddleware,
       rateLimitMiddleware,
+      stateCapabilities: {
+        referenceGeneration: env.ENTITY_STATE_REFERENCE_GENERATION_ENABLED,
+        storyAutofill: env.EPISODE_STATE_AUTOFILL_V1_ENABLED,
+      },
       creditService: resolvedDependencies.creditService,
       organizationService: env.ENTERPRISE_FEATURES_ENABLED ? resolvedDependencies.organizationService : undefined,
     }),
@@ -630,11 +671,13 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       pageExportService: resolvedDependencies.pageExportService,
+      pageThumbnailService: resolvedDependencies.pageThumbnailService,
       pageFinalizeService: resolvedDependencies.pageFinalizeService,
       pageService: resolvedDependencies.pageService,
       episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       pageQueryService: resolvedDependencies.pageQueryService,
       pageGenerationService: resolvedDependencies.pageGenerationService,
+      pageAtomicGenerationService: resolvedDependencies.pageAtomicGenerationService,
       pageLayoutService: resolvedDependencies.pageLayoutService,
       organizationService: resolvedDependencies.organizationService,
     }),
@@ -784,6 +827,7 @@ function resolveDependencies(
       | 'accountDeletionService'
       | 'mobileStorePurchaseService'
       | 'googlePubSubPushVerifier'
+      | 'pushTokenRegistryService'
       | 'webStaticDir'
       | 'readinessCheck'
     >
@@ -797,6 +841,7 @@ function resolveDependencies(
   accountDeletionService?: AccountDeletionServicePort;
   mobileStorePurchaseService?: MobileStorePurchaseServicePort;
   googlePubSubPushVerifier?: Pick<GooglePubSubPushVerifier, 'verifyAuthorization'>;
+  pushTokenRegistryService?: PushTokenRegistryServicePort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
   const creditRepository = new PostgresCreditRepository(db, db);
@@ -829,6 +874,43 @@ function resolveDependencies(
   const creditService = dependencies.creditService ?? new CreditService(creditRepository);
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
   const generationQueue = resolveGenerationQueue();
+  if (env.GENERATION_QUOTES_ENABLED && dependencies.generationQuoteService === undefined
+    && (generationQueue === null || env.OPENAI_API_KEY === undefined || env.S3_BUCKET_IMAGES === undefined || env.LOCAL_IMAGE_FALLBACK_ENABLED)) {
+    throw new ConfigurationError('Generation quotes require configured GPT, durable queue and image storage without local fallback');
+  }
+  const pushTokenRegistryService = dependencies.pushTokenRegistryService ?? resolveConfiguredPushTokenRegistryService();
+  const googleLinkConfig = resolveGoogleIdentityLinkConfig(env);
+  const googleIdentityLinkService = dependencies.googleIdentityLinkService ?? new GoogleIdentityLinkService({
+    repository: new PostgresGoogleIdentityLinkRepository(db), config: googleLinkConfig,
+    gateway: googleLinkConfig === null ? {
+      getNativeIdentity: async () => { throw new ConfigurationError('Google identity linking is disabled'); },
+      exchangeCode: async () => { throw new ConfigurationError('Google identity linking is disabled'); },
+      linkGoogleIdentity: async () => { throw new ConfigurationError('Google identity linking is disabled'); },
+    } : createGoogleIdentityLinkGateway({ ...googleLinkConfig, clientSecret: env.GOOGLE_LINK_CLIENT_SECRET!,
+      userPoolId: env.COGNITO_USER_POOL_ID!, region: env.AWS_REGION! }),
+  });
+  const generationQuoteService = dependencies.generationQuoteService ?? new GenerationQuoteService({
+    database: db,
+    enabled: env.GENERATION_QUOTES_ENABLED,
+    resolver: new PostgresGenerationQuotePlanResolver({
+      imageModel: env.OPENAI_IMAGE_MODEL,
+      generationEnabled: env.GENERATION_ENABLED,
+      pageGenerationEnabled: env.PAGE_GENERATION_ENABLED,
+      entityGenerationEnabled: env.ENTITY_GENERATION_ENABLED,
+      stateGenerationEnabled: env.ENTITY_STATE_REFERENCE_GENERATION_ENABLED,
+      importEnabled: env.ENTITY_IMPORT_ANALYSIS_ENABLED,
+      candidateImageLoader: resolveStoredPageImageLoader(),
+      uploadStorage: env.S3_BUCKET_IMAGES === undefined ? undefined : new S3EntityReferenceUploadStorage(
+        createPageImageStorageClient(env.AWS_REGION), {
+          bucketName: env.S3_BUCKET_IMAGES,
+          cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
+          uploadUrlTtlSeconds: ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS,
+        },
+      ),
+    }),
+    dispatcher: generationQueue === null ? undefined : new GenerationQuoteDispatcher(db, generationQueue),
+    capacityLimits: { perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT, global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT },
+  });
   const inlineWorkerDependencies =
     localAssetConfig !== null ? resolveWorkerDependencies() : null;
   const billingCreditGrantService =
@@ -1040,13 +1122,29 @@ function resolveDependencies(
     dependencies.episodeExportService ?? resolveConfiguredEpisodeExportService();
   const entityReferenceImageExportService =
     dependencies.entityReferenceImageExportService ??
-    new EntityReferenceImageExportService(entityRepository, resolveStoredPageImageLoader());
+    new EntityReferenceImageExportService(entityRepository, resolveStoredPageImageLoader(), generationJobRepository);
   const panelRepository = new PostgresPanelRepository(db);
   const panelFrameRepository = new PostgresPanelFrameRepository(db);
   const balloonRepository = new PostgresBalloonRepository(db);
   const balloonService =
     dependencies.balloonService ??
     new BalloonService(balloonRepository, entityRepository, panelRepository, panelFrameRepository);
+  const pageAtomicGenerationService = dependencies.pageAtomicGenerationService ?? new PageAtomicGenerationService({
+    database: db,
+    // The public quote flag is intentionally irrelevant to the shipped direct endpoint.
+    // A durable queue is still required before any paid job can be admitted.
+    generationEnabled: env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED && env.OPENAI_IMAGE_MODEL === 'gpt-image-2' && generationQueue !== null,
+    resolver: new PostgresGenerationQuotePlanResolver({
+      imageModel: env.OPENAI_IMAGE_MODEL,
+      generationEnabled: env.GENERATION_ENABLED,
+      pageGenerationEnabled: env.PAGE_GENERATION_ENABLED,
+      stateGenerationEnabled: env.ENTITY_STATE_REFERENCE_GENERATION_ENABLED,
+      importEnabled: false,
+    }),
+    capacityLimits: { perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT, global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT },
+    dispatcher: generationQueue === null ? undefined : new GenerationQuoteDispatcher(db, generationQueue),
+    styleCompiler: resolveStyleReferenceCompiler(),
+  });
   const pageGenerationService =
     dependencies.pageGenerationService ??
     new PageGenerationService(
@@ -1076,6 +1174,9 @@ function resolveDependencies(
   const pageExportService =
     dependencies.pageExportService ??
     new PageExportService(pageRepository, resolveStoredPageImageLoader(), organizationService);
+  const pageThumbnailService = dependencies.pageThumbnailService ?? new PageThumbnailService(
+    pageRepository, resolveStoredPageImageLoader(), new SharpPageThumbnailRenderer(),
+  );
   const pageQueryService =
     dependencies.pageQueryService ?? new PageQueryService(pageRepository, new PostgresStoryRepository(db));
   const panelEntityAssignmentService =
@@ -1111,6 +1212,7 @@ function resolveDependencies(
       () => Date.now(),
       env.EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED,
       env.GENERATION_JOB_CANCELLATION_ENABLED,
+      new PostgresQuotedImportExecutionRepository(db),
     );
   const storyCollaborationService =
     dependencies.storyCollaborationService ??
@@ -1144,16 +1246,7 @@ function resolveDependencies(
     dependencies.sceneService ?? new SceneService(new PostgresSceneRepository(db), entityRepository);
   const userProvisioningService =
     dependencies.userProvisioningService ??
-    new UserProvisioningService(
-      new PostgresUserRepository(db),
-      creditService,
-      env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET === undefined
-        ? undefined
-        : new AccountDeletionIdentityGuard(
-            accountDeletionRepository,
-            env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET,
-          ),
-    );
+    new TransactionalUserProvisioningService(db, env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET);
   const rateLimitStore = dependencies.rateLimitStore ?? resolveRateLimitStore();
 
   return {
@@ -1183,6 +1276,7 @@ function resolveDependencies(
     organizationService,
     organizationBillingService,
     pageExportService,
+    pageThumbnailService,
     pageFinalizeService,
     pageService,
     pageQueryService,
@@ -1190,8 +1284,12 @@ function resolveDependencies(
     pageGenerationQueue,
     pageGenerationRecoveryService,
     pageGenerationService,
+    pageAtomicGenerationService,
     pageLayoutService,
     pagePanelStructureService,
+    generationQuoteService,
+    googleIdentityLinkService,
+    pushTokenRegistryService,
     panelService,
     panelEntityAssignmentService,
     panelFrameService,
@@ -1323,7 +1421,7 @@ function resolveEntityImageStorage(): EntityImageStoragePort {
   return new S3EntityImageStorage(createPageImageStorageClient(env.AWS_REGION), {
     bucketName: env.S3_BUCKET_IMAGES,
     cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
-  });
+  }, createStateReferenceCopyClient(env.AWS_REGION));
 }
 
 function resolveConfiguredEntityReferenceUploadService(
@@ -1359,15 +1457,13 @@ function resolveConfiguredEntityReferenceUploadService(
 function resolveConfiguredEpisodeExportService():
   | EpisodeExportServicePort
   | undefined {
-  if (!env.EPISODE_EXPORT_ENABLED) {
-    return undefined;
-  }
+  const queue = resolveEpisodeExportQueueConfig(env);
+  if (queue === null) return undefined;
   if (
-    env.SQS_QUEUE_URL_EXPORT === undefined
-    || env.S3_BUCKET_IMAGES === undefined
+    env.S3_BUCKET_IMAGES === undefined
   ) {
     throw new ConfigurationError(
-      'EPISODE_EXPORT_ENABLED=true requires SQS_QUEUE_URL_EXPORT and S3_BUCKET_IMAGES',
+      'EPISODE_EXPORT_ENABLED=true requires queue and artifact storage',
     );
   }
 
@@ -1376,7 +1472,8 @@ function resolveConfiguredEpisodeExportService():
     repository,
     new SqsEpisodeExportQueue(
       createEpisodeExportQueueClient(env.AWS_REGION),
-      env.SQS_QUEUE_URL_EXPORT,
+      queue.queueUrl,
+      queue.shared ? 'deployed' : 'v1',
     ),
   );
   return new EpisodeExportService(
@@ -1425,7 +1522,8 @@ function resolveEpisodePagePlanCompiler(): EpisodePagePlanCompilerPort {
     };
   }
 
-  return new OpenAIPageEpisodePlanCompiler(client);
+  const profile = resolveEpisodeOpenAIModelProfile(env.OPENAI_EPISODE_TEXT_PROFILE).detail;
+  return new OpenAIPageEpisodePlanCompiler(client, profile.model, profile.reasoningEffort);
 }
 
 function resolveEpisodeBeatPlanCompiler(): EpisodeBeatPlanCompilerPort {
@@ -1438,7 +1536,8 @@ function resolveEpisodeBeatPlanCompiler(): EpisodeBeatPlanCompilerPort {
     };
   }
 
-  return new OpenAIEpisodeBeatPlanCompiler(client);
+  const profile = resolveEpisodeOpenAIModelProfile(env.OPENAI_EPISODE_TEXT_PROFILE).beat;
+  return new OpenAIEpisodeBeatPlanCompiler(client, profile.model, profile.reasoningEffort);
 }
 
 function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
@@ -1451,7 +1550,8 @@ function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
     };
   }
 
-  return new OpenAIEpisodePlanAuditCompiler(client);
+  const profile = resolveEpisodeOpenAIModelProfile(env.OPENAI_EPISODE_TEXT_PROFILE).audit;
+  return new OpenAIEpisodePlanAuditCompiler(client, profile.model, profile.reasoningEffort);
 }
 
 function resolveStyleReferenceCompiler(): StyleReferenceCompilerPort | undefined {
@@ -1750,4 +1850,14 @@ class StoredPageImageLoaderStub {
   public async loadByS3Key(): Promise<never> {
     throw new ConfigurationError('Stored page image loader is not configured');
   }
+}
+
+function resolveConfiguredPushTokenRegistryService(): PushTokenRegistryServicePort | undefined {
+  if (!env.PUSH_NOTIFICATIONS_ENABLED) return undefined;
+  if (!env.PUSH_TOKEN_ENCRYPTION_KEY_BASE64 || !env.PUSH_TOKEN_HASH_KEY_BASE64 || !env.PUSH_TOKEN_ENCRYPTION_KEY_ID)
+    throw new ConfigurationError('Push notifications require the existing encryption key, hash key, and key ID');
+  return new PushTokenRegistryService(new PostgresPushTokenRepository(db), new AesGcmPushTokenCipher({
+    encryptionKeyBase64: env.PUSH_TOKEN_ENCRYPTION_KEY_BASE64,
+    hashKeyBase64: env.PUSH_TOKEN_HASH_KEY_BASE64, keyId: env.PUSH_TOKEN_ENCRYPTION_KEY_ID,
+  }));
 }

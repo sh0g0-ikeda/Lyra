@@ -26,6 +26,10 @@ describe('SqsEpisodeExportQueue', () => {
     });
   });
 
+  it('shared dispatch keeps the deployed generation-queue envelope', async () => {
+    const client = new FakeClient(); await new SqsEpisodeExportQueue(client, queueUrl, 'deployed').enqueue(jobId);
+    expect(JSON.parse(client.commands[0]!.input.MessageBody!)).toEqual({ job_id: jobId, job_type: 'episode_export' });
+  });
   it('message ID欠落とprovider詳細を安全な一時障害へする', async () => {
     const client = new FakeClient();
     client.response = {};

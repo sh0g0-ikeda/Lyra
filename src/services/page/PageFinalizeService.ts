@@ -1,3 +1,4 @@
+import { assertImageDeliveryAllowed } from '../../domain/generation/ImageAccessPolicy.js';
 import { ConflictError, ConfigurationError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { GeneratedPageImage, PageGenerationContext } from '../../domain/types/page.js';
 import type { BalloonRepository } from '../../repositories/BalloonRepository.js';
@@ -30,6 +31,7 @@ export class PageFinalizeService implements PageFinalizeServicePort {
     this.ensurePageCanConfirm(page);
 
     const generatedImage = requireGeneratedImage(page);
+    assertImageDeliveryAllowed(generatedImage);
     if (organizationId === null) {
       ensureOwnedPageImageKey(generatedImage.s3Key, userId, pageId, 'generated page image key');
     } else {

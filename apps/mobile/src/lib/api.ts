@@ -1,7 +1,12 @@
+import type { GenerationQuote, GenerationQuoteReceipt, GenerationQuoteAcceptance, GenerationQuoteRequest } from '@/domain/pageGenerationQuote';
+import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStartBody, type GoogleLinkStatus } from '@/domain/googleAuth';
 import { z, type ZodType } from 'zod';
+import type { EditableEntityState, NamedEntityStatePayload } from '@/domain/entityStateEditor';
+import type { InsertPanelAfterPayload, PanelStructureResult } from '@/domain/panelInsertion';
 import { onlineManager } from '@tanstack/react-query';
 
 import {
+  generationQuoteRequestSchema, generationQuoteAcceptanceSchema, generationQuoteResponseSchema, generationQuoteReceiptSchema,
   accountDeletionPreviewSchema,
   accountDeletionResultSchema,
   apiErrorBodySchema,
@@ -15,6 +20,9 @@ import {
   createEpisodeExportResponseSchema,
   entitiesResponseSchema,
   entityStateSchema,
+  entityStateReferenceGenerationResponseSchema,
+  entityStateReferenceResponseSchema,
+  confirmEntityStateReferenceBodySchema,
   entityStatesResponseSchema,
   entityImportResponseSchema,
   entityReferenceUploadPresignResponseSchema,
@@ -55,6 +63,7 @@ import {
   pageAutofillResponseSchema,
   pageGenerationReadinessSchema,
   pageLayoutTemplatesResponseSchema,
+  pagePanelStructureResponseSchema,
   pageSchema,
   pageSkeletonResponseSchema,
   pagesResponseSchema,
@@ -351,6 +360,20 @@ export class LyraMobileApiClient {
     this.tokenProvider = tokenProvider;
     this.tokenRefreshProvider = tokenRefreshProvider;
     this.baseUrl = config.apiBaseUrl;
+  }
+
+  public getGoogleAuthCapabilities(): Promise<GoogleAuthCapabilities> {
+    return this.request('/api/auth/capabilities', googleAuthCapabilitiesSchema);
+  }
+
+  public startGoogleIdentityLink(input: GoogleLinkStartBody): Promise<GoogleLinkStart> {
+    const body = googleLinkStartBodySchema.parse(input);
+    return this.request('/api/auth/identity-links/google/start', googleLinkStartSchema, { method: 'POST', body });
+  }
+
+  public getGoogleIdentityLinkStatus(challengeId: string): Promise<GoogleLinkStatus> {
+    const id = z.uuid().parse(challengeId);
+    return this.request(`/api/auth/identity-links/google/${id}`, googleLinkStatusSchema);
   }
 
   public getCurrentSession(): Promise<CurrentSessionRecord> {
@@ -746,11 +769,9 @@ export class LyraMobileApiClient {
   }
 
   public updateWork(workId: string, body: UpdateWorkPayload, organizationId?: string | null): Promise<WorkRecord> {
-    const { expected_updated_at: _expectedUpdatedAt, ...requestBody } = body;
-    void _expectedUpdatedAt;
     return this.request(`/api/works/${workId}${organizationQuery(organizationId)}`, workSchema, {
       method: 'PUT',
-      body: requestBody
+      body
     });
   }
 
@@ -774,11 +795,9 @@ export class LyraMobileApiClient {
     body: UpdateChapterPayload,
     organizationId?: string | null
   ): Promise<ChapterRecord> {
-    const { expected_updated_at: _expectedUpdatedAt, ...requestBody } = body;
-    void _expectedUpdatedAt;
     return this.request(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, chapterSchema, {
       method: 'PUT',
-      body: requestBody
+      body
     });
   }
 
@@ -813,11 +832,9 @@ export class LyraMobileApiClient {
     body: UpdateEpisodePayload,
     organizationId?: string | null
   ): Promise<EpisodeRecord> {
-    const { expected_updated_at: _expectedUpdatedAt, ...requestBody } = body;
-    void _expectedUpdatedAt;
     return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
       method: 'PUT',
-      body: requestBody
+      body
     });
   }
 
@@ -1045,8 +1062,38 @@ export class LyraMobileApiClient {
   public getEntityStates(
     entityId: string,
     organizationId?: string | null,
-  ): Promise<{ entity_states: EntityStateRecord[] }> {
+  ): Promise<{ entity_states: EditableEntityState[] }> {
     return this.request(`/api/entities/${entityId}/states${organizationQuery(organizationId)}`, entityStatesResponseSchema);
+  }
+
+  public saveNamedEntityState(
+    entityId: string,
+    stateId: string | null,
+    body: NamedEntityStatePayload,
+    organizationId?: string | null
+  ): Promise<EditableEntityState> {
+    return this.request(
+      `/api/entities/${entityId}/states${stateId === null ? '' : `/${stateId}`}${organizationQuery(organizationId)}`,
+      entityStateSchema,
+      { method: stateId === null ? 'POST' : 'PUT', body }
+    );
+  }
+
+  public generateEntityStateReference(
+    entityId: string,
+    stateId: string,
+    organizationId?: string | null
+  ): Promise<z.infer<typeof entityStateReferenceGenerationResponseSchema>> {
+    return this.request(`/api/entities/${entityId}/states/${stateId}/generate-reference${organizationQuery(organizationId)}`, entityStateReferenceGenerationResponseSchema, { method: 'POST', body: {} });
+  }
+
+  public confirmEntityStateReference(
+    entityId: string,
+    stateId: string,
+    body: z.infer<typeof confirmEntityStateReferenceBodySchema>,
+    organizationId?: string | null
+  ): Promise<z.infer<typeof entityStateReferenceResponseSchema>> {
+    return this.request(`/api/entities/${entityId}/states/${stateId}/reference/confirm${organizationQuery(organizationId)}`, entityStateReferenceResponseSchema, { method: 'POST', body });
   }
 
   public createEntityState(
@@ -1182,6 +1229,29 @@ export class LyraMobileApiClient {
     );
   }
 
+  public createPageGenerationQuote(
+    input: GenerationQuoteRequest & { operation: 'page_generate' | 'page_regenerate' },
+    organizationId?: string | null
+  ): Promise<GenerationQuote> {
+    return this.createGenerationQuote(input, organizationId);
+  }
+
+  public createGenerationQuote(input: GenerationQuoteRequest, organizationId?: string | null): Promise<GenerationQuote> {
+    return this.request(`/api/generation-quotes${organizationQuery(organizationId)}`, generationQuoteResponseSchema, {
+      method: 'POST', body: generationQuoteRequestSchema.parse(input)
+    });
+  }
+
+  public acceptGenerationQuote(quoteId: string, input: GenerationQuoteAcceptance, organizationId?: string | null): Promise<GenerationQuoteReceipt> {
+    return this.request(`/api/generation-quotes/${encodeURIComponent(quoteId)}/accept${organizationQuery(organizationId)}`, generationQuoteReceiptSchema, {
+      method: 'POST', body: generationQuoteAcceptanceSchema.parse(input)
+    });
+  }
+
+  public getGenerationQuote(quoteId: string, organizationId?: string | null): Promise<GenerationQuoteReceipt> {
+    return this.request(`/api/generation-quotes/${encodeURIComponent(quoteId)}${organizationQuery(organizationId)}`, generationQuoteReceiptSchema);
+  }
+
   public getPageLayoutTemplates(): Promise<{ templates: PageLayoutTemplateRecord[] }> {
     return this.request('/api/page-layout-templates', pageLayoutTemplatesResponseSchema);
   }
@@ -1189,14 +1259,15 @@ export class LyraMobileApiClient {
   public autofillEpisodePagesFromStory(
     episodeId: string,
     language: 'ja' | 'en',
-    organizationId?: string | null
+    organizationId?: string | null,
+    stateOptions?: { state_autofill_version: 'v1'; state_assignment_policy: 'preserve_existing' | 'overwrite_existing' }
   ): Promise<{ job_id: string }> {
     return this.request(
       `/api/episodes/${episodeId}/autofill-pages-from-story${organizationQuery(organizationId)}`,
       jobAcceptedSchema,
       {
       method: 'POST',
-      body: { language }
+      body: { language, ...stateOptions }
       }
     );
   }
@@ -1241,6 +1312,17 @@ export class LyraMobileApiClient {
 
   public getPanels(pageId: string, organizationId?: string | null): Promise<{ panels: PanelRecord[] }> {
     return this.request(`/api/pages/${pageId}/panels${organizationQuery(organizationId)}`, panelsResponseSchema);
+  }
+
+  public insertPanelAfter(
+    pageId: string,
+    body: InsertPanelAfterPayload,
+    organizationId?: string | null
+  ): Promise<PanelStructureResult> {
+    return this.request(`/api/pages/${pageId}/panel-structure${organizationQuery(organizationId)}`, pagePanelStructureResponseSchema, {
+      method: 'PUT',
+      body
+    });
   }
 
   public createPanel(pageId: string, body: CreatePanelPayload, organizationId?: string | null): Promise<PanelRecord> {

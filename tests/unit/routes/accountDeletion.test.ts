@@ -78,6 +78,26 @@ describe('createAccountDeletionRoutes', () => {
     ).toBe(true);
   });
 
+  it('preserves the deployed deletion-preview URL and count fields without exposing storage keys', async () => {
+    const app = createRoutes(new FakeService()); const response = await app.request('/account/deletion-preview');
+    expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toMatchObject({ active_personal_subscription_count: 0, active_stripe_subscription_count: 0, active_mobile_store_subscription_count: 0, confirmed_personal_asset_count: 0 });
+  });
+
+  it('maps only the complete legacy acknowledgement contract to current deletion guards', async () => {
+    const service = new FakeService(); const app = createRoutes(service);
+    const response = await app.request('/account/deletion', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirmation: 'DELETE', acknowledge_active_subscription: true, acknowledge_confirmed_assets: true }) });
+    expect(response.status).toBe(200);expect(service.requests[0]).toMatchObject({ acknowledgePersonalSubscriptions: true, acknowledgeStoreBilling: true, acknowledgePersonalAssets: true });
+    const mixed = await app.request('/account/deletion', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirmation: 'DELETE', acknowledge_active_subscription: true, acknowledge_personal_assets: false }) });
+    expect(mixed.status).toBe(422);expect(service.requests).toHaveLength(1);
+  });
+
+  it('legacy clients receive a clear error for a new safety blocker, never a false success or disguised asset count', async () => {
+    const service = new FakeService();service.result={status:'blocked',blockers:[{code:'ACTIVE_PERSONAL_JOB',job_count:1}]};
+    const response=await createRoutes(service).request('/account/deletion',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({confirmation:'DELETE',acknowledge_active_subscription:true,acknowledge_confirmed_assets:true})});
+    expect(response.status).toBe(409);expect(await response.json()).toMatchObject({error:{code:'ACCOUNT_HAS_ACTIVE_JOBS'}});
+  });
+
   it('exact confirmationとacknowledgementだけを本人identity付きで渡す', async () => {
     const service = new FakeService();
     const app = createRoutes(service);

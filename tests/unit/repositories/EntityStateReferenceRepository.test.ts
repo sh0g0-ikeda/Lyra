@@ -1,5 +1,5 @@
 import type { QueryResult, QueryResultRow } from 'pg';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { computeStateReferenceFingerprint } from '../../../src/domain/state/StateReferenceFingerprint.js';
 import type { ConfirmEntityStateReferenceInput } from '../../../src/domain/types/entityStateReference.js';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
@@ -31,7 +31,8 @@ describe('PostgresEntityStateReferenceRepository', () => {
 
   it('confirmはreference_sets→entity_statesの順にlockしてbase行を更新しない', async () => {
     const input = buildConfirmInput();
-    const database = new ScriptedDatabase([
+    const validationRows: QueryResultRow[][] = [
+      [{ account_deletion_started_at: null, account_deleted_at: null }],
       [{ primary_ref_id: 'base-ref-1', base_s3_key: 'saved/owner/entities/entity/base.png' }],
       [{ name: '外傷', description: '左頬に傷', reference_image: null, state_revision: oldRevision }],
       [{
@@ -49,16 +50,24 @@ describe('PostgresEntityStateReferenceRepository', () => {
         },
         result: { candidates: [{ ref_id: input.descriptor.refId, s3_key: input.candidateS3Key }] },
       }],
+    ];
+    const database = new ScriptedDatabase([
+      ...validationRows, [], ...validationRows, [{ id: jobId }],
       [{ state_revision: '2026-09-30T00:00:00.001Z' }],
     ]);
     const repository = new PostgresEntityStateReferenceRepository(database);
 
-    const result = await repository.confirmReference(input);
+    const copy = vi.fn(async () => {});
+    const result = await repository.confirmReference(input, copy);
+    expect(copy).toHaveBeenCalledOnce();
 
-    expect(database.sql[0]).toContain('FOR UPDATE OF reference_sets');
-    expect(database.sql[1]).toContain('FOR UPDATE OF entity_states');
-    expect(database.sql[2]).toContain('FROM generation_jobs');
-    expect(database.sql[3]).toContain('UPDATE entity_states');
+    expect(database.sql[0]).toContain('FROM users');
+    expect(database.sql[1]).toContain('FOR UPDATE OF reference_sets');
+    expect(database.sql[2]).toContain('FOR UPDATE OF entity_states');
+    expect(database.sql[3]).toContain('FROM generation_jobs');
+    expect(database.sql[4]).toContain('state_reference_copies');
+    expect(database.sql[9]).toContain('jsonb_agg');
+    expect(database.sql[10]).toContain('UPDATE entity_states');
     expect(database.sql.join('\n')).not.toContain('UPDATE reference_sets');
     expect(result.referenceImage.refId).toBe(`${jobId}-1`);
   });
@@ -75,6 +84,7 @@ describe('PostgresEntityStateReferenceRepository', () => {
       input_fingerprint: input.descriptor.inputFingerprint,
     };
     const database = new ScriptedDatabase([
+      [{ account_deletion_started_at: null, account_deleted_at: null }],
       [{ primary_ref_id: 'base-ref-1', base_s3_key: 'saved/owner/entities/entity/base.png' }],
       [{
         name: '外傷',
@@ -100,16 +110,17 @@ describe('PostgresEntityStateReferenceRepository', () => {
     ]);
     const repository = new PostgresEntityStateReferenceRepository(database);
 
-    await expect(repository.confirmReference(input)).resolves.toMatchObject({
+    await expect(repository.confirmReference(input, async () => {})).resolves.toMatchObject({
       stateRevision: '2026-09-30T00:00:00.001Z',
       referenceImage: input.descriptor,
     });
-    expect(database.sql).toHaveLength(3);
+    expect(database.sql).toHaveLength(4);
   });
 
   it('jobのstate_revisionがconfirm期待値と異なる場合はstaleで更新しない', async () => {
     const input = buildConfirmInput();
     const database = new ScriptedDatabase([
+      [{ account_deletion_started_at: null, account_deleted_at: null }],
       [{ primary_ref_id: 'base-ref-1', base_s3_key: 'saved/owner/entities/entity/base.png' }],
       [{ name: '外傷', description: '左頬に傷', reference_image: null, state_revision: oldRevision }],
       [{
@@ -130,21 +141,29 @@ describe('PostgresEntityStateReferenceRepository', () => {
     ]);
     const repository = new PostgresEntityStateReferenceRepository(database);
 
-    await expect(repository.confirmReference(input)).rejects.toMatchObject({ code: 'CONFLICT' });
-    expect(database.sql).toHaveLength(3);
+    await expect(repository.confirmReference(input, async () => {})).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(database.sql.join('\n')).not.toContain('UPDATE entity_states');
+    expect(database.sql.join('\n')).not.toContain('UPDATE generation_jobs');
   });
 });
 
 class ScriptedDatabase implements DatabaseClient, TransactionRunner {
   public readonly sql: string[] = [];
   private queryIndex = 0;
+  private history: unknown;
 
   public constructor(private readonly rowsByQuery: QueryResultRow[][]) {}
 
-  public async query<T extends QueryResultRow>(text: string): Promise<QueryResult<T>> {
+  public async query<T extends QueryResultRow>(text: string, values?: readonly unknown[]): Promise<QueryResult<T>> {
     this.sql.push(text);
+    if (text.includes("SET result = jsonb_set(result, '{state_reference_copies}', $2::jsonb)")) {
+      this.history = JSON.parse(String(values?.[1]));
+    }
     const rows = (this.rowsByQuery[this.queryIndex] ?? []) as T[];
     this.queryIndex += 1;
+    if (text.includes('SELECT user_id, organization_id, status, params, result') && this.history !== undefined) {
+      for (const row of rows) Object.assign(row, { result: { ...(row.result as Record<string, unknown>), state_reference_copies: this.history } });
+    }
     return { rows, rowCount: rows.length } as QueryResult<T>;
   }
 

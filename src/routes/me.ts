@@ -1,3 +1,5 @@
+import { hasWebImageDeliveryAccess } from './webImageDelivery.js';
+import { CREDIT_COSTS } from '../domain/constants/credits.js';
 import { Hono, type MiddlewareHandler } from 'hono';
 import type { OrganizationWorkspaceSummary } from '../domain/types/organization.js';
 import type { AuthenticatedUser } from '../domain/types/user.js';
@@ -12,6 +14,9 @@ export interface MeRouteDependencies {
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   creditService?: CreditServicePort;
   organizationService?: OrganizationServicePort;
+  stateCapabilities?: { referenceGeneration: boolean; storyAutofill: boolean };
+  generationQuotesEnabled?: boolean;
+  pushNotificationsEnabled?: boolean;
 }
 
 /**
@@ -36,7 +41,17 @@ export function createMeRoutes(dependencies: MeRouteDependencies): Hono<AppEnv> 
         ? null
         : await dependencies.creditService.getBalance(user.id);
 
+    // Capability discovery is additive and informational. Admission still checks
+    // server flags/permissions; clients cannot enable features through this route.
     const payload = {
+      capabilities: {
+        web_image_delivery: hasWebImageDeliveryAccess(c),
+        generation_quotes: dependencies.generationQuotesEnabled === true,
+        push_notifications: dependencies.pushNotificationsEnabled === true,
+        entity_state_reference_generation: dependencies.stateCapabilities?.referenceGeneration === true,
+        episode_state_autofill_v1: dependencies.stateCapabilities?.storyAutofill === true,
+        entity_state_preview_credit_cost: CREDIT_COSTS.ENTITY_STATE_GENERATION,
+      },
       user: toUserResponse(user),
       personal_credits:
         personalCredits === null

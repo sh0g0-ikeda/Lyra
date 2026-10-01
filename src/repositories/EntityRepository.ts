@@ -1,3 +1,4 @@
+import { readImageProvenance, toImageProvenanceRecord } from '../domain/generation/ImageAccessPolicy.js';
 import type { QueryResultRow } from 'pg';
 import type {
   CreateEntityInput,
@@ -17,6 +18,11 @@ import { ConfigurationError } from '../domain/errors/index.js';
 import type { EntityListCursor } from '../domain/pagination.js';
 import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+
+// All entity/reference writes advance the revision used by editor CAS and state freshness.
+const nextEntityRevisionSql = (table: 'entities' | 'reference_sets'): string =>
+  `GREATEST(date_trunc('milliseconds', clock_timestamp()),
+    date_trunc('milliseconds', ${table}.updated_at) + INTERVAL '1 millisecond')`;
 
 export type { CreateEntityInput, Entity, UpdateEntityInput };
 export type { EntityListCursor } from '../domain/pagination.js';
@@ -648,7 +654,7 @@ export class PostgresEntityRepository
         SET reference_images = $3::jsonb,
             primary_ref_id = $4,
             status = $5,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('reference_sets')}
         FROM entities
         INNER JOIN works ON works.id = entities.work_id
         WHERE reference_sets.entity_id = $1
@@ -691,7 +697,7 @@ export class PostgresEntityRepository
               ELSE prompt_supplement
             END,
             status = $5,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('entities')}
         WHERE id = $1
           AND (
             ($6::uuid IS NULL AND user_id = $2 AND work_id IN (
@@ -791,7 +797,7 @@ export class PostgresEntityRepository
         SET reference_images = $3::jsonb,
             primary_ref_id = $4,
             status = $5,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('reference_sets')}
         FROM entities
         INNER JOIN works ON works.id = entities.work_id
         WHERE reference_sets.entity_id = $1
@@ -830,7 +836,7 @@ export class PostgresEntityRepository
         `
         UPDATE entities
         SET status = $3,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('entities')}
         WHERE id = $1
           AND (
             ($4::uuid IS NULL AND user_id = $2 AND work_id IN (
@@ -910,8 +916,9 @@ export class PostgresEntityRepository
           prompt_supplement = CASE WHEN $7::boolean THEN $8 ELSE prompt_supplement END,
           structured_fields = CASE WHEN $9::boolean THEN $10::jsonb ELSE structured_fields END,
           speech_profile = CASE WHEN $11::boolean THEN $12::jsonb ELSE speech_profile END,
-          updated_at = NOW()
+          updated_at = ${nextEntityRevisionSql('entities')}
       WHERE id = $1
+        AND ($14::timestamptz IS NULL OR date_trunc('milliseconds', entities.updated_at) = $14::timestamptz)
         AND (
           ($13::uuid IS NULL AND user_id = $2 AND work_id IN (
               SELECT id
@@ -947,6 +954,7 @@ export class PostgresEntityRepository
         input.speechProfile !== undefined,
         JSON.stringify(input.speechProfile ?? {}),
         organizationId,
+        input.expectedUpdatedAt ?? null,
       ],
     );
 
@@ -1056,6 +1064,7 @@ function parseReferenceImages(value: unknown): EntityReferenceImage[] {
 
     return [
       {
+        ...readImageProvenance(entry),
         refId: entry.ref_id,
         s3Key: entry.s3_key,
         cdnUrl: entry.cdn_url,
@@ -1163,6 +1172,7 @@ function referenceAssignmentKey(assignment: EntityReferenceAssignment): string {
 
 function toReferenceImageRecord(image: EntityReferenceImage): Record<string, unknown> {
   return {
+    ...toImageProvenanceRecord(image),
     ref_id: image.refId,
     s3_key: image.s3Key,
     cdn_url: image.cdnUrl,

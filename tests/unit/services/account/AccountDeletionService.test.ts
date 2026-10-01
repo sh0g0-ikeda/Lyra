@@ -124,6 +124,24 @@ class FakeAssets implements AccountAssetDeletionPort {
 }
 
 describe('AccountDeletionService', () => {
+  it('復旧claimに未確定copyがあれば既存削除checkpointがあっても外部操作を再開しない', async () => {
+    const repository = new FakeRepository();
+    repository.flight = { ...emptyFlight(), activePersonalGenerationJobCount: 1,
+      activePersonalStripeSubscriptionIds: ['sub-1'], personalAssetKeys: ['saved/late-copy.png'] };
+    repository.recoverableRequests = [{ ...buildRequest(), deletedAssetKeys: ['saved/late-copy.png'] }];
+    const subscriptions = new FakeSubscriptions();
+    const identity = new FakeIdentity();
+    const assets = new FakeAssets();
+    const service = new AccountDeletionService(repository, subscriptions, identity, assets,
+      'account-deletion-local-test-secret-only');
+    expect(await service.recoverPendingRequests(1)).toEqual({ attemptedCount: 1, completedCount: 0 });
+    expect(subscriptions.calls).toEqual([]);
+    expect(identity.calls).toEqual([]);
+    expect(assets.calls).toEqual([]);
+    expect(repository.completed).toBe(false);
+    expect(repository.failures).toEqual(['EXTERNAL_REVALIDATION_BLOCKED']);
+  });
+
   it('唯一ownerとactive personal jobはacknowledgeできないblockerになる', async () => {
     const repository = new FakeRepository();
     repository.flight = {

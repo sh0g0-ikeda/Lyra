@@ -1,7 +1,10 @@
+import { requireWebImageDeliveryAccess } from './webImageDelivery.js';
+import { imageMobileAccess, publicImageProvenance } from '../domain/generation/ImageAccessPolicy.js';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import {
   entityImportResponseSchema,
+  entityReferenceGenerationAvailabilityResponseSchema,
   entityReferenceGenerationResponseSchema,
   entityReferenceSetSchema,
   entityStateReferenceGenerationBodySchema,
@@ -61,11 +64,17 @@ const referenceCandidateImageQuerySchema = z
   .object({
     candidate_token: z.string().trim().min(1).max(4096).optional(),
     s3_key: z.string().trim().min(1).max(512).optional(),
+    organization_id: z.string().uuid().optional(),
   })
   .strict()
   .refine((query) => query.candidate_token !== undefined || query.s3_key !== undefined, {
     message: 'candidate_token is required',
   });
+const stateReferenceCandidateImageQuerySchema = z.object({
+  candidate_token: z.string().trim().min(1).max(4096),
+  expected_state_revision: z.string().datetime({ offset: true }),
+  organization_id: z.string().uuid().optional(),
+}).strict();
 const MAX_ENTITY_LIST_PAGE_LIMIT = 100;
 
 export interface EntityRouteDependencies {
@@ -84,6 +93,14 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
 
   app.use('*', dependencies.authMiddleware);
   app.use('*', dependencies.rateLimitMiddleware);
+
+  app.get('/entities/reference-generation-availability', async (c) => {
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    return c.json(assertMobileResponseContract(entityReferenceGenerationAvailabilityResponseSchema, {
+      enabled: env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
+    }));
+  });
 
   app.post('/works/:work_id/entities', async (c) => {
     const user = c.get('user');
@@ -240,6 +257,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     }
 
     const entity = await dependencies.entityService.updateEntity(user.id, entityId, {
+      expectedUpdatedAt: body.data.expected_updated_at,
       entityType: body.data.entity_type,
       name: body.data.name,
       freeDescription: body.data.free_description,
@@ -513,6 +531,30 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
     }));
   });
 
+  app.get('/entities/:id/states/:state_id/reference-candidate-image', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const stateId = parseUuidParam(c, 'state_id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const query = stateReferenceCandidateImageQuerySchema.safeParse(c.req.query());
+    if (!query.success) throw new ValidationError(formatZodValidationError(query.error));
+    const candidate = parseStateReferenceCandidateToken(query.data.candidate_token, {
+      userId: user.id, organizationId, entityId, stateId,
+    }, { secret: getReferenceCandidateTokenSecret() });
+    const service = requireEntityStateReferenceService(dependencies);
+    if (service.exportCandidateImage === undefined) throw new ConfigurationError('State candidate images are unavailable');
+    const image = await service.exportCandidateImage(user.id, entityId, stateId, {
+      jobId: candidate.jobId, candidateS3Key: candidate.s3Key,
+      expectedStateRevision: query.data.expected_state_revision,
+    }, organizationId);
+    return c.body(new Uint8Array(image.imageData), 200, {
+      'Content-Type': image.mimeType,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+  });
+
   app.get('/entities/:id/states/:state_id/reference-image', async (c) => {
     const user = c.get('user');
     const entityId = parseUuidParam(c, 'id');
@@ -524,6 +566,116 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       entityId,
       stateId,
       organizationId,
+    );
+    return c.body(new Uint8Array(image.imageData), 200, {
+      'Content-Type': image.mimeType,
+      'Cache-Control': 'private, no-store',
+    });
+  });
+
+
+  app.get('/web/entities/:id/reference/:ref_id/image', async (c) => {
+    requireWebImageDeliveryAccess(c);
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const refIdResult = referenceIdParamSchema.safeParse(c.req.param('ref_id'));
+
+    if (!refIdResult.success) {
+      throw new ValidationError(formatZodValidationError(refIdResult.error));
+    }
+
+    const exportedImage = await dependencies.entityReferenceImageExportService.exportReferenceImage(
+      user.id,
+      entityId,
+      refIdResult.data,
+      organizationId,
+      'authorized_web',
+    );
+
+    return c.body(new Uint8Array(exportedImage.imageData), 200, {
+      'Content-Type': exportedImage.mimeType,
+      'Cache-Control': 'private, no-store',
+    });
+  });
+
+  app.get('/web/entities/:id/reference-candidate-image', async (c) => {
+    requireWebImageDeliveryAccess(c);
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const query = referenceCandidateImageQuerySchema.safeParse(c.req.query());
+
+    if (!query.success) {
+      throw new ValidationError(formatZodValidationError(query.error));
+    }
+
+    const candidateS3Key = query.data.candidate_token === undefined
+      ? query.data.s3_key
+      : parseReferenceCandidateToken(query.data.candidate_token, {
+        userId: user.id,
+        entityId,
+      }, {
+        secret: getReferenceCandidateTokenSecret(),
+      });
+    if (candidateS3Key === undefined) {
+      throw new ValidationError('candidate_token is required');
+    }
+
+    const exportedImage = await dependencies.entityReferenceImageExportService.exportCandidateImage(
+      user.id,
+      entityId,
+      candidateS3Key,
+      organizationId,
+      'authorized_web',
+    );
+
+    return c.body(new Uint8Array(exportedImage.imageData), 200, {
+      'Content-Type': exportedImage.mimeType,
+      'Cache-Control': 'private, no-store',
+    });
+  });
+
+  app.get('/web/entities/:id/states/:state_id/reference-candidate-image', async (c) => {
+    requireWebImageDeliveryAccess(c);
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const stateId = parseUuidParam(c, 'state_id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const query = stateReferenceCandidateImageQuerySchema.safeParse(c.req.query());
+    if (!query.success) throw new ValidationError(formatZodValidationError(query.error));
+    const candidate = parseStateReferenceCandidateToken(query.data.candidate_token, {
+      userId: user.id, organizationId, entityId, stateId,
+    }, { secret: getReferenceCandidateTokenSecret() });
+    const service = requireEntityStateReferenceService(dependencies);
+    if (service.exportCandidateImage === undefined) throw new ConfigurationError('State candidate images are unavailable');
+    const image = await service.exportCandidateImage(user.id, entityId, stateId, {
+      jobId: candidate.jobId, candidateS3Key: candidate.s3Key,
+      expectedStateRevision: query.data.expected_state_revision,
+    }, organizationId, 'authorized_web');
+    return c.body(new Uint8Array(image.imageData), 200, {
+      'Content-Type': image.mimeType,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+  });
+
+  app.get('/web/entities/:id/states/:state_id/reference-image', async (c) => {
+    requireWebImageDeliveryAccess(c);
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const stateId = parseUuidParam(c, 'state_id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const image = await requireEntityStateReferenceService(dependencies).exportReferenceImage(
+      user.id,
+      entityId,
+      stateId,
+      organizationId,
+      'authorized_web',
     );
     return c.body(new Uint8Array(image.imageData), 200, {
       'Content-Type': image.mimeType,
@@ -638,9 +790,10 @@ async function toReferenceSetResponse(referenceSet: EntityReferenceSet): Promise
 }
 
 async function toReferenceImageResponse(image: EntityReferenceSet['images'][number]): Promise<Record<string, unknown>> {
-  const signedCdnUrl = await signImageCdnUrl(image.cdnUrl, image.s3Key);
+  const signedCdnUrl = imageMobileAccess(image) === 'available' ? await signImageCdnUrl(image.cdnUrl, image.s3Key) : null;
 
   return {
+    ...publicImageProvenance(image),
     ref_id: image.refId,
     ...(signedCdnUrl === null ? {} : { cdn_url: signedCdnUrl }),
     source: image.source,

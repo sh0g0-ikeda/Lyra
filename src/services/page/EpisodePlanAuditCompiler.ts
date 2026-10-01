@@ -6,6 +6,7 @@ import type {
 
 export type EpisodePlanAuditIssueCode =
   | 'duplicate_dialogue'
+  | 'dialogue_density'
   | 'duplicate_visual_beat'
   | 'timeline_discontinuity'
   | 'dialogue_misplacement'

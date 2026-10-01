@@ -64,6 +64,19 @@ describe('Local file storage adapters', () => {
     expect(loaded.imageData).toEqual(Buffer.from('entity-image'));
   });
 
+  it('状態専用copyを完了してからsaved descriptorを返す', async () => {
+    const config = await createConfig();
+    const storage = new LocalFileEntityImageStorage(config);
+    const source = 'session/user-1/entities/entity-1/job-1.png';
+    await writeLocalAsset(config.rootDir, source, Buffer.from('state-image'));
+    const result = await storage.finalizeStateReferenceImage({
+      userId: 'user-1', entityId: 'entity-1', stateId: 'state-1', refId: 'job-1', sourceS3Key: source,
+    });
+    expect(result.s3Key).toBe('saved/user-1/entities/entity-1/states/state-1/job-1.png');
+    expect((await new LocalFileStoredImageLoader(config).loadByS3Key(result.s3Key)).imageData)
+      .toEqual(Buffer.from('state-image'));
+  });
+
   it('final page image を saved 配下へ保存する', async () => {
     const config = await createConfig();
     const storage = new LocalFileFinalPageImageStorage(config);

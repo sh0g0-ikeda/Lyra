@@ -1,3 +1,4 @@
+import { STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY } from '../../../../src/infrastructure/openai/StoryEditorialPrompts.js';
 import { describe, expect, it } from 'vitest';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEpisodeBeatPlanCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
@@ -9,6 +10,8 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
         requests.push(payload);
+        expect(JSON.stringify(payload.input)).toContain(STORY_SPEAKER_POLICY);
+        expect(JSON.stringify(payload.input)).toContain(STORY_DIALOGUE_FLOW_POLICY);
         return {
           body: {
             output_text: JSON.stringify({
@@ -21,6 +24,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
                   exit_state: '少女は錨に人為的な異変があると疑う。',
                   new_information: ['錨の表面に新しい傷がある。'],
                   dialogue_intent: '疑念を短い独白で示す。',
+                  text_plan:{required_text_beats:['疑念の所在'],visual_only_beats:['傷に気づく'],density_reason:'観察を画像で伝える'},
                   handoff: '次ページで傷に触れる行動へつなぐ。',
                 },
               ],
@@ -45,6 +49,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       exitState: '少女は錨に人為的な異変があると疑う。',
       newInformation: ['錨の表面に新しい傷がある。'],
       dialogueIntent: '疑念を短い独白で示す。',
+      textPlan:{requiredTextBeats:['疑念の所在'],visualOnlyBeats:['傷に気づく'],densityReason:'観察を画像で伝える'},
       handoff: '次ページで傷に触れる行動へつなぐ。',
     });
     const request = requests[0];

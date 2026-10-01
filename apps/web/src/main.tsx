@@ -1,3 +1,5 @@
+import { processGooglePopupReturn } from './lib/googleAuthPopup';
+import { getCognitoAuthConfig } from './lib/cognitoAuth';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -30,7 +32,9 @@ const queryClient = new QueryClient({
   },
 });
 
-createRoot(document.getElementById('root')!).render(
+async function startApp(): Promise<void> {
+  if (await processGooglePopupReturn(window,getCognitoAuthConfig(import.meta.env,window.location.origin))) return;
+  createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <AppErrorBoundary>
@@ -39,3 +43,10 @@ createRoot(document.getElementById('root')!).render(
     </QueryClientProvider>
   </StrictMode>,
 );
+
+}
+void startApp().catch(() => {
+  // Never route a failed dedicated callback through normal Cognito exchange.
+  const root = document.getElementById('root') ?? document.body;
+  root.textContent = 'Lyra could not finish checking sign-in. Return to your original tab and check the request, or reload Lyra to try again. / ログイン確認を完了できませんでした。元のタブでリクエストを確認するか、Lyraを再読み込みしてください。';
+});

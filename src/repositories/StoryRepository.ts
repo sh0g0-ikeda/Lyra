@@ -40,6 +40,12 @@ import {
   lockStoryEpisodeAdmissions,
 } from './StoryEpisodeAdmissionLock.js';
 
+// CAS revisions must advance even inside one transaction or when clocks move backwards.
+type StoryRevisionTable = 'works' | 'chapters' | 'episodes';
+const nextStoryRevisionSql = (table: StoryRevisionTable): string =>
+  `GREATEST(date_trunc('milliseconds', clock_timestamp()),
+    date_trunc('milliseconds', ${table}.updated_at) + INTERVAL '1 millisecond')`;
+
 export type {
   Chapter,
   CreateChapterInput,
@@ -361,6 +367,7 @@ export class PostgresStoryRepository
       throw new ConfigurationError('Work list page limit is invalid');
     }
 
+    const productionCursor = request.cursor?.format === 'production-v1';
     const result = await this.client.query<WorkRow>(
       `
       SELECT works.*
@@ -387,7 +394,8 @@ export class PostgresStoryRepository
         OR (
           works.updated_at = $3::timestamptz
           AND (
-            works.created_at < $4::timestamptz
+            ($4::timestamptz IS NULL AND works.id < $5::uuid)
+            OR works.created_at < $4::timestamptz
             OR (
               works.created_at = $4::timestamptz
               AND works.id < $5::uuid
@@ -395,14 +403,16 @@ export class PostgresStoryRepository
           )
         )
       )
-      ORDER BY works.updated_at DESC, works.created_at DESC, works.id DESC
+      ORDER BY ${productionCursor
+        ? 'works.updated_at DESC, works.id DESC'
+        : 'works.updated_at DESC, works.created_at DESC, works.id DESC'}
       LIMIT $6
       `,
       [
         userId,
         organizationId,
         request.cursor?.updatedAt ?? null,
-        request.cursor?.createdAt ?? null,
+        request.cursor?.format === 'production-v1' ? null : request.cursor?.createdAt ?? null,
         request.cursor?.id ?? null,
         request.limit + 1,
       ],
@@ -414,7 +424,9 @@ export class PostgresStoryRepository
       works: rows.map(mapWorkRow),
       nextCursor:
         result.rows.length > request.limit && lastRow !== undefined
-          ? {
+          ? productionCursor
+            ? {format: 'production-v1', updatedAt: lastRow.updated_at, id: lastRow.id}
+            : {
               updatedAt: lastRow.updated_at,
               createdAt: lastRow.created_at,
               id: lastRow.id,
@@ -533,8 +545,9 @@ export class PostgresStoryRepository
             ) history_entry
           ),
           version = version + 1,
-          updated_at = NOW()
+          updated_at = ${nextStoryRevisionSql('works')}
       WHERE id = $1
+          AND ($20::timestamptz IS NULL OR date_trunc('milliseconds', works.updated_at) = $20::timestamptz)
         AND (
           ($19::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
           OR (
@@ -571,6 +584,7 @@ export class PostgresStoryRepository
         normalizeNullableText(input.overallFlow ?? null),
         input.status ?? null,
         organizationId,
+        input.expectedUpdatedAt ?? null,
       ],
     );
 
@@ -724,9 +738,10 @@ export class PostgresStoryRepository
               ) history_entry
             ),
             version = chapters.version + 1,
-            updated_at = NOW()
+            updated_at = ${nextStoryRevisionSql('chapters')}
         FROM works
         WHERE chapters.id = $1
+          AND ($20::timestamptz IS NULL OR date_trunc('milliseconds', chapters.updated_at) = $20::timestamptz)
           AND chapters.work_id = works.id
           AND (
             ($19::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
@@ -764,6 +779,7 @@ export class PostgresStoryRepository
           input.keyBeats ?? [],
           input.status ?? null,
           organizationId,
+          input.expectedUpdatedAt ?? null,
         ],
       );
 
@@ -1208,10 +1224,11 @@ export class PostgresStoryRepository
               ) history_entry
             ),
             version = episodes.version + 1,
-            updated_at = NOW()
+            updated_at = ${nextStoryRevisionSql('episodes')}
         FROM chapters
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
+          AND ($27::timestamptz IS NULL OR date_trunc('milliseconds', episodes.updated_at) = $27::timestamptz)
           AND episodes.chapter_id = chapters.id
           AND (
             ($26::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
@@ -1259,11 +1276,12 @@ export class PostgresStoryRepository
           input.startingEntityStates !== undefined,
           serializeEpisodeStartingEntityStates(input.startingEntityStates ?? []),
           organizationId,
+          input.expectedUpdatedAt ?? null,
         ],
       );
 
       if (result.rows[0] === undefined) {
-        if (input.startingEntityStates !== undefined) {
+        if (input.startingEntityStates !== undefined && input.expectedUpdatedAt === undefined) {
           throw new ConflictError('Episode starting state references changed while the episode was being updated');
         }
         return null;
@@ -2486,7 +2504,7 @@ export class PostgresStoryRepository
               ) history_entry
             ),
             version = episodes.version + 1,
-            updated_at = NOW()
+            updated_at = ${nextStoryRevisionSql('episodes')}
         FROM chapters
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
@@ -2614,7 +2632,7 @@ export class PostgresStoryRepository
               ) history_entry
             ),
             version = episodes.version + 1,
-            updated_at = NOW()
+            updated_at = ${nextStoryRevisionSql('episodes')}
         FROM chapters
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
@@ -2688,7 +2706,7 @@ async function swapChapterOrders(
     UPDATE chapters
     SET "order" = $2,
         version = version + 1,
-        updated_at = NOW()
+        updated_at = ${nextStoryRevisionSql('chapters')}
     WHERE id = $1
     `,
     [neighborChapterId, currentOrder],
@@ -2699,7 +2717,7 @@ async function swapChapterOrders(
     UPDATE chapters
     SET "order" = $2,
         version = version + 1,
-        updated_at = NOW()
+        updated_at = ${nextStoryRevisionSql('chapters')}
     WHERE id = $1
     RETURNING *
     `,
@@ -2737,7 +2755,7 @@ async function swapEpisodeOrders(
     UPDATE episodes
     SET "order" = $2,
         version = version + 1,
-        updated_at = NOW()
+        updated_at = ${nextStoryRevisionSql('episodes')}
     WHERE id = $1
     `,
     [neighborEpisodeId, currentOrder],
@@ -2748,7 +2766,7 @@ async function swapEpisodeOrders(
     UPDATE episodes
     SET "order" = $2,
         version = version + 1,
-        updated_at = NOW()
+        updated_at = ${nextStoryRevisionSql('episodes')}
     WHERE id = $1
     RETURNING *
     `,
@@ -2802,7 +2820,7 @@ async function moveEpisodeAcrossChapters(
       UPDATE episodes
       SET "order" = $2,
           version = version + 1,
-          updated_at = NOW()
+          updated_at = ${nextStoryRevisionSql('episodes')}
       WHERE id = $1
       `,
       [sourceEpisode.id, sourceEpisode.order - 1],
@@ -2816,7 +2834,7 @@ async function moveEpisodeAcrossChapters(
         UPDATE episodes
         SET "order" = $2,
             version = version + 1,
-            updated_at = NOW()
+            updated_at = ${nextStoryRevisionSql('episodes')}
         WHERE id = $1
         `,
         [destinationEpisode.id, destinationEpisode.order + 1],
@@ -2834,7 +2852,7 @@ async function moveEpisodeAcrossChapters(
     SET chapter_id = $2,
         "order" = $3,
         version = version + 1,
-        updated_at = NOW()
+        updated_at = ${nextStoryRevisionSql('episodes')}
     WHERE id = $1
     RETURNING *
     `,

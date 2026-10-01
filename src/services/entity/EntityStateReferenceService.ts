@@ -1,3 +1,4 @@
+import { assertImageDeliveryAllowed, readGenerationImageProvenance, type ImageDeliveryAudience } from '../../domain/generation/ImageAccessPolicy.js';
 import { randomUUID } from 'node:crypto';
 import { CREDIT_COSTS } from '../../domain/constants/credits.js';
 import {
@@ -5,6 +6,7 @@ import {
   ConflictError,
   NotFoundError,
 } from '../../domain/errors/index.js';
+import { buildEntityStateReferenceImageKey } from '../../domain/state/StateReferenceImageKey.js';
 import { computeStateReferenceFingerprint } from '../../domain/state/StateReferenceFingerprint.js';
 import type { GenerationJob } from '../../domain/types/job.js';
 import {
@@ -24,6 +26,7 @@ import {
   isGenerationJobCancellationRace,
   isUniqueViolation,
 } from '../../repositories/GenerationJobRepository.js';
+import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolicy.js';
 import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import {
@@ -57,11 +60,18 @@ export interface EntityStateReferenceServicePort {
     },
     organizationId?: string | null,
   ): Promise<ConfirmedEntityStateReference>;
+  exportCandidateImage?(
+    userId: string, entityId: string, stateId: string,
+    input: { jobId: string; candidateS3Key: string; expectedStateRevision: string },
+    organizationId?: string | null,
+    audience?: ImageDeliveryAudience,
+  ): Promise<{ imageData: Buffer; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' }>;
   exportReferenceImage(
     userId: string,
     entityId: string,
     stateId: string,
     organizationId?: string | null,
+    audience?: ImageDeliveryAudience,
   ): Promise<{ imageData: Buffer; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' }>;
 }
 
@@ -234,22 +244,26 @@ export class EntityStateReferenceService implements EntityStateReferenceServiceP
       throw new ConflictError('Entity state changed after the preview was generated');
     }
 
-    const finalized = await this.finalizeCandidateImage({
-      userId,
-      entityId,
-      stateId,
-      refId: candidate.refId,
-      candidateS3Key: input.candidateS3Key,
+    const destinationKey = buildEntityStateReferenceImageKey({
+      userId, entityId, stateId, refId: candidate.refId, sourceS3Key: input.candidateS3Key,
     });
+    assertImageDeliveryAllowed(readGenerationImageProvenance(job?.params, job?.result));
     const descriptor: EntityStateReferenceDescriptor = {
+      ...readGenerationImageProvenance(job?.params, job?.result),
       refId: candidate.refId,
-      s3Key: finalized.s3Key,
+      s3Key: destinationKey,
       storageOwnerUserId: userId,
       imageModel: requireStringParam(job?.params.image_model, 'image_model'),
       baseRefId: context.baseReference.refId,
       createdAt: readJobCreatedAt(job),
       inputFingerprint: fingerprint,
     };
+
+    // State settlement requires an explicit adapter contract. A generic base
+    // copy may retry invisibly and cannot establish this attempt's completion.
+    if (this.dependencies.imageStorage.finalizeStateReferenceImage === undefined) {
+      throw new ConfigurationError('State reference image storage is not configured');
+    }
 
     return this.dependencies.stateRepository.confirmReference({
       userId,
@@ -260,7 +274,32 @@ export class EntityStateReferenceService implements EntityStateReferenceServiceP
       candidateS3Key: input.candidateS3Key,
       expectedStateRevision: input.expectedStateRevision,
       descriptor,
+    }, async () => {
+      const finalized = await this.finalizeCandidateImage({
+        userId, entityId, stateId, refId: candidate.refId, candidateS3Key: input.candidateS3Key,
+      });
+      if (finalized.s3Key !== destinationKey) {
+        throw new ConfigurationError('State reference copy returned an unexpected destination');
+      }
     });
+  }
+
+  public async exportCandidateImage(
+    userId: string, entityId: string, stateId: string,
+    input: { jobId: string; candidateS3Key: string; expectedStateRevision: string },
+    organizationId: string | null = null,
+    audience: ImageDeliveryAudience = 'mobile',
+  ): Promise<{ imageData: Buffer; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' }> {
+    const context = await this.requireReadyContext(userId, entityId, stateId, organizationId);
+    const job = await this.dependencies.generationJobRepository.findByIdAndUserId(input.jobId, userId, organizationId);
+    if (job?.userId !== userId || (job.organizationId ?? null) !== organizationId
+      || context.stateRevision !== input.expectedStateRevision) {
+      throw new ConflictError('State reference preview is stale or does not match this scope');
+    }
+    requireMatchingCompletedCandidate(job, context, input);
+    assertImageDeliveryAllowed(readGenerationImageProvenance(job.params, job.result), audience);
+    ensureAllowedReferenceSourceKey(input.candidateS3Key, userId, entityId, 'state reference candidate');
+    return this.dependencies.storedImageLoader.loadByS3Key(input.candidateS3Key);
   }
 
   public async exportReferenceImage(
@@ -268,6 +307,7 @@ export class EntityStateReferenceService implements EntityStateReferenceServiceP
     entityId: string,
     stateId: string,
     organizationId: string | null = null,
+    audience: ImageDeliveryAudience = 'mobile',
   ): Promise<{ imageData: Buffer; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' }> {
     const context = await this.requireReadyContext(userId, entityId, stateId, organizationId);
     const descriptor = context.referenceImage;
@@ -278,6 +318,7 @@ export class EntityStateReferenceService implements EntityStateReferenceServiceP
     ) {
       throw new NotFoundError('Entity state reference image not found');
     }
+    assertImageDeliveryAllowed(descriptor, audience);
     ensureOwnedEntityReferenceImageKey(
       descriptor.s3Key,
       descriptor.storageOwnerUserId,
@@ -321,19 +362,15 @@ export class EntityStateReferenceService implements EntityStateReferenceServiceP
     refId: string;
     candidateS3Key: string;
   }): Promise<StoredEntityImage> {
-    if (this.dependencies.imageStorage.finalizeStateReferenceImage !== undefined) {
-      return this.dependencies.imageStorage.finalizeStateReferenceImage({
-        userId: input.userId,
-        entityId: input.entityId,
-        stateId: input.stateId,
-        refId: input.refId,
-        sourceS3Key: input.candidateS3Key,
-      });
+    const finalize = this.dependencies.imageStorage.finalizeStateReferenceImage;
+    if (finalize === undefined) {
+      throw new ConfigurationError('State reference image storage is not configured');
     }
-    return this.dependencies.imageStorage.finalizeReferenceImage({
+    return finalize.call(this.dependencies.imageStorage, {
       userId: input.userId,
       entityId: input.entityId,
-      refId: `states/${input.stateId}/${input.refId}`,
+      stateId: input.stateId,
+      refId: input.refId,
       sourceS3Key: input.candidateS3Key,
     });
   }

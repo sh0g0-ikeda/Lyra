@@ -14,7 +14,7 @@ export const colors = {
   inkStrong: '#F4F4F4',
   muted: '#8A8A8A',
   mutedSoft: '#6F6F6F',
-  border: 'rgba(229, 199, 107, 0.12)',
+  border: 'rgba(229, 199, 107, 0.34)',
   borderStrong: 'rgba(229, 199, 107, 0.34)',
   controlBorder: 'rgba(229, 199, 107, 0.48)',
   primary: '#E5C76B',

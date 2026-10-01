@@ -1,4 +1,5 @@
-import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { resolvePageGenerationLayoutControl, type PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
+import { ConfigurationError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import type { PageGenerationInputImage } from '../../domain/types/pageGeneration.js';
@@ -11,11 +12,13 @@ import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { LayoutGuideImageRendererPort } from './LayoutGuideImageRenderer.js';
 import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
+import { buildPageReferenceSubjectLabel, collectPageReferenceImages } from './PageReferenceIdentity.js';
 
 export interface BuildPageGenerationInputImagesInput {
   userId: string;
   organizationId?: string | null;
   pageId: string;
+  layoutControl?: PageGenerationLayoutControl | null;
 }
 
 export interface PageGenerationInputImageBuilderPort {
@@ -68,10 +71,15 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     const referenceByAssignment = new Map(
       references.map((reference) => [referenceAssignmentKey(reference), reference]),
     );
-    const referenceImageCount = assignments.filter((assignment) => {
+    // Validate each alias before deduplication so a shared image cannot hide an invalid owner.
+    for (const assignment of assignments) {
       const reference = referenceByAssignment.get(referenceAssignmentKey(assignment));
-      return reference !== undefined && hasResolvedImage(reference);
-    }).length;
+      if (reference !== undefined && hasResolvedImage(reference)) {
+        ensureOwnedEntityReferenceImageKey(reference.s3Key, reference.ownerUserId ?? input.userId, assignment.entityId);
+      }
+    }
+    const referenceImages = collectPageReferenceImages(assignments, references);
+    const referenceImageCount = referenceImages.length;
     if (referenceImageCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
       throw new ValidationError(
         `Page generation supports up to ${PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES} reference images per page. Reduce assigned characters or split the scene.`,
@@ -79,33 +87,21 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     }
 
     const inputImages: PageGenerationInputImage[] = [];
-    for (const assignment of assignments) {
-      const reference = referenceByAssignment.get(referenceAssignmentKey(assignment));
-      if (reference === undefined || !hasResolvedImage(reference)) {
-        continue;
-      }
-
-      ensureOwnedEntityReferenceImageKey(
-        reference.s3Key,
-        reference.ownerUserId ?? input.userId,
-        assignment.entityId,
-      );
+    for (const { reference } of referenceImages) {
       const loadedImage = await this.storedImageLoader.loadByS3Key(reference.s3Key);
       ensureInputImageWithinLimit(loadedImage.imageData);
-      const subjectLabel = buildSubjectLabel(
-        entityNameById.get(assignment.entityId) ?? `entity-${assignment.entityId}`,
-        reference.stateName,
-        assignments.some((candidate) => (
-          candidate.entityId === assignment.entityId && candidate.stateId !== null
-        )),
+      const subjectLabel = buildPageReferenceSubjectLabel(
+        entityNameById.get(reference.entityId) ?? `entity-${reference.entityId}`,
+        reference,
+        referenceImages,
       );
       inputImages.push({
         role: 'entity_reference',
         label: subjectLabel,
         dataUrl: toDataUrl(loadedImage.mimeType, loadedImage.imageData),
         reference: {
-          entityId: assignment.entityId,
-          stateId: assignment.stateId,
+          entityId: reference.entityId,
+          stateId: reference.stateId,
           refId: reference.refId,
           s3Key: reference.s3Key,
           imageModel: reference.imageModel,
@@ -114,8 +110,12 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
       });
     }
 
-    const layoutGuideImage = buildLayoutGuideImage(page.layoutConfig, this.layoutGuideImageRenderer);
+    const control = input.layoutControl === undefined
+      ? resolvePageGenerationLayoutControl(page.layoutConfig, page.panels.length) : input.layoutControl;
+    const layoutGuideImage = control === null ? null : this.layoutGuideImageRenderer.render(control.frames, { numberFrames: true });
+    if (control !== null && layoutGuideImage === null) throw new ConfigurationError('Resolved layout guide could not be rendered');
     if (layoutGuideImage !== null) {
+      ensureInputImageWithinLimit(layoutGuideImage.imageData);
       inputImages.push({
         role: 'layout_reference',
         label: 'page-layout-reference',
@@ -125,17 +125,6 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
 
     return inputImages;
   }
-}
-
-function buildLayoutGuideImage(
-  layoutConfig: Record<string, unknown>,
-  layoutGuideImageRenderer: LayoutGuideImageRendererPort,
-): { imageData: Buffer; mimeType: 'image/png' } | null {
-  if (layoutConfig.type !== 'custom') {
-    return null;
-  }
-
-  return layoutGuideImageRenderer.render(layoutConfig.frame_definitions);
 }
 
 function collectAssignments(
@@ -224,13 +213,6 @@ function hasResolvedImage(
 
 function referenceAssignmentKey(assignment: EntityReferenceAssignment): string {
   return `${assignment.entityId}:${assignment.stateId ?? 'default'}`;
-}
-
-function buildSubjectLabel(canonicalName: string, stateName: string | null, includeDefault: boolean): string {
-  if (stateName === null && !includeDefault) {
-    return canonicalName;
-  }
-  return `${canonicalName} / ${stateName ?? 'default'}`;
 }
 
 function ensureInputImageWithinLimit(imageData: Buffer): void {

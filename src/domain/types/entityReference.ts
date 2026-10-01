@@ -1,9 +1,10 @@
+import type { ImageProvenance } from '../generation/ImageAccessPolicy.js';
 import type { EntityStatus, EntityType } from './entity.js';
 
 export type EntityReferenceSetStatus = 'empty' | 'partial' | 'ready';
 export type EntityReferenceImageSource = 'upload' | 'generated';
 
-export interface EntityReferenceImage {
+export interface EntityReferenceImage extends ImageProvenance {
   refId: string;
   s3Key: string;
   cdnUrl: string;

@@ -1,0 +1,13 @@
+{
+  "checks_passed": 5,
+  "checks": [
+    "image_create",
+    "marker_create",
+    "marker_replace",
+    "single_attempt_on_503",
+    "explicit_max_attempts"
+  ],
+  "synthetic_handler_calls": 4,
+  "external_requests": 0,
+  "warning": "Serializer behavior only; not proof of real S3 conditional/policy compatibility"
+}

@@ -11,8 +11,11 @@ import type {
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { lockStoryEpisodeAdmission } from './StoryEpisodeAdmissionLock.js';
 
+const PENDING_CREATED_PANEL_ID = 'pending-created-panel';
+
 export type PagePanelStructureOperation =
   | { type: 'append' }
+  | { type: 'insert_after'; panelId: string }
   | { type: 'delete'; panelId: string }
   | { type: 'reorder'; panelIds: string[] };
 
@@ -46,6 +49,9 @@ export interface PagePanelStructureRepository {
 }
 
 export class PostgresPagePanelStructureRepository implements PagePanelStructureRepository {
+  // Insert-after uses this same authorized, snapshot-checked transaction: allocate a
+  // blank panel at the free tail order, then reorder safely and replace the layout.
+  // Existing panel content stays untouched; balloon references follow panel IDs.
   public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
 
   public async apply(
@@ -114,9 +120,14 @@ export class PostgresPagePanelStructureRepository implements PagePanelStructureR
         }
         ensureReplacementFrames(replacementLayout.frameDefinitions, desiredPanelIds.length);
         await deleteFramesForPage(transactionClient, pageId);
-        if (input.operation.type === 'append') {
+        if (input.operation.type === 'append' || input.operation.type === 'insert_after') {
           createdPanelId = await insertEmptyPanel(transactionClient, pageId, desiredPanelIds.length);
-          desiredPanelIds[desiredPanelIds.length - 1] = createdPanelId;
+          desiredPanelIds[desiredPanelIds.indexOf(PENDING_CREATED_PANEL_ID)] = createdPanelId;
+          if (input.operation.type === 'insert_after') {
+            // Allocate at the unused tail order before two-phase reordering so the
+            // immediate (page_id, order) uniqueness constraint is never violated.
+            await reorderPanels(transactionClient, pageId, desiredPanelIds);
+          }
         } else {
           await deletePanel(transactionClient, pageId, input.operation.panelId);
           await compactPanelOrders(transactionClient, pageId, currentPanels, input.operation.panelId);
@@ -283,11 +294,20 @@ async function listFramesForUpdate(client: DatabaseClient, pageId: string): Prom
 }
 
 function resolveDesiredPanelIds(currentPanelIds: string[], operation: PagePanelStructureOperation): string[] {
-  if (operation.type === 'append') {
+  if (operation.type === 'append' || operation.type === 'insert_after') {
     if (currentPanelIds.length >= 8) {
       throw new ValidationError('A page can contain at most eight panels');
     }
-    return [...currentPanelIds, 'pending-created-panel'];
+    if (operation.type === 'append') {
+      return [...currentPanelIds, PENDING_CREATED_PANEL_ID];
+    }
+    const selectedIndex = currentPanelIds.indexOf(operation.panelId);
+    if (selectedIndex === -1) {
+      throw new ConflictError('The selected panel is no longer on the page');
+    }
+    const desiredPanelIds = [...currentPanelIds];
+    desiredPanelIds.splice(selectedIndex + 1, 0, PENDING_CREATED_PANEL_ID);
+    return desiredPanelIds;
   }
   if (operation.type === 'delete') {
     if (currentPanelIds.length <= 1) {

@@ -48,6 +48,8 @@ describe('PostgresImageStorageReferenceRepository', () => {
     expect(db.sql).toContain('live_entity_state_reference_images');
     expect(db.sql).toContain('jsonb_typeof(entity_states.reference_image) = \'object\'');
     expect(db.sql).toContain('retained_input_snapshot_reference_images');
+    expect(db.sql).toContain('retained_state_reference_copies');
+    expect(db.sql).toContain("jsonb_typeof(result->'state_reference_copies') = 'array'");
     expect(db.sql).toContain("jsonb_typeof(generation_jobs.result->'input_snapshot'->'references') = 'array'");
     expect(db.sql).toContain("reference_image->>'s3Key'");
   });

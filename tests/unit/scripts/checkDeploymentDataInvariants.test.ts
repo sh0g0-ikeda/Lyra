@@ -138,6 +138,15 @@ class FakeDatabase implements DatabaseClient {
 }
 
 describe('checkDeploymentDataInvariants', () => {
+  it('未確定・旧形式の状態copy履歴をrelease前のblockerとして報告する', async () => {
+    const database = new FakeDatabase('generation_jobs.unresolved_state_reference_copies');
+    const report = await checkDeploymentDataInvariants(database);
+    expect(report.ok).toBe(false);
+    expect(report.violations).toContainEqual({
+      name: 'generation_jobs.unresolved_state_reference_copies', sampleIds: ['bad-row-1', 'bad-row-2'],
+    });
+  });
+
   it('DB 不変条件の違反がなければ ok を返す', async () => {
     const database = new FakeDatabase();
 
@@ -178,7 +187,7 @@ describe('checkDeploymentDataInvariants', () => {
     expect(
       database.queries.some((query) =>
         query.includes(
-          "job_type NOT IN ('page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton')",
+          "job_type NOT IN ('page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton', 'entity_import_analysis')",
         ),
       ),
     ).toBe(true);

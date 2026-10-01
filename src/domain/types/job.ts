@@ -7,6 +7,7 @@ import type {
 export type GenerationJobType =
   | 'page_generate'
   | 'entity_generate'
+  | 'entity_import_analysis'
   | 'episode_story_autofill'
   | 'episode_page_skeleton';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
@@ -19,6 +20,8 @@ export interface PageGenerationJobParams {
   requiresPlanner: boolean;
 }
 
+export interface GenerationJobCreditSettlement { chargedCredits: number; refundedCredits: number; netCredits: number; status: 'not_charged' | 'charged' | 'refunded' | 'partially_refunded' | 'refund_pending'; }
+
 export interface GenerationJob {
   id: string;
   userId: string;
@@ -27,6 +30,7 @@ export interface GenerationJob {
   status: GenerationJobStatus;
   generationMode: PageGenerationMode | null;
   creditCost: number;
+  creditSettlement?: GenerationJobCreditSettlement;
   params: Record<string, unknown>;
   result: Record<string, unknown> | null;
   sqsMessageId: string | null;

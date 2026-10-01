@@ -1,5 +1,6 @@
 import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
+import { ResourceStaleError } from '../../../src/domain/errors/index.js';
 import { createApp } from '../../../src/app.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import { env } from '../../../src/lib/env.js';
@@ -80,6 +81,7 @@ class FakeCreditService implements CreditServicePort {
 }
 
 class FakeEntityService implements EntityServicePort {
+  public lastUpdate: Parameters<EntityServicePort['updateEntity']>[2] | null = null;
   public entityPage: EntityListPage = { entities: [], nextCursor: null };
   public pageCalls: Array<{
     userId: string;
@@ -166,6 +168,7 @@ class FakeEntityService implements EntityServicePort {
     requestedEntityId: string,
     input: Parameters<EntityServicePort['updateEntity']>[2],
   ): Promise<Entity> {
+    this.lastUpdate = input;
     return {
       id: requestedEntityId,
       workId,
@@ -306,6 +309,7 @@ class FakeEntityReferenceImageExportService implements EntityReferenceImageExpor
 class FakeEntityStateReferenceService implements EntityStateReferenceServicePort {
   public enqueueInput: Record<string, unknown> | null = null;
   public confirmInput: Record<string, unknown> | null = null;
+  public candidateReadInput: Record<string, unknown> | null = null;
 
   public async enqueueReferenceGeneration(
     userId: string,
@@ -347,9 +351,45 @@ class FakeEntityStateReferenceService implements EntityStateReferenceServicePort
   public async exportReferenceImage(): Promise<ExportedEntityReferenceImage> {
     return { imageData: Buffer.from('state-reference-image'), mimeType: 'image/png' };
   }
+
+  public async exportCandidateImage(
+    userId: string, entityId: string, stateId: string,
+    input: { jobId: string; candidateS3Key: string; expectedStateRevision: string },
+    organizationId: string | null = null,
+  ): Promise<ExportedEntityReferenceImage> {
+    this.candidateReadInput = { userId, entityId, stateId, ...input, organizationId };
+    return { imageData: Buffer.from('state-candidate-image'), mimeType: 'image/png' };
+  }
 }
 
 describe('entity routes', () => {
+  it('状態専用署名候補だけをno-storeで読め、別stateやraw keyを拒否する', async () => {
+    const service = new FakeEntityStateReferenceService();
+    const app = createTestApp(undefined,undefined,undefined,service);
+    const token = await createToken();
+    const stateId = '33333333-3333-4333-8333-333333333333';
+    const jobId = '44444444-4444-4444-8444-444444444444';
+    const signed = createStateReferenceCandidateToken({userId:user.id,organizationId:null,entityId,stateId,jobId,
+      s3Key:`session/${user.id}/entities/${entityId}/${jobId}-1.png`}, {
+      secret:env.REFERENCE_CANDIDATE_TOKEN_SECRET ?? env.SUPABASE_JWT_SECRET ?? env.STRIPE_WEBHOOK_SECRET ?? 'development-reference-candidate-token-secret',
+    });
+    const query = new URLSearchParams({candidate_token:signed,expected_state_revision:now.toISOString()});
+    const response = await app.request(`/api/entities/${entityId}/states/${stateId}/reference-candidate-image?${query}`, {
+      headers:{Authorization:`Bearer ${token}`},
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(await response.text()).toBe('state-candidate-image');
+    expect(service.candidateReadInput).toMatchObject({stateId,jobId,expectedStateRevision:now.toISOString()});
+    service.candidateReadInput=null;
+    const wrong=await app.request(`/api/entities/${entityId}/states/77777777-7777-4777-8777-777777777777/reference-candidate-image?${query}`, {headers:{Authorization:`Bearer ${token}`}});
+    expect(wrong.status).toBe(422);
+    expect(service.candidateReadInput).toBeNull();
+    query.set('s3_key','saved/foreign/private.png');
+    expect((await app.request(`/api/entities/${entityId}/states/${stateId}/reference-candidate-image?${query}`,{headers:{Authorization:`Bearer ${token}`}})).status).toBe(422);
+    expect(service.candidateReadInput).toBeNull();
+  });
+
   it('状態reference previewを空bodyで受け付けjobとrevisionだけを返す', async () => {
     const stateReferences = new FakeEntityStateReferenceService();
     const app = createTestApp(undefined, undefined, undefined, stateReferences);
@@ -969,6 +1009,24 @@ describe('entity routes', () => {
       entityId,
       s3Key,
     });
+  });
+});
+
+describe('entity shipped timestamp contract', () => {
+  it('PUTはtimestampをServiceへ渡しstaleを409のまま返す', async () => {
+    const service = new FakeEntityService();
+    const app = createTestApp(undefined,undefined,service);
+    const token = await createToken();
+    const request = () => app.request(`/api/entities/${entityId}`, {
+      method:'PUT', headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({name:'updated',expected_updated_at:'2026-10-01T12:00:00.123Z'}),
+    });
+    expect((await request()).status).toBe(200);
+    expect(service.lastUpdate?.expectedUpdatedAt).toBe('2026-10-01T12:00:00.123Z');
+    service.updateEntity = async (): Promise<never> => { throw new ResourceStaleError(); };
+    const stale = await request();
+    expect(stale.status).toBe(409);
+    await expect(stale.json()).resolves.toMatchObject({error:{code:'RESOURCE_STALE'}});
   });
 });
 

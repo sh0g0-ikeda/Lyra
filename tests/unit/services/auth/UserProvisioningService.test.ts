@@ -94,6 +94,19 @@ class FakeAccountDeletionIdentityGuard implements AccountDeletionIdentityGuardPo
 }
 
 describe('UserProvisioningService', () => {
+  it('初回クレジットの一意制約失敗を正常な同時ログインとして扱わない', async () => {
+    const repository = new FakeUserRepository();
+    const creditService = new FakeCreditService();
+    const failure = Object.assign(new Error('Injected credit ledger collision'), { code: '23505' });
+    creditService.grantSignupBonus = async () => {
+      repository.existingUserBySupabaseId = repository.insertedUser;
+      throw failure;
+    };
+    await expect(new UserProvisioningService(repository, creditService)
+      .provisionFromSupabaseClaims({ sub: 'supabase-1', email: 'user@example.com' }))
+      .rejects.toBe(failure);
+  });
+
   it('新規ユーザー作成時だけ初回ボーナスを付与する', async () => {
     const repository = new FakeUserRepository();
     const creditService = new FakeCreditService();
@@ -149,29 +162,21 @@ describe('UserProvisioningService', () => {
     expect(creditService.signupBonusUserIds).toEqual([]);
   });
 
-  it('同じメールで認証プロバイダーIDが変わった場合は既存ユーザーに再リンクする', async () => {
-    const repository = new FakeUserRepository();
-    repository.existingUserByEmail = buildUser({ supabaseId: 'old-provider-sub' });
-    repository.linkedUser = buildUser({ supabaseId: 'new-provider-sub' });
-    const creditService = new FakeCreditService();
-    const service = new UserProvisioningService(repository, creditService);
-
-    const result = await service.provisionFromSupabaseClaims({
-      sub: 'new-provider-sub',
-      email: 'USER@example.com',
-    });
-
-    expect(result).toEqual({
-      user: repository.linkedUser,
-      isNewUser: false,
-    });
-    expect(repository.linkByEmailCalls).toEqual([
-      { email: 'user@example.com', supabaseId: 'new-provider-sub' },
-    ]);
-    expect(creditService.signupBonusUserIds).toEqual([]);
+  it('native-provider email equality never rewrites a different authentication subject', async () => {
+    const repository = new FakeUserRepository();repository.existingUserByEmail = buildUser({ supabaseId: 'old-provider-sub' });
+    const credits = new FakeCreditService();const service = new UserProvisioningService(repository, credits);
+    await expect(service.provisionFromSupabaseClaims({ sub: 'new-provider-sub', email: 'USER@example.com' })).rejects.toMatchObject({ code: 'ACCOUNT_LINK_REQUIRED', statusCode: 409 });
+    expect(repository.linkByEmailCalls).toEqual([]);expect(credits.signupBonusUserIds).toEqual([]);
   });
 
-  // Spec §4: 既存Cognito移行は維持し、外部IdPのメール一致だけでは既存資産の所有者を変えない。
+  it('a concurrent native signup email collision also requires verified offline reconciliation', async () => {
+    const repository = new FakeUserRepository();repository.existingUserByEmail = buildUser({supabaseId:'old-provider-sub'});
+    repository.firstEmailLookupReturnsNull = true;repository.insertError = { code: '23505' };
+    const credits = new FakeCreditService();
+    await expect(new UserProvisioningService(repository, credits).provisionFromSupabaseClaims({sub:'new-provider-sub',email:'user@example.com'})).rejects.toMatchObject({code:'ACCOUNT_LINK_REQUIRED'});
+    expect(repository.linkByEmailCalls).toEqual([]);expect(credits.signupBonusUserIds).toEqual([]);
+  });
+
   it('Google由来の別subjectが既存メールと一致する場合はユーザーを付け替えない', async () => {
     const repository = new FakeUserRepository();
     repository.existingUserByEmail = buildUser({ supabaseId: 'native-sub' });

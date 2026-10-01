@@ -31,6 +31,12 @@ vi.mock('@/components/PrimaryButton', () => ({
 }));
 
 describe('PersonalBillingSummary', () => {
+  it('shows the current plan separately from a future scheduled change', () => {
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(<PersonalBillingSummary cancelAtPeriodEnd={false} currentPeriodEnd="2026-11-01T00:00:00Z" currentPlan="premium" scheduledPlan="standard" scheduledPlanEffectiveAt="2026-11-01T00:00:00Z" language="en" onManage={vi.fn()} />); });
+    const output = JSON.stringify(renderer.toJSON());
+    expect(output).toContain('Current plan'); expect(output).toContain('Premium'); expect(output).toContain('Scheduled plan'); expect(output).toContain('Standard'); expect(output).toContain('2026');
+  });
   it('次回更新日と期間終了時の解約予約を表示する', () => {
     let renderer: ReturnType<typeof create>;
     act(() => {

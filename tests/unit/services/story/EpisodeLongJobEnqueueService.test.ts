@@ -293,6 +293,7 @@ describe('Episode long job enqueue services', () => {
     ]);
     expect(repository.createdJobs).toHaveLength(1);
     expect(repository.createdJobs[0]?.jobType).toBe('episode_page_skeleton');
+    expect(repository.createdJobs[0]?.params.apply_story_plan).toBe(false);
     expect(repository.createdJobs[0]?.capacityLimits).toEqual({
       perUser: 1,
       global: 5,

@@ -109,6 +109,7 @@ interface EntityStateRow extends QueryResultRow {
   name: string | null;
   description: string | null;
   reference_image: unknown;
+  base_reference_id?: string | null;
   costume_note: string | null;
   costume_ref_id: string | null;
   condition_note: string | null;
@@ -118,6 +119,13 @@ interface EntityStateRow extends QueryResultRow {
   created_at: Date;
   updated_at: Date | null;
 }
+
+const currentBaseReferenceIdSql = `(SELECT rs.primary_ref_id FROM reference_sets rs
+  WHERE rs.entity_id = entity_states.entity_id AND rs.status = 'ready'
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(
+      CASE WHEN jsonb_typeof(rs.reference_images) = 'array' THEN rs.reference_images ELSE '[]'::jsonb END
+    ) AS image WHERE image->>'ref_id' = rs.primary_ref_id AND COALESCE(image->>'s3_key', '') <> '')
+  LIMIT 1)`;
 
 const sceneSelectColumns = `
   scenes.id,
@@ -404,7 +412,7 @@ export class PostgresSceneRepository implements SceneRepository {
         extra_note
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING *
+      RETURNING entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id
       `,
       [
         entityId,
@@ -430,7 +438,7 @@ export class PostgresSceneRepository implements SceneRepository {
   ): Promise<EntityState[]> {
     const result = await this.client.query<EntityStateRow>(
       `
-      SELECT entity_states.*
+      SELECT entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id
       FROM entity_states
       INNER JOIN entities ON entities.id = entity_states.entity_id
       INNER JOIN works ON works.id = entities.work_id
@@ -496,7 +504,7 @@ export class PostgresSceneRepository implements SceneRepository {
             )
           )
         )
-      RETURNING entity_states.*
+      RETURNING entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id
       `,
       [
         stateId,
@@ -585,6 +593,7 @@ function mapEntityStateRow(row: EntityStateRow): EntityState {
     name: row.name,
     description: row.description,
     referenceImage: toNullableRecord(row.reference_image),
+    baseReferenceId: row.base_reference_id ?? null,
     costumeNote: row.costume_note,
     costumeRefId: row.costume_ref_id,
     conditionNote: row.condition_note,

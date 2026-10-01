@@ -23,6 +23,7 @@ import {
 } from './PageGenerationRecoveryService.js';
 import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
 import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
+import { pageReferenceImageKey } from './PageReferenceIdentity.js';
 
 export interface EnqueuePageGenerationResult {
   jobId: string;
@@ -355,7 +356,7 @@ export class PageGenerationService implements PageGenerationServicePort {
         throw new ValidationError('Assigned character state reference has no storage owner');
       }
       ensureOwnedEntityReferenceImageKey(reference.s3Key, reference.ownerUserId, assignment.entityId);
-      available.add(`${assignment.entityId}:${assignment.stateId ?? 'default'}:${reference.refId}`);
+      available.add(pageReferenceImageKey(reference));
     }
     if (available.size > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
       throw new ValidationError(

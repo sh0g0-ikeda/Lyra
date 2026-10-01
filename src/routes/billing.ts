@@ -52,6 +52,9 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
       monthly_expires_at: balance.monthlyExpiresAt?.toISOString() ?? null,
       plan_code: user.planCode,
       current_period_end: subscription?.currentPeriodEnd?.toISOString() ?? null,
+      subscription_store: subscription?.store ?? null,
+      scheduled_plan_code: subscription?.scheduledPlanCode ?? null,
+      scheduled_plan_effective_at: subscription?.scheduledPlanEffectiveAt?.toISOString() ?? null,
       cancel_at_period_end: subscription?.cancelAtPeriodEnd ?? false,
       subscription_plans: dependencies.billingService.getSubscriptionPlanCatalog().map((plan) => ({
         plan_code: plan.planCode,

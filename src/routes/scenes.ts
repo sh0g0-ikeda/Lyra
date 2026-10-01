@@ -1,3 +1,4 @@
+import { presentEntityStateReference } from '../services/entity/EntityStatePresentation.js';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import {
   entityStateSchema,
@@ -224,6 +225,7 @@ function toSceneResponse(scene: Scene): Record<string, unknown> {
 
 function toEntityStateResponse(entityState: EntityState): Record<string, unknown> {
   return {
+    ...presentEntityStateReference(entityState),
     id: entityState.id,
     entity_id: entityState.entityId,
     scene_id: entityState.sceneId,

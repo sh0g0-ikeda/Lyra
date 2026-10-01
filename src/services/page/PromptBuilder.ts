@@ -1,7 +1,4 @@
-import {
-  PANEL_FRAME_TEMPLATES,
-  getPanelFrameTemplate,
-} from '../../domain/constants/panelFrameTemplates.js';
+import { resolvePageGenerationLayoutControl, type PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { CompositionGalleryItem } from '../../domain/types/composition.js';
 import type { Entity } from '../../domain/types/entity.js';
@@ -23,6 +20,7 @@ import type {
 } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
+import { buildPageReferenceSubjectLabel, collectPageReferenceImages } from './PageReferenceIdentity.js';
 
 export interface BuildPagePromptInput {
   userId: string;
@@ -34,6 +32,7 @@ export interface BuildPagePromptInput {
 }
 
 export interface BuiltPagePrompt {
+  layoutControl?: PageGenerationLayoutControl | null;
   workId: string;
   draftPrompt: string;
   compilerBrief: string;
@@ -46,7 +45,7 @@ export interface PromptBuilderPort {
 
 interface NormalizedReferenceRole {
   entityId: string | null;
-  stateId: string | null;
+  assignmentKeys: string[];
   imageLabel: string;
   role: 'character_reference' | 'layout_reference';
   subject: string;
@@ -67,6 +66,7 @@ interface NormalizedPanelInstruction {
 }
 
 interface NormalizedPagePrompt {
+  layoutControl: PageGenerationLayoutControl | null;
   pageSummary: string;
   pageSetting: string;
   referenceRoles: NormalizedReferenceRole[];
@@ -137,6 +137,7 @@ export class PromptBuilder implements PromptBuilderPort {
 
     return {
       workId: page.workId,
+      layoutControl: normalized.layoutControl,
       draftPrompt: buildDraftPrompt(normalized),
       compilerBrief: buildCompilerBrief(normalized),
       inputSnapshot: buildPageGenerationInputSnapshot(
@@ -201,14 +202,16 @@ function normalizePagePrompt(
 ): NormalizedPagePrompt {
   const orderedPanels = [...panels].sort((left, right) => left.order - right.order);
   assertContiguousPanelOrder(orderedPanels);
-  const referenceRoles = buildReferenceRoles(page, orderedPanels, entityMap, references);
+  const layoutControl = resolvePageGenerationLayoutControl(page.layoutConfig, orderedPanels.length);
+  const referenceRoles = buildReferenceRoles(orderedPanels, entityMap, references, layoutControl);
   const referenceLabelByEntityId = buildReferenceLabelMap(referenceRoles);
 
   return {
+    layoutControl,
     pageSummary: buildPageSummary(page, input, orderedPanels.length),
     pageSetting: buildPageSetting(page),
     referenceRoles,
-    layoutInstruction: buildLayoutInstruction(page, orderedPanels.length),
+    layoutInstruction: layoutControl?.detailedInstruction ?? buildLayoutInstruction(orderedPanels.length),
     panelInstructions: orderedPanels.map((panel, index) =>
       buildNormalizedPanelInstruction(
         panel,
@@ -217,6 +220,7 @@ function normalizePagePrompt(
         compositionMap,
         referenceLabelByEntityId,
         shouldBakeDialogueForPanel(page, panel),
+        layoutControl?.frames.find(frame => frame.readingOrder === panel.order)?.physicalPlacement,
       ),
     ),
     qualityConstraints: buildQualityConstraints(page, orderedPanels.length, referenceRoles),
@@ -284,10 +288,10 @@ function buildPageSetting(page: PagePromptContext): string {
 }
 
 function buildReferenceRoles(
-  page: PagePromptContext,
   panels: Panel[],
   entityMap: Map<string, Entity>,
   references: EntityResolvedReferenceImage[],
+  layoutControl: PageGenerationLayoutControl | null,
 ): NormalizedReferenceRole[] {
   const orderedAssignments = new Map<string, PanelEntityAssignment>();
   const panelOrdersByAssignment = new Map<string, number[]>();
@@ -306,31 +310,23 @@ function buildReferenceRoles(
     }
   }
 
-  const referenceByAssignment = new Map(
-    references.filter(hasResolvedImage).map((reference) => [
-      referenceKey(reference.entityId, reference.stateId),
-      reference,
-    ]),
-  );
+  const referenceImages = collectPageReferenceImages(Array.from(orderedAssignments.values()), references);
   const roles: NormalizedReferenceRole[] = [];
-  for (const [key, assignment] of orderedAssignments) {
-    const reference = referenceByAssignment.get(key);
-    if (reference === undefined) {
-      continue;
-    }
-    const entity = entityMap.get(assignment.entityId);
-    const entityName = buildSubjectLabel(
-      entity?.name ?? `Unknown entity ${assignment.entityId}`,
-      reference.stateName,
-      Array.from(orderedAssignments.values()).some((candidate) => (
-        candidate.entityId === assignment.entityId && candidate.stateId !== null
-      )),
+  for (const { reference, assignments } of referenceImages) {
+    const entity = entityMap.get(reference.entityId);
+    const entityName = buildPageReferenceSubjectLabel(
+      entity?.name ?? `Unknown entity ${reference.entityId}`,
+      reference,
+      referenceImages,
     );
     const anchor = summarizeEntityAnchor(entity);
-    const panelScope = formatPanelOrderList(panelOrdersByAssignment.get(key) ?? []);
+    const assignmentKeys = assignments.map((assignment) => referenceKey(assignment.entityId, assignment.stateId));
+    const panelOrders = Array.from(new Set(assignmentKeys.flatMap((key) => panelOrdersByAssignment.get(key) ?? [])))
+      .sort((left, right) => left - right);
+    const panelScope = formatPanelOrderList(panelOrders);
     roles.push({
-      entityId: assignment.entityId,
-      stateId: assignment.stateId,
+      entityId: reference.entityId,
+      assignmentKeys,
       imageLabel: `Image ${roles.length + 1} (${entityName})`,
       role: 'character_reference',
       subject: entityName,
@@ -338,10 +334,10 @@ function buildReferenceRoles(
     });
   }
 
-  if (page.layoutConfig.type === 'custom') {
+  if (layoutControl !== null) {
     roles.push({
       entityId: null,
-      stateId: null,
+      assignmentKeys: [],
       imageLabel: `Image ${roles.length + 1} (layout)`,
       role: 'layout_reference',
       subject: 'page layout',
@@ -357,7 +353,7 @@ function buildReferenceLabelMap(referenceRoles: NormalizedReferenceRole[]): Map<
   return new Map(
     referenceRoles.flatMap((role) =>
       role.role === 'character_reference' && role.entityId !== null
-        ? [[referenceKey(role.entityId, role.stateId), role.imageLabel] as const]
+        ? role.assignmentKeys.map((key) => [key, role.imageLabel] as const)
         : [],
     ),
   );
@@ -370,6 +366,7 @@ function buildNormalizedPanelInstruction(
   compositionMap: Map<string, CompositionGalleryItem>,
   referenceLabelByEntityId: Map<string, string>,
   includeDialogue: boolean,
+  physicalPlacement?: string,
 ): NormalizedPanelInstruction {
   return {
     order: panel.order,
@@ -378,7 +375,7 @@ function buildNormalizedPanelInstruction(
     situation: normalizePanelSituation(panel.situationText),
     subjectLock: buildSubjectLock(panel, entityMap, referenceLabelByEntityId),
     characterBeat: buildCharacterBeat(panel.entities, entityMap, referenceLabelByEntityId),
-    compositionBeat: buildCompositionBeat(panel, compositionMap),
+    compositionBeat: [physicalPlacement === undefined ? null : `Guide frame P${panel.order}: ${physicalPlacement}.`, buildCompositionBeat(panel, compositionMap)].filter(Boolean).join(' '),
     dialogueBeats: includeDialogue ? buildDialogueBeats(panel, entityMap, referenceLabelByEntityId) : [],
     dialogueLock: includeDialogue ? buildDialogueLock(panel, entityMap, referenceLabelByEntityId) : null,
     visualLock: buildVisualLock(panel, entityMap, compositionMap, referenceLabelByEntityId),
@@ -560,17 +557,21 @@ function buildDialogueLock(
 
   const lines = panel.dialogue.map((dialogue, index) => {
     const ordinal = index + 1;
-    if (dialogue.entityId === null) {
-      return `line ${ordinal} is narration text and must remain narration, not character speech: "${dialogue.text}"`;
+    if (dialogue.type === 'narration') {
+      return `line ${ordinal} is narration text and must remain narration, not character speech: "${dialogue.text}". Narration has no speech tail`;
     }
 
+    if (dialogue.entityId === null) return `line ${ordinal} has an unspecified speaker; never assign it to a visible person by guessing: "${dialogue.text}"`;
     const speaker = formatEntityReferenceIdentity(
       dialogue.entityId,
       entityMap,
       referenceLabelByEntityId,
       findAssignedStateId(panel.entities, dialogue.entityId),
     );
-    return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}". Do not assign this line to any other subject or reference image`;
+    const offPanel = !panel.entities.some(assignment => assignment.entityId === dialogue.entityId);
+    const voiceRule = dialogue.type === 'thought' ? ' This thought has no speech tail.' : '';
+    const visibilityRule = offPanel ? ' This voice is off-panel; do not add the speaker to visible subjects or point a tail at a visible person.' : '';
+    return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}". Do not assign this line to any other subject or reference image.${voiceRule}${visibilityRule}`;
   });
 
   return `Dialogue lock for panel ${panel.order}: ${lines.join('; ')}. Do not omit, paraphrase, merge, split, or reassign these lines.`;
@@ -636,44 +637,8 @@ function shouldBakeDialogueForPanel(page: PagePromptContext, panel: Panel): bool
   return true;
 }
 
-function buildLayoutInstruction(page: PagePromptContext, panelCount: number): string {
-  const layoutType = readString(page.layoutConfig.type);
-  if (layoutType === 'template') {
-    const templateId = readString(page.layoutConfig.template_id);
-    if (templateId !== null && isKnownTemplateId(templateId)) {
-      const template = getPanelFrameTemplate(templateId);
-      return `Use the ${template.id} template with ${template.panelCount} panels. Preserve its panel proportions, reading rhythm, and clear gutters for this ${panelCount}-panel page. Do not add, merge, or omit panels.`;
-    }
-  }
-
-  if (layoutType === 'custom') {
-    const frameDefinitions = toFrameDefinitions(page.layoutConfig.frame_definitions);
-    const instructionLines = [
-      'Follow the uploaded layout reference image exactly for panel borders, gutter spacing, and reading order.',
-    ];
-
-    if (frameDefinitions.length > 0) {
-      instructionLines.push(
-        `Frame map: ${frameDefinitions
-          .map(
-            (frame) =>
-              `panel ${frame.readingOrder} uses vertices ${frame.vertices
-                .map((vertex) => `(${vertex.x.toFixed(2)}, ${vertex.y.toFixed(2)})`)
-                .join(' -> ')}`,
-          )
-          .join('; ')}.`,
-      );
-    }
-
-    instructionLines.push(`Do not add, merge, or omit panels. The finished page must retain exactly ${panelCount} panels.`);
-    return instructionLines.join(' ');
-  }
-
-  if (layoutType === 'ai_generated' || layoutType === 'ai_auto') {
-    return `Use the stored AI-generated panel arrangement for this page and preserve the intended manga reading order. Do not add, merge, or omit panels. Keep exactly ${panelCount} panels.`;
-  }
-
-  return `Preserve the intended manga page reading flow and clear panel separation. Do not add, merge, or omit panels. Keep exactly ${panelCount} panels with clear gutters and borders.`;
+function buildLayoutInstruction(panelCount: number): string {
+  return `No complete saved frame map is available. Keep exactly ${panelCount} panels in authored order; Read right-to-left within each regular tier, then downward. Never mirror, merge, add or omit panels.`;
 }
 
 function buildQualityConstraints(
@@ -1198,47 +1163,25 @@ function findAssignedStateId(
   return assignments.find((assignment) => assignment.entityId === entityId)?.stateId ?? null;
 }
 
-function buildSubjectLabel(canonicalName: string, stateName: string | null, includeDefault: boolean): string {
-  if (stateName === null && !includeDefault) {
-    return canonicalName;
-  }
-  return `${canonicalName} / ${stateName ?? 'default'}`;
-}
-
 function buildInputSnapshotReferences(
   panels: Panel[],
   references: EntityResolvedReferenceImage[],
   entityMap: Map<string, Entity>,
 ): NonNullable<PageGenerationInputSnapshot['references']> {
-  const assignments = collectOrderedAssignments(panels);
-  const referenceByAssignment = new Map(
-    references.filter(hasResolvedImage).map((reference) => [
-      referenceKey(reference.entityId, reference.stateId),
+  const images = collectPageReferenceImages(collectOrderedAssignments(panels), references);
+  return images.map(({ reference }, index) => ({
+    entityId: reference.entityId,
+    stateId: reference.stateId,
+    refId: reference.refId,
+    s3Key: reference.s3Key,
+    imageModel: reference.imageModel,
+    subjectLabel: buildPageReferenceSubjectLabel(
+      entityMap.get(reference.entityId)?.name ?? reference.entityId,
       reference,
-    ]),
-  );
-  return assignments.flatMap((assignment) => {
-    const reference = referenceByAssignment.get(referenceKey(assignment.entityId, assignment.stateId));
-    if (reference === undefined) {
-      return [];
-    }
-    const subjectLabel = buildSubjectLabel(
-      entityMap.get(assignment.entityId)?.name ?? assignment.entityId,
-      reference.stateName,
-      assignments.some((candidate) => (
-        candidate.entityId === assignment.entityId && candidate.stateId !== null
-      )),
-    );
-    return [{
-      entityId: assignment.entityId,
-      stateId: assignment.stateId,
-      refId: reference.refId,
-      s3Key: reference.s3Key,
-      imageModel: reference.imageModel,
-      subjectLabel,
-      modelInputOrder: 0,
-    }];
-  }).map((reference, index) => ({ ...reference, modelInputOrder: index + 1 }));
+      images,
+    ),
+    modelInputOrder: index + 1,
+  }));
 }
 
 function normalizeSentence(value: string, includeTrailingPeriod = true): string {
@@ -1256,50 +1199,6 @@ function normalizeWhitespace(value: string): string {
 
 function humanizeToken(value: string): string {
   return value.replace(/_/gu, ' ');
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
-}
-
-function isKnownTemplateId(value: string): value is Parameters<typeof getPanelFrameTemplate>[0] {
-  return value in PANEL_FRAME_TEMPLATES;
-}
-
-interface LayoutFrameVertex {
-  x: number;
-  y: number;
-}
-
-interface LayoutFrameDefinition {
-  readingOrder: number;
-  vertices: LayoutFrameVertex[];
-}
-
-function toFrameDefinitions(value: unknown): LayoutFrameDefinition[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.flatMap((entry) => {
-    if (!isRecord(entry) || typeof entry.reading_order !== 'number' || !Array.isArray(entry.vertices)) {
-      return [];
-    }
-
-    const vertices = entry.vertices.flatMap((vertex) => {
-      if (!isRecord(vertex) || typeof vertex.x !== 'number' || typeof vertex.y !== 'number') {
-        return [];
-      }
-
-      return [{ x: vertex.x, y: vertex.y }];
-    });
-
-    if (vertices.length === 0) {
-      return [];
-    }
-
-    return [{ readingOrder: entry.reading_order, vertices }];
-  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

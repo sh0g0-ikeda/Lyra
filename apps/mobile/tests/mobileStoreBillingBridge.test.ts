@@ -47,7 +47,7 @@ describe('mobile store billing backend bridge', () => {
     await expect(backend.getAccountBinding()).resolves.toEqual({
       appleAppAccountToken: '11111111-1111-4111-8111-111111111111',
       googleObfuscatedAccountId: 'binding-hash',
-      subscriptionPurchaseAllowed: true
+      subscriptionPurchaseAllowed: true, currentPlan: 'standard', scheduledPlan: null
     });
   });
 
@@ -59,7 +59,7 @@ describe('mobile store billing backend bridge', () => {
       backend.verifyGooglePurchase({ purchaseToken: 'google-purchase-token' })
     ).resolves.toEqual({
       balance: { monthlyCredits: 50, purchasedCredits: 10 },
-      entitlement: { plan: 'standard' }
+      entitlement: { plan: 'standard', store: null, currentPeriodEnd: balance.current_period_end, scheduledPlan: null, scheduledPlanEffectiveAt: null }
     });
     expect(api.verifyGoogleMobilePurchase).toHaveBeenCalledWith({
       purchase_token: 'google-purchase-token'
@@ -68,6 +68,10 @@ describe('mobile store billing backend bridge', () => {
     expect(api.getCurrentSession).toHaveBeenCalledOnce();
   });
 
+  it('returns current and scheduled entitlements separately after verification', async () => {
+    const api = createApi(); api.getBalance.mockResolvedValue({ ...balance, plan_code: 'premium', subscription_store: 'google', scheduled_plan_code: 'standard', scheduled_plan_effective_at: '2026-11-01T00:00:00Z' });
+    await expect(createMobileStoreBillingBackend(api).verifyGooglePurchase({ purchaseToken: 'proof' })).resolves.toMatchObject({ entitlement: { plan: 'premium', store: 'google', scheduledPlan: 'standard', scheduledPlanEffectiveAt: '2026-11-01T00:00:00Z' } });
+  });
   it('復元証跡をBackendへ渡してから最新状態を返す', async () => {
     const api = createApi();
     const backend = createMobileStoreBillingBackend(api);

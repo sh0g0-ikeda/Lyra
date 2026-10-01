@@ -1,8 +1,10 @@
+import type { RefObject } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors, radius, spacing } from '@/constants/theme';
 
 interface PrimaryButtonProps {
+  buttonRef?: RefObject<View | null>;
   label: string;
   onPress: () => void;
   disabled?: boolean;
@@ -13,6 +15,7 @@ interface PrimaryButtonProps {
 }
 
 export function PrimaryButton({
+  buttonRef,
   label,
   onPress,
   disabled = false,
@@ -25,6 +28,7 @@ export function PrimaryButton({
 
   return (
     <Pressable
+      ref={buttonRef}
       accessibilityHint={isDisabled ? disabledReason : undefined}
       accessibilityRole="button"
       accessibilityState={{ disabled: isDisabled, busy: loading }}

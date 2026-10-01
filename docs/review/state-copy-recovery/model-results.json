@@ -1,0 +1,292 @@
+{
+  "model": "conditional_same_key_fence_v1",
+  "checks": 30,
+  "safe_scenarios": 24,
+  "expected_counterexamples": 6,
+  "checked_invariants": [
+    "erased implies current ordinary fence",
+    "erased implies no current or historical image"
+  ],
+  "scope": "All reachable abstract states for 0..3 pending image requests, 1..3 recovery requests, versioning disabled/enabled, initially no object",
+  "not_proven": [
+    "real S3/IAM behavior",
+    "timing or liveness bounds",
+    "unbounded implementation correctness",
+    "legacy operation settlement",
+    "costs or erasure compliance"
+  ],
+  "results": [
+    {
+      "name": "safe_v0_writers0_recovery1",
+      "safe": true,
+      "states": 4,
+      "transitions": 3,
+      "erased_states": 1
+    },
+    {
+      "name": "safe_v0_writers0_recovery2",
+      "safe": true,
+      "states": 7,
+      "transitions": 8,
+      "erased_states": 2
+    },
+    {
+      "name": "safe_v0_writers0_recovery3",
+      "safe": true,
+      "states": 10,
+      "transitions": 13,
+      "erased_states": 3
+    },
+    {
+      "name": "safe_v0_writers1_recovery1",
+      "safe": true,
+      "states": 8,
+      "transitions": 10,
+      "erased_states": 2
+    },
+    {
+      "name": "safe_v0_writers1_recovery2",
+      "safe": true,
+      "states": 14,
+      "transitions": 23,
+      "erased_states": 4
+    },
+    {
+      "name": "safe_v0_writers1_recovery3",
+      "safe": true,
+      "states": 20,
+      "transitions": 36,
+      "erased_states": 6
+    },
+    {
+      "name": "safe_v0_writers2_recovery1",
+      "safe": true,
+      "states": 12,
+      "transitions": 17,
+      "erased_states": 3
+    },
+    {
+      "name": "safe_v0_writers2_recovery2",
+      "safe": true,
+      "states": 21,
+      "transitions": 38,
+      "erased_states": 6
+    },
+    {
+      "name": "safe_v0_writers2_recovery3",
+      "safe": true,
+      "states": 30,
+      "transitions": 59,
+      "erased_states": 9
+    },
+    {
+      "name": "safe_v0_writers3_recovery1",
+      "safe": true,
+      "states": 16,
+      "transitions": 24,
+      "erased_states": 4
+    },
+    {
+      "name": "safe_v0_writers3_recovery2",
+      "safe": true,
+      "states": 28,
+      "transitions": 53,
+      "erased_states": 8
+    },
+    {
+      "name": "safe_v0_writers3_recovery3",
+      "safe": true,
+      "states": 40,
+      "transitions": 82,
+      "erased_states": 12
+    },
+    {
+      "name": "safe_v1_writers0_recovery1",
+      "safe": true,
+      "states": 4,
+      "transitions": 3,
+      "erased_states": 1
+    },
+    {
+      "name": "safe_v1_writers0_recovery2",
+      "safe": true,
+      "states": 7,
+      "transitions": 8,
+      "erased_states": 2
+    },
+    {
+      "name": "safe_v1_writers0_recovery3",
+      "safe": true,
+      "states": 10,
+      "transitions": 13,
+      "erased_states": 3
+    },
+    {
+      "name": "safe_v1_writers1_recovery1",
+      "safe": true,
+      "states": 10,
+      "transitions": 13,
+      "erased_states": 2
+    },
+    {
+      "name": "safe_v1_writers1_recovery2",
+      "safe": true,
+      "states": 18,
+      "transitions": 31,
+      "erased_states": 4
+    },
+    {
+      "name": "safe_v1_writers1_recovery3",
+      "safe": true,
+      "states": 26,
+      "transitions": 49,
+      "erased_states": 6
+    },
+    {
+      "name": "safe_v1_writers2_recovery1",
+      "safe": true,
+      "states": 16,
+      "transitions": 25,
+      "erased_states": 3
+    },
+    {
+      "name": "safe_v1_writers2_recovery2",
+      "safe": true,
+      "states": 29,
+      "transitions": 58,
+      "erased_states": 6
+    },
+    {
+      "name": "safe_v1_writers2_recovery3",
+      "safe": true,
+      "states": 42,
+      "transitions": 91,
+      "erased_states": 9
+    },
+    {
+      "name": "safe_v1_writers3_recovery1",
+      "safe": true,
+      "states": 22,
+      "transitions": 37,
+      "erased_states": 4
+    },
+    {
+      "name": "safe_v1_writers3_recovery2",
+      "safe": true,
+      "states": 40,
+      "transitions": 85,
+      "erased_states": 8
+    },
+    {
+      "name": "safe_v1_writers3_recovery3",
+      "safe": true,
+      "states": 58,
+      "transitions": 133,
+      "erased_states": 12
+    },
+    {
+      "name": "legacy_unconditional_writer",
+      "safe": false,
+      "states": 11,
+      "transitions": 10,
+      "counterexample": [
+        "marker_CAS_finishes",
+        "verified_marker_persisted",
+        "declare_erased",
+        "image_request_finishes"
+      ],
+      "occupancy_counterexample": [
+        "marker_CAS_finishes",
+        "verified_marker_persisted",
+        "declare_erased",
+        "image_request_finishes"
+      ]
+    },
+    {
+      "name": "marker_expiration_unversioned",
+      "safe": false,
+      "states": 17,
+      "transitions": 21,
+      "counterexample": [
+        "marker_CAS_finishes",
+        "verified_marker_persisted",
+        "declare_erased",
+        "marker_expired_or_deleted",
+        "image_request_finishes"
+      ],
+      "occupancy_counterexample": [
+        "marker_CAS_finishes",
+        "verified_marker_persisted",
+        "declare_erased",
+        "marker_expired_or_deleted"
+      ]
+    },
+    {
+      "name": "version_delete_marker_reopens_key",
+      "safe": false,
+      "states": 21,
+      "transitions": 26,
+      "counterexample": [
+        "marker_CAS_finishes",
+        "verified_marker_persisted",
+        "declare_erased",
+        "marker_expired_or_deleted",
+        "image_request_finishes"
+      ],
+      "occupancy_counterexample": [
+        "marker_CAS_finishes",
+        "verified_marker_persisted",
+        "declare_erased",
+        "marker_expired_or_deleted"
+      ]
+    },
+    {
+      "name": "separate_receipt_key",
+      "safe": false,
+      "states": 6,
+      "transitions": 6,
+      "counterexample": [
+        "marker_CAS_finishes",
+        "declare_erased",
+        "image_request_finishes"
+      ],
+      "occupancy_counterexample": [
+        "marker_CAS_finishes",
+        "declare_erased"
+      ]
+    },
+    {
+      "name": "plain_delete_after_image_wins",
+      "safe": false,
+      "states": 6,
+      "transitions": 5,
+      "counterexample": [
+        "image_request_finishes",
+        "plain_DeleteObject_then_declare",
+        "image_request_finishes"
+      ],
+      "occupancy_counterexample": [
+        "image_request_finishes",
+        "plain_DeleteObject_then_declare"
+      ]
+    },
+    {
+      "name": "versioned_image_retained",
+      "safe": false,
+      "states": 11,
+      "transitions": 14,
+      "counterexample": [
+        "image_request_finishes",
+        "marker_CAS_finishes",
+        "verified_marker_persisted",
+        "declare_erased"
+      ],
+      "occupancy_counterexample": [
+        "image_request_finishes",
+        "marker_CAS_finishes",
+        "verified_marker_persisted",
+        "declare_erased"
+      ]
+    }
+  ]
+}

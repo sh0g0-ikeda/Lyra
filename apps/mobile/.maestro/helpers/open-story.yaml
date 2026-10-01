@@ -1,4 +1,13 @@
+- runFlow:
+    file: open-manga.yaml
+- runFlow:
+    when:
+      visible:
+        id: manga-start-story
+    commands:
+      - tapOn:
+          id: manga-start-story
 - tapOn:
-    id: tab-story
+    id: manga-step-story
 - assertVisible:
-    id: tab-story
+    id: manga-step-story

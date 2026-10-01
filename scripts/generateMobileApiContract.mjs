@@ -28,10 +28,7 @@ const compatibilityExport =
   organizationUpdateResponseSchema,
   organizationWorkspaceDetailSchema,
   organizationWorkspacesResponseSchema,
-  pageGenerationReadinessSchema,
   pageLayoutTemplatesResponseSchema,
-  pushTokenRegistrationSchema,
-  saveAndGeneratePageResponseSchema,
 } from './mobileCompatibilitySchemas';
 `;
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');

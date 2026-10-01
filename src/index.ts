@@ -1,3 +1,8 @@
+import { createAccountDeletionRecoveryRuntime, startAccountDeletionRecovery } from './infrastructure/account/AccountDeletionRuntime.js';
+import { createEpisodeExportMaintenanceRuntime } from './lib/episodeExportMaintenanceRuntime.js';
+import { startEpisodeExportMaintenance } from './lib/episodeExportMaintenance.js';
+import { createPushNotificationDeliveryRuntime } from './infrastructure/push/PushNotificationRuntime.js';
+import { startPushNotificationMaintenance } from './lib/pushNotificationMaintenance.js';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
@@ -74,6 +79,10 @@ async function main(): Promise<void> {
       sanitizePersistedErrorMessage(error, 'Entity generation recovery failed'),
     );
   }
+
+  startPushNotificationMaintenance(createPushNotificationDeliveryRuntime(env, db));
+  startAccountDeletionRecovery(createAccountDeletionRecoveryRuntime(env, db));
+  startEpisodeExportMaintenance(createEpisodeExportMaintenanceRuntime(env, db));
 
   serve(
     {

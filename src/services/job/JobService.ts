@@ -4,7 +4,7 @@ import {
   ConflictError,
   NotFoundError,
 } from '../../domain/errors/index.js';
-import type { GenerationJob } from '../../domain/types/job.js';
+import type { GenerationJob, GenerationJobStatus, GenerationJobType } from '../../domain/types/job.js';
 import type {
   GenerationJobCancellationRepository,
   GenerationJobHistoryCursor,
@@ -34,6 +34,8 @@ export interface JobServicePort {
       organizationId?: string | null;
       limit: number;
       cursor: GenerationJobHistoryCursor | null;
+      statuses?: readonly GenerationJobStatus[];
+      jobTypes?: readonly GenerationJobType[];
     },
   ): Promise<GenerationJobHistoryPage>;
   hideJobFromHistory(
@@ -55,6 +57,7 @@ export class JobService implements JobServicePort {
     private readonly now: () => number = () => Date.now(),
     private readonly storyCancellationEnabled = true,
     private readonly genericCancellationEnabled = false,
+    private readonly quotedImportRecovery?: { recoverExpired(limit: number, jobId: string): Promise<number> },
   ) {}
 
   public async listJobHistory(
@@ -63,6 +66,8 @@ export class JobService implements JobServicePort {
       organizationId?: string | null;
       limit: number;
       cursor: GenerationJobHistoryCursor | null;
+      statuses?: readonly GenerationJobStatus[];
+      jobTypes?: readonly GenerationJobType[];
     },
   ): Promise<GenerationJobHistoryPage> {
     const historyRepository = requireGenerationJobHistoryRepository(
@@ -73,6 +78,8 @@ export class JobService implements JobServicePort {
       organizationId: input.organizationId ?? null,
       limit: input.limit,
       cursor: input.cursor,
+      ...(input.statuses === undefined ? {} : { statuses: input.statuses }),
+      ...(input.jobTypes === undefined ? {} : { jobTypes: input.jobTypes }),
     });
   }
 
@@ -152,7 +159,10 @@ export class JobService implements JobServicePort {
       organizationId,
     );
     if (cancelled !== null) {
-      return cancelled;
+      // Cancellation/refund writes keep their existing transaction and lock order.
+      // Read the committed ledger only after that operation has completed.
+      const refreshed = await this.generationJobRepository.findByIdAndUserId(jobId, userId, organizationId);
+      return refreshed?.creditSettlement === undefined ? cancelled : { ...cancelled, creditSettlement: refreshed.creditSettlement };
     }
 
     const current = await this.generationJobRepository.findByIdAndUserId(
@@ -170,6 +180,9 @@ export class JobService implements JobServicePort {
   }
 
   private async recoverStaleActiveJob(userId: string, job: GenerationJob): Promise<boolean> {
+    if (job.jobType === 'entity_import_analysis') {
+      return (await this.quotedImportRecovery?.recoverExpired(1, job.id) ?? 0) > 0;
+    }
     if (job.jobType === 'page_generate') {
       const pageId = readStringParam(job.params, 'page_id');
       if (pageId === null) {

@@ -17,6 +17,8 @@ interface ActionableErrorNoticeProps {
   language: UiLanguage;
   target?: ErrorRecoveryTarget;
   tone?: 'warning' | 'danger';
+  recoveryMessage?: string;
+  recoveryActionLabel?: string;
 }
 
 export function ActionableErrorNotice({
@@ -24,7 +26,9 @@ export function ActionableErrorNotice({
   error,
   language,
   target,
-  tone = 'warning'
+  tone = 'warning',
+  recoveryMessage,
+  recoveryActionLabel
 }: ActionableErrorNoticeProps): React.JSX.Element {
   const resolvedTarget = target ?? errorRecoveryTarget(error);
   const onAction =
@@ -38,7 +42,7 @@ export function ActionableErrorNotice({
         resolvedTarget !== null &&
         resolvedTarget !== undefined &&
         onAction !== undefined
-          ? errorRecoveryActionLabel(resolvedTarget, language)
+          ? recoveryActionLabel ?? errorRecoveryActionLabel(resolvedTarget, language)
           : undefined
       }
       actionTestID={
@@ -48,7 +52,7 @@ export function ActionableErrorNotice({
           ? `error-recovery-${resolvedTarget}`
           : undefined
       }
-      message={userErrorMessage(error, language)}
+      message={recoveryMessage ?? userErrorMessage(error, language)}
       onAction={onAction}
       tone={tone}
     />

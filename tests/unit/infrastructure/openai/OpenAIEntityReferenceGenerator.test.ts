@@ -38,6 +38,7 @@ describe('OpenAIEntityReferenceGenerator', () => {
 
     expect(callCount).toBe(1);
     expect(result.openaiRequestId).toBe('req-1');
+    expect(result).toMatchObject({ imageModel: 'gpt-image-2', providerModelId: 'gpt-image-2', provider: 'openai' });
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]?.mimeType).toBe('image/png');
     expect(requestBodies[0]).toContain('"size":"1024x1536"');

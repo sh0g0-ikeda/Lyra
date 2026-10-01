@@ -1272,7 +1272,8 @@ describe('page generation routes', () => {
       stateId,
       jobId: stateJob.id,
     });
-    expect(payload.params).not.toHaveProperty('entity_state_id');
+    expect(payload.params).toMatchObject({target:'entity_state',entity_state_id:stateId});
+    expect(payload.params).not.toHaveProperty('state_description');
   });
 
   it('jobs endpoint は provider request id を返さず local fallback 候補を明示する', async () => {

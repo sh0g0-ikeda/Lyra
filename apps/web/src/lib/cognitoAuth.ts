@@ -87,6 +87,9 @@ type TokenFetcher = (
 
 export const COGNITO_SESSION_STORAGE_KEY = 'lyra:web:cognito-session';
 const COGNITO_PKCE_STORAGE_KEY = 'lyra:web:cognito-pkce';
+const COGNITO_REAUTH_PKCE_STORAGE_KEY = 'lyra:web:cognito-reauth-pkce';
+export interface CognitoLoginOptions { identityProvider?: 'Google' | 'COGNITO'; freshLogin?: boolean; mode?: 'reauthentication' }
+interface CognitoCompletionOptions { mode?: 'reauthentication'; persistSession?: boolean }
 const DEFAULT_COGNITO_SCOPES = ['openid', 'email', 'profile'];
 const COGNITO_PKCE_STATE_TTL_MS = 10 * 60 * 1000;
 const TOKEN_EXPIRY_SKEW_SECONDS = 30;
@@ -226,16 +229,17 @@ export async function beginCognitoLogin(
   storage: WebStorageLike,
   location: WebLocationLike,
   cryptoProvider: WebCryptoLike,
+  options: CognitoLoginOptions = {},
 ): Promise<void> {
   const verifier = createPkceVerifier(cryptoProvider);
   const state = createPkceVerifier(cryptoProvider);
   const challenge = await createCodeChallenge(verifier, cryptoProvider);
-  storage.setItem(COGNITO_PKCE_STORAGE_KEY, JSON.stringify({
+  storage.setItem(options.mode === 'reauthentication' ? COGNITO_REAUTH_PKCE_STORAGE_KEY : COGNITO_PKCE_STORAGE_KEY, JSON.stringify({
     state,
     verifier,
     createdAt: Date.now(),
   } satisfies StoredPkceState));
-  location.assign(buildCognitoAuthorizeUrl(config, state, challenge));
+  location.assign(buildCognitoAuthorizeUrl(config, state, challenge, options));
 }
 
 export async function completeCognitoRedirectIfPresent(
@@ -245,10 +249,15 @@ export async function completeCognitoRedirectIfPresent(
   history: WebHistoryLike,
   fetcher: TokenFetcher = getGlobalFetch(),
   now = Date.now(),
+  options: CognitoCompletionOptions = {},
 ): Promise<CognitoRedirectResult> {
+  const redirect = new URL(config.redirectUri);
+  if (location.origin !== redirect.origin || location.pathname !== redirect.pathname) return { handled: false, session: null, error: null };
+  const pkceKey = options.mode === 'reauthentication' ? COGNITO_REAUTH_PKCE_STORAGE_KEY : COGNITO_PKCE_STORAGE_KEY;
   const query = new URLSearchParams(location.search);
   const error = query.get('error');
   if (error !== null) {
+    storage.removeItem(pkceKey);
     clearCognitoCallbackUrl(location, history);
     return {
       handled: true,
@@ -268,8 +277,8 @@ export async function completeCognitoRedirectIfPresent(
     return { handled: true, session: null, error: 'Cognito callback is incomplete' };
   }
 
-  const storedState = readStoredPkceState(storage, now);
-  storage.removeItem(COGNITO_PKCE_STORAGE_KEY);
+  const storedState = readStoredPkceState(storage, now, pkceKey);
+  storage.removeItem(pkceKey);
   if (storedState === null || storedState.state !== state) {
     clearCognitoCallbackUrl(location, history);
     return { handled: true, session: null, error: 'Cognito callback state did not match' };
@@ -278,7 +287,7 @@ export async function completeCognitoRedirectIfPresent(
   try {
     const session = await exchangeCodeForTokens(config, code, storedState.verifier, fetcher, now);
     assertCompatibleSession(config, session, now);
-    storeCognitoSession(storage, session);
+    if (options.persistSession !== false && options.mode !== 'reauthentication') storeCognitoSession(storage, session);
     clearCognitoCallbackUrl(location, history);
     return { handled: true, session, error: null };
   } catch (exchangeError) {
@@ -321,6 +330,7 @@ export function buildCognitoAuthorizeUrl(
   config: CognitoAuthConfig,
   state: string,
   codeChallenge: string,
+  options: CognitoLoginOptions = {},
 ): string {
   const url = new URL(`${config.domain}/oauth2/authorize`);
   url.searchParams.set('client_id', config.clientId);
@@ -330,6 +340,8 @@ export function buildCognitoAuthorizeUrl(
   url.searchParams.set('state', state);
   url.searchParams.set('code_challenge', codeChallenge);
   url.searchParams.set('code_challenge_method', 'S256');
+  if (options.identityProvider) url.searchParams.set('identity_provider', options.identityProvider);
+  if (options.freshLogin) { url.searchParams.set('prompt', 'login'); url.searchParams.set('max_age', '0'); }
   return url.toString();
 }
 
@@ -391,8 +403,8 @@ function clearCognitoCallbackUrl(location: WebLocationLike, history: WebHistoryL
   history.replaceState(null, '', `${location.pathname}${location.hash}`);
 }
 
-function readStoredPkceState(storage: WebStorageLike, now: number): StoredPkceState | null {
-  const rawValue = storage.getItem(COGNITO_PKCE_STORAGE_KEY);
+function readStoredPkceState(storage: WebStorageLike, now: number, pkceKey: string): StoredPkceState | null {
+  const rawValue = storage.getItem(pkceKey);
   if (rawValue === null) {
     return null;
   }
@@ -409,7 +421,7 @@ function readStoredPkceState(storage: WebStorageLike, now: number): StoredPkceSt
       parsed.createdAt > now ||
       now - parsed.createdAt > COGNITO_PKCE_STATE_TTL_MS
     ) {
-      storage.removeItem(COGNITO_PKCE_STORAGE_KEY);
+      storage.removeItem(pkceKey);
       return null;
     }
 
@@ -419,7 +431,7 @@ function readStoredPkceState(storage: WebStorageLike, now: number): StoredPkceSt
       createdAt: parsed.createdAt,
     };
   } catch {
-    storage.removeItem(COGNITO_PKCE_STORAGE_KEY);
+    storage.removeItem(pkceKey);
     return null;
   }
 }

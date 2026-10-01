@@ -22,7 +22,7 @@ const expectedScenarios = [
   ['E2E-13', 'deep link cold/warm start', 'required', 'required'],
   ['E2E-14', 'account deletion', 'required', 'required'],
   ['E2E-15', 'personal purchase/pending/restore/refund', 'StoreKit sandbox', 'Play license test'],
-  ['E2E-16', 'save-and-generate atomicity/409 conflict', 'required', 'required'],
+  ['E2E-16', 'quoted generation/409 conflict', 'required', 'required'],
   ['E2E-17', 'active job recovery after app restart', 'required', 'required'],
   ['E2E-18', 'external dialogue is unavailable until balloon flow is complete', 'required', 'required']
 ] as const;

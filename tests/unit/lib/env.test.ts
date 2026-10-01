@@ -4,6 +4,11 @@ import { parseEnv } from '../../../src/lib/env.js';
 const originalNodeEnv = process.env.NODE_ENV;
 
 describe('parseEnv', () => {
+  it('episode text profile remains legacy unless an exact supported profile is selected',()=>{
+    expect(parseEnv({}).OPENAI_EPISODE_TEXT_PROFILE).toBe('legacy');
+    expect(parseEnv({OPENAI_EPISODE_TEXT_PROFILE:'balanced_v1'}).OPENAI_EPISODE_TEXT_PROFILE).toBe('balanced_v1');
+    expect(()=>parseEnv({OPENAI_EPISODE_TEXT_PROFILE:'other'})).toThrow();
+  });
   it('mobile store billingは明示しない限り無効でprovider timeoutだけ安全な既定値を持つ', () => {
     const parsed = parseEnv({});
 

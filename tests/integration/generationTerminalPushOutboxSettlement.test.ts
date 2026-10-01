@@ -30,7 +30,7 @@ describePostgres('generation terminal push outbox settlement', () => {
         migrationLockMaxAttempts: 10,
       },
     ));
-    expect(applied.at(-1)).toBe('041_add_episode_starting_entity_states.sql');
+    expect(applied.at(-1)).toBe('046_bridge_production_schema_lineage.sql');
   }, 120_000);
 
   afterAll(async () => {

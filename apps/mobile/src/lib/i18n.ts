@@ -1,3 +1,4 @@
+import { navigationTranslations, type NavigationTranslationKey } from '@/lib/i18nNavigationMessages';
 import type { UiLanguage } from '@/domain/types';
 import {
   componentTranslations,
@@ -291,7 +292,8 @@ export type TranslationKey =
   | GeneratedTranslationKey
   | ComponentTranslationKey
   | ScreenTranslationKey
-  | SharedTranslationKey;
+  | SharedTranslationKey
+  | NavigationTranslationKey;
 
 const translations: Record<UiLanguage, Record<TranslationKey, string>> = {
   ja: {
@@ -299,6 +301,7 @@ const translations: Record<UiLanguage, Record<TranslationKey, string>> = {
     ...generatedTranslations.ja,
     ...componentTranslations.ja,
     ...screenTranslations.ja,
+    ...navigationTranslations.ja,
     ...sharedTranslations.ja
   },
   en: {
@@ -306,6 +309,7 @@ const translations: Record<UiLanguage, Record<TranslationKey, string>> = {
     ...generatedTranslations.en,
     ...componentTranslations.en,
     ...screenTranslations.en,
+    ...navigationTranslations.en,
     ...sharedTranslations.en
   }
 };

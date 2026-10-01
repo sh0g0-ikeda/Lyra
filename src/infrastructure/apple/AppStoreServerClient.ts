@@ -30,10 +30,13 @@ export interface AppleDecodedTransaction {
 
 export interface AppleDecodedRenewal {
   autoRenewStatus?: number;
+  autoRenewProductId?: string;
+  gracePeriodExpiresDate?: number;
 }
 
 export interface AppleDecodedNotification {
   notificationType?: string;
+  subtype?: string;
   notificationUUID?: string;
   signedDate?: number;
   data?: {
@@ -64,24 +67,16 @@ export class AppStoreServerClient implements AppleStorePurchaseVerifierPort {
     signedTransaction: string;
     environment: StorePurchaseEnvironment;
   }): Promise<VerifiedStorePurchase> {
-    this.assertEnvironmentEnabled(input.environment);
-    try {
-      const transaction = await withTimeout(
-        this.verifierFactory
-          .create(input.environment)
-          .verifyAndDecodeTransaction(input.signedTransaction),
-        this.config.timeoutMs,
-      );
-      return toVerifiedPurchase({
-        transaction,
-        environment: input.environment,
-        notificationType: null,
-        notificationId: null,
-        renewal: null,
-      });
-    } catch (error) {
-      throw toSafeVerificationError(error);
+    let lastError: unknown = null;
+    for (const environment of this.orderedEnabledEnvironments(input.environment)) {
+      try {
+        const transaction = await withTimeout(this.verifierFactory.create(environment)
+          .verifyAndDecodeTransaction(input.signedTransaction), this.config.timeoutMs);
+        return toVerifiedPurchase({ transaction, environment, notificationType: null,
+          notificationSubtype: null, notificationId: null, renewal: null });
+      } catch (error) { lastError = error; }
     }
+    throw toSafeVerificationError(lastError);
   }
 
   public async verifyNotification(
@@ -119,6 +114,7 @@ export class AppStoreServerClient implements AppleStorePurchaseVerifierPort {
           transaction,
           environment,
           notificationType: notification.notificationType ?? null,
+          notificationSubtype: notification.subtype ?? null,
           notificationId: notification.notificationUUID ?? null,
           notificationSignedAt: notification.signedDate,
           renewal,
@@ -145,13 +141,9 @@ export class AppStoreServerClient implements AppleStorePurchaseVerifierPort {
     return environments;
   }
 
-  private assertEnvironmentEnabled(environment: StorePurchaseEnvironment): void {
-    if (
-      (environment === 'sandbox' && !this.config.allowSandbox) ||
-      (environment === 'production' && !this.config.allowProduction)
-    ) {
-      throw new ValidationError('Store purchase could not be verified');
-    }
+  private orderedEnabledEnvironments(preferred: StorePurchaseEnvironment): StorePurchaseEnvironment[] {
+    const enabled = this.enabledEnvironments();
+    return enabled.includes(preferred) ? [preferred, ...enabled.filter(value => value !== preferred)] : enabled;
   }
 }
 
@@ -175,6 +167,7 @@ function toVerifiedPurchase(input: {
   transaction: AppleDecodedTransaction;
   environment: StorePurchaseEnvironment;
   notificationType: string | null;
+  notificationSubtype: string | null;
   notificationId: string | null;
   notificationSignedAt?: number;
   renewal: AppleDecodedRenewal | null;
@@ -187,7 +180,13 @@ function toVerifiedPurchase(input: {
       input.transaction.signedDate ??
       input.transaction.purchaseDate,
   );
-  const expiresAt = nullableDateFromUnixMilliseconds(input.transaction.expiresDate);
+  const transactionExpiresAt = nullableDateFromUnixMilliseconds(input.transaction.expiresDate);
+  const graceExpiresAt = nullableDateFromUnixMilliseconds(input.renewal?.gracePeriodExpiresDate);
+  // A verified renewal grace deadline is distinct from an expired transaction.
+  // Mere billing retry must not extend entitlement without a verified grace period.
+  const inGrace = input.notificationSubtype === 'GRACE_PERIOD' && graceExpiresAt !== null
+    && graceExpiresAt.getTime() > observedAt.getTime();
+  const expiresAt = inGrace ? graceExpiresAt : transactionExpiresAt;
 
   return {
     store: 'apple',
@@ -208,12 +207,13 @@ function toVerifiedPurchase(input: {
     expiresAt,
     autoRenewEnabled:
       input.renewal === null ? null : input.renewal.autoRenewStatus === 1,
+    renewalProductId: input.renewal?.autoRenewProductId?.trim() || null,
     accountBinding: input.transaction.appAccountToken ?? null,
     isTestPurchase: input.environment === 'sandbox',
     providerEventType:
       input.notificationType === null
         ? 'apple.transaction'
-        : `apple.${input.notificationType}`,
+        : `apple.${input.notificationType}${input.notificationSubtype === null ? '' : `.${input.notificationSubtype}`}`,
     providerCompletion: 'none',
   };
 }

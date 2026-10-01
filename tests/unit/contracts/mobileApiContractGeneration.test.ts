@@ -29,10 +29,7 @@ const compatibilityExport = `export {
   organizationUpdateResponseSchema,
   organizationWorkspaceDetailSchema,
   organizationWorkspacesResponseSchema,
-  pageGenerationReadinessSchema,
   pageLayoutTemplatesResponseSchema,
-  pushTokenRegistrationSchema,
-  saveAndGeneratePageResponseSchema,
 } from './mobileCompatibilitySchemas';
 `;
 

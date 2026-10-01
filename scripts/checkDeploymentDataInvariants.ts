@@ -1,3 +1,4 @@
+import { UNRESOLVED_STATE_REFERENCE_COPY_SQL } from '../src/repositories/StateReferenceCopyHistory.js';
 import { pathToFileURL } from 'node:url';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import type { DatabaseClient } from '../src/lib/db.js';
@@ -25,7 +26,7 @@ export interface DeploymentDataInvariantReport {
 const SAMPLE_LIMIT = 10;
 const ACTIVE_GENERATION_JOB_STATUSES_SQL = "'queued', 'processing'";
 const GENERATION_JOB_TYPES_SQL =
-  "'page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton'";
+  "'page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton', 'entity_import_analysis'";
 const GENERATION_JOB_LEDGER_SCOPE_SQL =
   '((generation_jobs.organization_id IS NULL AND credit_ledger.organization_id IS NULL AND credit_ledger.user_id = generation_jobs.user_id) OR (generation_jobs.organization_id IS NOT NULL AND credit_ledger.organization_id = generation_jobs.organization_id))';
 const GENERATION_JOB_CONSUME_LEDGER_EXISTS_SQL = `EXISTS (SELECT 1 FROM credit_ledger WHERE credit_ledger.job_id = generation_jobs.id AND credit_ledger.type = 'consume' AND ${GENERATION_JOB_LEDGER_SCOPE_SQL})`;
@@ -212,6 +213,12 @@ export const DEPLOYMENT_DATA_INVARIANT_QUERIES: readonly DeploymentDataInvariant
   {
     name: 'credit_ledger.amount_sign',
     sql: "SELECT id::text AS id FROM credit_ledger WHERE NOT ((type IN ('consume', 'purchase_reversal') AND amount < 0) OR (type IN ('signup_bonus', 'monthly_grant', 'purchase', 'refund') AND amount > 0)) ORDER BY id LIMIT $1",
+  },
+  {
+    name: 'generation_jobs.unresolved_state_reference_copies',
+    sql: `SELECT id::text AS id FROM generation_jobs
+      WHERE /* generation_jobs.unresolved_state_reference_copies */ (${UNRESOLVED_STATE_REFERENCE_COPY_SQL})
+      ORDER BY id LIMIT $1`,
   },
   {
     name: 'account_deletion_requests.status',

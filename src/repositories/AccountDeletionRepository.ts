@@ -3,6 +3,7 @@ import { MOBILE_PUSH_TOKEN_REGISTRY_LOCK_KEY } from '../domain/constants/mobileP
 import { ConflictError } from '../domain/errors/index.js';
 import type { StorePurchaseStore } from '../domain/storePurchase.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import { UNRESOLVED_STATE_REFERENCE_COPY_SQL } from './StateReferenceCopyHistory.js';
 
 export interface AccountDeletionOrganization {
   id: string;
@@ -393,6 +394,7 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
       }
 
       const originalEmail = await this.readUserEmail(client, userId);
+      await client.query('DELETE FROM generation_quotes WHERE user_id = $1 AND organization_id IS NULL', [userId]);
       await client.query(
         `
         DELETE FROM entity_reference_upload_tokens
@@ -639,7 +641,7 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
         FROM generation_jobs
         WHERE user_id = $1
           AND organization_id IS NULL
-          AND status IN ('queued', 'processing')
+          AND (status IN ('queued', 'processing') OR (${UNRESOLVED_STATE_REFERENCE_COPY_SQL}))
         `,
         [userId],
       );
@@ -880,11 +882,100 @@ const PERSONAL_ASSET_KEYS_SQL = `
       AND organization_id IS NULL
       AND params ? 'source_s3_key'
   ),
+  personal_job_input_reference_images AS (
+    -- Worker-written personal page snapshots retain replaced/deleted references.
+    -- Do not require a live entity: it may already have been deleted. Still
+    -- require the exact owner/entity storage namespace and reject any surviving
+    -- entity that belongs to another personal owner or an organization.
+    SELECT reference_image->>'s3Key' AS s3_key
+    FROM generation_jobs
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(generation_jobs.result->'input_snapshot'->'references') = 'array'
+          THEN generation_jobs.result->'input_snapshot'->'references'
+        ELSE '[]'::jsonb
+      END
+      || CASE WHEN jsonb_typeof(generation_jobs.result->'retained_input_references') = 'array'
+        THEN generation_jobs.result->'retained_input_references' ELSE '[]'::jsonb END
+    ) AS reference_image
+    WHERE generation_jobs.user_id = $1
+      AND generation_jobs.organization_id IS NULL
+      AND generation_jobs.job_type = 'page_generate'
+      AND jsonb_typeof(reference_image->'entityId') = 'string'
+      AND reference_image->>'entityId' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      AND jsonb_typeof(reference_image->'s3Key') = 'string'
+      AND reference_image->>'s3Key' ~ (
+        '^saved/' || $1::text || '/entities/' || (reference_image->>'entityId')
+        || '/([A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+[.](png|jpg|jpeg|webp)$'
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM entities AS referenced_entity
+        INNER JOIN works AS referenced_work ON referenced_work.id = referenced_entity.work_id
+        WHERE referenced_entity.id::text = reference_image->>'entityId'
+          AND (
+            referenced_work.organization_id IS NOT NULL
+            OR referenced_entity.user_id <> $1
+            OR referenced_work.user_id <> $1
+          )
+      )
+  ),
+  personal_state_reference_copies AS (
+    -- Confirmation records this intent before copying. A crash or rejected
+    -- commit can leave the exact saved object without a live state descriptor.
+    SELECT copied_image->>'s3_key' AS s3_key
+    FROM generation_jobs
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(generation_jobs.result->'state_reference_copies') = 'array'
+          THEN generation_jobs.result->'state_reference_copies'
+        ELSE '[]'::jsonb
+      END
+    ) AS copied_image
+    WHERE generation_jobs.user_id = $1
+      AND generation_jobs.organization_id IS NULL
+      AND generation_jobs.job_type = 'entity_generate'
+      AND generation_jobs.params->>'target' = 'entity_state'
+      AND copied_image->>'entity_id' = generation_jobs.params->>'entity_id'
+      AND copied_image->>'state_id' = generation_jobs.params->>'entity_state_id'
+      AND copied_image->>'entity_id' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      AND copied_image->>'state_id' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      AND jsonb_typeof(copied_image->'ref_id') = 'string'
+      AND copied_image->>'ref_id' ~ '^[A-Za-z0-9_-]+$'
+      AND jsonb_typeof(copied_image->'s3_key') = 'string'
+      AND copied_image->>'s3_key' ~ (
+        '^saved/' || $1::text || '/entities/' || (copied_image->>'entity_id')
+        || '/states/' || (copied_image->>'state_id') || '/' || (copied_image->>'ref_id')
+        || '[.](png|jpeg|webp)$'
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM entities AS referenced_entity
+        INNER JOIN works AS referenced_work ON referenced_work.id = referenced_entity.work_id
+        WHERE referenced_entity.id::text = copied_image->>'entity_id'
+          AND (
+            referenced_work.organization_id IS NOT NULL
+            OR referenced_entity.user_id <> $1
+            OR referenced_work.user_id <> $1
+          )
+      )
+  ),
   personal_uploads AS (
     SELECT s3_key
     FROM entity_reference_upload_tokens
     WHERE user_id = $1
       AND organization_id IS NULL
+  ),
+  personal_import_copy_intents AS (
+    SELECT result->>'import_copy_intent' AS s3_key
+    FROM generation_jobs
+    WHERE user_id = $1 AND organization_id IS NULL AND job_type = 'entity_import_analysis'
+      AND result->>'import_copy_intent' = (
+        'tmp/' || $1::text || '/entities/imports/' || id::text || '.' ||
+        CASE WHEN result->>'import_copy_intent' LIKE '%.jpeg' THEN 'jpeg'
+          WHEN result->>'import_copy_intent' LIKE '%.webp' THEN 'webp'
+          ELSE 'png' END
+      )
   ),
   personal_exports AS (
     SELECT artifact_s3_key AS s3_key
@@ -906,7 +997,13 @@ const PERSONAL_ASSET_KEYS_SQL = `
     UNION ALL
     SELECT s3_key FROM personal_job_sources
     UNION ALL
+    SELECT s3_key FROM personal_job_input_reference_images
+    UNION ALL
+    SELECT s3_key FROM personal_state_reference_copies
+    UNION ALL
     SELECT s3_key FROM personal_uploads
+    UNION ALL
+    SELECT s3_key FROM personal_import_copy_intents
     UNION ALL
     SELECT s3_key FROM personal_exports
   ) AS keys

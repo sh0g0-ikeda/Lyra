@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
 
-import { navigationRef } from '@/navigation/navigationRef';
+import { navigateToLegacyTarget } from '@/navigation/navigationRef';
 import { handlePushNavigation } from '@/lib/pushNavigation';
 import { registerPushNotifications } from '@/lib/pushNotifications';
 import { useAppState } from '@/state/appState';
@@ -46,13 +46,7 @@ export function PushNotificationCoordinator(): null {
           getJob: (jobId, organizationId) =>
             api.getJob(jobId, organizationId),
           updateSelection,
-          navigate: (target) => {
-            if (!navigationRef.isReady()) {
-              return false;
-            }
-            navigationRef.navigate(target);
-            return true;
-          }
+          navigate: navigateToLegacyTarget
         }
       );
       if (navigated) {

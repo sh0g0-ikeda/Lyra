@@ -56,6 +56,14 @@ export function parseReferenceCandidateToken(
   expected: Pick<ReferenceCandidateTokenPayload, 'userId' | 'entityId'>,
   options: ReferenceCandidateTokenOptions,
 ): string {
+  return parseReferenceCandidateTokenDetails(token, expected, options).s3Key;
+}
+
+export function parseReferenceCandidateTokenDetails(
+  token: string,
+  expected: Pick<ReferenceCandidateTokenPayload, 'userId' | 'entityId'>,
+  options: ReferenceCandidateTokenOptions,
+): { s3Key: string; expiresAt: number } {
   const now = options.now ?? Date.now;
   const [body, signature, ...rest] = token.split('.');
   if (body === undefined || signature === undefined || rest.length > 0) {
@@ -77,7 +85,7 @@ export function parseReferenceCandidateToken(
     throw new ValidationError('Invalid reference candidate token');
   }
 
-  return decoded.s3Key;
+  return { s3Key: decoded.s3Key, expiresAt: decoded.expiresAt };
 }
 
 export function createStateReferenceCandidateToken(

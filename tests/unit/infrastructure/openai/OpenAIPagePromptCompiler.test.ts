@@ -30,7 +30,7 @@ describe('OpenAIPagePromptCompiler', () => {
         'Create a complete manga page with stable character references, exact panel order, and readable dialogue baked only where requested.',
       compilerProvider: 'openai',
       compilerModel: 'gpt-5.4-mini',
-      compilerPromptVersion: 'page_prompt_v2',
+      compilerPromptVersion: 'page_prompt_v5',
     });
 
     const request = requests[0];

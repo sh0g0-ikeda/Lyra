@@ -3,12 +3,14 @@ import { AppState, Linking, Platform, StyleSheet, Switch, Text, View } from 'rea
 import { useFocusEffect } from '@react-navigation/native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { GoogleIdentityLinkPanel } from '@/components/GoogleIdentityLinkPanel';
 import { FormField } from '@/components/FormField';
 import { JobStatusCard } from '@/components/JobStatusCard';
 import { MobileStoreBillingPanel } from '@/components/MobileStoreBillingPanel';
 import { Notice } from '@/components/Notice';
 import { OrganizationManagementModal } from '@/components/OrganizationManagementModal';
 import { OrganizationManagementPanel } from '@/components/OrganizationManagementPanel';
+import { billingPlanMessage } from '@/lib/billingPlanMessages';
 import { PersonalBillingSummary } from '@/components/PersonalBillingSummary';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { RecordPicker } from '@/components/RecordPicker';
@@ -132,7 +134,7 @@ export function AccountScreen(): React.JSX.Element {
       return createNativeStoreBillingAdapter({
         backend: createMobileStoreBillingBackend(api),
         products: mobileStoreProducts,
-        sdk: createExpoIapSdk()
+        sdk: createExpoIapSdk(nativeMobileStore ?? undefined)
       });
     },
     [api, mobileStoreProducts]
@@ -398,6 +400,8 @@ export function AccountScreen(): React.JSX.Element {
         <Text style={styles.caption}>{session?.user.display_name ?? session?.user.id ?? '-'}</Text>
       </Section>
 
+      <GoogleIdentityLinkPanel key={session?.user.id ?? sessionKey} onSignInAgain={confirmLogout} />
+
       {organizationFeaturesEnabled ? (
         <Section
           collapsible
@@ -545,13 +549,14 @@ export function AccountScreen(): React.JSX.Element {
           </View>
         </View>
         <View style={styles.usage}>
-          <Text style={styles.caption}>{t(language, "generated.screens.AccountScreen.character.preview.import.1.credit.c94447dd")}</Text>
-          <Text style={styles.caption}>{t(language, "generated.screens.AccountScreen.page.generation.3.credits.c308dc72")}</Text>
-          <Text style={styles.caption}>{t(language, "generated.screens.AccountScreen.text.ai.actions.0.credits.d7c4fd44")}</Text>
+          <Text style={styles.caption}>{billingPlanMessage(language, 'prices')}</Text>
         </View>
         <PersonalBillingSummary
           cancelAtPeriodEnd={balanceQuery.data?.cancel_at_period_end ?? false}
           currentPeriodEnd={balanceQuery.data?.current_period_end ?? null}
+          currentPlan={balanceQuery.data?.plan_code === 'free' || balanceQuery.data?.plan_code === 'standard' || balanceQuery.data?.plan_code === 'premium' ? balanceQuery.data.plan_code : undefined}
+          scheduledPlan={balanceQuery.data?.scheduled_plan_code}
+          scheduledPlanEffectiveAt={balanceQuery.data?.scheduled_plan_effective_at}
           language={language}
           onManage={() => {
             if (nativeSubscriptionManagementUrl !== null) {
@@ -603,6 +608,9 @@ export function AccountScreen(): React.JSX.Element {
         ) : (
           <MobileStoreBillingPanel
             adapter={mobileStoreBillingAdapter}
+            currentPlan={balanceQuery.data?.plan_code === 'free' || balanceQuery.data?.plan_code === 'standard' || balanceQuery.data?.plan_code === 'premium' ? balanceQuery.data.plan_code : undefined}
+            scheduledPlan={balanceQuery.data?.scheduled_plan_code}
+            scheduledPlanEffectiveAt={balanceQuery.data?.scheduled_plan_effective_at}
             language={language}
             onVerified={refresh}
           />

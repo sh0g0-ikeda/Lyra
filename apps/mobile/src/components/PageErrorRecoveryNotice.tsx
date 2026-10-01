@@ -1,5 +1,7 @@
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
 import type { UiLanguage } from '@/domain/types';
+import { commonGuidanceMessages } from '@/lib/commonGuidanceMessages';
+import { confirmStaleDraftReload } from '@/lib/confirmStaleDraftReload';
 import { ApiError } from '@/lib/api';
 
 interface PageErrorRecoveryNoticeProps {
@@ -23,9 +25,11 @@ export function PageErrorRecoveryNotice({
   onReloadStale,
   onRetry
 }: PageErrorRecoveryNoticeProps): React.JSX.Element {
+  const stale = error instanceof ApiError && error.code === 'PAGE_STALE';
+  const copy = commonGuidanceMessages(language);
   const retry =
-    error instanceof ApiError && error.code === 'PAGE_STALE'
-      ? onReloadStale
+    stale
+      ? () => confirmStaleDraftReload({ language, scope: 'page', onConfirm: onReloadStale })
       : onRetry;
 
   return (
@@ -41,6 +45,8 @@ export function PageErrorRecoveryNotice({
       }}
       error={error}
       language={language}
+      recoveryActionLabel={stale ? copy.reloadPageAction : undefined}
+      recoveryMessage={stale ? `${copy.reloadWarning}\n${copy.reloadFields.page}` : undefined}
     />
   );
 }

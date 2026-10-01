@@ -1,4 +1,5 @@
 import { Alert } from 'react-native';
+import { beginConfirmationPresentation } from '@/lib/confirmationPresentation';
 
 import type { UiLanguage } from '@/domain/types';
 import type { DirtyStateChoice } from '@/domain/dirtyStatePolicy';
@@ -28,14 +29,15 @@ export const confirmDestructiveAction = ({
   confirmLabel,
   onConfirm
 }: ConfirmDestructiveActionParams): void => {
+  const finish = beginConfirmationPresentation();
   Alert.alert(
     title,
     message,
     [
-      { text: t(language, "generated.lib.confirm.cancel.3672b0b9"), style: 'cancel' },
-      { text: confirmLabel ?? t(language, "generated.lib.confirm.delete.8deafb71"), style: 'destructive', onPress: onConfirm }
+      { text: t(language, "generated.lib.confirm.cancel.3672b0b9"), style: 'cancel', onPress: finish },
+      { text: confirmLabel ?? t(language, "generated.lib.confirm.delete.8deafb71"), style: 'destructive', onPress: () => { finish(); onConfirm(); } }
     ],
-    { cancelable: true }
+    { cancelable: true, onDismiss: finish }
   );
 };
 
@@ -47,14 +49,15 @@ export const confirmAction = ({
   onConfirm,
   destructive = false
 }: ConfirmActionParams): void => {
+  const finish = beginConfirmationPresentation();
   Alert.alert(
     title,
     message,
     [
-      { text: t(language, "generated.lib.confirm.cancel.3672b0b9"), style: 'cancel' },
-      { text: confirmLabel, style: destructive ? 'destructive' : 'default', onPress: onConfirm }
+      { text: t(language, "generated.lib.confirm.cancel.3672b0b9"), style: 'cancel', onPress: finish },
+      { text: confirmLabel, style: destructive ? 'destructive' : 'default', onPress: () => { finish(); onConfirm(); } }
     ],
-    { cancelable: true }
+    { cancelable: true, onDismiss: finish }
   );
 };
 

@@ -27,7 +27,7 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(source).not.toContain('persistKey="story:chapter-title"');
   });
 
-  it('話は初期表示し、Story AIをシーンより前に置き、シーン説明を閉じた状態でも示す', () => {
+  it('話は初期表示し、Story AIをシーンより前に置き、定常シーン説明は表示しない', () => {
     const source = renderSource('StoryScreen');
     const episode = source.indexOf('persistKey="story:episode"');
     const storyAi = source.indexOf('persistKey="story:story-ai"');
@@ -38,7 +38,7 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(storyAi).toBeGreaterThan(episode);
     expect(scenes).toBeGreaterThan(storyAi);
     expect(source.slice(Math.max(0, scenes - 180), scenes)).toContain('defaultCollapsed');
-    expect(source.slice(Math.max(0, scenes - 220), scenes + 220)).toContain('showSubtitleWhenCollapsed');
+    expect(source.slice(Math.max(0, scenes - 220), scenes + 220)).not.toContain('showSubtitleWhenCollapsed');
   });
 
   it('キャラクター種別の直後に画像取り込みを置く', () => {
@@ -135,7 +135,8 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(pages.slice(pages.indexOf('const confirmGeneratePage'))).toContain(
       "component.jobStatusCard.imageDurationEstimate"
     );
-    expect(characters.slice(characters.indexOf('const confirmGenerateReference'))).toContain(
+    expect(characters).toContain('<AssetGenerationQuoteDialog');
+    expect(readSource('src/components/AssetGenerationQuoteDialog.tsx')).toContain(
       "component.jobStatusCard.imageDurationEstimate"
     );
   });

@@ -35,7 +35,7 @@ vi.mock('@tanstack/react-query', () => ({
 
 vi.mock('react-native', () => ({
   AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-  Linking: { canOpenURL: mocks.canOpenUrl, openURL: mocks.openUrl },
+  Linking: { canOpenURL: mocks.canOpenUrl, openURL: mocks.openUrl, getInitialURL: vi.fn().mockResolvedValue(null), addEventListener: () => ({ remove: vi.fn() }) },
   Modal: ({ children, visible }: { children: React.ReactNode; visible: boolean }) =>
     visible ? React.createElement('modal', null, children) : null,
   Platform: { OS: 'android' },
@@ -46,9 +46,13 @@ vi.mock('react-native', () => ({
 }));
 
 vi.mock('@react-navigation/native', () => ({ useFocusEffect: vi.fn() }));
-vi.mock('@/lib/config', () => ({ config: mocks.config }));
+vi.mock('@/lib/config', () => ({ config: mocks.config, isAuthConfigured: () => true }));
+vi.mock('expo-crypto', () => ({ randomUUID: () => 'bb1a66da-a1a1-4b4a-8a8a-6b906a785493' }));
+vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
+vi.mock('@/lib/auth', () => ({ reauthenticateWithCognito: vi.fn() }));
 vi.mock('@/lib/download', () => ({ downloadAuthenticatedFile: vi.fn() }));
-vi.mock('@/lib/i18n', () => ({
+vi.mock('@/lib/i18n', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/i18n')>(),
   t: (_language: string, key: string) => ({
     'generated.screens.AccountScreen.create.organization.2c93e462': 'Create organization',
     'generated.screens.AccountScreen.organization.name.74237aeb': 'Organization name'
