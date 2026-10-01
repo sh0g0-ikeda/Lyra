@@ -4,6 +4,11 @@ import { parseEnv } from '../../../src/lib/env.js';
 const originalNodeEnv = process.env.NODE_ENV;
 
 describe('parseEnv', () => {
+  it('episode text profile remains legacy unless an exact supported profile is selected',()=>{
+    expect(parseEnv({}).OPENAI_EPISODE_TEXT_PROFILE).toBe('legacy');
+    expect(parseEnv({OPENAI_EPISODE_TEXT_PROFILE:'balanced_v1'}).OPENAI_EPISODE_TEXT_PROFILE).toBe('balanced_v1');
+    expect(()=>parseEnv({OPENAI_EPISODE_TEXT_PROFILE:'other'})).toThrow();
+  });
   it('mobile store billingは明示しない限り無効でprovider timeoutだけ安全な既定値を持つ', () => {
     const parsed = parseEnv({});
 
@@ -67,6 +72,7 @@ describe('parseEnv', () => {
 
     expect(parsed.PAGE_GENERATION_ENABLED).toBe(true);
     expect(parsed.ENTITY_GENERATION_ENABLED).toBe(true);
+    expect(parsed.ENTITY_STATE_REFERENCE_GENERATION_ENABLED).toBe(false);
     expect(parsed.ENTITY_IMPORT_ANALYSIS_ENABLED).toBe(true);
     expect(parsed.ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED).toBe(false);
   });
@@ -75,12 +81,14 @@ describe('parseEnv', () => {
     const parsed = parseEnv({
       PAGE_GENERATION_ENABLED: 'false',
       ENTITY_GENERATION_ENABLED: 'false',
+      ENTITY_STATE_REFERENCE_GENERATION_ENABLED: 'true',
       ENTITY_IMPORT_ANALYSIS_ENABLED: 'false',
       ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED: 'true',
     });
 
     expect(parsed.PAGE_GENERATION_ENABLED).toBe(false);
     expect(parsed.ENTITY_GENERATION_ENABLED).toBe(false);
+    expect(parsed.ENTITY_STATE_REFERENCE_GENERATION_ENABLED).toBe(true);
     expect(parsed.ENTITY_IMPORT_ANALYSIS_ENABLED).toBe(false);
     expect(parsed.ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED).toBe(true);
   });
@@ -102,5 +110,10 @@ describe('parseEnv', () => {
     const parsed = parseEnv({ EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED: 'false' });
 
     expect(parsed.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED).toBe(false);
+  });
+
+  it('episode state autofill v1 は明示しない限りOFFで、trueだけを受理する', () => {
+    expect(parseEnv({}).EPISODE_STATE_AUTOFILL_V1_ENABLED).toBe(false);
+    expect(parseEnv({ EPISODE_STATE_AUTOFILL_V1_ENABLED: 'true' }).EPISODE_STATE_AUTOFILL_V1_ENABLED).toBe(true);
   });
 });

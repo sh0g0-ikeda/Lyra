@@ -1,4 +1,5 @@
 import React from 'react';
+import { Linking, Platform } from 'react-native';
 import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -25,6 +26,8 @@ const adapter = {
 
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
+  Platform: { OS: 'android' },
+  Linking: { openURL: vi.fn().mockResolvedValue(undefined) },
   StyleSheet: { create: <T,>(styles: T): T => styles },
   Text: 'Text',
   View: 'View'
@@ -48,6 +51,18 @@ vi.mock('@/state/networkStatus', () => ({
 }));
 
 describe('MobileStoreBillingPanel', () => {
+  it('disables current and scheduled subscriptions without announcing the scheduled plan as active', async () => {
+    const state = { ...adapter.getState(), products: [
+      { id: 'premium', kind: 'subscription', planCode: 'premium', title: 'Premium', displayPrice: '$10', available: true },
+      { id: 'standard', kind: 'subscription', planCode: 'standard', title: 'Standard', displayPrice: '$5', available: true }
+    ] };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<MobileStoreBillingPanel adapter={{ ...adapter, getState: () => state } as never} language="en" currentPlan="premium" scheduledPlan="standard" scheduledPlanEffectiveAt="2026-11-01T00:00:00Z" />); });
+    const buttons = renderer.root.findAllByType('button');
+    expect(buttons[0].children.join('')).toBe('Current plan'); expect(buttons[0].props.disabled).toBe(true);
+    expect(buttons[1].children.join('')).toContain('Scheduled'); expect(buttons[1].props.disabled).toBe(true);
+    expect(JSON.stringify(renderer.toJSON())).toContain('Standard');
+  });
   it('日本語で購入と復元を表示し、利用可能な商品だけを購入可能にする', async () => {
     let renderer: ReturnType<typeof create>;
     await act(async () => {
@@ -87,6 +102,29 @@ describe('MobileStoreBillingPanel', () => {
     expect(rendered).not.toContain('NETWORK');
   });
 
+  it('offers native-catalog retry and recovers from legal-link errors without requesting a purchase', async () => {
+    const refreshProducts = vi.fn().mockResolvedValue(undefined); const state = { ...adapter.getState(), products: [], error: { code: 'NETWORK', retryable: true } };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<MobileStoreBillingPanel adapter={{ ...adapter, refreshProducts, getState: () => state } as never} language="en" />); });
+    const retry = renderer.root.findAllByType('button').find((button) => button.children.join('') === 'Reload store products')!;
+    await act(async () => { retry.props.onClick(); }); expect(refreshProducts).toHaveBeenCalledOnce();
+    vi.mocked(Linking.openURL).mockRejectedValueOnce(new Error('private provider message'));
+    await act(async () => { renderer.root.findAllByType('Text').find((node) => node.props.accessibilityRole === 'link')!.props.onPress(); });
+    expect(JSON.stringify(renderer.toJSON())).toContain('legal page could not be opened'); expect(JSON.stringify(renderer.toJSON())).not.toContain('private provider message');
+    Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
+    await act(async () => { renderer.update(<MobileStoreBillingPanel adapter={adapter as never} language="en" />); });
+    expect(JSON.stringify(renderer.toJSON())).toContain('Apple Standard EULA');
+    Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+    act(() => renderer.unmount());
+  });
+  it('does not promote a scheduled downgrade when account refresh fails', async () => {
+    const verified = { balance: { monthlyCredits: 100, purchasedCredits: 0 }, entitlement: { plan: 'premium', scheduledPlan: 'standard', scheduledPlanEffectiveAt: '2026-11-01T00:00:00Z' } };
+    const state = { ...adapter.getState(), lastVerified: verified, products: [{ id: 'premium', kind: 'subscription', planCode: 'premium', title: 'Premium', displayPrice: '$10', available: true }] };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<MobileStoreBillingPanel adapter={{ ...adapter, getState: () => state } as never} currentPlan="free" language="en" onVerified={async () => { throw new Error('offline'); }} />); });
+    expect(renderer.root.findAllByType('button')[0].children.join('')).toBe('Current plan'); expect(JSON.stringify(renderer.toJSON())).toContain('account display could not refresh');
+    act(() => renderer.unmount());
+  });
   it('server確認済みの残高・権利状態だけを呼び出し元へ通知する', async () => {
     const onVerified = vi.fn();
     const verifiedState = {

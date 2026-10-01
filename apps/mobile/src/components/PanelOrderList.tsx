@@ -14,6 +14,8 @@ import { panelRoleOptions } from '@/constants/options';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import type { PanelRecord } from '@/domain/types';
 import { t } from '@/lib/i18n';
+import { editorMessage } from '@/lib/editorUiMessages';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
 
 interface PanelOrderListProps {
@@ -148,21 +150,20 @@ export function PanelOrderList({
                 onPress={() => onSelect(panel.id)}
                 style={styles.rowMain}
               >
-                <View style={styles.orderBadge}>
-                  <Text style={styles.orderText}>{panel.order}</Text>
+                {selected ? <View accessibilityRole="image" accessibilityLabel={editorMessage(language, 'selected')}><Check color={colors.primaryText} size={18} /></View> : null}
+                <View style={[styles.orderBadge, selected ? styles.orderBadgeSelected : null]}>
+                  <Text style={[styles.orderText, selected ? styles.orderTextSelected : null]}>{panel.order}</Text>
                 </View>
                 <View style={styles.rowCopy}>
                   <View style={styles.rowHeading}>
-                    <Text numberOfLines={1} style={styles.rowTitle}>
+                    <Text numberOfLines={1} style={[styles.rowTitle, selected ? styles.selectedText : null]}>
                       {t(language, 'component.panelOrderList.panelTitle', { order: panel.order })}
                     </Text>
-                    <Text numberOfLines={1} style={styles.role}>
+                    <Text numberOfLines={1} style={[styles.role, selected ? styles.selectedText : null]}>
                       {roleLabel(panel.panel_role, language)}
                     </Text>
                   </View>
-                  <Text numberOfLines={2} style={styles.summary}>
-                    {situationSummary(panel, language)}
-                  </Text>
+
                 </View>
               </Pressable>
               <Pressable
@@ -177,7 +178,7 @@ export function PanelOrderList({
                 }}
                 style={styles.moreButton}
               >
-                <MoreHorizontal color={colors.ink} size={22} strokeWidth={2} />
+                <MoreHorizontal color={selected ? colors.primaryText : colors.ink} size={22} strokeWidth={2} />
               </Pressable>
             </View>
           );
@@ -185,7 +186,9 @@ export function PanelOrderList({
       </View>
 
       <Modal animationType="fade" onRequestClose={closeMenu} transparent visible={activePanel !== null}>
+        <SafeAreaProvider>
         <Pressable accessibilityRole="button" onPress={closeMenu} style={styles.backdrop}>
+          <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.modalSafeArea}>
           <View
             accessibilityViewIsModal
             onAccessibilityEscape={closeMenu}
@@ -216,7 +219,7 @@ export function PanelOrderList({
             </View>
 
             {menuMode === 'actions' ? (
-              <View style={styles.actionList}>
+              <ScrollView contentContainerStyle={styles.actionList}>
                 <MenuAction
                   accessibilityLabel={t(language, "generated.components.PanelOrderList.move.earlier.749347cc")}
                   disabled={disabled || activeIndex <= 0}
@@ -246,7 +249,7 @@ export function PanelOrderList({
                   label={t(language, "generated.components.PanelOrderList.delete.panel.5c663bc3")}
                   onPress={remove}
                 />
-              </View>
+              </ScrollView>
             ) : (
               <ScrollView contentContainerStyle={styles.roleList}>
                 <Text style={styles.rolePrompt}>
@@ -275,7 +278,9 @@ export function PanelOrderList({
               </ScrollView>
             )}
           </View>
+          </SafeAreaView>
         </Pressable>
+        </SafeAreaProvider>
       </Modal>
     </>
   );
@@ -341,9 +346,14 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    flex: 1
+  },
+  modalSafeArea: {
     flex: 1,
     justifyContent: 'flex-end',
-    padding: spacing.md
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm
   },
   closeButton: {
     alignItems: 'center',
@@ -433,7 +443,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     flexDirection: 'row',
-    minHeight: 70,
+    minHeight: 52,
     overflow: 'hidden'
   },
   rowCopy: {
@@ -451,13 +461,24 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     gap: spacing.md,
-    minHeight: 68,
+    minHeight: 44,
     minWidth: 0,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
   },
+  // Highlight the selected panel itself; page-card borders remain independent.
   rowSelected: {
+    backgroundColor: colors.primary,
     borderColor: colors.primary
+  },
+  orderBadgeSelected: {
+    backgroundColor: colors.primaryText
+  },
+  orderTextSelected: {
+    color: colors.primary
+  },
+  selectedText: {
+    color: colors.primaryText
   },
   rowTitle: {
     ...textStyles.body,

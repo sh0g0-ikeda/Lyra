@@ -1,0 +1,3 @@
+# Frozen production SQL is verified byte-for-byte against its recorded Git SHA.
+# Do not normalize line endings or "repair" whitespace inherited from that source.
+tests/fixtures/production-lineage-2debe/*.sql -text whitespace=-blank-at-eof

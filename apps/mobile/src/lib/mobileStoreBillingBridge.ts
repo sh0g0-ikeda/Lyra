@@ -38,6 +38,7 @@ export function toNativeStoreProductDefinitions(
       return {
         id: product.product_id,
         kind: product.kind,
+        planCode: product.plan_code,
         title: t(language, label.title),
         description: t(language, label.description)
       };
@@ -89,18 +90,24 @@ export function createMobileStoreBillingBackend(
         purchasedCredits: balance.purchased_credits
       },
       entitlement: {
-        plan: personalPlan(balance.plan_code)
+        plan: personalPlan(balance.plan_code),
+        currentPeriodEnd: balance.current_period_end,
+        store: balance.subscription_store ?? null,
+        scheduledPlan: balance.scheduled_plan_code ?? null,
+        scheduledPlanEffectiveAt: balance.scheduled_plan_effective_at ?? null
       }
     };
   };
 
   return {
     getAccountBinding: async () => {
-      const binding = await api.getMobilePurchaseBinding();
+      const [binding, balance] = await Promise.all([api.getMobilePurchaseBinding(), api.getBalance()]);
       return {
         appleAppAccountToken: binding.apple_app_account_token,
         googleObfuscatedAccountId: binding.google_obfuscated_account_id,
-        subscriptionPurchaseAllowed: binding.subscription_purchase_allowed
+        subscriptionPurchaseAllowed: binding.subscription_purchase_allowed,
+        currentPlan: personalPlan(balance.plan_code),
+        scheduledPlan: balance.scheduled_plan_code ?? null
       };
     },
     verifyApplePurchase: async ({ signedTransaction, environment }) => {

@@ -106,6 +106,10 @@ interface EntityStateRow extends QueryResultRow {
   id: string;
   entity_id: string;
   scene_id: string | null;
+  name: string | null;
+  description: string | null;
+  reference_image: unknown;
+  base_reference_id?: string | null;
   costume_note: string | null;
   costume_ref_id: string | null;
   condition_note: string | null;
@@ -113,7 +117,15 @@ interface EntityStateRow extends QueryResultRow {
   expression_default: string;
   extra_note: string | null;
   created_at: Date;
+  updated_at: Date | null;
 }
+
+const currentBaseReferenceIdSql = `(SELECT rs.primary_ref_id FROM reference_sets rs
+  WHERE rs.entity_id = entity_states.entity_id AND rs.status = 'ready'
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(
+      CASE WHEN jsonb_typeof(rs.reference_images) = 'array' THEN rs.reference_images ELSE '[]'::jsonb END
+    ) AS image WHERE image->>'ref_id' = rs.primary_ref_id AND COALESCE(image->>'s3_key', '') <> '')
+  LIMIT 1)`;
 
 const sceneSelectColumns = `
   scenes.id,
@@ -390,6 +402,8 @@ export class PostgresSceneRepository implements SceneRepository {
       INSERT INTO entity_states (
         entity_id,
         scene_id,
+        name,
+        description,
         costume_note,
         costume_ref_id,
         condition_note,
@@ -397,12 +411,14 @@ export class PostgresSceneRepository implements SceneRepository {
         expression_default,
         extra_note
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING *
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id
       `,
       [
         entityId,
         input.sceneId,
+        input.name ?? null,
+        input.description ?? null,
         input.costumeNote,
         input.costumeRefId,
         input.conditionNote,
@@ -422,7 +438,7 @@ export class PostgresSceneRepository implements SceneRepository {
   ): Promise<EntityState[]> {
     const result = await this.client.query<EntityStateRow>(
       `
-      SELECT entity_states.*
+      SELECT entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id
       FROM entity_states
       INNER JOIN entities ON entities.id = entity_states.entity_id
       INNER JOIN works ON works.id = entities.work_id
@@ -460,22 +476,25 @@ export class PostgresSceneRepository implements SceneRepository {
       `
       UPDATE entity_states
       SET scene_id = CASE WHEN $4::boolean THEN $5 ELSE entity_states.scene_id END,
-          costume_note = CASE WHEN $6::boolean THEN $7 ELSE entity_states.costume_note END,
-          costume_ref_id = CASE WHEN $8::boolean THEN $9 ELSE entity_states.costume_ref_id END,
-          condition_note = CASE WHEN $10::boolean THEN $11 ELSE entity_states.condition_note END,
-          hair_note = CASE WHEN $12::boolean THEN $13 ELSE entity_states.hair_note END,
-          expression_default = COALESCE($14, entity_states.expression_default),
-          extra_note = CASE WHEN $15::boolean THEN $16 ELSE entity_states.extra_note END
+          name = CASE WHEN $6::boolean THEN $7 ELSE entity_states.name END,
+          description = CASE WHEN $8::boolean THEN $9 ELSE entity_states.description END,
+          costume_note = CASE WHEN $10::boolean THEN $11 ELSE entity_states.costume_note END,
+          costume_ref_id = CASE WHEN $12::boolean THEN $13 ELSE entity_states.costume_ref_id END,
+          condition_note = CASE WHEN $14::boolean THEN $15 ELSE entity_states.condition_note END,
+          hair_note = CASE WHEN $16::boolean THEN $17 ELSE entity_states.hair_note END,
+          expression_default = COALESCE($18, entity_states.expression_default),
+          extra_note = CASE WHEN $19::boolean THEN $20 ELSE entity_states.extra_note END,
+          updated_at = NOW()
       FROM entities
       INNER JOIN works ON works.id = entities.work_id
       WHERE entity_states.id = $1
         AND entity_states.entity_id = $2
         AND entity_states.entity_id = entities.id
         AND (
-          ($17::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $3)
+          ($21::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $3)
           OR (
-            $17::uuid IS NOT NULL
-            AND works.organization_id = $17::uuid
+            $21::uuid IS NOT NULL
+            AND works.organization_id = $21::uuid
             AND EXISTS (
               SELECT 1
               FROM organization_members
@@ -485,7 +504,7 @@ export class PostgresSceneRepository implements SceneRepository {
             )
           )
         )
-      RETURNING entity_states.*
+      RETURNING entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id
       `,
       [
         stateId,
@@ -493,6 +512,10 @@ export class PostgresSceneRepository implements SceneRepository {
         userId,
         input.sceneId !== undefined,
         input.sceneId ?? null,
+        input.name !== undefined,
+        input.name ?? null,
+        input.description !== undefined,
+        input.description ?? null,
         input.costumeNote !== undefined,
         input.costumeNote ?? null,
         input.costumeRefId !== undefined,
@@ -567,6 +590,10 @@ function mapEntityStateRow(row: EntityStateRow): EntityState {
     id: row.id,
     entityId: row.entity_id,
     sceneId: row.scene_id,
+    name: row.name,
+    description: row.description,
+    referenceImage: toNullableRecord(row.reference_image),
+    baseReferenceId: row.base_reference_id ?? null,
     costumeNote: row.costume_note,
     costumeRefId: row.costume_ref_id,
     conditionNote: row.condition_note,
@@ -574,7 +601,14 @@ function mapEntityStateRow(row: EntityStateRow): EntityState {
     expressionDefault: row.expression_default,
     extraNote: row.extra_note,
     createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
   };
+}
+
+function toNullableRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function toSceneStateReferences(value: unknown): SceneEntityStateReference[] {

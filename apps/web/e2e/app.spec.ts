@@ -1,4 +1,31 @@
-import { expect, test, type Page, type Route } from '@playwright/test';
+import { expect, test as base, type ConsoleMessage, type Page, type Route } from '@playwright/test';
+import type { CurrentSessionRecord } from '../src/types/api';
+
+// React's error boundary catches render failures before pageerror can report them.
+// Keep both diagnostics in the mocked smoke gate and its failure artifacts.
+const test = base.extend<{ browserRuntimeErrors: void }>({
+  browserRuntimeErrors: [async ({ page }, use, testInfo) => {
+    const errors: string[] = [];
+    const onPageError = (error: Error): void => { errors.push(error.stack ?? error.message); };
+    const onConsoleError = (message: ConsoleMessage): void => {
+      if (message.type() === 'error' && message.text().includes('Unexpected web render failure')) {
+        errors.push(message.text());
+      }
+    };
+    page.on('pageerror', onPageError);
+    page.on('console', onConsoleError);
+    await use();
+    page.off('pageerror', onPageError);
+    page.off('console', onConsoleError);
+    if (errors.length > 0) {
+      await testInfo.attach('browser-runtime-errors', {
+        body: errors.join('\n\n'),
+        contentType: 'text/plain',
+      });
+    }
+    expect(errors, 'The console must not throw or enter its render error boundary').toEqual([]);
+  }, { auto: true }],
+});
 
 const manualTokenStorageKey = 'lyra:web:manual-token';
 const uiLanguageStorageKey = 'lyra:web:ui-language';
@@ -173,6 +200,23 @@ const composition = {
   created_at: '2026-04-26T00:00:00.000Z',
 };
 
+const currentSession: CurrentSessionRecord = {
+  user: {
+    id: work.user_id,
+    email: 'fixture@example.test',
+    display_name: null,
+    plan_code: 'free',
+  },
+  personal_credits: {
+    monthly_credits: 100,
+    purchased_credits: 40,
+    total_credits: 140,
+    monthly_expires_at: null,
+  },
+  organizations: [],
+  capabilities: { web_image_delivery: false },
+};
+
 async function mockApi(
   route: Route,
   options: { legacyBilling?: boolean; legacyJobCancellationFields?: boolean } = {},
@@ -186,6 +230,14 @@ async function mockApi(
       contentType: 'application/json',
       body: JSON.stringify(body),
     });
+
+  if (pathname === '/api/me') {
+    return json(currentSession);
+  }
+
+  if (pathname === '/api/auth/capabilities') {
+    return json({ google_sign_in: false, google_linking: false, google_ios: false });
+  }
 
   if (pathname === '/api/works') {
     if (route.request().method() === 'GET') {
@@ -409,7 +461,7 @@ test('shows auth screen without token', async ({ page }) => {
 test('renders the console with mocked api responses', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
-  await page.route('**/api/**', mockApi);
+  await page.route('**/api/**', (route) => mockApi(route));
 
   await page.goto('/');
 
@@ -436,7 +488,7 @@ test('renders the console with mocked api responses', async ({ page }) => {
 test('キャラ編集では画像取り込みを自由記述の前に置き不要な詳細入力を隠す', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
-  await page.route('**/api/**', mockApi);
+  await page.route('**/api/**', (route) => mockApi(route));
 
   await page.goto('/');
   await page.getByRole('button', { name: 'Entities', exact: true }).click();
@@ -663,7 +715,7 @@ test('初心者向け案内とページ編集の情報境界を明確にする',
 test('ストーリー画面でストーリーAIとシーンが任意であることを説明する', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
-  await page.route('**/api/**', mockApi);
+  await page.route('**/api/**', (route) => mockApi(route));
 
   await page.goto('/');
 
@@ -705,7 +757,7 @@ test('ストーリー画面でストーリーAIとシーンが任意であるこ
 test('ページ設計とページ生成の操作をページ編集の保存導線に並べる', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
-  await page.route('**/api/**', mockApi);
+  await page.route('**/api/**', (route) => mockApi(route));
 
   await page.goto('/');
 
@@ -728,15 +780,44 @@ test('ページ設計とページ生成の操作をページ編集の保存導�
   await expect(pageStack.locator('.page-section-frames-panels + .page-section-generate')).toHaveCount(1);
   await expect(pageStack.locator('.page-section-generate + .page-section-style-constraints')).toHaveCount(1);
   await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'Generate page', exact: true })).toBeVisible();
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'Generate monochrome page', exact: true })).toBeVisible();
   await expect(pageStack.locator('.page-section-generate .generated-image')).toHaveCount(1);
 
   await page.getByRole('button', { name: 'Account menu', exact: true }).click();
   await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
   await expect(page.getByRole('heading', { name: 'ページ設計', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'ストーリーから設定を自動入力', exact: true })).toBeVisible();
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
+});
+
+test('白黒で生成は保存後に白黒指定のページjobを送る', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    if (new URL(route.request().url()).pathname === `/api/pages/${pageRecord.id}/generate`) {
+      await route.fulfill({
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify({ job_id: 'job-monochrome' }),
+      });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  const generationRequest = page.waitForRequest((request) =>
+    request.method() === 'POST' && new URL(request.url()).pathname === `/api/pages/${pageRecord.id}/generate`,
+  );
+  await page.getByRole('button', { name: 'Generate monochrome page', exact: true }).click();
+  const request = await generationRequest;
+
+  expect(request.postDataJSON()).toEqual({ render_style: 'monochrome' });
 });
 
 test('creates works from the sidebar without rendering a work overview editor', async ({ page }) => {
@@ -780,7 +861,7 @@ test('PCヘッダーで制作ナビと設定メニューを階層分離する', 
   await page.setViewportSize({ width: 1440, height: 900 });
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
-  await page.route('**/api/**', mockApi);
+  await page.route('**/api/**', (route) => mockApi(route));
 
   await page.goto('/');
 
@@ -820,7 +901,7 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await page.setViewportSize({ width: 390, height: 844 });
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
-  await page.route('**/api/**', mockApi);
+  await page.route('**/api/**', (route) => mockApi(route));
 
   await page.goto('/');
 
@@ -905,7 +986,7 @@ test('スマホWebで作品一覧と編集操作を作業導線に合わせて�
   await page.setViewportSize({ width: 390, height: 844 });
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
-  await page.route('**/api/**', mockApi);
+  await page.route('**/api/**', (route) => mockApi(route));
 
   await page.goto('/');
 
@@ -1001,7 +1082,7 @@ test('stops a queued story apply job and removes it from local history', async (
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
   await seedTrackedJobs(page, [cancellableStoryJobId]);
-  await page.route('**/api/**', mockApi);
+  await page.route('**/api/**', (route) => mockApi(route));
 
   await page.goto('/');
 
@@ -1032,8 +1113,6 @@ test('keeps stop available when a rolling API response omits cancellation fields
 });
 
 test('keeps the console usable with a legacy billing response', async ({ page }) => {
-  const pageErrors: Error[] = [];
-  page.on('pageerror', (error) => pageErrors.push(error));
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
   await page.route('**/api/**', (route) => mockApi(route, { legacyBilling: true }));
@@ -1042,5 +1121,31 @@ test('keeps the console usable with a legacy billing response', async ({ page })
 
   await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Story', exact: true })).toBeVisible();
-  expect(pageErrors).toEqual([]);
 });
+
+for (const [caseName, session] of [
+  ['user omitted', {}],
+  ['user null', { ...currentSession, user: null }],
+] as const) {
+  test(`keeps editing available and Google linking hidden with ${caseName} in the session response`, async ({ page }) => {
+    await seedEnglishUi(page);
+    await seedAuthenticatedSession(page);
+    await page.route('**/api/**', (route) => {
+      if (new URL(route.request().url()).pathname === '/api/me') {
+        return route.fulfill({ json: session });
+      }
+      return mockApi(route);
+    });
+
+    const sessionResponse = page.waitForResponse('**/api/me');
+    await page.goto('/?account=google-link');
+    await (await sessionResponse).finished();
+
+    await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Verify existing login and link Google' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Pages', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
+    await expect(page.getByRole('heading', { name: 'The screen could not be displayed' })).toHaveCount(0);
+  });
+}

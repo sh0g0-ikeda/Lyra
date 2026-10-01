@@ -10,6 +10,7 @@ import type {
 } from '../../../../src/repositories/GenerationJobRepository.js';
 import type {
   EntityPrimaryReferenceImage,
+  EntityResolvedReferenceImage,
   EntityRepository,
 } from '../../../../src/repositories/EntityRepository.js';
 import type { PageRepository } from '../../../../src/repositories/PageRepository.js';
@@ -175,6 +176,7 @@ class FakeEntityRepository implements EntityRepository {
       cdnUrl: 'https://img.lyra.test/entity-2.png',
     },
   ];
+  public resolvedReferences: EntityResolvedReferenceImage[] = [];
 
   public async create(): Promise<never> {
     throw new Error('not used');
@@ -205,6 +207,10 @@ class FakeEntityRepository implements EntityRepository {
   ): Promise<EntityPrimaryReferenceImage[]> {
     this.lastReferenceArgs = { entityIds, workId, userId: requestedUserId, organizationId };
     return this.references.filter((reference) => entityIds.includes(reference.entityId));
+  }
+
+  public async findResolvedReferenceImagesByAssignmentsAndUserId(): Promise<EntityResolvedReferenceImage[]> {
+    return this.resolvedReferences;
   }
 
   public async update(): Promise<null> {
@@ -340,6 +346,7 @@ describe('PageGenerationService', () => {
       requires_planner: false,
       previous_page_status: 'designing',
       previous_generation_mode: null,
+      render_style: 'color',
     });
     expect(pageRepository.updates[0]).toEqual({
       status: 'generating',
@@ -357,6 +364,20 @@ describe('PageGenerationService', () => {
       previousPageStatus: 'designing',
       previousGenerationMode: null,
     });
+  });
+
+  it('白黒生成の場合に通常料金を維持してstyleをjobに固定する', async () => {
+    const jobRepository = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationService(
+      new FakePageRepository(), new FakeEntityRepository(), jobRepository,
+      creditService, new FakeQueue(), new ModeSelector(),
+    );
+
+    await service.enqueuePageGeneration(userId, pageId, null, 'monochrome');
+
+    expect(jobRepository.created?.params).toMatchObject({ render_style: 'monochrome' });
+    expect(creditService.consumed[0]?.cost).toBe(3);
   });
 
   it('pageをgeneratingへ予約してからcreditを消費する', async () => {
@@ -825,6 +846,223 @@ it('assigned character reference が未確定なら VALIDATION_ERROR になる',
     code: 'VALIDATION_ERROR',
     message: expect.stringContaining('Leo'),
   });
+});
+
+it('新しい派生状態がページに含まれる場合はjob作成とクレジット消費前に停止する', async () => {
+  const pageRepository = new FakePageRepository();
+  pageRepository.context = buildPageContext({
+    hasVariantState: true,
+    panels: [{
+      ...buildPanelContext('entity-1'),
+      entities: [{ ...buildPanelContext('entity-1').entities[0]!, stateId: 'state-1' }],
+    }],
+  });
+  const jobRepository = new FakeGenerationJobRepository();
+  const creditService = new FakeCreditService();
+  const queue = new FakeQueue();
+  const service = new PageGenerationService(
+    pageRepository,
+    new FakeEntityRepository(),
+    jobRepository,
+    creditService,
+    queue,
+    new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+    code: 'VALIDATION_ERROR',
+    message: expect.stringContaining('state'),
+  });
+  expect(jobRepository.created).toBeNull();
+  expect(creditService.consumed).toEqual([]);
+});
+
+// Compatibility contract: alias assignments share one base image; confirmed variants remain distinct.
+it.each([4, 13])('同じbase画像を参照する旧状態が%i件ある場合は従来の3クレジットで受付する', async (assignmentCount) => {
+  const states = Array.from({ length: assignmentCount }, (_, index) => index === 0 ? null : `legacy-${index}`);
+  const pageRepository = new FakePageRepository();
+  pageRepository.context = buildPageContext({
+    hasVariantState: true,
+    frameCount: states.length,
+    panels: states.map((stateId) => ({
+      ...buildPanelContext('entity-1'),
+      entities: [{ ...buildPanelContext('entity-1').entities[0]!, stateId }],
+    })),
+  });
+  const entityRepository = new FakeEntityRepository();
+  entityRepository.resolvedReferences = states.map((stateId) => ({
+    entityId: 'entity-1', stateId, stateName: stateId, stateDescription: null,
+    stateExists: true, ownerUserId: 'user-1', refId: 'base-ref',
+    s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: null, imageModel: null,
+  }));
+  const jobs = new FakeGenerationJobRepository();
+  const credits = new FakeCreditService();
+  const queue = new FakeQueue();
+  const service = new PageGenerationService(
+    pageRepository, entityRepository, jobs, credits, queue, new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).resolves.toMatchObject({ jobId: expect.any(String) });
+  expect(jobs.created?.creditCost).toBe(3);
+  expect(credits.consumed).toEqual([expect.objectContaining({ cost: 3 })]);
+  expect(queue.lastPayload?.creditCost).toBe(3);
+});
+
+it('旧状態の別名と確定済みvariantが混在する場合は実際の4参照分を課金する', async () => {
+  const states = [null, 'legacy-1', 'legacy-2', 'variant-1', 'variant-2', 'variant-3'];
+  const pageRepository = new FakePageRepository();
+  pageRepository.context = buildPageContext({
+    hasVariantState: true, frameCount: states.length,
+    panels: states.map((stateId) => ({
+      ...buildPanelContext('entity-1'),
+      entities: [{ ...buildPanelContext('entity-1').entities[0]!, stateId }],
+    })),
+  });
+  const entityRepository = new FakeEntityRepository();
+  entityRepository.resolvedReferences = states.map((stateId) => {
+    const isVariant = stateId?.startsWith('variant-') === true;
+    const refId = isVariant ? stateId : 'base-ref';
+    return {
+      entityId: 'entity-1', stateId, stateName: stateId,
+      stateDescription: isVariant ? 'confirmed state' : null,
+      stateExists: true, ownerUserId: 'user-1', refId,
+      s3Key: `saved/user-1/entities/entity-1/${refId}.png`, cdnUrl: null, imageModel: null,
+    };
+  });
+  const jobs = new FakeGenerationJobRepository();
+  const credits = new FakeCreditService();
+  await new PageGenerationService(
+    pageRepository, entityRepository, jobs, credits, new FakeQueue(), new ModeSelector(),
+  ).enqueuePageGeneration(userId, pageId);
+
+  expect(jobs.created?.creditCost).toBe(4);
+  expect(credits.consumed).toEqual([expect.objectContaining({ cost: 4 })]);
+});
+
+it.each([12, 13])('実際に異なるvariant参照が%i件の場合は画像上限と料金を維持する', async (count) => {
+  const states = Array.from({ length: count }, (_, index) => `variant-${index}`);
+  const pageRepository = new FakePageRepository();
+  pageRepository.context = buildPageContext({
+    hasVariantState: true, frameCount: count,
+    panels: states.map((stateId) => ({
+      ...buildPanelContext('entity-1'),
+      entities: [{ ...buildPanelContext('entity-1').entities[0]!, stateId }],
+    })),
+  });
+  const entityRepository = new FakeEntityRepository();
+  entityRepository.resolvedReferences = states.map((stateId) => ({
+    entityId: 'entity-1', stateId, stateName: stateId, stateDescription: 'confirmed state',
+    stateExists: true, ownerUserId: 'user-1', refId: stateId,
+    s3Key: `saved/user-1/entities/entity-1/${stateId}.png`, cdnUrl: null, imageModel: null,
+  }));
+  const jobs = new FakeGenerationJobRepository();
+  const credits = new FakeCreditService();
+  const service = new PageGenerationService(
+    pageRepository, entityRepository, jobs, credits, new FakeQueue(), new ModeSelector(),
+  );
+  if (count > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
+    await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(jobs.created).toBeNull();
+    expect(credits.consumed).toEqual([]);
+  } else {
+    await service.enqueuePageGeneration(userId, pageId);
+    expect(jobs.created?.creditCost).toBe(12);
+    expect(credits.consumed).toEqual([expect.objectContaining({ cost: 12 })]);
+  }
+});
+
+it('確定した派生状態と既定状態が同じ人物にある場合は2参照として受付する', async () => {
+  const pageRepository = new FakePageRepository();
+  pageRepository.context = buildPageContext({
+    hasVariantState: true,
+    frameCount: 2,
+    panels: [
+      buildPanelContext('entity-1'),
+      {
+        ...buildPanelContext('entity-1'),
+        entities: [{ ...buildPanelContext('entity-1').entities[0]!, stateId: 'state-1' }],
+      },
+    ],
+  });
+  const entityRepository = new FakeEntityRepository();
+  entityRepository.resolvedReferences = [
+    { entityId: 'entity-1', stateId: null, stateName: null, stateDescription: null,
+      stateExists: true, ownerUserId: 'user-1', refId: 'base-ref',
+      s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: null, imageModel: null },
+    { entityId: 'entity-1', stateId: 'state-1', stateName: '外傷', stateDescription: '左頬の傷',
+      stateExists: true, ownerUserId: 'user-1', refId: 'state-ref',
+      s3Key: 'saved/user-1/entities/entity-1/states/state-1/state-ref.png', cdnUrl: null, imageModel: 'gpt-image-2' },
+  ];
+  const jobRepository = new FakeGenerationJobRepository();
+  const creditService = new FakeCreditService();
+  const service = new PageGenerationService(
+    pageRepository, entityRepository, jobRepository, creditService, new FakeQueue(), new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).resolves.toMatchObject({ jobId: expect.any(String) });
+  expect(jobRepository.created?.creditCost).toBe(3);
+  expect(creditService.consumed).toHaveLength(1);
+});
+
+it('従来の注記だけの状態は既存の参照画像と料金で生成を続ける', async () => {
+  const pageRepository = new FakePageRepository();
+  pageRepository.context = buildPageContext({
+    hasVariantState: true,
+    panels: [{
+      ...buildPanelContext('entity-1'),
+      entities: [{ ...buildPanelContext('entity-1').entities[0]!, stateId: 'legacy-state-1' }],
+    }],
+  });
+  const entityRepository = new FakeEntityRepository();
+  entityRepository.resolvedReferences = [{
+    entityId: 'entity-1', stateId: 'legacy-state-1', stateName: null,
+    stateDescription: null, stateExists: true, ownerUserId: 'user-1',
+    refId: 'ref-1', s3Key: 'saved/user-1/entities/entity-1/ref-1.png',
+    cdnUrl: 'https://img.lyra.test/entity-1.png', imageModel: null,
+  }];
+  const jobRepository = new FakeGenerationJobRepository();
+  const creditService = new FakeCreditService();
+  const service = new PageGenerationService(
+    pageRepository,
+    entityRepository,
+    jobRepository,
+    creditService,
+    new FakeQueue(),
+    new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).resolves.toMatchObject({ jobId: expect.any(String) });
+  expect(jobRepository.created).not.toBeNull();
+  expect(creditService.consumed).toHaveLength(1);
+});
+
+it('注記だけのobject状態に画像がない場合も従来どおり生成を受け付ける', async () => {
+  const pageRepository = new FakePageRepository();
+  pageRepository.context = buildPageContext({
+    hasVariantState: true,
+    panels: [{
+      ...buildPanelContext('entity-1'),
+      entities: [{ ...buildPanelContext('entity-1').entities[0]!, stateId: 'legacy-state-1' }],
+    }],
+  });
+  const entityRepository = new FakeEntityRepository();
+  entityRepository.entities = [buildEntity('entity-1', 'Door', 'object')];
+  entityRepository.references = [];
+  entityRepository.resolvedReferences = [{
+    entityId: 'entity-1', stateId: 'legacy-state-1', stateName: null,
+    stateDescription: null, stateExists: true, ownerUserId: null,
+    refId: null, s3Key: null, cdnUrl: null, imageModel: null,
+  }];
+  const jobRepository = new FakeGenerationJobRepository();
+  const creditService = new FakeCreditService();
+  const service = new PageGenerationService(
+    pageRepository, entityRepository, jobRepository, creditService,
+    new FakeQueue(), new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).resolves.toMatchObject({ jobId: expect.any(String) });
+  expect(jobRepository.created).not.toBeNull();
+  expect(creditService.consumed).toHaveLength(1);
 });
 
 it('page generation reference image count が上限を超えるとクレジット消費前に VALIDATION_ERROR になる', async () => {

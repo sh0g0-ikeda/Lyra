@@ -5,6 +5,7 @@ import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { PostgresPageRepository } from './PageRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './PanelEntityAssignmentRepository.js';
 import { PostgresPanelRepository } from './PanelRepository.js';
+import { PostgresEpisodeStoryAutofillExecutionRepository } from './EpisodeStoryAutofillExecutionRepository.js';
 import type {
   EpisodePlanPersistenceInput,
   EpisodePlanPersistencePort,
@@ -39,6 +40,8 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
       const panelEntityAssignmentService = new PanelEntityAssignmentService(
         new PostgresPanelEntityAssignmentRepository(transactionRunner),
       );
+      const storyAutofillExecutionRepository =
+        new PostgresEpisodeStoryAutofillExecutionRepository(transactionRunner);
       const context = await pageRepository.findEpisodePlanningContextByIdAndUserId(
         input.episodeId,
         input.userId,
@@ -52,6 +55,12 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
         pageRepository,
         panelRepository,
         panelEntityAssignmentService,
+        completeStoryAutofillJob: async (jobId, userId, result) =>
+          storyAutofillExecutionRepository.completeEpisodeStoryAutofill({
+            jobId,
+            userId,
+            result,
+          }),
       });
     });
   }
@@ -131,6 +140,17 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
        WHERE episodes.id = $1
        ORDER BY entities.id ASC
        FOR UPDATE OF entities`,
+      [input.episodeId],
+    );
+    await client.query(
+      `SELECT reference_sets.entity_id
+       FROM reference_sets
+       INNER JOIN entities ON entities.id = reference_sets.entity_id
+       INNER JOIN chapters ON chapters.work_id = entities.work_id
+       INNER JOIN episodes ON episodes.chapter_id = chapters.id
+       WHERE episodes.id = $1
+       ORDER BY reference_sets.entity_id ASC
+       FOR UPDATE OF reference_sets`,
       [input.episodeId],
     );
     await client.query(

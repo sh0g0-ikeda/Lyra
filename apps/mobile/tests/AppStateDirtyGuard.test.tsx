@@ -210,7 +210,7 @@ describe('AppStateProvider dirty-state guard', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('push機能OFFのlogout確定時は認証情報を消す前にnative tokenだけを解除する', async () => {
+  it('logout確定時は現在の能力に依らず旧server登録とnative token解除を先に依頼する', async () => {
     mocks.resolveDirtyEditors.mockResolvedValue(true);
     const renderer = await renderProvider();
 
@@ -218,9 +218,8 @@ describe('AppStateProvider dirty-state guard', () => {
       await latestState?.logout();
     });
 
-    expect(mocks.unregisterNativePushNotifications).toHaveBeenCalledOnce();
-    expect(mocks.unregisterNativePushNotifications).toHaveBeenCalledBefore(mocks.clearAuthTokens);
-    expect(mocks.unregisterPushNotifications).not.toHaveBeenCalled();
+    expect(mocks.unregisterPushNotifications).toHaveBeenCalledOnce();
+    expect(mocks.unregisterPushNotifications).toHaveBeenCalledBefore(mocks.clearAuthTokens);
     await act(async () => renderer.unmount());
   });
 

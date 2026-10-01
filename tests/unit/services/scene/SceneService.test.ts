@@ -122,6 +122,9 @@ class FakeSceneRepository implements SceneRepository {
       id: `state-${this.entityStates.size + 1}`,
       entityId,
       sceneId: input.sceneId,
+      name: input.name ?? null,
+      description: input.description ?? null,
+      referenceImage: null,
       costumeNote: input.costumeNote,
       costumeRefId: input.costumeRefId,
       conditionNote: input.conditionNote,
@@ -129,6 +132,7 @@ class FakeSceneRepository implements SceneRepository {
       expressionDefault: input.expressionDefault,
       extraNote: input.extraNote,
       createdAt: now,
+      updatedAt: now,
     };
     this.entityStates.set(entityState.id, entityState);
     return entityState;
@@ -148,6 +152,8 @@ class FakeSceneRepository implements SceneRepository {
     const updatedEntityState: EntityState = {
       ...entityState,
       sceneId: input.sceneId === undefined ? entityState.sceneId : input.sceneId,
+      name: input.name === undefined ? entityState.name : input.name,
+      description: input.description === undefined ? entityState.description : input.description,
       costumeNote: input.costumeNote === undefined ? entityState.costumeNote : input.costumeNote,
       costumeRefId: input.costumeRefId === undefined ? entityState.costumeRefId : input.costumeRefId,
       conditionNote: input.conditionNote === undefined ? entityState.conditionNote : input.conditionNote,
@@ -250,6 +256,72 @@ describe('SceneService', () => {
     expect(entityState.entityId).toBe('entity-1');
     expect(entityState.sceneId).toBeNull();
     expect(entityState.expressionDefault).toBe('determined');
+  });
+
+  it('状態名だけでEntity stateを作成する場合にVALIDATION_ERRORになる', async () => {
+    const { service, entityReader } = createService();
+    entityReader.addEntity(buildEntity({ id: 'entity-1', workId: 'work-1' }));
+
+    await expect(
+      service.createEntityState('user-1', 'entity-1', {
+        name: '外傷',
+        sceneId: null,
+        costumeNote: null,
+        costumeRefId: null,
+        conditionNote: null,
+        hairNote: null,
+        expressionDefault: 'neutral',
+        extraNote: null,
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+  });
+
+  it('既存状態のnoteだけを更新しても追加フィールドを保持する', async () => {
+    const { service, sceneRepository, entityReader } = createService();
+    entityReader.addEntity(buildEntity({ id: 'entity-1', workId: 'work-1' }));
+    const created = await service.createEntityState('user-1', 'entity-1', {
+      name: '外傷',
+      description: '左頬に傷がある',
+      sceneId: null,
+      costumeNote: null,
+      costumeRefId: null,
+      conditionNote: null,
+      hairNote: null,
+      expressionDefault: 'neutral',
+      extraNote: null,
+    });
+
+    const updated = await service.updateEntityState('user-1', 'entity-1', created.id, {
+      costumeNote: '破れた上着',
+    });
+
+    expect(updated).toMatchObject({
+      name: '外傷',
+      description: '左頬に傷がある',
+      costumeNote: '破れた上着',
+    });
+    expect(await sceneRepository.findEntityStatesByEntityIdAndUserId('entity-1')).toHaveLength(1);
+  });
+
+  it('legacy note-only stateを状態名と自由入力のPATCHでvariant化する場合にVALIDATION_ERRORになる', async () => {
+    const { service, entityReader } = createService();
+    entityReader.addEntity(buildEntity({ id: 'entity-1', workId: 'work-1' }));
+    const legacyState = await service.createEntityState('user-1', 'entity-1', {
+      sceneId: null,
+      costumeNote: '黒のタクティカルスーツ',
+      costumeRefId: null,
+      conditionNote: null,
+      hairNote: null,
+      expressionDefault: 'neutral',
+      extraNote: null,
+    });
+
+    await expect(
+      service.updateEntityState('user-1', 'entity-1', legacyState.id, {
+        name: '外傷',
+        description: '左頬に傷がある',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
   });
 
   it('entity_stateのSceneが別作品の場合にVALIDATION_ERRORになる', async () => {

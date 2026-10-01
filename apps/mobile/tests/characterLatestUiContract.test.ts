@@ -19,7 +19,7 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
     );
   });
 
-  it('renders list, name, type, import, description/save, and references in order', () => {
+  it('renders list, name, type, import and integrated details/save before references', () => {
     const source = readSource('src/screens/CharactersScreen.tsx');
     const renderSource = source.slice(source.indexOf('  return (\n    <Screen'));
     const orderedMarkers = [
@@ -27,7 +27,7 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
       "label={t(language, 'name')}",
       '<SegmentedControl onChange={setEntityType}',
       "onLayout={recordSectionOffset('import')}",
-      'persistKey="characters:description-save"',
+      "editorMessage(language, 'additionalDetails')",
       'persistKey="characters:reference-set"'
     ];
     const positions = orderedMarkers.map((marker) => renderSource.indexOf(marker));
@@ -51,14 +51,14 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
   });
 
   it('uses the required Japanese import and free-description guidance', () => {
-    const translations = readSource('src/lib/i18nGenerated.ts');
+    const translations = readSource('src/lib/editorUiMessages.ts');
 
     expect(translations).toContain(
-      '手元のキャラクター画像をアップロードすると、その見た目を参考にLyraの漫画へ登場させられます。'
+      'アップロードした画像のキャラクターを漫画に登場させられます！'
     );
     expect(translations).toContain(
-      '選択肢にない特徴や、特別に守りたい条件を書いてください'
+      '選択肢にない特徴などを記入出来ます'
     );
-    expect(translations).toContain('すべての空欄を埋める必要はありません');
+    expect(translations).toContain('すべての項目を埋める必要はありません');
   });
 });

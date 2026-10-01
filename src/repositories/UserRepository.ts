@@ -15,7 +15,6 @@ export interface UserRepository {
   findByEmail(email: string): Promise<AuthenticatedUser | null>;
   insertSupabaseUser(supabaseId: string, email: string): Promise<AuthenticatedUser>;
   updateEmail(supabaseId: string, email: string): Promise<AuthenticatedUser>;
-  linkSupabaseIdByEmail(email: string, supabaseId: string): Promise<AuthenticatedUser>;
 }
 
 export class PostgresUserRepository implements UserRepository {
@@ -54,11 +53,13 @@ export class PostgresUserRepository implements UserRepository {
       `
       INSERT INTO users (supabase_id, email, plan_code)
       VALUES ($1, $2, 'free')
+      ON CONFLICT DO NOTHING
       RETURNING id, supabase_id, email, display_name, plan_code
       `,
       [supabaseId, email],
     );
 
+    if (result.rows[0] === undefined) throw Object.assign(new Error('Concurrent user provisioning conflict'), { code: '23505' });
     return mapUserRow(result.rows[0]);
   }
 
@@ -78,22 +79,6 @@ export class PostgresUserRepository implements UserRepository {
     return mapUserRow(result.rows[0]);
   }
 
-  public async linkSupabaseIdByEmail(email: string, supabaseId: string): Promise<AuthenticatedUser> {
-    const result = await this.client.query<UserRow>(
-      `
-      UPDATE users
-      SET supabase_id = $2,
-          email = $1,
-          updated_at = NOW()
-      WHERE lower(email) = lower($1)
-        AND account_deletion_started_at IS NULL
-      RETURNING id, supabase_id, email, display_name, plan_code
-      `,
-      [email, supabaseId],
-    );
-
-    return mapUserRow(result.rows[0]);
-  }
 }
 
 export function isUniqueViolation(error: unknown): boolean {

@@ -1,4 +1,5 @@
-﻿import { describe, expect, it } from 'vitest';
+import { env } from '../../../src/lib/env.js';
+import { describe, expect, it } from 'vitest';
 import type { MiddlewareHandler } from 'hono';
 import type { AuthenticatedUser } from '../../../src/domain/types/user.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
@@ -18,6 +19,14 @@ const testUser: AuthenticatedUser = {
 };
 
 describe('createMeRoutes', () => {
+  it('通知の受付能力は信頼したruntimeだけが有効化できる', async () => {
+    for (const enabled of [false, true]) {
+      const routes = createMeRoutes({authMiddleware: buildAuthMiddleware(testUser), rateLimitMiddleware: buildPassThroughMiddleware(), pushNotificationsEnabled: enabled});
+      const response = await routes.request('/me?push_notifications=true');
+      expect((await response.json()).capabilities.push_notifications).toBe(enabled);
+    }
+  });
+
   it('ログイン中ユーザーと法人ワークスペース概要を返す', async () => {
     const organizationService = new FakeOrganizationService();
     const routes = createMeRoutes({
@@ -30,9 +39,17 @@ describe('createMeRoutes', () => {
     const response = await routes.request('/me');
 
     expect(response.status).toBe(200);
-    const payload = await response.json();
+    const payload = currentSessionSchema.parse(await response.json());
     expect(currentSessionSchema.safeParse(payload).success).toBe(true);
     expect(payload).toEqual({
+      capabilities: {
+        generation_quotes: false,
+        push_notifications: false,
+        web_image_delivery: false,
+        entity_state_reference_generation: false,
+        episode_state_autofill_v1: false,
+        entity_state_preview_credit_cost: 1,
+      },
       user: {
         id: 'user-1',
         email: 'owner@example.com',
@@ -70,11 +87,19 @@ describe('createMeRoutes', () => {
     });
 
     const response = await routes.request('/me');
-    const payload = await response.json();
+    const payload = currentSessionSchema.parse(await response.json());
 
     expect(response.status).toBe(200);
     expect(currentSessionSchema.safeParse(payload).success).toBe(true);
     expect(payload).toEqual({
+      capabilities: {
+        generation_quotes: false,
+        push_notifications: false,
+        web_image_delivery: false,
+        entity_state_reference_generation: false,
+        episode_state_autofill_v1: false,
+        entity_state_preview_credit_cost: 1,
+      },
       user: {
         id: 'user-1',
         email: 'owner@example.com',
@@ -83,6 +108,36 @@ describe('createMeRoutes', () => {
       },
       personal_credits: null,
       organizations: [],
+    });
+  });
+
+  it('状態受付の能力が未設定ならOFFとserver料金だけを返す', async () => {
+    const routes = createMeRoutes({ authMiddleware: buildAuthMiddleware(testUser), rateLimitMiddleware: buildPassThroughMiddleware() });
+    const response = await routes.request('/me');
+    const payload = currentSessionSchema.parse(await response.json());
+    expect(payload.capabilities).toEqual({
+      generation_quotes: false,
+        push_notifications: false,
+        web_image_delivery: false,
+      entity_state_reference_generation: false,
+      episode_state_autofill_v1: false,
+      entity_state_preview_credit_cost: 1,
+    });
+  });
+
+  it('信頼したruntimeの受付flagを返しクライアントqueryでは有効化しない', async () => {
+    const routes = createMeRoutes({
+      authMiddleware: buildAuthMiddleware(testUser), rateLimitMiddleware: buildPassThroughMiddleware(),
+      stateCapabilities: { referenceGeneration: true, storyAutofill: false },
+    });
+    const response = await routes.request('/me?episode_state_autofill_v1=true');
+    expect(currentSessionSchema.parse(await response.json()).capabilities).toEqual({
+      generation_quotes: false,
+        push_notifications: false,
+        web_image_delivery: false,
+      entity_state_reference_generation: true,
+      episode_state_autofill_v1: false,
+      entity_state_preview_credit_cost: 1,
     });
   });
 
@@ -208,3 +263,15 @@ class FakeOrganizationService {
     ];
   }
 }
+
+
+it('Web配信能力は検証済みclientとserver許可リストだけで決まる', async () => {
+ const before=env.WEB_IMAGE_DELIVERY_COGNITO_CLIENT_IDS;env.WEB_IMAGE_DELIVERY_COGNITO_CLIENT_IDS='web-client';
+ try {
+  for (const clientId of [undefined,'mobile-client','web-client']) {
+   const routes=createMeRoutes({authMiddleware:async(c,next)=>{c.set('user',testUser);if(clientId!==undefined)c.set('authenticatedClientId',clientId);await next();},rateLimitMiddleware:buildPassThroughMiddleware()});
+   const payload=await (await routes.request('/me?platform=web',{headers:{'X-Client-Id':'web-client'}})).json() as {capabilities:{web_image_delivery:boolean}};
+   expect(payload.capabilities.web_image_delivery).toBe(clientId==='web-client');
+  }
+ } finally {env.WEB_IMAGE_DELIVERY_COGNITO_CLIENT_IDS=before;}
+});

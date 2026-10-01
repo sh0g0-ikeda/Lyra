@@ -104,10 +104,10 @@ function toServiceRequest(
       operation: { type: 'append' },
     };
   }
-  if (body.operation.type === 'delete') {
+  if (body.operation.type === 'delete' || body.operation.type === 'insert_after') {
     return {
       expectedPanelIds: [...body.expected_panel_ids],
-      operation: { type: 'delete', panelId: body.operation.panel_id },
+      operation: { type: body.operation.type, panelId: body.operation.panel_id },
     };
   }
   return {

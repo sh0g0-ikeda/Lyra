@@ -1,0 +1,7 @@
+# Only run against authorized staging fixtures with the quote capability enabled.
+- extendedWaitUntil:
+    visible:
+      id: page-quote-accept
+    timeout: 30000
+- tapOn:
+    id: page-quote-accept

@@ -214,6 +214,9 @@ describe('billing routes', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
+      subscription_store: null,
+      scheduled_plan_code: null,
+      scheduled_plan_effective_at: null,
       monthly_credits: 25,
       purchased_credits: 15,
       total_credits: 40,

@@ -3,10 +3,14 @@ import { StyleSheet, Text, View } from 'react-native';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import type { UiLanguage } from '@/domain/types';
+import { billingPlanMessage } from '@/lib/billingPlanMessages';
 import { t } from '@/lib/i18n';
 
 interface PersonalBillingSummaryProps {
   cancelAtPeriodEnd: boolean;
+  currentPlan?: 'free' | 'standard' | 'premium';
+  scheduledPlan?: 'standard' | 'premium' | null;
+  scheduledPlanEffectiveAt?: string | null;
   currentPeriodEnd: string | null;
   language: UiLanguage;
   onManage: () => void;
@@ -14,12 +18,19 @@ interface PersonalBillingSummaryProps {
 
 export function PersonalBillingSummary({
   cancelAtPeriodEnd,
+  currentPlan, scheduledPlan, scheduledPlanEffectiveAt,
   currentPeriodEnd,
   language,
   onManage
 }: PersonalBillingSummaryProps): React.JSX.Element {
   return (
     <View style={styles.root}>
+      {currentPlan === undefined ? null : <View style={styles.row}><Text style={styles.label}>{billingPlanMessage(language, 'current')}</Text><Text style={styles.value}>{billingPlanMessage(language, currentPlan)}</Text></View>}
+      {scheduledPlan == null ? null : <>
+        <View style={styles.row}><Text style={styles.label}>{billingPlanMessage(language, 'scheduled')}</Text><Text style={styles.value}>{billingPlanMessage(language, scheduledPlan)}</Text></View>
+        <View style={styles.row}><Text style={styles.label}>{billingPlanMessage(language, 'effective')}</Text><Text style={styles.value}>{scheduledPlanEffectiveAt == null ? billingPlanMessage(language, 'unknownDate') : formatBillingDate(scheduledPlanEffectiveAt, language)}</Text></View>
+        <Text style={styles.caption}>{billingPlanMessage(language, 'scheduledNotice', { plan: billingPlanMessage(language, scheduledPlan) })}</Text>
+      </>}
       <View style={styles.row}>
         <Text style={styles.label}>{t(language, "generated.components.PersonalBillingSummary.next.renewal.388f0683")}</Text>
         <Text style={styles.value}>{formatBillingDate(currentPeriodEnd, language)}</Text>

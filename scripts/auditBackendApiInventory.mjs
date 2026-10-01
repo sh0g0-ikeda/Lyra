@@ -26,6 +26,8 @@ const routeMethods = new Set([
 
 const routeMountPrefixes = new Map([
   ['accountDeletion.ts', '/api'],
+  ['pushTokens.ts', '/api'],
+  ['googleIdentityLinks.ts', '/api/auth'],
   ['adminOrganizations.ts', '/api'],
   ['aiContentReports.ts', '/api'],
   ['organizationSafetyReports.ts', '/api'],
@@ -44,6 +46,7 @@ const routeMountPrefixes = new Map([
   ['organizations.ts', '/api'],
   ['pages.ts', '/api'],
   ['pagePanelStructure.ts', '/api'],
+  ['generationQuotes.ts', '/api'],
   ['panelEntityAssignments.ts', '/api'],
   ['panelFrames.ts', '/api'],
   ['panels.ts', '/api'],
@@ -53,6 +56,9 @@ const routeMountPrefixes = new Map([
 ]);
 
 const explicitResponseClassifications = new Map([
+  ['GET /api/web/exports/:jobId/download', { response: 'Redirect', detail: 'Verified Cognito Web client and scoped export authorization; short-lived artifact download redirect' }],
+  ['DELETE /api/push-tokens/:installationId', { response: 'Empty', detail: 'Authenticated installation removal (204)' }],
+  ['GET /api/auth/identity-links/google/callback', { response: 'Redirect', detail: 'Single-use state-bound callback; fixed return URI with opaque receipt ID only' }],
   [
     'GET /healthz',
     {

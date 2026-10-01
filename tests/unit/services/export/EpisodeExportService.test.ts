@@ -280,3 +280,16 @@ function buildJob(overrides: Partial<EpisodeExportJob> = {}): EpisodeExportJob {
     ...overrides,
   };
 }
+
+describe('export image provenance',()=>{
+ it('Web限定画像を含む完成済みartifactもMobileへ署名しない',async()=>{
+  const repository=new FakeRepository();repository.job=buildJob({status:'completed',artifactS3Key:`exports/${organizationId}/episodes/${episodeId}/${jobId}.pdf`,artifactMimeType:'application/pdf',artifactSizeBytes:1024,expiresAt:new Date(now.getTime()+120000)});
+  repository.job.pageSnapshot[0]!.imageModel='hy4-preview';
+  const signer=new FakeDownloadSigner();const service=createService(repository,new FakeDispatcher(),signer);
+  expect((await service.getExport(userId,jobId,organizationId)).downloadReady).toBe(false);
+  await expect(service.createDownload(userId,jobId,organizationId)).rejects.toThrow();expect(signer.inputs).toHaveLength(0);
+  await expect(service.createDownload(userId,jobId,organizationId,'authorized_web')).resolves.toHaveProperty('url');
+  repository.job.pageSnapshot[0]!.imageModel='unregistered';signer.inputs=[];
+  await expect(service.createDownload(userId,jobId,organizationId,'authorized_web')).rejects.toThrow();expect(signer.inputs).toHaveLength(0);
+ });
+});

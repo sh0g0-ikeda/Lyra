@@ -1,3 +1,6 @@
+import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStatus } from './googleIdentityLink';
+import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
+import { pageImageDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
 import type {
   BalloonRecord,
   BillingBalanceRecord,
@@ -77,6 +80,19 @@ export class LyraApiClient {
     this.tokenProvider = tokenProvider;
     const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL;
     this.baseUrl = typeof configuredBaseUrl === 'string' ? configuredBaseUrl : '';
+  }
+
+  public async getGoogleAuthCapabilities(): Promise<GoogleAuthCapabilities> {
+    return googleAuthCapabilitiesSchema.parse(await this.request('/api/auth/capabilities'));
+  }
+
+  public async startGoogleIdentityLink(body: { platform: 'mobile' | 'web'; request_key: string }): Promise<GoogleLinkStart> {
+    return googleLinkStartSchema.parse(await this.request('/api/auth/identity-links/google/start', { method: 'POST', body: googleLinkStartBodySchema.parse(body) }));
+  }
+
+  public async getGoogleIdentityLinkStatus(id: string): Promise<GoogleLinkStatus> {
+    const parsedId = googleLinkStartSchema.shape.challenge_id.parse(id);
+    return googleLinkStatusSchema.parse(await this.request(`/api/auth/identity-links/google/${parsedId}`));
   }
 
   public getOrganizationWorkspaces(): Promise<{ organizations: OrganizationWorkspaceRecord[] }> {
@@ -446,8 +462,15 @@ export class LyraApiClient {
     });
   }
 
-  public generatePage(pageId: string, organizationId?: string | null): Promise<{ job_id: string }> {
-    return this.request(`/api/pages/${pageId}/generate${organizationQuery(organizationId)}`, { method: 'POST' });
+  public generatePage(
+    pageId: string,
+    organizationId?: string | null,
+    renderStyle?: 'monochrome',
+  ): Promise<{ job_id: string }> {
+    return this.request(`/api/pages/${pageId}/generate${organizationQuery(organizationId)}`, {
+      method: 'POST',
+      body: renderStyle === 'monochrome' ? { render_style: 'monochrome' } : undefined,
+    });
   }
 
   public confirmPage(pageId: string, organizationId?: string | null): Promise<void> {
@@ -547,14 +570,14 @@ export class LyraApiClient {
     return this.request(`/api/compositions${query.length > 0 ? `?${query}` : ''}`);
   }
 
-  public getJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
-    return this.request(`/api/jobs/${jobId}${organizationQuery(organizationId)}`);
+  public async getJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
+    return normalizeGenerationJobRecord(await this.request<GenerationJobWireRecord>(`/api/jobs/${jobId}${organizationQuery(organizationId)}`));
   }
 
-  public cancelJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
-    return this.request(`/api/jobs/${jobId}/cancel${organizationQuery(organizationId)}`, {
+  public async cancelJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
+    return normalizeGenerationJobRecord(await this.request<GenerationJobWireRecord>(`/api/jobs/${jobId}/cancel${organizationQuery(organizationId)}`, {
       method: 'POST',
-    });
+    }));
   }
 
   public getBalance(): Promise<BillingBalanceRecord> {
@@ -583,9 +606,9 @@ export class LyraApiClient {
     return this.request('/api/billing/customer-portal', { method: 'POST', timeoutMs: billingRedirectTimeoutMs });
   }
 
-  public async exportPageImage(pageId: string, organizationId?: string | null): Promise<BlobResponse> {
+  public async exportPageImage(pageId: string, organizationId?: string | null, image?: ImageDeliveryMetadata | null, webDeliveryEnabled = false): Promise<BlobResponse> {
     const response = await fetch(
-      this.toUrl(`/api/pages/${pageId}/export-image${organizationQuery(organizationId)}`),
+      this.toUrl(`${pageImageDeliveryPath(pageId, image, webDeliveryEnabled)}${organizationQuery(organizationId)}`),
       this.buildRequest({ method: 'GET' }),
     );
     if (!response.ok) {

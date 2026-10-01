@@ -62,13 +62,14 @@ describe('PostgresEpisodePlanPersistenceRepository', () => {
       async () => undefined,
     )).rejects.toBeInstanceOf(NotFoundError);
 
-    expect(client.queries.slice(0, 7).map((query) => {
+    expect(client.queries.slice(0, 8).map((query) => {
       if (query.includes('FOR UPDATE OF works, chapters, episodes')) return 'episode';
       if (query.includes('FROM scenes')) return 'scenes';
       if (query.includes('FROM pages') && !query.includes('INNER JOIN')) return 'pages';
       if (query.includes('FROM panels')) return 'panels';
       if (query.includes('FROM panel_frames')) return 'frames';
       if (query.includes('FROM entities')) return 'entities';
+      if (query.includes('FROM reference_sets')) return 'reference_sets';
       if (query.includes('FROM entity_states')) return 'entity_states';
       return 'unknown';
     })).toEqual([
@@ -78,6 +79,7 @@ describe('PostgresEpisodePlanPersistenceRepository', () => {
       'panels',
       'frames',
       'entities',
+      'reference_sets',
       'entity_states',
     ]);
   });

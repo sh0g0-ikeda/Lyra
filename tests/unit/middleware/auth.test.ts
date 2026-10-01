@@ -1,7 +1,8 @@
+import { requireAuthorizedWebImageClient } from '../../../src/domain/generation/ImageAccessPolicy.js';
 import { Hono } from 'hono';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
-import { UnauthorizedError } from '../../../src/domain/errors/index.js';
+import { AppError, UnauthorizedError } from '../../../src/domain/errors/index.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
 import { createAuthMiddleware, type CognitoVerifierConfig } from '../../../src/middleware/auth.js';
 import type {
@@ -70,6 +71,50 @@ describe('createAuthMiddleware Cognito mode', () => {
     });
 
     expect(response.status).toBe(401);
+  });
+
+  it('Cognitoが署名したGoogleユーザー名を外部IdPとしてprovisioningへ渡す', async () => {
+    const fixture = await createCognitoFixture();
+    const provisioningService = new FakeUserProvisioningService();
+    const app = createProtectedApp(provisioningService, fixture.jwks);
+    const token = await fixture.signToken({ username: 'Google_123456' });
+
+    const response = await app.request('/protected', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(provisioningService.claims).toEqual({
+      sub: 'cognito-user-1',
+      email: 'user@example.com',
+      identityProvider: 'federated',
+    });
+  });
+
+  it('Cognito ID tokenのGoogle identitiesを外部IdPとしてprovisioningへ渡す', async () => {
+    const fixture = await createCognitoFixture();
+    const provisioningService = new FakeUserProvisioningService();
+    const app = createProtectedApp(provisioningService, fixture.jwks, {
+      ...cognitoConfig,
+      tokenUse: 'id',
+      requiredScopes: [],
+    });
+    const token = await fixture.signToken({
+      aud: cognitoConfig.clientId,
+      token_use: 'id',
+      identities: [{ providerName: 'Google', userId: 'google-user-1' }],
+    });
+
+    const response = await app.request('/protected', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(provisioningService.claims).toEqual({
+      sub: 'cognito-user-1',
+      email: 'user@example.com',
+      identityProvider: 'federated',
+    });
   });
 
   it('email_verified が欠けている token は拒否する', async () => {
@@ -232,6 +277,34 @@ function createProtectedApp(
   return app;
 }
 
+describe('verified identity-link authentication proof', () => {
+  it('exposes only verified ID-token proof internally, without passing it to provisioning', async () => {
+    const fixture = await createCognitoFixture();
+    const provisioning = new FakeUserProvisioningService();
+    const app = new Hono<AppEnv>();
+    app.use('*', createAuthMiddleware(provisioning, { authProvider: 'cognito', enableDevBypass: false,
+      cognito: { ...cognitoConfig, tokenUse: 'id', requiredGroups: [], requiredScopes: [] }, cognitoJwks: fixture.jwks }));
+    app.get('/', (c) => c.json(c.get('cognitoIdentity') ?? null));
+    const authTime = Math.floor(Date.now() / 1000);
+    const token = await fixture.signToken({ token_use: 'id', aud: cognitoConfig.clientId, 'cognito:username': 'native-username', auth_time: authTime });
+    const response = await app.request('/', { headers: { Authorization: `Bearer ${token}` } });
+    const result = await response.json() as Record<string, unknown>;
+    expect(result).toMatchObject({ subject: 'cognito-user-1', username: 'native-username', email: 'user@example.com', authTime });
+    expect(result.tokenFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+    expect(provisioning.claims).toEqual({ sub: 'cognito-user-1', email: 'user@example.com' });
+  });
+  it('ordinary ID tokens lacking recent-auth claims continue to authenticate without link proof', async () => {
+    const fixture = await createCognitoFixture();
+    const app = new Hono<AppEnv>();
+    app.use('*', createAuthMiddleware(new FakeUserProvisioningService(), { authProvider: 'cognito', enableDevBypass: false,
+      cognito: { ...cognitoConfig, tokenUse: 'id', requiredGroups: [], requiredScopes: [] }, cognitoJwks: fixture.jwks }));
+    app.get('/', (c) => c.json(c.get('cognitoIdentity') ?? null));
+    const token = await fixture.signToken({ token_use: 'id', aud: cognitoConfig.clientId });
+    const response = await app.request('/', { headers: { Authorization: `Bearer ${token}` } });
+    expect(response.status).toBe(200);expect(await response.json()).toBeNull();
+  });
+});
+
 async function createCognitoFixture(): Promise<{
   jwks: ReturnType<typeof createLocalJWKSet>;
   signToken: (overrides?: Record<string, unknown>) => Promise<string>;
@@ -270,3 +343,33 @@ async function createCognitoFixture(): Promise<{
 function removeUndefinedValues(input: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
+
+
+describe('署名済みclient IDによるWeb画像配信', () => {
+  it.each(['id', 'access'] as const)('検証済み%s tokenからだけclient IDを抽出する', async (tokenUse) => {
+    const fixture = await createCognitoFixture();
+    const provisioning = new FakeUserProvisioningService();
+    const app = new Hono<AppEnv>();
+    app.onError((error,c) => error instanceof AppError ? c.json({code:error.code},error.statusCode) : c.json({},500));
+    app.use('*', createAuthMiddleware(provisioning, {authProvider:'cognito',enableDevBypass:false,
+      cognito:{...cognitoConfig,tokenUse,clientIds:['web-client'],requiredScopes:[],requiredGroups:[]},cognitoJwks:fixture.jwks}));
+    app.get('/', c => { requireAuthorizedWebImageClient(c.get('authenticatedClientId'), ['web-client']); return c.json({client:c.get('authenticatedClientId')}); });
+    const valid=await fixture.signToken({token_use:tokenUse,client_id:'web-client',aud:'web-client'});
+    expect((await app.request('/',{headers:{Authorization:`Bearer ${valid}`}})).status).toBe(200);
+    const mobile=await fixture.signToken({token_use:tokenUse,client_id:cognitoConfig.clientId,aud:cognitoConfig.clientId});
+    expect((await app.request('/',{headers:{Authorization:`Bearer ${mobile}`,'X-Client-Platform':'web','X-Client-Id':'web-client'}})).status).toBe(403);
+    const unknown=await fixture.signToken({token_use:tokenUse,client_id:'unknown',aud:'unknown'});
+    expect((await app.request('/',{headers:{Authorization:`Bearer ${unknown}`}})).status).toBe(401);
+    expect((await app.request('/',{headers:{'X-Client-Id':'web-client'}})).status).toBe(401);
+    expect(provisioning.claims).not.toHaveProperty('authenticatedClientId');
+    expect(provisioning.claims).not.toHaveProperty('verifiedClientId');
+  });
+  it('Supabaseのclient申告はWeb配信権限に昇格しない', async () => {
+    const secret='test-only-supabase-secret';const app=new Hono<AppEnv>();
+    app.onError((error,c) => error instanceof AppError ? c.json({code:error.code},error.statusCode) : c.json({},500));
+    app.use('*',createAuthMiddleware(new FakeUserProvisioningService(),{authProvider:'supabase',jwtSecret:secret,enableDevBypass:false}));
+    app.get('/',c=>{requireAuthorizedWebImageClient(c.get('authenticatedClientId'),['web-client']);return c.json({ok:true});});
+    const token=await new SignJWT({sub:'user',email:'user@example.com',client_id:'web-client',aud:'web-client'}).setProtectedHeader({alg:'HS256'}).setExpirationTime('1h').sign(new TextEncoder().encode(secret));
+    expect((await app.request('/',{headers:{Authorization:`Bearer ${token}`}})).status).toBe(403);
+  });
+});

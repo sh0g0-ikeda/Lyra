@@ -1,3 +1,4 @@
+import { parseEpisodeExportQueueMessage } from '../src/domain/episodeExportQueueMessage.js';
 import { z } from 'zod';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import { resolveWorkerDependencies, type WorkerDependencies } from './dependencies.js';
@@ -62,8 +63,10 @@ export async function handleGenerationQueue(
     if (
       parsedMessage.job_type !== 'page_generate' &&
       parsedMessage.job_type !== 'entity_generate' &&
+      parsedMessage.job_type !== 'entity_import_analysis' &&
       parsedMessage.job_type !== 'episode_story_autofill' &&
-      parsedMessage.job_type !== 'episode_page_skeleton'
+      parsedMessage.job_type !== 'episode_page_skeleton' &&
+      parsedMessage.job_type !== 'episode_export'
     ) {
       // Unknown job types cannot become valid through SQS retry, so acknowledge and report them.
       results.push({
@@ -76,7 +79,19 @@ export async function handleGenerationQueue(
     }
 
     try {
-      const result = parsedMessage.job_type === 'page_generate'
+      if (parsedMessage.job_type === 'episode_export' && dependencies.episodeExportWorkerService === undefined) {
+        addBatchItemFailure(batchItemFailures, record.messageId);
+        results.push({ messageId: record.messageId ?? null, jobId: parsedMessage.job_id, status: 'retry', reason: 'Episode export runtime is unavailable' });
+        continue;
+      }
+      if (parsedMessage.job_type === 'entity_import_analysis' && dependencies.quotedImportWorkerService === undefined) {
+        throw new Error('Quoted import worker is not configured');
+      }
+      const result = parsedMessage.job_type === 'episode_export'
+        ? await dependencies.episodeExportWorkerService!.processJob(parsedMessage.job_id)
+        : parsedMessage.job_type === 'entity_import_analysis'
+        ? await dependencies.quotedImportWorkerService!.processJob(parsedMessage.job_id)
+        : parsedMessage.job_type === 'page_generate'
         ? await dependencies.pageGenerationWorkerService.processJob(parsedMessage.job_id)
         : parsedMessage.job_type === 'entity_generate'
           ? await dependencies.entityGenerationWorkerService.processJob(parsedMessage.job_id)
@@ -89,7 +104,7 @@ export async function handleGenerationQueue(
           messageId: record.messageId ?? null,
           jobId: parsedMessage.job_id,
           status: 'retry',
-          reason: result.reason ?? 'Worker requested retry',
+          reason: parsedMessage.job_type === 'episode_export' ? 'Episode export worker requested retry' : result.reason ?? 'Worker requested retry',
         });
         continue;
       }
@@ -108,7 +123,7 @@ export async function handleGenerationQueue(
         messageId: record.messageId ?? null,
         jobId: parsedMessage.job_id,
         status: 'failed',
-        reason: sanitizePersistedErrorMessage(error, 'Worker processing failed'),
+        reason: parsedMessage.job_type === 'episode_export' ? 'Episode export worker processing failed' : sanitizePersistedErrorMessage(error, 'Worker processing failed'),
       });
     }
   }
@@ -135,6 +150,10 @@ function addBatchItemFailure(
 function parseQueueMessage(body: string): z.infer<typeof queueMessageSchema> | null {
   try {
     const payload = JSON.parse(body) as unknown;
+    if (typeof payload === 'object' && payload !== null && ('export_job_id' in payload || ('job_type' in payload && payload.job_type === 'episode_export'))) {
+      const jobId = parseEpisodeExportQueueMessage(payload);
+      return jobId === null ? null : { job_id: jobId, job_type: 'episode_export' };
+    }
     const parsed = queueMessageSchema.safeParse(payload);
     return parsed.success ? parsed.data : null;
   } catch {

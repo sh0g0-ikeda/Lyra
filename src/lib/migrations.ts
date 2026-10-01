@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ConfigurationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from './db.js';
+import { reconcileProductionLineage } from './migrationLineage.js';
 
 export interface MigrationRunnerPort extends DatabaseClient, TransactionRunner {}
 
@@ -17,6 +18,8 @@ export async function runPendingMigrations(
     migrationLockPollMs?: number;
     migrationLockMaxAttempts?: number;
     migrationLockStaleSeconds?: number;
+    allowProductionLineageBridge?: boolean;
+    accountDeletionIdentityHashSecret?: string;
   },
 ): Promise<string[]> {
   const migrationsDir = options?.migrationsDir ?? join(process.cwd(), 'migrations');
@@ -41,7 +44,7 @@ export async function runPendingMigrations(
   });
 
   try {
-    return await runPendingMigrationsWithLock(db, migrationsDir);
+    return await runPendingMigrationsWithLock(db, migrationsDir, options);
   } finally {
     await releaseMigrationLock(db);
   }
@@ -50,6 +53,7 @@ export async function runPendingMigrations(
 async function runPendingMigrationsWithLock(
   db: MigrationRunnerPort,
   migrationsDir: string,
+  lineageOptions?: { allowProductionLineageBridge?: boolean; accountDeletionIdentityHashSecret?: string },
 ): Promise<string[]> {
   const appliedResult = await db.query<{ filename: string }>('SELECT filename FROM schema_migrations');
   const appliedFilenames = new Set(appliedResult.rows.map((row) => row.filename));
@@ -57,7 +61,9 @@ async function runPendingMigrationsWithLock(
     .filter((filename) => filename.endsWith('.sql'))
     .sort();
 
-  const appliedNow: string[] = [];
+  const appliedNow = await reconcileProductionLineage(
+    db, { ...lineageOptions, migrationsDir }, appliedFilenames, new Set(migrationFilenames),
+  );
 
   for (const filename of migrationFilenames) {
     if (appliedFilenames.has(filename)) {

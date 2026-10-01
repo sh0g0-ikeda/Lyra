@@ -21,6 +21,10 @@ WORKDIR /app/apps/web
 COPY apps/web/package.json apps/web/package-lock.json ./
 RUN npm ci
 COPY apps/web ./
+# Web consumes canonical schemas outside apps/web; match the reviewed local
+# dependency resolution without copying backend code into the browser bundle.
+COPY packages /app/packages
+COPY --from=deps /app/node_modules /app/node_modules
 ARG VITE_API_BASE_URL=
 ARG VITE_COGNITO_DOMAIN=https://ap-northeast-1wizlzlgmm.auth.ap-northeast-1.amazoncognito.com
 ARG VITE_COGNITO_CLIENT_ID=6b2h941o888u2l7ejhv5jog94

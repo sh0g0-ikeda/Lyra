@@ -1,6 +1,7 @@
 import {
   ConfigurationError,
   NotFoundError,
+  ResourceStaleError,
   ValidationError,
 } from '../../domain/errors/index.js';
 import type {
@@ -120,6 +121,10 @@ export class StoryService implements StoryServicePort {
 
     const work = await this.storyRepository.updateWork(workId, userId, input, organizationId);
     if (work === null) {
+      if (input.expectedUpdatedAt !== undefined &&
+          await this.storyRepository.findWorkByIdAndUserId(workId, userId, organizationId) !== null) {
+        throw new ResourceStaleError();
+      }
       throw new NotFoundError('Work not found');
     }
 
@@ -158,6 +163,10 @@ export class StoryService implements StoryServicePort {
 
     const chapter = await this.storyRepository.updateChapter(chapterId, userId, input, organizationId);
     if (chapter === null) {
+      if (input.expectedUpdatedAt !== undefined &&
+          await this.storyRepository.findChapterByIdAndUserId(chapterId, userId, organizationId) !== null) {
+        throw new ResourceStaleError();
+      }
       throw new NotFoundError('Chapter not found');
     }
 
@@ -215,9 +224,26 @@ export class StoryService implements StoryServicePort {
       const chapter = await this.ensureChapterOwnedByUser(userId, currentEpisode.chapterId, organizationId);
       await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved, organizationId);
     }
+    if (input.startingEntityStates !== undefined) {
+      const valid = await this.storyRepository.validateEpisodeStartingEntityStates?.(
+        episodeId,
+        userId,
+        input.startingEntityStates,
+        organizationId,
+      );
+      if (valid !== true) {
+        throw new ValidationError(
+          'Each starting entity state must belong to the episode work and have a confirmed reference image',
+        );
+      }
+    }
 
     const episode = await this.storyRepository.updateEpisode(episodeId, userId, input, organizationId);
     if (episode === null) {
+      if (input.expectedUpdatedAt !== undefined &&
+          await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId, organizationId) !== null) {
+        throw new ResourceStaleError();
+      }
       throw new NotFoundError('Episode not found');
     }
 

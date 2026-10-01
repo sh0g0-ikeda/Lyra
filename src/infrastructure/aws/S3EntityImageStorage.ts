@@ -1,9 +1,12 @@
-import { CopyObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { CopyObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'node:crypto';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { buildEntityStateReferenceImageKey } from '../../domain/state/StateReferenceImageKey.js';
 import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
 import { SAVED_IMAGE_CACHE_CONTROL, SESSION_IMAGE_CACHE_CONTROL } from './S3ImageCacheControl.js';
 import { buildStoredImageUrl } from './S3StoredImageUrl.js';
+
+const STATE_REFERENCE_COPY_TIMEOUT_MS = 15_000;
 
 export interface StoredEntityImage {
   s3Key: string;
@@ -29,10 +32,17 @@ export interface FinalizeEntityReferenceImageInput {
   sourceS3Key: string;
 }
 
+export interface FinalizeEntityStateReferenceImageInput extends FinalizeEntityReferenceImageInput {
+  stateId: string;
+}
+
 export interface EntityImageStoragePort {
   storeImportedImage(input: StoreImportedEntityImageInput): Promise<StoredEntityImage>;
   storeGeneratedCandidate(input: StoreGeneratedEntityCandidateInput): Promise<StoredEntityImage>;
   finalizeReferenceImage(input: FinalizeEntityReferenceImageInput): Promise<StoredEntityImage>;
+  finalizeStateReferenceImage?(
+    input: FinalizeEntityStateReferenceImageInput,
+  ): Promise<StoredEntityImage>;
 }
 
 export interface S3EntityImageStorageOptions {
@@ -41,13 +51,14 @@ export interface S3EntityImageStorageOptions {
 }
 
 interface S3EntityImageStorageClient {
-  send(command: PutObjectCommand | CopyObjectCommand): Promise<unknown>;
+  send(command: PutObjectCommand | CopyObjectCommand, options?: { abortSignal: AbortSignal }): Promise<unknown>;
 }
 
 export class S3EntityImageStorage implements EntityImageStoragePort {
   public constructor(
     private readonly client: S3EntityImageStorageClient,
     private readonly options: S3EntityImageStorageOptions,
+    private readonly stateReferenceCopyClient?: S3EntityImageStorageClient,
   ) {}
 
   public async storeImportedImage(input: StoreImportedEntityImageInput): Promise<StoredEntityImage> {
@@ -91,6 +102,48 @@ export class S3EntityImageStorage implements EntityImageStoragePort {
       throw new ConfigurationError(
         toSanitizedAwsErrorMessage(error, 'Failed to finalize entity reference image'),
       );
+    }
+
+    return {
+      s3Key: destinationKey,
+      cdnUrl: buildStoredImageUrl(this.options, destinationKey),
+    };
+  }
+
+  public async finalizeStateReferenceImage(
+    input: FinalizeEntityStateReferenceImageInput,
+  ): Promise<StoredEntityImage> {
+    const extension = readExtension(input.sourceS3Key);
+    const destinationKey = buildEntityStateReferenceImageKey(input);
+    // Design: only a single SDK attempt with a complete success response can
+    // settle this durable copy attempt. Timeout/abort is an ambiguous outcome,
+    // never proof that the remote write stopped. Keep ordinary copies unchanged.
+    const client = this.stateReferenceCopyClient;
+    if (client === undefined) {
+      throw new ConfigurationError('Single-attempt state reference storage is not configured');
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), STATE_REFERENCE_COPY_TIMEOUT_MS);
+    try {
+      const response = await client.send(
+        new CopyObjectCommand({
+          Bucket: this.options.bucketName,
+          Key: destinationKey,
+          CopySource: `${this.options.bucketName}/${input.sourceS3Key}`,
+          CacheControl: SAVED_IMAGE_CACHE_CONTROL,
+          MetadataDirective: 'REPLACE',
+          ContentType: extensionToMimeType(extension),
+          ServerSideEncryption: 'AES256',
+        }),
+        { abortSignal: controller.signal },
+      );
+      requireSingleAttemptCopySuccess(response);
+    } catch (error) {
+      throw new ConfigurationError(
+        toSanitizedAwsErrorMessage(error, 'Failed to finalize entity state reference image'),
+      );
+    } finally {
+      clearTimeout(timeout);
     }
 
     return {
@@ -196,4 +249,24 @@ function extensionToMimeType(extension: 'png' | 'jpeg' | 'webp'): string {
   }
 
   return 'image/png';
+}
+
+// Explicit constructor configuration wins over AWS_MAX_ATTEMPTS/profile defaults.
+export function createStateReferenceCopyClient(region?: string): S3Client {
+  return new S3Client({ ...(region === undefined ? {} : { region }), maxAttempts: 1 });
+}
+
+function requireSingleAttemptCopySuccess(response: unknown): void {
+  const result = asRecord(response);
+  const metadata = asRecord(result?.$metadata);
+  const copy = asRecord(result?.CopyObjectResult);
+  if (metadata?.attempts !== 1 || metadata.httpStatusCode !== 200
+    || typeof copy?.ETag !== 'string' || copy.ETag.length === 0) {
+    throw new ConfigurationError('State reference copy outcome is not a verified single-attempt success');
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown> : null;
 }

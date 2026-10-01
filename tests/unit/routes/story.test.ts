@@ -1,7 +1,7 @@
 ﻿import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../../src/app.js';
-import { ConflictError, ValidationError } from '../../../src/domain/errors/index.js';
+import { ConflictError, ResourceStaleError, ValidationError } from '../../../src/domain/errors/index.js';
 import { decodeWorkListCursor } from '../../../src/domain/pagination.js';
 import type { CreditBalanceSnapshot } from '../../../src/domain/types/credit.js';
 import type { AuthenticatedUser, SupabaseJwtClaims } from '../../../src/domain/types/user.js';
@@ -98,6 +98,9 @@ class FakeStoryService implements StoryServicePort {
   public moveEpisodeCrossChapter: boolean | undefined = undefined;
   public workPage: WorkListPage = { works: [], nextCursor: null };
   public deleteEpisodeError: Error | null = null;
+  public lastWorkUpdate: UpdateWorkRequest | null = null;
+  public lastChapterUpdate: UpdateChapterRequest | null = null;
+  public lastEpisodeUpdate: UpdateEpisodeRequest | null = null;
   public workPageCalls: Array<{
     userId: string;
     limit: number;
@@ -133,6 +136,7 @@ class FakeStoryService implements StoryServicePort {
     requestedWorkId: string,
     input: UpdateWorkRequest,
   ): Promise<Work> {
+    this.lastWorkUpdate = input;
     return buildWork({ id: requestedWorkId, userId, title: input.title ?? '作品', version: 2 });
   }
 
@@ -153,6 +157,7 @@ class FakeStoryService implements StoryServicePort {
     requestedChapterId: string,
     input: UpdateChapterRequest,
   ): Promise<Chapter> {
+    this.lastChapterUpdate = input;
     return buildChapter({ id: requestedChapterId, title: input.title ?? '第一章', version: 2 });
   }
 
@@ -183,7 +188,13 @@ class FakeStoryService implements StoryServicePort {
     requestedEpisodeId: string,
     input: UpdateEpisodeRequest,
   ): Promise<Episode> {
-    return buildEpisode({ id: requestedEpisodeId, title: input.title ?? '第一話', version: 2 });
+    this.lastEpisodeUpdate = input;
+    return buildEpisode({
+      id: requestedEpisodeId,
+      title: input.title ?? '第一話',
+      startingEntityStates: input.startingEntityStates,
+      version: 2,
+    });
   }
 
   public async deleteEpisode(_userId: string, _requestedEpisodeId: string): Promise<void> {
@@ -893,7 +904,7 @@ describe('story routes', () => {
     });
   });
 
-  it('creates a page skeleton and applies the story plan', async () => {
+  it('page skeletonだけ作成しstory planを自動適用しない', async () => {
     const pageSkeletonService = new FakePageSkeletonService();
     const app = createTestApp(new FakeStoryCollaborationService(), pageSkeletonService);
     const token = await createToken();
@@ -910,8 +921,8 @@ describe('story routes', () => {
       pages_created: 16,
       panels_created: 80,
       replaced_existing: false,
-      story_plan_applied: true,
-      story_plan_job_id: '55555555-5555-4555-8555-555555555555',
+      story_plan_applied: false,
+      story_plan_job_id: null,
     });
     expect(pageSkeletonService.requestedEpisodeId).toBe(episodeId);
   });
@@ -927,7 +938,7 @@ describe('story routes', () => {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ overwrite_existing: true }),
+      body: JSON.stringify({ overwrite_existing: true, apply_story_plan: true }),
     });
 
     expect(response.status).toBe(201);
@@ -935,8 +946,8 @@ describe('story routes', () => {
       pages_created: 16,
       panels_created: 80,
       replaced_existing: true,
-      story_plan_applied: true,
-      story_plan_job_id: '55555555-5555-4555-8555-555555555555',
+      story_plan_applied: false,
+      story_plan_job_id: null,
     });
     expect(pageSkeletonService.overwriteExisting).toBe(true);
   });
@@ -1262,6 +1273,66 @@ describe('story routes', () => {
     });
 
     expect(response.status).toBe(422);
+  });
+
+  it.each(['works', 'chapters', 'episodes'] as const)('%sのshipped timestampを渡しstaleの409を保持する', async (kind) => {
+    const storyService = new FakeStoryService();
+    const token = await createToken();
+    const app = createTestApp({ storyService });
+    const id = kind === 'works' ? workId : kind === 'chapters' ? chapterId : episodeId;
+    const request = () => app.request(`/api/${kind}/${id}`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'updated', expected_updated_at: '2026-10-01T12:00:00.123Z' }),
+    });
+    expect((await request()).status).toBe(200);
+    const input = kind === 'works' ? storyService.lastWorkUpdate : kind === 'chapters' ? storyService.lastChapterUpdate : storyService.lastEpisodeUpdate;
+    expect(input?.expectedUpdatedAt).toBe('2026-10-01T12:00:00.123Z');
+    const fail = async (): Promise<never> => { throw new ResourceStaleError(); };
+    if (kind === 'works') storyService.updateWork = fail;
+    else if (kind === 'chapters') storyService.updateChapter = fail;
+    else storyService.updateEpisode = fail;
+    const stale = await request();
+    expect(stale.status).toBe(409);
+    await expect(stale.json()).resolves.toMatchObject({ error: { code: 'RESOURCE_STALE' } });
+  });
+
+  it('queued skeletonも旧true入力をfalseへ固定する', async () => {
+    const skeleton = new FakeEpisodePageSkeletonService();
+    let received: unknown;
+    skeleton.enqueueEpisodePageSkeleton = async (...args: unknown[]) => { received = args[2]; return {jobId: skeleton.jobId}; };
+    const app = createTestApp({episodePageSkeletonService:skeleton});
+    const token = await createToken();
+    const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method:'POST', headers: {Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({apply_story_plan:true}),
+    });
+    expect(response.status).toBe(202);
+    expect(received).toMatchObject({applyStoryPlan:false});
+    await expect(response.json()).resolves.toMatchObject({story_plan_applied:false});
+  });
+
+  it('episode PUTの開始状態をsnake caseでServiceへ渡し、responseへ返す', async () => {
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const entityId = '44444444-4444-4444-8444-444444444444';
+    const stateId = '55555555-5555-4555-8555-555555555555';
+
+    const response = await app.request(`/api/episodes/${episodeId}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        starting_entity_states: [{ entity_id: entityId, state_id: stateId }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(storyService.lastEpisodeUpdate?.startingEntityStates).toEqual([
+      { entityId, stateId },
+    ]);
+    await expect(response.json()).resolves.toMatchObject({
+      starting_entity_states: [{ entity_id: entityId, state_id: stateId }],
+    });
   });
 });
 

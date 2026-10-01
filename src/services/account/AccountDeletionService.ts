@@ -242,6 +242,14 @@ export class AccountDeletionService implements AccountDeletionServicePort {
   ): Promise<AccountDeletionResult> {
     let latest = request;
     const flight = await this.repository.getFlight(request.userId);
+    // A recovered/legacy claim may predate durable state-copy fencing. Recheck
+    // before any irreversible external action, not only before anonymization.
+    // Historical deleted-key checkpoints do not prove a late write cannot occur.
+    if (flight.activePersonalGenerationJobCount > 0 || flight.activePersonalExportJobCount > 0
+      || flight.uniqueOwnerOrganizations.length > 0) {
+      await this.repository.recordFailure(request.userId, request.processingToken, 'EXTERNAL_REVALIDATION_BLOCKED');
+      return { status: 'pending_external_action', blockers: [], next_action: 'anonymize_personal_data' };
+    }
 
     for (const subscriptionId of flight.activePersonalStripeSubscriptionIds) {
       if (latest.cancelledSubscriptionIds.includes(subscriptionId)) {

@@ -116,6 +116,8 @@ class FakeSceneService implements SceneServicePort {
     return buildEntityState({
       entityId: requestedEntityId,
       sceneId: input.sceneId,
+      name: input.name ?? null,
+      description: input.description ?? null,
       costumeNote: input.costumeNote,
       expressionDefault: input.expressionDefault,
     });
@@ -131,6 +133,8 @@ class FakeSceneService implements SceneServicePort {
       id: requestedStateId,
       entityId: requestedEntityId,
       sceneId: input.sceneId === undefined ? sceneId : input.sceneId,
+      name: input.name ?? null,
+      description: input.description ?? null,
       costumeNote: input.costumeNote ?? '黒のタクティカルスーツ',
     });
   }
@@ -222,6 +226,46 @@ describe('scene routes', () => {
       costume_note: '黒のタクティカルスーツ',
       expression_default: 'determined',
     });
+  });
+
+  it('状態名と自由入力を持つEntity stateを作成して追加フィールドを返す', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/states`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: '外傷', description: '左頬に傷がある' }),
+    });
+
+    expect(response.status).toBe(201);
+    const payload = await response.json();
+    expect(payload).toMatchObject({
+      name: '外傷',
+      description: '左頬に傷がある',
+      updated_at: now.toISOString(),
+    });
+    expect(payload).toMatchObject({reference_status:'draft',reference_image:null});
+    expect(JSON.stringify(payload)).not.toContain('s3_key');
+  });
+
+  it('状態名だけのEntity state作成はVALIDATION_ERRORになる', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+
+    const response = await app.request(`/api/entities/${entityId}/states`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: '外傷' }),
+    });
+
+    expect(response.status).toBe(422);
   });
 
   it('Authorizationヘッダーがない場合に401になる', async () => {
@@ -432,6 +476,9 @@ function buildEntityState(overrides: Partial<EntityState> = {}): EntityState {
     id: stateId,
     entityId,
     sceneId,
+    name: null,
+    description: null,
+    referenceImage: null,
     costumeNote: null,
     costumeRefId: null,
     conditionNote: null,
@@ -439,6 +486,7 @@ function buildEntityState(overrides: Partial<EntityState> = {}): EntityState {
     expressionDefault: 'neutral',
     extraNote: null,
     createdAt: now,
+    updatedAt: now,
     ...overrides,
   };
 }

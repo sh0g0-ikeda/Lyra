@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { Notice } from '@/components/Notice';
 import { PrimaryButton } from '@/components/PrimaryButton';
@@ -8,9 +8,11 @@ import type {
   NativeStoreBillingAdapter,
   NativeStoreBillingErrorCode,
   NativeStoreBillingState,
+  NativeStoreServerEntitlement,
   NativeStoreServerState
 } from '@/lib/nativeStoreBilling';
 import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
+import { billingPlanMessage } from '@/lib/billingPlanMessages';
 import { t } from '@/lib/i18n';
 import { useNetworkStatus } from '@/state/networkStatus';
 
@@ -27,12 +29,18 @@ const legalUrls = {
 
 interface MobileStoreBillingPanelProps {
   adapter: NativeStoreBillingAdapter;
+  currentPlan?: NativeStoreServerEntitlement['plan'];
+  scheduledPlan?: 'standard' | 'premium' | null;
+  scheduledPlanEffectiveAt?: string | null;
   language: 'ja' | 'en';
   onVerified?: (state: NativeStoreServerState) => void | Promise<void>;
 }
 
-export function MobileStoreBillingPanel({ adapter, language, onVerified }: MobileStoreBillingPanelProps): React.JSX.Element {
+export function MobileStoreBillingPanel({ adapter, language, onVerified, currentPlan, scheduledPlan, scheduledPlanEffectiveAt }: MobileStoreBillingPanelProps): React.JSX.Element {
   const { online } = useNetworkStatus();
+  const [acknowledgedVerified, setAcknowledgedVerified] = useState<NativeStoreServerState | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  const [legalFailed, setLegalFailed] = useState(false);
   const [state, setState] = useState<NativeStoreBillingState>(() => adapter.getState());
 
   useEffect(() => {
@@ -46,10 +54,21 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
 
   useEffect(() => {
     if (state.lastVerified !== null && onVerified !== undefined) {
-      void onVerified(state.lastVerified);
+      let active = true;
+      const verified = state.lastVerified;
+      void Promise.resolve().then(() => onVerified(verified)).then(() => {
+        if (active) { setAcknowledgedVerified(state.lastVerified); setRefreshFailed(false); }
+      }).catch(() => { if (active) setRefreshFailed(true); });
+      return () => { active = false; };
     }
+    return undefined;
   }, [onVerified, state.lastVerified]);
 
+  const verifiedPending = state.lastVerified !== null && state.lastVerified !== acknowledgedVerified;
+  const effectivePlan = verifiedPending ? state.lastVerified?.entitlement.plan ?? currentPlan : currentPlan;
+  const effectiveScheduledPlan = verifiedPending && state.lastVerified?.entitlement.scheduledPlan !== undefined ? state.lastVerified.entitlement.scheduledPlan : scheduledPlan ?? null;
+  const effectiveScheduledAt = verifiedPending && state.lastVerified?.entitlement.scheduledPlanEffectiveAt !== undefined ? state.lastVerified.entitlement.scheduledPlanEffectiveAt : scheduledPlanEffectiveAt ?? null;
+  const openLegalLink = async (url: string): Promise<void> => { setLegalFailed(false); try { await Linking.openURL(url); } catch { setLegalFailed(true); } };
   const isBusy = state.loading || state.restoring || state.submittingProductId !== null;
   const restore = async (): Promise<void> => {
     try {
@@ -75,8 +94,13 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
         />
       )}
       {state.error !== null ? <Notice message={errorMessage(state.error.code, language)} tone={errorTone(state.error.code)} /> : null}
+      {refreshFailed ? <Notice message={billingPlanMessage(language, 'refreshFailed')} tone="warning" /> : null}
+      {effectiveScheduledPlan === null ? null : <Notice message={billingPlanMessage(language, 'scheduledNotice', { plan: billingPlanMessage(language, effectiveScheduledPlan) })} tone="info" />}
       {state.products.map((product) => {
-        const disabledReason = product.available
+        const isCurrent = product.kind === 'subscription' && product.planCode !== undefined && product.planCode === effectivePlan;
+        const isScheduled = product.kind === 'subscription' && product.planCode !== undefined && product.planCode === effectiveScheduledPlan;
+        const planUnknown = product.kind === 'subscription' && (effectivePlan === undefined || product.planCode === undefined);
+        const disabledReason = isCurrent ? billingPlanMessage(language, 'currentReason') : isScheduled ? billingPlanMessage(language, 'scheduledReason') : planUnknown ? billingPlanMessage(language, 'loadingPlan') : product.available
           ? undefined
           : t(language, "generated.components.MobileStoreBillingPanel.this.product.is.unavailable.right.now.bd7334b4");
         const productBusy = state.submittingProductId === product.id;
@@ -88,11 +112,12 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
               {product.displayPrice === null ? null : <Text style={styles.price}>{product.displayPrice}</Text>}
             </View>
             <PrimaryButton
-              disabled={!online || !state.connected || !product.available || isBusy}
+              disabled={!online || !state.connected || !product.available || isBusy || isCurrent || isScheduled || planUnknown}
               disabledReason={!online ? offlineMessage(language) : disabledReason ?? (isBusy ? busyMessage(language) : undefined)}
-              label={t(language, "generated.components.MobileStoreBillingPanel.purchase.8ff82e16")}
+              label={product.kind === 'credit_pack' ? t(language, "generated.components.MobileStoreBillingPanel.purchase.8ff82e16") : isCurrent ? billingPlanMessage(language, 'current') : isScheduled ? scheduledLabel(effectiveScheduledAt, language) : billingPlanMessage(language, effectivePlan === 'free' ? 'subscribe' : 'change')}
               loading={productBusy}
               onPress={() => {
+                if (isCurrent || isScheduled || planUnknown || isBusy || !online) return;
                 void adapter.purchase(product.id).catch(() => undefined);
               }}
               variant="primary"
@@ -100,6 +125,7 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
           </View>
         );
       })}
+      {(state.error !== null || state.products.length === 0 || state.products.some((product) => !product.available)) ? <PrimaryButton label={billingPlanMessage(language, 'retryCatalog')} disabled={!online || isBusy} onPress={() => { void (adapter.refreshProducts?.() ?? adapter.connect()).catch(() => undefined); }} variant="secondary" /> : null}
       <PrimaryButton
         disabled={!online || !state.connected || isBusy}
         disabledReason={!online ? offlineMessage(language) : isBusy ? busyMessage(language) : undefined}
@@ -111,17 +137,19 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
       <Text style={styles.caption}>
         {t(language, 'component.mobileStoreBilling.renewalDisclosure')}
       </Text>
+      {legalFailed ? <Notice message={billingPlanMessage(language, 'legalFailed')} tone="warning" /> : null}
       <View style={styles.legalLinks}>
+        {Platform.OS === 'ios' ? <Text accessibilityRole="link" onPress={() => { void openLegalLink('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/'); }} style={styles.legalLink}>{billingPlanMessage(language, 'appleEula')}</Text> : null}
         <Text
           accessibilityRole="link"
-          onPress={() => void Linking.openURL(legalUrls[language].terms)}
+          onPress={() => void openLegalLink(legalUrls[language].terms)}
           style={styles.legalLink}
         >
           {t(language, 'component.mobileStoreBilling.terms')}
         </Text>
         <Text
           accessibilityRole="link"
-          onPress={() => void Linking.openURL(legalUrls[language].privacy)}
+          onPress={() => void openLegalLink(legalUrls[language].privacy)}
           style={styles.legalLink}
         >
           {t(language, 'component.mobileStoreBilling.privacy')}
@@ -129,6 +157,11 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified }: Mobil
       </View>
     </View>
   );
+}
+
+function scheduledLabel(value: string | null, language: 'ja' | 'en'): string {
+  if (value === null || Number.isNaN(Date.parse(value))) return billingPlanMessage(language, 'scheduled');
+  return billingPlanMessage(language, 'scheduledAt', { date: new Intl.DateTimeFormat(language === 'ja' ? 'ja-JP' : 'en-US', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(value)) });
 }
 
 function busyMessage(language: 'ja' | 'en'): string {

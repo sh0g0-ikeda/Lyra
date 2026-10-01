@@ -1,4 +1,5 @@
-﻿import type { QueryResultRow } from 'pg';
+﻿import { readImageProvenance, toImageProvenanceRecord } from '../domain/generation/ImageAccessPolicy.js';
+import type { QueryResultRow } from 'pg';
 import type {
   EpisodePagePlanContext,
   EpisodePagePlanSceneEntityStateContext,
@@ -23,6 +24,8 @@ import { readStyleReferenceMetadata } from '../domain/types/styleReference.js';
 import type { DatabaseClient } from '../lib/db.js';
 import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignment.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
+import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
+import { parseStateReferenceDescriptor } from './EntityStateReferenceRepository.js';
 
 export type { PageGenerationContext, PageGenerationStateUpdate };
 export type { PageListCursor } from '../domain/pagination.js';
@@ -94,6 +97,7 @@ interface GenerationContextRow extends QueryResultRow {
   status: PageStatus;
   frame_count: number;
   panel_entities: unknown;
+  has_variant_state: boolean;
 }
 
 interface PromptContextRow extends QueryResultRow {
@@ -108,6 +112,7 @@ interface PromptContextRow extends QueryResultRow {
 }
 
 interface AutofillContextRow extends QueryResultRow {
+  layout_config: unknown;
   page_id: string;
   work_id: string;
   episode_id: string;
@@ -145,11 +150,14 @@ interface EpisodePlanContextRow extends QueryResultRow {
   chapter_key_beats: unknown;
   episode_title: string | null;
   episode_purpose: string | null;
+  story_full_draft: string | null;
   introduction: string | null;
   middle: string | null;
   climax: string | null;
   ending_hook: string | null;
   estimated_pages: number;
+  starting_entity_states: unknown;
+  state_library: unknown;
   scenes: unknown;
   entities: unknown;
 }
@@ -468,7 +476,17 @@ export class PostgresPageRepository
                  ORDER BY panels."order"
                ) FILTER (WHERE panels.id IS NOT NULL),
                '[]'::jsonb
-             ) AS panel_entities
+             ) AS panel_entities,
+             EXISTS (
+               SELECT 1
+               FROM panels AS state_panels
+               CROSS JOIN LATERAL jsonb_array_elements(
+                 CASE WHEN jsonb_typeof(state_panels.entities) = 'array'
+                   THEN state_panels.entities ELSE '[]'::jsonb END
+               ) AS assigned(value)
+               WHERE state_panels.page_id = pages.id
+                 AND assigned.value->>'state_id' IS NOT NULL
+             ) AS has_variant_state
       FROM pages
       INNER JOIN episodes ON episodes.id = pages.episode_id
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -507,6 +525,7 @@ export class PostgresPageRepository
           status: row.status,
           frameCount: row.frame_count,
           panels: toPageGenerationPanels(row.panel_entities),
+          hasVariantState: row.has_variant_state,
         };
   }
 
@@ -607,6 +626,7 @@ export class PostgresPageRepository
              episodes.id AS episode_id,
              chapters.id AS chapter_id,
              pages.page_number,
+             pages.layout_config,
              (
                SELECT COUNT(*)::int
                FROM pages AS episode_pages
@@ -746,6 +766,7 @@ export class PostgresPageRepository
       pageNumber: row.page_number,
       totalPagesInEpisode: row.total_pages_in_episode,
       frameCount: row.frame_count,
+      layoutConfig: toJsonObject(row.layout_config),
       status: row.status,
       dialogueMode: toPageDialogueMode(row.dialogue_mode),
       pageDialogueToggle: row.page_dialogue_toggle,
@@ -784,11 +805,38 @@ export class PostgresPageRepository
              chapters.key_beats AS chapter_key_beats,
              episodes.title AS episode_title,
              episodes.purpose AS episode_purpose,
+             episodes.story_full_draft,
              episodes.introduction,
              episodes.middle,
              episodes.climax,
              episodes.ending_hook,
              episodes.estimated_pages,
+             episodes.starting_entity_states,
+             (
+               SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                 'state_id', entity_states.id,
+                 'entity_id', entity_states.entity_id,
+                 'name', entity_states.name,
+                 'description', entity_states.description,
+                 'revision', COALESCE(entity_states.updated_at, entity_states.created_at),
+                 'base_ref_id', reference_sets.primary_ref_id,
+                 'base_ref_updated_at', reference_sets.updated_at,
+                 'base_image_present', EXISTS (
+                   SELECT 1
+                   FROM jsonb_array_elements(
+                     CASE WHEN jsonb_typeof(reference_sets.reference_images) = 'array'
+                       THEN reference_sets.reference_images ELSE '[]'::jsonb END
+                   ) AS base_image(value)
+                   WHERE base_image.value->>'ref_id' = reference_sets.primary_ref_id
+                     AND NULLIF(base_image.value->>'s3_key', '') IS NOT NULL
+                 ),
+                 'reference_image', entity_states.reference_image
+               ) ORDER BY entity_states.created_at ASC, entity_states.id ASC), '[]'::jsonb)
+               FROM entity_states
+               INNER JOIN entities ON entities.id = entity_states.entity_id
+               LEFT JOIN reference_sets ON reference_sets.entity_id = entities.id
+               WHERE entities.work_id = chapters.work_id
+             ) AS state_library,
              (
                SELECT COALESCE(
                  jsonb_agg(
@@ -961,14 +1009,17 @@ export class PostgresPageRepository
       episode: {
         title: normalizeNullableText(row.episode_title),
         purpose: normalizeNullableText(row.episode_purpose),
+        storyFullDraft: normalizeNullableText(row.story_full_draft),
         introduction: normalizeNullableText(row.introduction),
         middle: normalizeNullableText(row.middle),
         climax: normalizeNullableText(row.climax),
         endingHook: normalizeNullableText(row.ending_hook),
         estimatedPages: row.estimated_pages,
+        startingEntityStates: toEpisodeStartingEntityStates(row.starting_entity_states),
       },
       scenes: toEpisodePlanScenes(row.scenes),
       entities: toAutofillEntities(row.entities),
+      stateLibrary: toEpisodeStateLibrary(row.state_library),
       pages: pagesResult.rows.map((pageRow) => ({
         pageId: pageRow.page_id as string,
         pageNumber: pageRow.page_number as number,
@@ -1092,7 +1143,7 @@ export class PostgresPageRepository
             'cdn_url', $6::text,
             'generation_mode', $7::text,
             'generated_at', $8::text
-          ),
+          ) || $10::jsonb,
           updated_at = NOW()
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -1125,6 +1176,7 @@ export class PostgresPageRepository
         input.generatedImage.generationMode,
         input.generatedImage.generatedAt,
         organizationId,
+        JSON.stringify(toImageProvenanceRecord(input.generatedImage)),
       ],
     );
 
@@ -1156,6 +1208,7 @@ function toGeneratedPageImage(value: unknown): GeneratedPageImage | null {
     cdnUrl,
     generationMode,
     generatedAt,
+    ...readImageProvenance(value),
   };
 }
 
@@ -1622,4 +1675,76 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 
 function readNullableString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+function toEpisodeStartingEntityStates(
+  value: unknown,
+): NonNullable<EpisodePagePlanContext['episode']['startingEntityStates']> {
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new ConfigurationError('Episode starting state data is invalid');
+  }
+  const states: NonNullable<EpisodePagePlanContext['episode']['startingEntityStates']> = [];
+  const seenEntityIds = new Set<string>();
+  for (const entry of value) {
+    if (!isJsonObject(entry)
+      || typeof entry.entity_id !== 'string'
+      || !isNullableString(entry.state_id)
+      || seenEntityIds.has(entry.entity_id)) {
+      throw new ConfigurationError('Episode starting state data is invalid');
+    }
+    seenEntityIds.add(entry.entity_id);
+    states.push({ entityId: entry.entity_id, stateId: entry.state_id });
+  }
+  return states;
+}
+
+function toEpisodeStateLibrary(
+  value: unknown,
+): NonNullable<EpisodePagePlanContext['stateLibrary']> {
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new ConfigurationError('Episode state library data is invalid');
+  }
+  return value.map((entry) => {
+    if (!isJsonObject(entry)
+      || typeof entry.entity_id !== 'string'
+      || typeof entry.state_id !== 'string') {
+      throw new ConfigurationError('Episode state library data is invalid');
+    }
+    const name = readNullableString(entry.name);
+    const description = readNullableString(entry.description);
+    const baseRefId = readNullableString(entry.base_ref_id);
+    const descriptor = parseStateReferenceDescriptor(entry.reference_image);
+    const referenceReady = name !== null
+      && name.length > 0
+      && description !== null
+      && description.length > 0
+      && baseRefId !== null
+      && entry.base_image_present === true
+      && descriptor !== null
+      && descriptor.baseRefId === baseRefId
+      && descriptor.inputFingerprint === computeStateReferenceFingerprint({
+        entityId: entry.entity_id,
+        stateId: entry.state_id,
+        name,
+        description,
+        baseRefId,
+      });
+    return {
+      entityId: entry.entity_id,
+      stateId: entry.state_id,
+      name,
+      description,
+      revision: readNullableString(entry.revision),
+      baseRefId,
+      baseRefUpdatedAt: readNullableString(entry.base_ref_updated_at),
+      referenceImage: descriptor,
+      referenceReady,
+    };
+  });
 }

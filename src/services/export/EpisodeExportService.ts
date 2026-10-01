@@ -1,3 +1,4 @@
+import { assertImageDeliveryAllowed, type ImageDeliveryAudience } from '../../domain/generation/ImageAccessPolicy.js';
 import {
   EPISODE_EXPORT_ARTIFACT_TTL_MS,
   EPISODE_EXPORT_DOWNLOAD_URL_TTL_SECONDS,
@@ -21,6 +22,7 @@ import type {
 } from './EpisodeExportDispatchService.js';
 
 export interface CreateEpisodeExportRequest {
+  audience?: ImageDeliveryAudience;
   format: EpisodeExportFormat;
   pageIds: string[];
   filename?: string;
@@ -68,11 +70,13 @@ export interface EpisodeExportServicePort {
     userId: string,
     jobId: string,
     organizationId: string | null,
+    audience?: ImageDeliveryAudience,
   ): Promise<EpisodeExportStatus>;
   createDownload(
     userId: string,
     jobId: string,
     organizationId: string | null,
+    audience?: ImageDeliveryAudience,
   ): Promise<EpisodeExportDownload>;
 }
 
@@ -115,8 +119,10 @@ export class EpisodeExportService implements EpisodeExportServicePort {
       requestFingerprint,
       idempotencyKey: input.idempotencyKey,
       expiresAt: new Date(this.now().getTime() + EPISODE_EXPORT_ARTIFACT_TTL_MS),
+      ...(input.audience === undefined ? {} : { audience: input.audience }),
     });
 
+    created.job.pageSnapshot.forEach((page) => assertImageDeliveryAllowed(page, input.audience));
     await this.bestEffortDispatch(created.job);
     return {
       jobId: created.job.id,
@@ -128,6 +134,7 @@ export class EpisodeExportService implements EpisodeExportServicePort {
     userId: string,
     jobId: string,
     organizationId: string | null,
+    audience: ImageDeliveryAudience = 'mobile',
   ): Promise<EpisodeExportStatus> {
     const job = await this.findScopedJob(userId, jobId, organizationId);
     await this.bestEffortDispatch(job);
@@ -144,7 +151,7 @@ export class EpisodeExportService implements EpisodeExportServicePort {
       startedAt: job.startedAt,
       completedAt: job.completedAt,
       expiresAt: job.expiresAt,
-      downloadReady: isDownloadReady(job, this.now()),
+      downloadReady: isDownloadReady(job, this.now(), audience),
     };
   }
 
@@ -152,10 +159,12 @@ export class EpisodeExportService implements EpisodeExportServicePort {
     userId: string,
     jobId: string,
     organizationId: string | null,
+    audience: ImageDeliveryAudience = 'mobile',
   ): Promise<EpisodeExportDownload> {
     const job = await this.findScopedJob(userId, jobId, organizationId);
+    job.pageSnapshot.forEach((page) => assertImageDeliveryAllowed(page, audience));
     const currentTime = this.now();
-    if (!isDownloadReady(job, currentTime)) {
+    if (!isDownloadReady(job, currentTime, audience)) {
       throw new ConflictError('Episode export download is not ready');
     }
 
@@ -214,7 +223,8 @@ export class EpisodeExportService implements EpisodeExportServicePort {
   }
 }
 
-function isDownloadReady(job: EpisodeExportJob, now: Date): boolean {
+function isDownloadReady(job: EpisodeExportJob, now: Date, audience: ImageDeliveryAudience = 'mobile'): boolean {
+  try { job.pageSnapshot.forEach((page) => assertImageDeliveryAllowed(page, audience)); } catch { return false; }
   if (
     job.status !== 'completed'
     || job.artifactS3Key === null

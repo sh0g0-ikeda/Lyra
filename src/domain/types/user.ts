@@ -9,6 +9,7 @@ export interface AuthenticatedUser {
 export interface SupabaseJwtClaims {
   sub: string;
   email: string;
+  identityProvider?: 'federated';
 }
 
 export type AuthIdentityClaims = SupabaseJwtClaims;

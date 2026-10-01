@@ -14,14 +14,18 @@ const {
   confirmActionMock,
   recordOperationalMetricMock,
   refetchMock,
-  useQueryMock
+  useQueryMock,
+  focusState
 } = vi.hoisted(() => ({
   addEventListenerMock: vi.fn(),
   confirmActionMock: vi.fn(),
   recordOperationalMetricMock: vi.fn(),
   refetchMock: vi.fn().mockResolvedValue(undefined),
-  useQueryMock: vi.fn()
+  useQueryMock: vi.fn(),
+  focusState: { focused: true }
 }));
+
+vi.mock('@react-navigation/native', () => ({ useIsFocused: () => focusState.focused }));
 
 vi.mock('@tanstack/react-query', () => ({
   useQuery: useQueryMock
@@ -30,6 +34,7 @@ vi.mock('@tanstack/react-query', () => ({
 vi.mock('react-native', () => ({
   ActivityIndicator: 'activity-indicator',
   AppState: {
+    currentState: 'active',
     addEventListener: addEventListenerMock
   },
   Pressable: ({
@@ -73,6 +78,7 @@ vi.mock('@/lib/operationalEvents', () => ({
 }));
 
 beforeEach(() => {
+  focusState.focused = true;
   confirmActionMock.mockReset();
   recordOperationalMetricMock.mockReset();
   useQueryMock.mockReturnValue({
@@ -417,7 +423,7 @@ describe('JobStatusCard processing cancellation', () => {
     });
 
     expect(confirmActionMock).toHaveBeenCalledWith(expect.objectContaining({
-      message: '停止を依頼します。現在の処理段階が終わった時点で生成を中止し、使用クレジットを返却します。'
+      message: '現在の処理段階が終わった時点での停止を依頼します。中止と返金の確定状況は、その後のジョブ状態とクレジット精算表示で確認してください。'
     }));
   });
 
@@ -557,6 +563,80 @@ describe('JobStatusCard legacy job compatibility', () => {
         .findAllByType('button')
         .some((button) => button.children.includes('生成を停止')),
     ).toBe(false);
+  });
+});
+
+describe('JobStatusCard settlement uncertainty', () => {
+  it('supplied terminal refund_pendingをserverで確認し、refundedで停止する', async () => {
+    const pending = { ...buildProcessingJob({ available: false, reason_key: null }), status: 'failed' as const, credit_settlement: { charged_credits: 3, refunded_credits: 0, net_credits: 3, status: 'refund_pending' as const } };
+    let renderer: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<JobStatusCard api={{ getJob: vi.fn() } as never} job={pending} jobId={pending.id} language="en" sessionKey="session-1" />); });
+    const options = useQueryMock.mock.calls.at(-1)?.[0];
+    expect(options.enabled).toBe(true);
+    expect(options.refetchInterval({ state: { data: pending, status: 'success' } })).toBe(5000);
+    expect(options.refetchInterval({ state: { data: { ...pending, credit_settlement: { ...pending.credit_settlement, status: 'refunded' } }, status: 'success' } })).toBe(false);
+    expect(JSON.stringify(renderer!.toJSON())).toContain('Checking refund status');
+    await act(async () => { renderer!.unmount(); });
+  });
+
+  it('supplied pendingより古いquery cacheを確定情報として表示しない', async () => {
+    const pending = { ...buildProcessingJob({ available: false, reason_key: null }), status: 'failed' as const, credit_settlement: { charged_credits: 3, refunded_credits: 0, net_credits: 3, status: 'refund_pending' as const } };
+    useQueryMock.mockReturnValue({ data: buildProcessingJob({ available: false, reason_key: null }), isFetchedAfterMount: false, isError: false, refetch: refetchMock });
+    let renderer: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<JobStatusCard api={{ getJob: vi.fn() } as never} job={pending} jobId={pending.id} language="en" sessionKey="session-1" />); });
+    expect(JSON.stringify(renderer!.toJSON())).toContain('Checking refund status');
+    const refunded = { ...pending, credit_settlement: { charged_credits: 3, refunded_credits: 3, net_credits: 0, status: 'refunded' as const } };
+    useQueryMock.mockReturnValue({ data: refunded, isFetchedAfterMount: true, isError: false, refetch: refetchMock });
+    await act(async () => { renderer!.update(<JobStatusCard api={{ getJob: vi.fn() } as never} job={pending} jobId={pending.id} language="en" sessionKey="session-1" />); });
+    expect(JSON.stringify(renderer!.toJSON())).toContain('3 credits refunded');
+    await act(async () => { renderer!.unmount(); });
+  });
+
+  it('not foundで所有側が監視を外さない時は結果不明を示し無限pollしない', async () => {
+    const error = new ApiError('not found', 404, 'NOT_FOUND');
+    useQueryMock.mockReturnValue({ data: undefined, error, isError: true, refetch: refetchMock });
+    let renderer: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<JobStatusCard api={{ getJob: vi.fn() } as never} jobId="missing-job" language="en" sessionKey="session-1" />); });
+    expect(JSON.stringify(renderer!.toJSON())).toContain('not available in the current workspace');
+    expect(useQueryMock.mock.calls.at(-1)?.[0].refetchInterval({ state: { data: undefined, status: 'error', error } })).toBe(false);
+    await act(async () => { renderer!.unmount(); });
+  });
+
+  it('refund自動windowが過ぎてもpendingのままで手動確認を残す', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = { ...buildProcessingJob({ available: false, reason_key: null }), status: 'failed' as const, credit_settlement: { charged_credits: 3, refunded_credits: 0, net_credits: 3, status: 'refund_pending' as const } };
+      let renderer: ReturnType<typeof create>;
+      await act(async () => { renderer = create(<JobStatusCard api={{ getJob: vi.fn() } as never} job={pending} jobId={pending.id} language="en" sessionKey="session-1" />); });
+      await act(async () => { vi.advanceTimersByTime(60_001); });
+      const options = useQueryMock.mock.calls.at(-1)?.[0];
+      expect(options.enabled).toBe(false);
+      expect(options.refetchInterval({ state: { data: pending, status: 'success' } })).toBe(false);
+      expect(JSON.stringify(renderer!.toJSON())).toContain('Automatic checks have paused');
+      const manual = renderer!.root.findAllByType('button').find((node) => node.children.includes('Refresh refund status'));
+      expect(manual).toBeDefined();
+      await act(async () => { manual!.props.onClick(); renderer!.unmount(); });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('inactive tabではrefundを自動取得せず、legacy不明情報から未課金を推測しない', async () => {
+    focusState.focused = false;
+    const legacy = { ...buildProcessingJob({ available: false, reason_key: null }), status: 'failed' as const, credit_settlement: null };
+    let renderer: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<JobStatusCard api={{ getJob: vi.fn() } as never} job={legacy} jobId={legacy.id} language="en" sessionKey="session-1" />); });
+    expect(useQueryMock.mock.calls.at(-1)?.[0].enabled).toBe(false);
+    expect(JSON.stringify(renderer!.toJSON())).toContain('Credit settlement is unavailable');
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('Not charged');
+    await act(async () => { renderer!.unmount(); });
+  });
+
+  it('status読取失敗は生成失敗や未課金と区別し、raw errorを出さない', async () => {
+    useQueryMock.mockReturnValue({ data: undefined, error: new ApiError('private provider info', 503, 'SERVICE_UNAVAILABLE'), isError: true, refetch: refetchMock });
+    let renderer: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<JobStatusCard api={{ getJob: vi.fn() } as never} jobId="job-1" language="en" sessionKey="session-1" />); });
+    expect(JSON.stringify(renderer!.toJSON())).toContain('current credit settlement are not confirmed');
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('private provider info');
+    await act(async () => { renderer!.unmount(); });
   });
 });
 

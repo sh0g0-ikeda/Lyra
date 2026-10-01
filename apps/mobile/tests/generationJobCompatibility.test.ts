@@ -25,6 +25,10 @@ const transitionalJob = {
 };
 
 describe('generation job compatibility', () => {
+  it('quoted import analysis jobs retain parsed results without inventing settlement', () => {
+    const result = { suggested_fields: { hair_color: 'black' }, prompt_supplement: 'analyzed', tmp_image_token: 'candidate' };
+    expect(generationJobCompatibilitySchema.parse({ ...transitionalJob, job_type: 'entity_import_analysis', status: 'completed', result })).toMatchObject({ job_type: 'entity_import_analysis', result, credit_settlement: null });
+  });
   it('中間APIのキャンセル項目を含むジョブ応答を受理する', () => {
     expect(generationJobCompatibilitySchema.parse(transitionalJob)).toMatchObject({
       ...transitionalJob,

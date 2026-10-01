@@ -1,4 +1,4 @@
-﻿import { PANEL_FRAME_TEMPLATES } from '../../domain/constants/panelFrameTemplates.js';
+﻿import { PANEL_FRAME_TEMPLATES, listPanelFrameTemplateDefinitions } from '../../domain/constants/panelFrameTemplates.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
 import { inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
@@ -210,6 +210,8 @@ function buildPageSkeletonSystemPrompt(estimatedPages: number, language: AppLang
     'Panel order numbers must match the selected layout template reading order; panel 1 is the first panel a manga reader sees.',
     `Return exactly ${estimatedPages} pages.`,
     `Allowed layout ids: ${Object.keys(PANEL_FRAME_TEMPLATES).join(', ')}.`,
+    'Choose a template by its actual geometry, focal beat, dialogue room, and saved reading order:',
+    ...listPanelFrameTemplateDefinitions().map(template => `${template.id}: panels=${template.panelCount}; geometry=${template.editorialGuide.geometry}; focal=${template.editorialGuide.focalPlacement}; dialogue_room=${template.editorialGuide.dialogueRoom}; action_pacing=${template.editorialGuide.actionPacing}; ${template.editorialGuide.rtlFlow}`),
     'Allowed panel_role values: establish, action, reaction, emphasis, transition, pause, impact.',
     'Allowed suggested_size values: standard, large, wide, narrow, splash.',
     'Each page must contain 1 to 8 panels.',

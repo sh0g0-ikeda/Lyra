@@ -198,7 +198,7 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
     },
   );
 
-  it('会話speakerを新しいassignmentから外す場合は更新しない', async () => {
+  it('同じworkの会話speakerは画面外にしてもIDを保持できる', async () => {
     const client = new ConditionalQueryClient();
     client.dialogue = [
       { entity_id: 'entity-1', text: 'hello', type: 'speech', position: 'top' },
@@ -214,8 +214,9 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
       null,
     );
 
-    expect(result).toEqual({ status: 'dialogue_speaker_not_assigned' });
-    expect(client.queries.map(queryKind)).toEqual(['page-lock', 'panel-lock']);
+    expect(result).toEqual({ status: 'saved', assignments: [] });
+    expect(client.valuesByKind.get('entity-lock')?.[0]).toEqual(['entity-1']);
+    expect(client.queries.map(queryKind)).toEqual(['page-lock', 'panel-lock', 'entity-lock', 'panel-update']);
   });
 });
 

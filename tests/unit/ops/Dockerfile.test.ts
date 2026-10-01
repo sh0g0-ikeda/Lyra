@@ -3,6 +3,14 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('production Dockerfile', () => {
+  it('Web build stageは共有contractのsourceと依存を持つ', async () => {
+    const dockerfile = await readFile(join(process.cwd(), 'Dockerfile'), 'utf8');
+    const stage = dockerfile.split(' AS web-build\n')[1]?.split('\nFROM ')[0] ?? '';
+    expect(stage).toContain('COPY packages /app/packages');
+    expect(stage).toContain('COPY --from=deps /app/node_modules /app/node_modules');
+    expect(stage.indexOf('COPY packages /app/packages')).toBeLessThan(stage.indexOf('RUN npm run build'));
+  });
+
   it('実行イメージは脆弱性を含むビルドツールを持たず非rootで起動する', async () => {
     const dockerfile = await readFile(join(process.cwd(), 'Dockerfile'), 'utf8');
     const runtimeStage = dockerfile.slice(dockerfile.lastIndexOf('\nFROM '));

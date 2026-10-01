@@ -1,13 +1,16 @@
 import { Hono, type MiddlewareHandler } from 'hono';
 import {
   accountDeletionPreviewResponseSchema,
+  deployedAccountDeletionPreviewSchema,
+  deployedAccountDeletionResultSchema,
   accountDeletionResultResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
-import { ValidationError } from '../domain/errors/index.js';
+import { AppError, ValidationError } from '../domain/errors/index.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import { accountDeletionRequestBodySchema } from '../lib/validators/accountDeletion.schema.js';
 import type {
   AccountDeletionPreview,
+  AccountDeletionResult,
   AccountDeletionServicePort,
 } from '../services/account/AccountDeletionService.js';
 import type { AppEnv } from '../types/app.js';
@@ -40,6 +43,21 @@ export function createAccountDeletionRoutes(
     );
   });
 
+  app.get('/account/deletion-preview', async (c) => {
+    const preview = await dependencies.accountDeletionService.getDeletionPreview(c.get('user').id);
+    c.header('Cache-Control', 'no-store');
+    return c.json(assertMobileResponseContract(deployedAccountDeletionPreviewSchema, {
+      personal_data: { account: preview.personalData.account, personal_works: preview.personalData.personalWorks, organization_memberships: preview.personalData.organizationMemberships },
+      unique_owner_organizations: preview.uniqueOwnerOrganizations,
+      active_personal_subscription_count: preview.activePersonalStripeSubscriptionCount + preview.activeStoreSubscriptions.length,
+      active_stripe_subscription_count: preview.activePersonalStripeSubscriptionCount,
+      active_mobile_store_subscription_count: preview.activeStoreSubscriptions.length,
+      // Conservatively include every protected personal asset, rather than hide
+      // newer state/snapshot assets from a legacy client's confirmation.
+      confirmed_personal_asset_count: preview.personalAssetCount,
+    }));
+  });
+
   app.post('/account/deletion', async (c) => {
     const user = c.get('user');
     const parsed = accountDeletionRequestBodySchema.safeParse(
@@ -67,6 +85,7 @@ export function createAccountDeletionRoutes(
           ? 200
           : 202;
     c.header('Cache-Control', 'no-store');
+    if (parsed.data.legacy_contract) return c.json(assertMobileResponseContract(deployedAccountDeletionResultSchema, toDeployedResult(result)), statusCode);
     return c.json(
       assertMobileResponseContract(accountDeletionResultResponseSchema, result),
       statusCode,
@@ -99,4 +118,21 @@ function toPreviewResponse(preview: AccountDeletionPreview): Record<string, unkn
     personal_asset_count: preview.personalAssetCount,
     active_personal_job_count: preview.activePersonalJobCount,
   };
+}
+
+function toDeployedResult(result: AccountDeletionResult): Record<string, unknown> {
+  if (result.status === 'blocked') {
+    if (result.blockers.some(blocker => blocker.code === 'ACTIVE_PERSONAL_JOB')) {
+      throw new AppError('ACCOUNT_HAS_ACTIVE_JOBS', 'Wait for active generation or export jobs to finish before deleting the account.', 409);
+    }
+    return { status: result.status, blockers: result.blockers.map(blocker => {
+      if (blocker.code === 'ACTIVE_STORE_SUBSCRIPTION') return { code: 'ACTIVE_PERSONAL_SUBSCRIPTION', subscription_count: blocker.subscription_count };
+      if (blocker.code === 'PERSONAL_ASSETS') return { code: 'CONFIRMED_PERSONAL_ASSETS', asset_count: blocker.asset_count };
+      return blocker;
+    }) };
+  }
+  if (result.status === 'pending_external_action') return { ...result,
+    next_action: result.next_action === 'cancel_personal_subscriptions' ? 'cancel_subscription'
+      : result.next_action === 'delete_personal_assets' ? 'schedule_asset_lifecycle' : result.next_action };
+  return result;
 }

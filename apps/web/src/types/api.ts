@@ -110,6 +110,10 @@ export interface SceneRecord {
 }
 
 export interface GeneratedImageRecord {
+  image_model?: string | null;
+  provider_model_id?: string | null;
+  provider?: string | null;
+  mobile_access?: 'available' | 'web_only' | 'unavailable';
   cdn_url?: string | null;
   generation_mode: 'standard' | 'thinking' | null;
   generated_at: string | null;
@@ -447,6 +451,7 @@ export interface CurrentUserCreditRecord {
 }
 
 export interface CurrentSessionRecord {
+  capabilities?: { web_image_delivery?: boolean };
   user: CurrentUserRecord;
   personal_credits: CurrentUserCreditRecord | null;
   organizations: CurrentUserOrganizationRecord[];

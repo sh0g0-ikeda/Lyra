@@ -129,6 +129,7 @@ export const pageGenerationBlockerRecoveryTarget = (
     case 'PANEL_ORDER_INVALID':
     case 'DIALOGUE_SPEAKER_REQUIRED':
     case 'DIALOGUE_SPEAKER_NOT_IN_PANEL':
+    case 'DIALOGUE_SPEAKER_INVALID':
     case 'ASSIGNED_ENTITY_INVALID':
     case 'PAGE_REOPEN_REQUIRED':
     case 'REFERENCE_IMAGE_LIMIT_EXCEEDED':

@@ -1,14 +1,10 @@
-import { ConfigurationError, ValidationError } from '../../domain/errors/index.js';
+import { ConfigurationError } from '../../domain/errors/index.js';
 import type { AppLanguage } from '../../domain/types/language.js';
-import type { EpisodePagePlanApplyResult } from '../../domain/types/page.js';
 import type {
   EpisodePageSkeletonExecutionRepository,
 } from '../../repositories/EpisodePageSkeletonExecutionRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
-import type {
-  EpisodePagePlanProgress,
-  PageServicePort,
-} from '../page/PageService.js';
+import type { PageServicePort } from '../page/PageService.js';
 import type { PageSkeletonServicePort } from './PageSkeletonService.js';
 import type {
   GenerationJobCancellationControlRepository,
@@ -27,7 +23,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
   public constructor(
     private readonly repository: EpisodePageSkeletonExecutionRepository,
     private readonly pageSkeletonService: PageSkeletonServicePort,
-    private readonly pageService?: PageServicePort,
+    _pageService?: PageServicePort,
     private readonly cancellationControl?: GenerationJobCancellationControlRepository,
   ) {}
 
@@ -43,12 +39,10 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
     const episodeId = readStringParam(job.params, 'episode_id');
     const language = readLanguageParam(job.params, 'language');
     const overwriteExisting = readBooleanParam(job.params, 'overwrite_existing');
-    const applyStoryPlan = readBooleanParam(job.params, 'apply_story_plan');
     if (
       episodeId === null ||
       language === null ||
-      overwriteExisting === null ||
-      applyStoryPlan === null
+      overwriteExisting === null
     ) {
       await this.repository.failEpisodePageSkeleton({
         jobId: job.id,
@@ -57,9 +51,6 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       });
       return { status: 'processed', jobStatus: 'failed' };
     }
-
-    let skeletonResult: Awaited<ReturnType<PageSkeletonServicePort['generateForEpisode']>> | null = null;
-    let storyPlanCompleted = applyStoryPlan === false;
 
     try {
       await this.recordProgress(job.id, job.userId, {
@@ -84,42 +75,14 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         return { status: 'processed', jobStatus: 'cancelled' };
       }
       const result = await this.pageSkeletonService.persistPreparedForEpisode(preparation);
-      skeletonResult = result;
 
-      let storyPlanResult: EpisodePagePlanApplyResult | null = null;
-      if (applyStoryPlan) {
-        if (this.pageService === undefined) {
-          throw new ValidationError('Page service is not configured for story plan autofill');
-        }
-
-        await this.recordProgress(job.id, job.userId, {
-          stage: 'applying_story_plan',
-          message: 'Applying story plan to pages and panels. This process can take around 20 minutes.',
-        });
-        storyPlanResult = await this.pageService.autofillEpisodeFromStory(
-          job.userId,
-          episodeId,
-          language,
-          async (progress) => {
-            await this.recordEpisodePlanProgress(job.id, job.userId, progress);
-          },
-          job.organizationId,
-        );
-        if (!storyPlanResult.compilerUsed) {
-          throw new ValidationError(
-            storyPlanResult.compilerError ??
-              'AI story plan autofill did not complete; page and panel fields were not changed',
-          );
-        }
-        storyPlanCompleted = true;
-      }
-
+      // Old queued apply_story_plan=true jobs also remain skeleton-only.
       const completed = await this.repository.completeEpisodePageSkeleton({
         jobId: job.id,
         userId: job.userId,
         result,
-        storyPlanApplied: applyStoryPlan,
-        storyPlanResult,
+        storyPlanApplied: false,
+        storyPlanResult: null,
       });
       if (!completed) {
         throw new ConfigurationError('Page skeleton terminal state could not be committed');
@@ -130,7 +93,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         episodeId,
         pagesCreated: result.pagesCreated,
         panelsCreated: result.panelsCreated,
-        storyPlanApplied: applyStoryPlan,
+        storyPlanApplied: false,
       });
       return { status: 'processed', jobStatus: 'completed' };
     } catch (error) {
@@ -143,15 +106,6 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         episodeId,
         reason: sanitizePersistedErrorMessage(error, 'Episode page skeleton failed'),
       });
-      if (applyStoryPlan && skeletonResult !== null && !skeletonResult.replacedExisting && !storyPlanCompleted) {
-        await this.rollbackFreshSkeletonAfterStoryPlanFailure(
-          job.id,
-          job.userId,
-          episodeId,
-          skeletonResult.pagesCreated,
-          job.organizationId ?? null,
-        );
-      }
       await this.repository.failEpisodePageSkeleton({
         jobId: job.id,
         userId: job.userId,
@@ -194,62 +148,6 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       console.warn('episode_page_skeleton_progress_update_failed', {
         jobId,
         reason: sanitizePersistedErrorMessage(error, 'Progress update failed'),
-      });
-    }
-  }
-
-  private async recordEpisodePlanProgress(
-    jobId: string,
-    userId: string,
-    progress: EpisodePagePlanProgress,
-  ): Promise<void> {
-    try {
-      await this.repository.updateEpisodePageSkeletonProgress({
-        jobId,
-        userId,
-        stage: progress.stage,
-        message: progress.message,
-        currentChunk: progress.currentChunk,
-        totalChunks: progress.totalChunks,
-      });
-    } catch (error) {
-      console.warn('episode_page_skeleton_progress_update_failed', {
-        jobId,
-        reason: sanitizePersistedErrorMessage(error, 'Progress update failed'),
-      });
-    }
-  }
-
-  private async rollbackFreshSkeletonAfterStoryPlanFailure(
-    jobId: string,
-    userId: string,
-    episodeId: string,
-    expectedPageCount: number,
-    organizationId: string | null,
-  ): Promise<void> {
-    try {
-      await this.recordProgress(jobId, userId, {
-        stage: 'rolling_back',
-        message: 'Story plan could not be applied, so the temporary page skeleton is being rolled back.',
-      });
-      const rolledBack = await this.pageSkeletonService.rollbackFreshSkeleton(
-        userId,
-        episodeId,
-        expectedPageCount,
-        organizationId,
-      );
-      console.warn('episode_page_skeleton_rolled_back_after_story_plan_failure', {
-        jobId,
-        userId,
-        episodeId,
-        rolledBack,
-      });
-    } catch (rollbackError) {
-      console.error('episode_page_skeleton_rollback_failed', {
-        jobId,
-        userId,
-        episodeId,
-        reason: sanitizePersistedErrorMessage(rollbackError, 'Page skeleton rollback failed'),
       });
     }
   }

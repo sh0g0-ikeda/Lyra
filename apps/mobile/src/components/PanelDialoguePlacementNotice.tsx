@@ -15,15 +15,9 @@ export function PanelDialoguePlacementNotice({
   dialogueInPanel,
   language,
   onOpenWeb
-}: PanelDialoguePlacementNoticeProps): React.JSX.Element {
-  if (dialogueInPanel) {
-    return (
-      <Notice
-        message={t(language, "generated.components.PanelDialoguePlacementNotice.in.the.mobile.app.dialogue.is.included.i.84b17d91")}
-        tone="info"
-      />
-    );
-  }
+}: PanelDialoguePlacementNoticeProps): React.JSX.Element | null {
+  // Keep the exceptional outside-art warning/action; the normal state needs no prose.
+  if (dialogueInPanel) return null;
 
   return (
     <View style={styles.container}>

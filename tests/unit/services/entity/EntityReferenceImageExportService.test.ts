@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { EntityReferenceContext } from '../../../../src/domain/types/entityReference.js';
 import type { LoadedStoredImage, StoredImageLoaderPort } from '../../../../src/infrastructure/aws/S3StoredImageLoader.js';
 import { EntityReferenceImageExportService } from '../../../../src/services/entity/EntityReferenceImageExportService.js';
@@ -120,21 +120,24 @@ describe('EntityReferenceImageExportService', () => {
     expect(result.mimeType).toBe('image/png');
   });
 
-  it('loads an owned generated candidate image by s3_key', async () => {
+  it('loads only an owned completed base candidate and retains legacy metadata compatibility', async () => {
     const repository = new FakeEntityReferenceRepository();
     const loader = new FakeStoredImageLoader();
-    const service = new EntityReferenceImageExportService(
-      repository,
-      loader,
-    );
-
-    await service.exportCandidateImage(
-      'user-1',
-      'entity-1',
-      'session/user-1/entities/entity-1/job-1-0.png',
-    );
-
-    expect(loader.lastS3Key).toBe('session/user-1/entities/entity-1/job-1-0.png');
+    const id='11111111-1111-4111-8111-111111111111';
+    const key=`session/user-1/entities/entity-1/${id}-0.png`;
+    const job={id,userId:'user-1',organizationId:null,jobType:'entity_generate',status:'completed',params:{entity_id:'entity-1'},result:{candidates:[{s3_key:key}]}};
+    const findByIdAndUserId=vi.fn().mockResolvedValue(job);
+    const service = new EntityReferenceImageExportService(repository,loader,{findByIdAndUserId});
+    await service.exportCandidateImage('user-1','entity-1',key);
+    expect(loader.lastS3Key).toBe(key);
+    for (const restricted of [
+      {...job,result:{...job.result,image_model:'hy4-preview'}},
+      {...job,params:{entity_id:'entity-1',target:'entity_state'}},
+    ]) {
+      loader.lastS3Key=null;findByIdAndUserId.mockResolvedValue(restricted);
+      await expect(service.exportCandidateImage('user-1','entity-1',key)).rejects.toThrow();
+      expect(loader.lastS3Key).toBeNull();
+    }
   });
 
   it('rejects candidate images outside the owner scope', async () => {

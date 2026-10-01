@@ -8,6 +8,7 @@ import type { EntityRecord, PanelDialogueLine } from '@/domain/types';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', () => ({
+  Pressable: 'pressable',
   StyleSheet: { create: <T,>(styles: T): T => styles },
   Text: 'text',
   View: 'view'

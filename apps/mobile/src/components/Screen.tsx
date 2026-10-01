@@ -1,11 +1,20 @@
-import type { PropsWithChildren, RefObject } from 'react';
+import { createContext, useContext, type PropsWithChildren, type RefObject } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CreditBalanceBadge } from '@/components/CreditBalanceBadge';
 import { Notice } from '@/components/Notice';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import { t } from '@/lib/i18n';
+import { useOptionalAppState } from '@/state/appState';
 import { useNetworkStatus } from '@/state/networkStatus';
+
+const EmbeddedScreenContext = createContext(false);
+
+// The workflow shell owns its top safe area; ordinary screens keep both edges.
+export function EmbeddedScreenProvider({ children }: PropsWithChildren): React.JSX.Element {
+  return <EmbeddedScreenContext.Provider value>{children}</EmbeddedScreenContext.Provider>;
+}
 
 interface ScreenProps extends PropsWithChildren {
   title: string;
@@ -30,10 +39,42 @@ export function Screen({
   children
 }: ScreenProps): React.JSX.Element {
   const { language, online, setLanguage } = useNetworkStatus();
+  const session = useOptionalAppState()?.session ?? null;
+  const embedded = useContext(EmbeddedScreenContext);
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea} testID={testID}>
+    <SafeAreaView edges={embedded ? ['bottom'] : ['top', 'bottom']} style={styles.safeArea} testID={testID}>
       <StatusBar backgroundColor={colors.canvas} barStyle="light-content" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardAvoider}>
+        <View style={styles.chrome}>
+          {session === null ? (
+            <View accessibilityLabel="Language / 言語" style={styles.languageSwitcher}>
+              <Pressable
+                accessibilityLabel="English"
+                accessibilityRole="radio"
+                accessibilityState={{ checked: language === 'en' }}
+                onPress={() => void setLanguage('en')}
+                style={{
+                  ...styles.languageOption,
+                  ...(language === 'en' ? styles.languageOptionActive : {})
+                }}
+              >
+                <Text style={language === 'en' ? styles.languageTextActive : styles.languageText}>ENG</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="日本語"
+                accessibilityRole="radio"
+                accessibilityState={{ checked: language === 'ja' }}
+                onPress={() => void setLanguage('ja')}
+                style={{
+                  ...styles.languageOption,
+                  ...(language === 'ja' ? styles.languageOptionActive : {})
+                }}
+              >
+                <Text style={language === 'ja' ? styles.languageTextActive : styles.languageText}>日本語</Text>
+              </Pressable>
+            </View>
+          ) : <CreditBalanceBadge />}
+        </View>
         <ScrollView
           automaticallyAdjustKeyboardInsets
           contentInsetAdjustmentBehavior="automatic"
@@ -53,32 +94,6 @@ export function Screen({
           }
           ref={scrollViewRef}
         >
-          <View accessibilityLabel="Language / 言語" style={styles.languageSwitcher}>
-            <Pressable
-              accessibilityLabel="English"
-              accessibilityRole="radio"
-              accessibilityState={{ checked: language === 'en' }}
-              onPress={() => void setLanguage('en')}
-              style={{
-                ...styles.languageOption,
-                ...(language === 'en' ? styles.languageOptionActive : {})
-              }}
-            >
-              <Text style={language === 'en' ? styles.languageTextActive : styles.languageText}>ENG</Text>
-            </Pressable>
-            <Pressable
-              accessibilityLabel="日本語"
-              accessibilityRole="radio"
-              accessibilityState={{ checked: language === 'ja' }}
-              onPress={() => void setLanguage('ja')}
-              style={{
-                ...styles.languageOption,
-                ...(language === 'ja' ? styles.languageOptionActive : {})
-              }}
-            >
-              <Text style={language === 'ja' ? styles.languageTextActive : styles.languageText}>日本語</Text>
-            </Pressable>
-          </View>
           {showHeader ? (
             <View style={styles.header}>
               {eyebrow === undefined ? null : <Text style={styles.eyebrow}>{eyebrow}</Text>}
@@ -100,6 +115,7 @@ export function Screen({
 }
 
 const styles = StyleSheet.create({
+  chrome: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs },
   content: {
     gap: spacing.sm,
     padding: spacing.md,
@@ -118,7 +134,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     gap: 3,
     marginHorizontal: -spacing.md,
-    marginTop: -spacing.md,
+    marginTop: 0,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
   },

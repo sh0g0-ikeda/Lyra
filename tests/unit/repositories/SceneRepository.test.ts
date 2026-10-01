@@ -58,6 +58,8 @@ describe('PostgresSceneRepository', () => {
     );
 
     expect(client.queries[0]).toContain('entities.user_id = $3');
+    expect(client.queries[0]).toContain('name = CASE WHEN $6::boolean THEN $7 ELSE entity_states.name END');
+    expect(client.queries[0]).toContain('updated_at = NOW()');
   });
 
   it('Sceneのorder重複の場合にVALIDATION_ERRORになる', async () => {
@@ -84,9 +86,30 @@ describe('PostgresSceneRepository', () => {
     );
 
     expect(states).toHaveLength(1);
+    expect(states[0]?.updatedAt).toEqual(new Date('2026-04-22T00:00:00.000Z'));
     expect(client.queries[0]).toContain('works.organization_id IS NULL AND entities.user_id = $2');
     expect(client.queries[0]).toContain("organization_members.status = 'active'");
     expect(client.queries[0]).toContain('ORDER BY entity_states.created_at ASC, entity_states.id ASC');
+  });
+
+  it('Entity state作成SQLが状態名と自由入力を追加列へ保存する', async () => {
+    const client = new QueryCapturingClient(entityStateRow());
+    const repository = new PostgresSceneRepository(client);
+
+    await repository.createEntityState('55555555-5555-4555-8555-555555555555', {
+      name: '外傷',
+      description: '左頬に傷がある',
+      sceneId: null,
+      costumeNote: null,
+      costumeRefId: null,
+      conditionNote: null,
+      hairNote: null,
+      expressionDefault: 'neutral',
+      extraNote: null,
+    });
+
+    expect(client.queries[0]).toContain('name,');
+    expect(client.queries[0]).toContain('description,');
   });
 });
 
@@ -111,6 +134,9 @@ function entityStateRow(): Record<string, unknown> {
     id: '66666666-6666-4666-8666-666666666666',
     entity_id: '55555555-5555-4555-8555-555555555555',
     scene_id: null,
+    name: null,
+    description: null,
+    reference_image: null,
     costume_note: '黒のタクティカルスーツ',
     costume_ref_id: null,
     condition_note: null,
@@ -118,5 +144,6 @@ function entityStateRow(): Record<string, unknown> {
     expression_default: 'neutral',
     extra_note: null,
     created_at: new Date('2026-04-22T00:00:00.000Z'),
+    updated_at: null,
   };
 }

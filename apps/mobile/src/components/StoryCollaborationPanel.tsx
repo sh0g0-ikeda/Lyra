@@ -70,6 +70,7 @@ export function StoryCollaborationPanel({
           label={t(language, 'component.storyCollaboration.request')}
           loading={loading}
           onPress={onRequest}
+        variant="secondary"
         />
         {loading ? (
           <PrimaryButton

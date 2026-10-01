@@ -27,6 +27,30 @@ describe('AppStoreServerClient', () => {
     });
   });
 
+  it('production hint on a valid TestFlight receipt falls back only to an enabled sandbox verifier', async () => {
+    const factory = new FakeAppleVerifierFactory({ transactionEnvironment: 'sandbox' });
+    const result = await createClient(factory).verifyTransaction({ signedTransaction: 'testflight', environment: 'production' });
+    expect(result.environment).toBe('sandbox');expect(factory.environments).toEqual(['production', 'sandbox']);
+  });
+
+  it('disabled sandbox is never enabled by an untrusted client environment hint', async () => {
+    const factory = new FakeAppleVerifierFactory({ transactionEnvironment: 'sandbox' });
+    const client = new AppStoreServerClient({ bundleId: 'jp.lyra.app', appAppleId: 1, rootCertificates: [], allowSandbox: false, allowProduction: true, timeoutMs: 50 }, factory);
+    await expect(client.verifyTransaction({ signedTransaction: 'testflight', environment: 'sandbox' })).rejects.toThrow();
+    expect(factory.environments).not.toContain('sandbox');
+  });
+
+  it('verified billing grace preserves access past the transaction expiry until its own deadline', async () => {
+    const factory = new FakeAppleVerifierFactory({ notificationType: 'DID_FAIL_TO_RENEW', subtype: 'GRACE_PERIOD', expiresDate: Date.parse('2026-07-30T00:00:00Z'), gracePeriodExpiresDate: Date.parse('2026-08-03T00:00:00Z') });
+    const purchase = await createClient(factory).verifyNotification('grace');
+    expect(purchase).toMatchObject({ state: 'active', expiresAt: new Date('2026-08-03T00:00:00Z'), providerEventType: 'apple.DID_FAIL_TO_RENEW.GRACE_PERIOD' });
+  });
+
+  it('billing retry without verified grace does not invent indefinite entitlement', async () => {
+    const purchase = await createClient(new FakeAppleVerifierFactory({ notificationType: 'DID_FAIL_TO_RENEW', expiresDate: Date.parse('2026-07-30T00:00:00Z') })).verifyNotification('retry');
+    expect(purchase?.state).toBe('expired');
+  });
+
   it('署名済みrefundとrevocation通知をterminal stateへ正規化する', async () => {
     const client = createClient(
       new FakeAppleVerifierFactory({
@@ -80,6 +104,9 @@ class FakeAppleVerifierFactory implements AppleSignedDataVerifierFactory {
   public constructor(
     private readonly options: {
       notificationType?: string;
+      subtype?: string;
+      transactionEnvironment?: 'sandbox' | 'production';
+      gracePeriodExpiresDate?: number;
       revocationType?: string;
       expiresDate?: number;
     } = {},
@@ -88,9 +115,10 @@ class FakeAppleVerifierFactory implements AppleSignedDataVerifierFactory {
   public create(environment: 'sandbox' | 'production') {
     this.environments.push(environment);
     return {
-      verifyAndDecodeTransaction: async (_signedTransaction: string) => this.transaction(),
+      verifyAndDecodeTransaction: async (_signedTransaction: string) => { if (this.options.transactionEnvironment && this.options.transactionEnvironment !== environment) throw new Error('wrong environment'); return this.transaction(); },
       verifyAndDecodeNotification: async (_signedPayload: string) => ({
         notificationType: this.options.notificationType ?? 'DID_RENEW',
+        subtype: this.options.subtype,
         notificationUUID: 'notification-1',
         signedDate: Date.parse('2026-07-31T00:00:00.000Z'),
         data: {
@@ -99,7 +127,7 @@ class FakeAppleVerifierFactory implements AppleSignedDataVerifierFactory {
           signedRenewalInfo: 'inner.renewal.jws',
         },
       }),
-      verifyAndDecodeRenewalInfo: async (_signedRenewal: string) => ({ autoRenewStatus: 1 }),
+      verifyAndDecodeRenewalInfo: async (_signedRenewal: string) => ({ autoRenewStatus: 1, gracePeriodExpiresDate: this.options.gracePeriodExpiresDate }),
     };
   }
 

@@ -1,3 +1,4 @@
+import { requireWebImageDeliveryAccess } from './webImageDelivery.js';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import {
   episodeExportAcceptedResponseSchema,
@@ -113,6 +114,89 @@ export function createEpisodeExportRoutes(
       user.id,
       jobId,
       organizationId,
+    );
+    c.header('Cache-Control', 'private, no-store');
+    return c.redirect(result.url, 302);
+  });
+
+
+  app.post('/web/episodes/:episodeId/exports', async (c) => {
+    requireWebImageDeliveryAccess(c);
+    const user = c.get('user');
+    const episodeId = parseUuid(c, 'episodeId');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'export');
+
+    const idempotencyKey = episodeExportIdempotencyKeySchema.safeParse(
+      c.req.header('Idempotency-Key'),
+    );
+    if (!idempotencyKey.success) {
+      throw new ValidationError('Idempotency-Key must be 8 to 128 safe ASCII characters');
+    }
+    const body = createEpisodeExportBodySchema.safeParse(
+      await readJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+        description: 'Episode export request',
+      }),
+    );
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+
+    const result = await dependencies.episodeExportService.createExport(
+      user.id,
+      episodeId,
+      {
+        audience: 'authorized_web',
+        format: body.data.format,
+        pageIds: body.data.page_ids,
+        filename: body.data.filename,
+        idempotencyKey: idempotencyKey.data,
+      },
+      organizationId,
+    );
+    c.header('Cache-Control', 'no-store');
+    return c.json(
+      assertMobileResponseContract(episodeExportAcceptedResponseSchema, {
+        job_id: result.jobId,
+        status: result.status,
+      }),
+      202,
+    );
+  });
+
+  app.get('/web/exports/:jobId', async (c) => {
+    requireWebImageDeliveryAccess(c);
+    const user = c.get('user');
+    const jobId = parseUuid(c, 'jobId');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'export');
+    const result = await dependencies.episodeExportService.getExport(
+      user.id,
+      jobId,
+      organizationId,
+      'authorized_web',
+    );
+    c.header('Cache-Control', 'no-store');
+    return c.json(
+      assertMobileResponseContract(
+        episodeExportStatusResponseSchema,
+        toStatusResponse(result),
+      ),
+    );
+  });
+
+  app.get('/web/exports/:jobId/download', async (c) => {
+    requireWebImageDeliveryAccess(c);
+    const user = c.get('user');
+    const jobId = parseUuid(c, 'jobId');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'export');
+    const result = await dependencies.episodeExportService.createDownload(
+      user.id,
+      jobId,
+      organizationId,
+      'authorized_web',
     );
     c.header('Cache-Control', 'private, no-store');
     return c.redirect(result.url, 302);

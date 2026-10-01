@@ -1,3 +1,4 @@
+import { canDisplayMobileImage } from '@/domain/imageAccess';
 import {
   deduplicateImageSources,
   publicHttpsImageSource,
@@ -19,6 +20,7 @@ interface EntityReferenceImageSourceInput {
 export function buildEntityReferenceImageSources(
   input: EntityReferenceImageSourceInput
 ): RemoteImageSource[] {
+  if (!canDisplayMobileImage(input.reference)) return [];
   const baseUrl = input.apiBaseUrl.replace(/\/+$/u, '');
   const url = new URL(
     `${baseUrl}/api/entities/${encodeURIComponent(input.entityId)}` +

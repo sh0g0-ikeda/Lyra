@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
+import { EpisodeStartingStatesEditor } from '@/components/EpisodeStartingStatesEditor';
+import { startingStateDraftIsDirty, type EpisodeStartingState } from '@/domain/episodeStartingStates';
 import { EpisodeImprovementPanel } from '@/components/EpisodeImprovementPanel';
 import { FormField } from '@/components/FormField';
 import { Notice } from '@/components/Notice';
@@ -26,11 +28,11 @@ import {
   upsertSceneInResponse
 } from '@/domain/storyEditorSavePolicy';
 import type {
-  EntityRecord,
   EpisodeRecord,
   SceneRecord,
   StoryEpisodeImprovementRecord
 } from '@/domain/types';
+import { confirmStaleDraftReload } from '@/lib/confirmStaleDraftReload';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
 import { appendAiProviderDisclosure } from '@/lib/aiProviderDisclosure';
 import {
@@ -49,6 +51,7 @@ import {
   worksQueryKey
 } from '@/lib/queryKeys';
 import { t } from '@/lib/i18n';
+import { editorMessage } from '@/lib/editorUiMessages';
 import { ApiError } from '@/lib/api';
 import { userErrorMessage } from '@/lib/userMessages';
 import { navigationRef } from '@/navigation/navigationRef';
@@ -59,9 +62,6 @@ const nullable = (value: string): string | null => {
   const trimmed = value.trim();
   return trimmed.length === 0 ? null : trimmed;
 };
-
-const toggleId = (ids: string[], id: string): string[] =>
-  ids.includes(id) ? ids.filter((currentId) => currentId !== id) : [...ids, id];
 
 const MAX_ESTIMATED_PAGES = 32;
 const MAX_STORY_ORDER = 1000;
@@ -84,45 +84,13 @@ const isResourceStaleError = (error: unknown): boolean =>
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && error.name === 'AbortError';
 
-interface EntityChipsProps {
-  entities: EntityRecord[];
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
-  emptyLabel: string;
-}
-
-function EntityChips({ entities, selectedIds, onChange, emptyLabel }: EntityChipsProps): React.JSX.Element {
-  if (entities.length === 0) {
-    return <Text style={styles.emptySmall}>{emptyLabel}</Text>;
-  }
-
-  return (
-    <View style={styles.chipRow}>
-      {entities.map((entity) => {
-        const selected = selectedIds.includes(entity.id);
-        return (
-          <Pressable
-            accessibilityRole="button"
-            key={entity.id}
-            onPress={() => onChange(toggleId(selectedIds, entity.id))}
-            style={[styles.chip, selected ? styles.chipSelected : null]}
-          >
-            <Text style={[styles.chipLabel, selected ? styles.chipLabelSelected : null]} numberOfLines={1}>
-              {entity.name}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-export function StoryScreen(): React.JSX.Element {
+export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => void } = {}): React.JSX.Element {
   const queryClient = useQueryClient();
-  const { api, hasCapability, language, logout, selection, sessionKey } = useAppState();
+  const { api, hasCapability, language, logout, selection, session, sessionKey } = useAppState();
   const { resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEdit = hasCapability('edit_work');
+  const [startingStateDraft, setStartingStateDraft] = useState<{ scopeKey: string; value: EpisodeStartingState[] } | null>(null);
   const [episodeTitle, setEpisodeTitle] = useState('');
   const [episodeDraft, setEpisodeDraft] = useState('');
   const [estimatedPages, setEstimatedPages] = useState('4');
@@ -223,12 +191,16 @@ export function StoryScreen(): React.JSX.Element {
     [sceneId, scenesQuery.data?.scenes]
   );
 
+  const episodeScopeKey = JSON.stringify([sessionKey, organizationId, selectedEpisode?.id ?? null]);
+  const startingEntityStatesDraft = startingStateDraft?.scopeKey === episodeScopeKey ? startingStateDraft.value : undefined;
+  const startingStatesEnabled = session?.capabilities?.episode_state_autofill_v1 === true;
+  const startingStatesDirty = startingStateDraftIsDirty(selectedEpisode?.starting_entity_states, startingEntityStatesDraft);
   const episodeDirty =
     selectedEpisode === null
       ? [episodeTitle, episodeDraft, estimatedPages].some((value) => value.trim().length > 0 && value !== '4')
       : episodeTitle !== (selectedEpisode.title ?? '') ||
         episodeDraft !== episodeMobileDraft(selectedEpisode) ||
-        estimatedPages !== String(selectedEpisode.estimated_pages ?? 4);
+        estimatedPages !== String(selectedEpisode.estimated_pages ?? 4) || startingStatesDirty;
 
   const sceneDirty =
     selectedScene === null
@@ -313,12 +285,15 @@ export function StoryScreen(): React.JSX.Element {
           episode: selectedEpisode,
           estimatedPages:
             parseIntInRange(estimatedPages, 1, MAX_ESTIMATED_PAGES) ?? 4,
-          title: episodeTitle
+          title: episodeTitle,
+          startingEntityStates: startingEntityStatesDraft
         }),
         organizationId
       );
     },
     onSuccess: async (updatedEpisode) => {
+      setStartingStateDraft((current) => current?.scopeKey === episodeScopeKey &&
+        !startingStateDraftIsDirty(updatedEpisode.starting_entity_states, current.value) ? null : current);
       queryClient.setQueryData<{ episodes: EpisodeRecord[] }>(
         episodesQueryKey(sessionKey, selectedChapter?.id ?? null, organizationId),
         (current) => replaceEpisodeInResponse(current, updatedEpisode)
@@ -393,6 +368,7 @@ export function StoryScreen(): React.JSX.Element {
   const saveExistingSceneMutation = updateSceneMutation.mutateAsync;
 
   const discardStoryDrafts = useCallback((): void => {
+    setStartingStateDraft(null);
     setEpisodeTitle(selectedEpisode?.title ?? '');
     setEpisodeDraft(selectedEpisode === null ? '' : episodeMobileDraft(selectedEpisode));
     setEstimatedPages(String(selectedEpisode?.estimated_pages ?? 4));
@@ -481,7 +457,8 @@ export function StoryScreen(): React.JSX.Element {
       draft: episodeDraft,
       estimatedPages,
       id: selectedEpisode?.id ?? null,
-      title: episodeTitle
+      title: episodeTitle,
+      startingEntityStates: startingEntityStatesDraft
     },
     scene: {
       atmosphere: sceneAtmosphere,
@@ -492,6 +469,11 @@ export function StoryScreen(): React.JSX.Element {
       time: sceneTime
     }
   });
+
+  const currentStoryDraftRef = useRef({ scope: episodeScopeKey, revision: storyEditorRevision });
+  useLayoutEffect(() => {
+    currentStoryDraftRef.current = { scope: episodeScopeKey, revision: storyEditorRevision };
+  }, [episodeScopeKey, storyEditorRevision]);
 
   useDirtyEditorRegistration({
     id: 'story-editor',
@@ -513,12 +495,17 @@ export function StoryScreen(): React.JSX.Element {
   };
 
   const reloadStaleResource = async (): Promise<void> => {
+    const stillApproved = (): boolean => currentStoryDraftRef.current.scope === episodeScopeKey &&
+      currentStoryDraftRef.current.revision === storyEditorRevision;
+    if (!stillApproved()) return;
     if (activeStaleResource === 'episode' && selectedEpisode !== null && selectedChapter !== null) {
       const response = await queryClient.fetchQuery({
         queryKey: episodesQueryKey(sessionKey, selectedChapter.id, organizationId),
         queryFn: () => api.getEpisodes(selectedChapter.id, organizationId),
       });
+      if (!stillApproved()) return;
       const latest = response.episodes.find((episode) => episode.id === selectedEpisode.id);
+      setStartingStateDraft(null);
       setEpisodeTitle(latest?.title ?? '');
       setEpisodeDraft(latest === undefined ? '' : episodeMobileDraft(latest));
       setEstimatedPages(String(latest?.estimated_pages ?? 4));
@@ -736,6 +723,10 @@ export function StoryScreen(): React.JSX.Element {
     void invalidateScenes();
   };
   const navigateAfterDirtyCheck = (target: 'Account' | 'Characters'): void => {
+    if (target === 'Characters' && onOpenCharacters !== undefined) {
+      onOpenCharacters();
+      return;
+    }
     void resolveDirtyEditors(language).then((canLeave) => {
       if (canLeave && navigationRef.isReady()) {
         navigationRef.navigate(target);
@@ -747,18 +738,7 @@ export function StoryScreen(): React.JSX.Element {
     <Screen
       onRefresh={refreshStory}
       refreshing={refreshing}
-      subtitle={
-        selectedEpisode === null
-          ? t(language, "generated.screens.StoryScreen.select.a.work.chapter.and.episode.4d87ee08")
-          : t(language, 'screen.story.editingEpisode', {
-              episodeTitle:
-                selectedEpisode.title ??
-                t(language, 'screen.story.untitledEpisode', {
-                  episodeOrder: selectedEpisode.order
-                })
-            })
-      }
-      title={t(language, 'story')}
+      title={editorMessage(language, 'storyTitle')}
     >
       {!canEdit ? (
         <Notice
@@ -794,23 +774,21 @@ export function StoryScreen(): React.JSX.Element {
           />
           <PrimaryButton
             label={t(language, "generated.screens.StoryScreen.reload.latest.state.327b1d0e")}
-            onPress={() => {
-              void reloadStaleResource();
-            }}
+            onPress={() => confirmStaleDraftReload({ language, scope: 'story', onConfirm: () => { void reloadStaleResource(); } })}
             variant="secondary"
           />
         </View>
       )}
       <WorkspaceHierarchyNavigator context={workspaceContext} />
 
-      <Section collapsible persistKey="story:episode" subtitle={t(language, "generated.screens.StoryScreen.use.one.full.story.draft.e2ff378b")} title={t(language, "generated.screens.StoryScreen.episode.d3de27bf")}>
+      <Section collapsible persistKey="story:episode" title={editorMessage(language, 'storyEntry')}>
         {selectedEpisode === null ? (
           <Notice message={t(language, "generated.screens.StoryScreen.select.an.episode.from.the.hierarchy.874ba80d")} tone="info" />
         ) : (
           <>
-            <FormField editable={canEdit} label={t(language, 'title')} maxLength={200} onChangeText={setEpisodeTitle} value={episodeTitle} />
-            <FormField editable={canEdit} label={t(language, 'fullDraft')} maxLength={8000} multiline multilineMaxHeight={260} onChangeText={setEpisodeDraft} value={episodeDraft} />
-            <FormField editable={canEdit} keyboardType="numeric" label={t(language, 'estimatedPages')} onChangeText={setEstimatedPages} value={estimatedPages} />
+            <FormField editable={canEdit} label={t(language, 'title')} placeholder={editorMessage(language, 'titleExample')} help={editorMessage(language, 'titleHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} maxLength={200} onChangeText={setEpisodeTitle} value={episodeTitle} />
+            <FormField editable={canEdit} label={t(language, 'fullDraft')} placeholder={editorMessage(language, 'storyExample')} help={editorMessage(language, 'storyInputHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} maxLength={8000} multiline multilineMaxHeight={260} onChangeText={setEpisodeDraft} value={episodeDraft} />
+            <FormField editable={canEdit} keyboardType="numeric" label={t(language, 'estimatedPages')} placeholder={editorMessage(language, 'pagesExample')} help={editorMessage(language, 'pagesHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} onChangeText={setEstimatedPages} value={estimatedPages} />
             {estimatedPagesInvalid ? <Notice message={t(language, "generated.screens.StoryScreen.estimated.pages.must.be.a.number.from.1.20301ed5")} tone="warning" /> : null}
             <View style={styles.buttonRow}>
               <PrimaryButton disabled={!canEdit || activeStaleResource === 'episode' || estimatedPagesInvalid || episodeTitle.trim().length === 0} label={t(language, 'save')} loading={updateEpisodeMutation.isPending} onPress={() => updateEpisodeMutation.mutate()} variant="secondary" />
@@ -819,7 +797,20 @@ export function StoryScreen(): React.JSX.Element {
         )}
       </Section>
 
-      <Section collapsible mobileDefaultCollapsed persistKey="story:story-ai" subtitle={t(language, "generated.screens.StoryScreen.improve.the.current.episode.and.apply.it.5fc027c6")} title={t(language, 'storyAi')}>
+      {selectedEpisode !== null && (startingStatesEnabled || (selectedEpisode.starting_entity_states?.length ?? 0) > 0) ? (
+        <EpisodeStartingStatesEditor
+          language={language}
+          entities={entities}
+          value={startingEntityStatesDraft ?? selectedEpisode.starting_entity_states ?? []}
+          onChange={(value) => setStartingStateDraft({ scopeKey: episodeScopeKey, value })}
+          disabled={!canEdit || !startingStatesEnabled || activeStaleResource === 'episode' || updateEpisodeMutation.isPending}
+          hasMoreEntities={entitiesQuery.hasNextPage}
+          loadingEntities={entitiesQuery.isFetchingNextPage}
+          onLoadMoreEntities={() => { void entitiesQuery.fetchNextPage(); }}
+        />
+      ) : null}
+
+      <Section collapsible mobileDefaultCollapsed persistKey="story:story-ai" subtitle={editorMessage(language, 'storyAiHelp')} title={editorMessage(language, 'storyAi')}>
         <EpisodeImprovementPanel
           canEdit={canEdit}
           improvement={improvement}
@@ -869,9 +860,7 @@ export function StoryScreen(): React.JSX.Element {
         collapsible
         defaultCollapsed
         persistKey="story:scenes"
-        showSubtitleWhenCollapsed
-        subtitle={t(language, "generated.screens.StoryScreen.use.scenes.to.keep.location.time.and.atm.4de6caa0")}
-        title={t(language, 'scenes')}
+        title={editorMessage(language, 'scenes')}
       >
         <RecordPicker
           emptyLabel={t(language, 'emptyScenes')}
@@ -886,30 +875,13 @@ export function StoryScreen(): React.JSX.Element {
         ) : (
           <PrimaryButton disabled={!canEdit || createSceneMutation.isPending || updateSceneMutation.isPending} label={t(language, "generated.screens.StoryScreen.create.a.new.scene.5a7af1dc")} onPress={beginNewSceneDraft} variant="ghost" />
         )}
-        <FormField keyboardType="numeric" label={t(language, "generated.screens.StoryScreen.order.da168b36")} onChangeText={setSceneOrder} value={sceneOrder} />
+        <FormField keyboardType="numeric" label={t(language, "generated.screens.StoryScreen.order.da168b36")} placeholder={editorMessage(language, 'orderExample')} help={editorMessage(language, 'orderHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} onChangeText={setSceneOrder} value={sceneOrder} />
         {sceneOrderInvalid ? <Notice message={t(language, "generated.screens.StoryScreen.order.must.be.a.number.from.1.to.1000.c52e4fa8")} tone="warning" /> : null}
-        <FormField label={t(language, 'location')} maxLength={200} onChangeText={setSceneLocation} value={sceneLocation} />
-        <FormField label={t(language, 'time')} maxLength={200} onChangeText={setSceneTime} value={sceneTime} />
-        <FormField label={t(language, 'atmosphere')} maxLength={2000} multiline onChangeText={setSceneAtmosphere} value={sceneAtmosphere} />
-        <Text style={styles.label}>{t(language, "generated.screens.StoryScreen.involved.characters.2790d18b")}</Text>
-        <EntityChips
-          emptyLabel={t(language, "generated.screens.StoryScreen.create.characters.first.to.select.them.h.fb086bcb")}
-          entities={entities}
-          onChange={setSceneEntityIds}
-          selectedIds={sceneEntityIds}
-        />
-        {entitiesQuery.hasNextPage ? (
-          <PrimaryButton
-            label={t(language, "generated.screens.StoryScreen.load.more.characters.0a56bda2")}
-            loading={entitiesQuery.isFetchingNextPage}
-            onPress={() => {
-              void entitiesQuery.fetchNextPage();
-            }}
-            variant="ghost"
-          />
-        ) : null}
+        <FormField label={t(language, 'location')} placeholder={editorMessage(language, 'locationExample')} help={editorMessage(language, 'locationHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} maxLength={200} onChangeText={setSceneLocation} value={sceneLocation} />
+        <FormField label={t(language, 'time')} placeholder={editorMessage(language, 'timeExample')} help={editorMessage(language, 'timeHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} maxLength={200} onChangeText={setSceneTime} value={sceneTime} />
+        <FormField label={t(language, 'atmosphere')} placeholder={editorMessage(language, 'atmosphereExample')} help={editorMessage(language, 'atmosphereHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} maxLength={2000} multiline onChangeText={setSceneAtmosphere} value={sceneAtmosphere} />
         <View style={styles.buttonRow}>
-          <PrimaryButton disabled={!canEdit || selectedEpisode === null || selectedScene !== null || scenesQuery.isLoading || sceneOrderInvalid || updateSceneMutation.isPending} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedEpisode === null ? t(language, "generated.screens.StoryScreen.select.an.episode.first.437356a6") : selectedScene !== null ? t(language, "generated.screens.StoryScreen.choose.create.a.new.scene.first.754b6b6c") : sceneOrderInvalid ? t(language, "generated.screens.StoryScreen.check.order.2ff9d500") : undefined} label={t(language, 'createScene')} loading={createSceneMutation.isPending} onPress={() => createSceneMutation.mutate()} />
+          <PrimaryButton disabled={!canEdit || selectedEpisode === null || selectedScene !== null || scenesQuery.isLoading || sceneOrderInvalid || updateSceneMutation.isPending} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedEpisode === null ? t(language, "generated.screens.StoryScreen.select.an.episode.first.437356a6") : selectedScene !== null ? t(language, "generated.screens.StoryScreen.choose.create.a.new.scene.first.754b6b6c") : sceneOrderInvalid ? t(language, "generated.screens.StoryScreen.check.order.2ff9d500") : undefined} label={t(language, 'createScene')} loading={createSceneMutation.isPending} onPress={() => createSceneMutation.mutate()} variant="secondary" />
           <PrimaryButton disabled={!canEdit || selectedScene === null || sceneOrderInvalid || createSceneMutation.isPending} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedScene === null ? t(language, "generated.screens.StoryScreen.select.a.scene.to.save.63d8c002") : sceneOrderInvalid ? t(language, "generated.screens.StoryScreen.check.order.2ff9d500") : undefined} label={t(language, 'saveScene')} loading={updateSceneMutation.isPending} onPress={() => updateSceneMutation.mutate()} variant="secondary" />
           <PrimaryButton disabled={!canEdit || selectedScene === null} disabledReason={!canEdit ? t(language, "generated.screens.StoryScreen.editing.permission.is.required.6d3b86ee") : selectedScene === null ? t(language, "generated.screens.StoryScreen.select.a.scene.to.delete.ec3b0582") : undefined} label={t(language, "generated.screens.StoryScreen.delete.scene.19681cb7")} loading={deleteSceneMutation.isPending} onPress={confirmDeleteScene} variant="danger" />
         </View>

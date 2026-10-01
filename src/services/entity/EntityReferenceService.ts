@@ -1,3 +1,5 @@
+import { assertImageDeliveryAllowed } from '../../domain/generation/ImageAccessPolicy.js';
+import { resolveEntityImageProvenance } from './EntityImageProvenance.js';
 import { randomUUID } from 'node:crypto';
 import { CREDIT_COSTS } from '../../domain/constants/credits.js';
 import {
@@ -337,6 +339,13 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     }
     const finalizedImages: EntityReferenceImage[] = [];
 
+    const provenanceByKey = new Map(await Promise.all(selectedS3Keys.map(async (s3Key) => {
+      const provenance = await resolveEntityImageProvenance({ userId, entityId, organizationId, s3Key,
+        references: entity.referenceSet.images, jobs: this.generationJobRepository });
+      assertImageDeliveryAllowed(provenance);
+      return [s3Key, provenance] as const;
+    })));
+
     for (const sourceS3Key of selectedS3Keys) {
       ensureAllowedReferenceSourceKey(sourceS3Key, userId, entityId);
 
@@ -349,6 +358,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
       });
 
       finalizedImages.push({
+        ...provenanceByKey.get(sourceS3Key),
         refId,
         s3Key: storedImage.s3Key,
         cdnUrl: storedImage.cdnUrl,

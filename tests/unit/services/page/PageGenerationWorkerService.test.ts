@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import sharp from 'sharp';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
@@ -47,6 +48,8 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public failureInput: FailPageGenerationInput | null = null;
   public progressInputs: TouchPageGenerationProgressInput[] = [];
   public snapshotInputs: SavePageGenerationInputSnapshotInput[] = [];
+  public snapshotFailure: 'reject' | 'throw' | null = null;
+  public snapshotFailureWrite = 1;
   public shouldFailCompletion = false;
   public failureResult = true;
 
@@ -65,6 +68,10 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
 
   public async savePageGenerationInputSnapshot(input: SavePageGenerationInputSnapshotInput): Promise<boolean> {
     this.snapshotInputs.push(input);
+    if (this.snapshotInputs.length === this.snapshotFailureWrite) {
+      if (this.snapshotFailure === 'throw') throw new Error('postgres://user:private-password@db.invalid/lyra');
+      if (this.snapshotFailure === 'reject') return false;
+    }
     return true;
   }
 
@@ -134,10 +141,22 @@ class FakePromptCompiler implements PagePromptCompilerPort {
 
 class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
   public calls = 0;
+  public preflightCalls = 0;
+  public rejectState = false;
+  public images: PageGenerationInputImage[] = [
+    { role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' },
+  ];
+
+  public async assertRenderableState(): Promise<void> {
+    this.preflightCalls += 1;
+    if (this.rejectState) {
+      throw new Error('Assigned character state requires a confirmed reference image before page generation');
+    }
+  }
 
   public async buildInputImages(_input: { userId: string; pageId: string }): Promise<PageGenerationInputImage[]> {
     this.calls += 1;
-    return [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }];
+    return this.images;
   }
 }
 
@@ -246,6 +265,215 @@ class FakeOrganizationService {
 }
 
 describe('PageGenerationWorkerService', () => {
+  it('quote対応workerがない場合はproviderを呼ばず失敗・返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob!.params.quote_id = 'quote-1';
+    const renderer = new FakeRenderer();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(repository, new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, new FakeStorage(), credits);
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(renderer.calls).toHaveLength(0);
+    expect(credits.refunds).toHaveLength(1);
+  });
+
+  it('quoteの固定promptと参照を使い現在の可変入力を再読込しない', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob!.params.quote_id = 'quote-1';
+    const prompt = new FakePromptBuilder();
+    const images = new FakeInputImageBuilder();
+    const renderer = new FakeRenderer();
+    const fixed = { ...prompt.builtPrompt, draftPrompt: 'approved quote prompt' };
+    const service = new PageGenerationWorkerService(repository, prompt, new FakePromptCompiler(), images,
+      new FakePlanner(), renderer, new FakeStorage(), new FakeCreditService(), true, undefined, undefined, {
+        page: async () => ({ prompt: fixed, inputImages: [] }),
+        entity: async () => { throw new Error('Wrong operation'); },
+      });
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(prompt.calls).toHaveLength(0);
+    expect(images.calls).toBe(0);
+    expect(repository.completionInput?.promptMetadata.draftPrompt).toBe('approved quote prompt');
+    expect(renderer.calls[0]?.inputImages).toEqual([]);
+  });
+
+  it.each(['reject', 'throw'] as const)('入力snapshot保存が%sの場合はproviderを呼ばずfailedにして一度返金する', async (failure) => {
+    const repository = new FakeExecutionRepository();
+    repository.snapshotFailure = failure;
+    const compiler = new FakePromptCompiler();
+    const planner = new FakePlanner();
+    const renderer = new FakeRenderer();
+    const storage = new FakeStorage();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(repository, new FakePromptBuilder(), compiler,
+      new FakeInputImageBuilder(), planner, renderer, storage, credits);
+
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(compiler.calls).toBe(0);
+    expect(planner.calls).toBe(0);
+    expect(renderer.calls).toEqual([]);
+    expect(storage.calls).toEqual([]);
+    expect(repository.completionInput).toBeNull();
+    expect(repository.failureInput?.errorMessage).toBe('Page generation input snapshot could not be persisted');
+    expect(credits.refunds).toHaveLength(1);
+  });
+
+  it('実画像snapshotの二回目の保存に失敗した場合も画像providerを呼ばず返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.snapshotFailure = 'reject';
+    repository.snapshotFailureWrite = 2;
+    const renderer = new FakeRenderer();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(repository, new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, new FakeStorage(), credits);
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(renderer.calls).toEqual([]);
+    expect(repository.completionInput).toBeNull();
+    expect(credits.refunds).toHaveLength(1);
+  });
+  it('状態参照がpromptとrendererで一致する場合に実画像の参照情報をsnapshotへ固定する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptBuilder = new FakePromptBuilder();
+    const reference = {
+      entityId: 'entity-1', stateId: 'state-1', refId: 'state-ref-1',
+      s3Key: 'saved/user-1/entities/entity-1/states/state-1/state-ref-1.png',
+      imageModel: 'gpt-image-2', subjectLabel: 'Aoi / 外傷', modelInputOrder: 1,
+    };
+    promptBuilder.builtPrompt.inputSnapshot.references = [reference];
+    const inputImageBuilder = new FakeInputImageBuilder();
+    inputImageBuilder.images = [{
+      role: 'entity_reference', label: 'Aoi / 外傷', dataUrl: 'data:image/png;base64,cmVm',
+      reference: { ...reference },
+    }];
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository, promptBuilder, new FakePromptCompiler(), inputImageBuilder,
+      new FakePlanner(), renderer, new FakeStorage(), new FakeCreditService(),
+    );
+
+    await expect(service.processJob('job-1')).resolves.toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(executionRepository.snapshotInputs[1]?.snapshot.references).toEqual([reference]);
+    expect(renderer.calls).toHaveLength(1);
+  });
+
+  it('状態参照がprompt後に変わった場合にrenderer前に失敗して返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptBuilder = new FakePromptBuilder();
+    promptBuilder.builtPrompt.inputSnapshot.references = [{
+      entityId: 'entity-1', stateId: 'state-1', refId: 'state-ref-1',
+      s3Key: 'saved/user-1/entities/entity-1/states/state-1/old.png',
+      imageModel: 'gpt-image-2', subjectLabel: 'Aoi / 外傷', modelInputOrder: 1,
+    }];
+    const inputImageBuilder = new FakeInputImageBuilder();
+    inputImageBuilder.images = [{
+      role: 'entity_reference', label: 'Aoi / 外傷', dataUrl: 'data:image/png;base64,cmVm',
+      reference: {
+        entityId: 'entity-1', stateId: 'state-1', refId: 'state-ref-2',
+        s3Key: 'saved/user-1/entities/entity-1/states/state-1/new.png',
+        imageModel: 'gpt-image-2', subjectLabel: 'Aoi / 外傷',
+      },
+    }];
+    const renderer = new FakeRenderer();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository, promptBuilder, new FakePromptCompiler(), inputImageBuilder,
+      new FakePlanner(), renderer, new FakeStorage(), creditService,
+    );
+
+    await expect(service.processJob('job-1')).resolves.toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(renderer.calls).toEqual([]);
+    expect(creditService.refunds).toHaveLength(1);
+  });
+
+  it('受付後に派生状態が割り当てられた場合はpromptと画像生成前に失敗・返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const promptBuilder = new FakePromptBuilder();
+    const promptCompiler = new FakePromptCompiler();
+    const inputImageBuilder = new FakeInputImageBuilder();
+    inputImageBuilder.rejectState = true;
+    const renderer = new FakeRenderer();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      promptBuilder,
+      promptCompiler,
+      inputImageBuilder,
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      creditService,
+    );
+
+    await expect(service.processJob('job-1')).resolves.toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(inputImageBuilder.preflightCalls).toBe(1);
+    expect(promptBuilder.calls).toEqual([]);
+    expect(promptCompiler.calls).toBe(0);
+    expect(renderer.calls).toEqual([]);
+    expect(executionRepository.failureInput).toMatchObject({ jobId: 'job-1' });
+    expect(creditService.refunds).toHaveLength(1);
+  });
+
+  it('白黒jobの場合に保存画像の全画素を無彩色にする', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob = buildJob({ params: { ...buildJob().params, render_style: 'monochrome' } });
+    const renderer = new FakeRenderer();
+    renderer.imageData = await sharp(Buffer.from([255, 0, 0, 0, 0, 255]), {
+      raw: { width: 2, height: 1, channels: 3 },
+    }).png().toBuffer();
+    const storage = new FakeStorage();
+    const builder = new FakePromptBuilder();
+    const service = new PageGenerationWorkerService(
+      repository, builder, new FakePromptCompiler(), new FakeInputImageBuilder(),
+      new FakePlanner(), renderer, storage, new FakeCreditService(),
+    );
+
+    const result = await service.processJob('job-1');
+    const pixels = await sharp(storage.calls[0]?.imageData).raw().toBuffer({ resolveWithObject: true });
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(builder.calls[0]).toMatchObject({ renderStyle: 'monochrome' });
+    expect(storage.calls[0]?.mimeType).toBe('image/png');
+    for (let offset = 0; offset < pixels.data.length; offset += pixels.info.channels) {
+      expect(pixels.data[offset]).toBe(pixels.data[offset + 1]);
+      expect(pixels.data[offset + 1]).toBe(pixels.data[offset + 2]);
+    }
+  });
+
+  it('未知の白黒styleのjobの場合に保存せず失敗・返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob = buildJob({ params: { ...buildJob().params, render_style: 'sepia' } });
+    const storage = new FakeStorage();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      repository, new FakePromptBuilder(), new FakePromptCompiler(), new FakeInputImageBuilder(),
+      new FakePlanner(), new FakeRenderer(), storage, credits,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(storage.calls).toEqual([]);
+    expect(credits.refunds).toHaveLength(1);
+  });
+
+  it('白黒変換に失敗した場合に画像を保存せず返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob = buildJob({ params: { ...buildJob().params, render_style: 'monochrome' } });
+    const renderer = new FakeRenderer();
+    renderer.imageData = Buffer.from('invalid-image-data');
+    const storage = new FakeStorage();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      repository, new FakePromptBuilder(), new FakePromptCompiler(), new FakeInputImageBuilder(),
+      new FakePlanner(), renderer, storage, credits,
+    );
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(storage.calls).toEqual([]);
+    expect(repository.completionInput).toBeNull();
+    expect(credits.refunds).toHaveLength(1);
+  });
   it('queued job を processing から completed まで進めて generated_image を保存する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const planner = new FakePlanner();
@@ -274,6 +502,7 @@ describe('PageGenerationWorkerService', () => {
     expect(promptBuilder.calls[0]).toMatchObject({
       userId: 'user-1',
       pageId: 'page-1',
+      renderStyle: 'color',
     });
     expect(executionRepository.snapshotInputs).toHaveLength(2);
     expect(executionRepository.snapshotInputs[0]).toMatchObject({
@@ -315,6 +544,7 @@ describe('PageGenerationWorkerService', () => {
       inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }],
     });
     expect(storage.calls[0]?.pageId).toBe('page-1');
+    expect(storage.calls[0]?.imageData).toEqual(Buffer.from('image-bytes'));
     expect(executionRepository.completionInput).toMatchObject({
       jobId: 'job-1',
       userId: 'user-1',

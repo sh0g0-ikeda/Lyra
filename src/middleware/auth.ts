@@ -1,4 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
+import { createHash } from 'node:crypto';
+import type { VerifiedCognitoIdentity } from '../domain/types/googleIdentityLink.js';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
 import { ConfigurationError, UnauthorizedError } from '../domain/errors/index.js';
@@ -72,8 +74,11 @@ export function createAuthMiddleware(
       authProvider === 'cognito'
         ? await verifyCognitoToken(c.req.header('Authorization'), cognitoConfig, cognitoJwks)
         : await verifySupabaseToken(c.req.header('Authorization'), jwtSecret);
-    const { user } = await userProvisioningService.provisionFromSupabaseClaims(claims);
+    const { cognitoIdentity, verifiedClientId, ...provisioningClaims } = claims as SupabaseJwtClaims & { cognitoIdentity?: VerifiedCognitoIdentity; verifiedClientId?: string };
+    const { user } = await userProvisioningService.provisionFromSupabaseClaims(provisioningClaims);
     c.set('user', user);
+    if (cognitoIdentity !== undefined) c.set('cognitoIdentity', cognitoIdentity);
+    if (authProvider === 'cognito' && verifiedClientId !== undefined) c.set('authenticatedClientId', verifiedClientId);
     await next();
   };
 }
@@ -111,7 +116,7 @@ async function verifyCognitoToken(
   authorizationHeader: string | undefined,
   config: CognitoVerifierConfig | null,
   jwks: JWTVerifyGetKey | null,
-): Promise<SupabaseJwtClaims> {
+): Promise<SupabaseJwtClaims & { cognitoIdentity?: VerifiedCognitoIdentity; verifiedClientId?: string }> {
   if (config === null || jwks === null) {
     throw new ConfigurationError('Cognito auth is not configured');
   }
@@ -126,11 +131,14 @@ async function verifyCognitoToken(
         : { issuer: config.issuer, algorithms: ['RS256'] };
     const result = await jwtVerify(token, jwks, verifyOptions);
     const claims = parseCognitoClaims(result.payload, config);
-
-    return {
-      sub: claims.sub,
-      email: claims.email,
-    };
+    const username = result.payload['cognito:username'];
+    const authTime = result.payload.auth_time;
+    const verifiedClientId = config.tokenUse === 'id' ? result.payload.aud : result.payload.client_id;
+    return { ...claims, ...(typeof verifiedClientId === 'string' ? { verifiedClientId } : {}), ...(config.tokenUse === 'id' && typeof username === 'string' && username.length > 0
+      && username.length <= 256 && Number.isSafeInteger(authTime) ? { cognitoIdentity: {
+        subject: claims.sub, username, email: claims.email, authTime: authTime as number,
+        tokenFingerprint: createHash('sha256').update(token).digest('hex'),
+      } } : {}) };
   } catch (error) {
     logCognitoAuthRejection(error, config);
     if (error instanceof ConfigurationError || error instanceof UnauthorizedError) {
@@ -185,7 +193,26 @@ function parseCognitoClaims(
   }
   assertRequiredGroups(payload['cognito:groups'], config.requiredGroups);
 
-  return parsed.data;
+  return {
+    ...parsed.data,
+    ...(isFederatedCognitoIdentity(payload) ? { identityProvider: 'federated' as const } : {}),
+  };
+}
+
+function isFederatedCognitoIdentity(payload: Record<string, unknown>): boolean {
+  const identities = payload.identities;
+  if (Array.isArray(identities)) {
+    return identities.length > 0;
+  }
+  if (typeof identities === 'string') {
+    return identities.trim().length > 0;
+  }
+  if (identities !== null && typeof identities === 'object') {
+    return true;
+  }
+
+  const username = payload['cognito:username'] ?? payload.username;
+  return typeof username === 'string' && /^google_/iu.test(username);
 }
 
 function isVerifiedEmailClaim(emailVerified: unknown): boolean {

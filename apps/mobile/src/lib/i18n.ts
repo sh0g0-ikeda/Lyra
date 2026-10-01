@@ -1,3 +1,4 @@
+import { navigationTranslations, type NavigationTranslationKey } from '@/lib/i18nNavigationMessages';
 import type { UiLanguage } from '@/domain/types';
 import {
   componentTranslations,
@@ -54,6 +55,7 @@ type BaseTranslationKey =
   | 'frames'
   | 'fullDraft'
   | 'generate'
+  | 'generateMonochrome'
   | 'generateReference'
   | 'guide'
   | 'imageImport'
@@ -143,6 +145,7 @@ const baseTranslations: Record<UiLanguage, Record<BaseTranslationKey, string>> =
     frames: '枠',
     fullDraft: '話の本文',
     generate: 'ページ生成',
+    generateMonochrome: '白黒で生成',
     generateReference: '全身プレビュー生成',
     guide: 'ガイド',
     imageImport: '画像取り込み',
@@ -231,6 +234,7 @@ const baseTranslations: Record<UiLanguage, Record<BaseTranslationKey, string>> =
     frames: 'Frames',
     fullDraft: 'Full draft',
     generate: 'Generate page',
+    generateMonochrome: 'Generate in black and white',
     generateReference: 'Generate reference',
     guide: 'Guide',
     imageImport: 'Import image',
@@ -288,7 +292,8 @@ export type TranslationKey =
   | GeneratedTranslationKey
   | ComponentTranslationKey
   | ScreenTranslationKey
-  | SharedTranslationKey;
+  | SharedTranslationKey
+  | NavigationTranslationKey;
 
 const translations: Record<UiLanguage, Record<TranslationKey, string>> = {
   ja: {
@@ -296,6 +301,7 @@ const translations: Record<UiLanguage, Record<TranslationKey, string>> = {
     ...generatedTranslations.ja,
     ...componentTranslations.ja,
     ...screenTranslations.ja,
+    ...navigationTranslations.ja,
     ...sharedTranslations.ja
   },
   en: {
@@ -303,6 +309,7 @@ const translations: Record<UiLanguage, Record<TranslationKey, string>> = {
     ...generatedTranslations.en,
     ...componentTranslations.en,
     ...screenTranslations.en,
+    ...navigationTranslations.en,
     ...sharedTranslations.en
   }
 };

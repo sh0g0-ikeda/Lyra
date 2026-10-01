@@ -1,4 +1,5 @@
 import type { QueryResultRow } from 'pg';
+import { toImageProvenanceRecord, type ImageProvenance } from '../domain/generation/ImageAccessPolicy.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
@@ -8,7 +9,7 @@ import {
   lockMobilePushTokenRegistryForTerminalSettlement,
 } from './PushNotificationOutboxRepository.js';
 
-export interface CompleteEntityGenerationInput {
+export interface CompleteEntityGenerationInput extends ImageProvenance {
   jobId: string;
   userId: string;
   structuredFields: Record<string, unknown>;
@@ -158,6 +159,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
             compiler_prompt_version: input.compilerPromptVersion,
             compiler_error: input.compilerError,
             image_model: input.imageModel,
+            ...toImageProvenanceRecord(input),
             image_params: input.imageParams,
             created_at: input.createdAt,
           }),

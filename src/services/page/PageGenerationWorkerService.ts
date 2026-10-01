@@ -1,10 +1,15 @@
+import type { PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
-import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS } from '../../domain/constants/generation.js';
+import type { ImageProvenance } from '../../domain/generation/ImageAccessPolicy.js';
+import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
+import sharp from 'sharp';
+import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS, PAGE_GENERATION_MONOCHROME_MAX_INPUT_PIXELS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
 import type {
   PageGenerationInputImage,
   PageGenerationInputSnapshot,
+  PageGenerationInputSnapshotReference,
   PersistedPageGenerationJobParams,
 } from '../../domain/types/pageGeneration.js';
 import type { PageStatus } from '../../domain/types/page.js';
@@ -66,12 +71,15 @@ export interface PageGenerationPlannerPort {
 }
 
 export interface RenderPageImageInput extends PageGenerationPlanInput {
+  layoutControl?: PageGenerationLayoutControl | null;
+  panelCount?: number;
+  renderStyle?: PersistedPageGenerationJobParams['render_style'];
   quality: PersistedPageGenerationJobParams['quality'];
   internalPlan: string | null;
   inputImages: PageGenerationInputImage[];
 }
 
-export interface RenderPageImageResult {
+export interface RenderPageImageResult extends ImageProvenance {
   imageData: Buffer;
   mimeType: string;
   openaiRequestId: string | null;
@@ -107,12 +115,14 @@ export interface ProcessPageGenerationJobResult {
 }
 
 export interface BuildPageGenerationInputImagesInput {
+  layoutControl?: PageGenerationLayoutControl | null;
   userId: string;
   organizationId?: string | null;
   pageId: string;
 }
 
 export interface PageGenerationInputImageBuilderPort {
+  assertRenderableState(input: BuildPageGenerationInputImagesInput): Promise<void>;
   buildInputImages(input: BuildPageGenerationInputImagesInput): Promise<PageGenerationInputImage[]>;
 }
 
@@ -129,6 +139,7 @@ export class PageGenerationWorkerService {
     private readonly generationEnabled = true,
     private readonly organizationService?: OrganizationServicePort,
     private readonly cancellationControl?: GenerationJobCancellationControlRepository,
+    private readonly quotedInputs?: QuotedGenerationInputsPort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessPageGenerationJobResult> {
@@ -152,16 +163,26 @@ export class PageGenerationWorkerService {
     }
 
     try {
+      if (hasGenerationQuote(job) && this.quotedInputs === undefined) {
+        throw new ConfigurationError('Quoted page execution is not configured');
+      }
+      const quoted = hasGenerationQuote(job) ? await this.quotedInputs!.page(job) : null;
       const startedAtMs = Date.now();
       const stageTimingsMs = createEmptyPageGenerationStageTimings();
+      await this.inputImageBuilder.assertRenderableState({
+        userId: job.userId,
+        organizationId: job.organizationId ?? null,
+        pageId: params.page_id,
+      });
       await this.touchJobProgress(job, 'Building page prompt.');
-      const builtPrompt = await measurePageGenerationStage(stageTimingsMs, 'prompt_build', () =>
+      const builtPrompt = quoted?.prompt ?? await measurePageGenerationStage(stageTimingsMs, 'prompt_build', () =>
         this.promptBuilder.buildPagePrompt({
           userId: job.userId,
           organizationId: job.organizationId ?? null,
           pageId: params.page_id,
           requestKind: params.request_kind,
           generationMode: params.generation_mode,
+          renderStyle: params.render_style,
         }),
       );
       await this.saveInputSnapshot(job, builtPrompt.inputSnapshot);
@@ -171,11 +192,12 @@ export class PageGenerationWorkerService {
       );
       const compiledPrompt = compiledPromptResult.compiledPrompt;
       await this.touchJobProgress(job, 'Preparing reference images.');
-      const inputImages = await measurePageGenerationStage(stageTimingsMs, 'reference_images', () =>
+      const inputImages = quoted?.inputImages ?? await measurePageGenerationStage(stageTimingsMs, 'reference_images', () =>
         this.inputImageBuilder.buildInputImages({
           userId: job.userId,
           organizationId: job.organizationId ?? null,
           pageId: params.page_id,
+          layoutControl: builtPrompt.layoutControl,
         }),
       );
       await this.saveInputSnapshot(job, appendInputImageSnapshot(builtPrompt.inputSnapshot, inputImages));
@@ -213,8 +235,11 @@ export class PageGenerationWorkerService {
             generationMode: params.generation_mode,
             prompt: compiledPrompt.prompt,
             quality: params.quality,
+            renderStyle: params.render_style,
             internalPlan,
             inputImages,
+            layoutControl: builtPrompt.layoutControl,
+            panelCount: builtPrompt.layoutControl === undefined ? undefined : builtPrompt.inputSnapshot.panelCount,
           }),
         ),
       );
@@ -223,6 +248,14 @@ export class PageGenerationWorkerService {
       if (await this.finalizeCancellationIfRequested(job.id)) {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
+      const imageToStore = params.render_style === 'monochrome'
+        ? {
+            ...renderResult,
+            imageData: await sharp(renderResult.imageData, { limitInputPixels: PAGE_GENERATION_MONOCHROME_MAX_INPUT_PIXELS })
+              .greyscale().png().toBuffer(),
+            mimeType: 'image/png',
+          }
+        : renderResult;
       if (!(await this.beginCommit(job.id))) {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
@@ -234,8 +267,8 @@ export class PageGenerationWorkerService {
             userId: job.userId,
             organizationId: job.organizationId ?? null,
             pageId: params.page_id,
-            imageData: renderResult.imageData,
-            mimeType: renderResult.mimeType,
+            imageData: imageToStore.imageData,
+            mimeType: imageToStore.mimeType,
           }),
         ),
       );
@@ -332,10 +365,13 @@ export class PageGenerationWorkerService {
     };
 
     try {
-      await this.executionRepository.savePageGenerationInputSnapshot(input);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      console.warn(`[page-generation-worker] failed to save input snapshot for job ${job.id}: ${reason}`);
+      if (!(await this.executionRepository.savePageGenerationInputSnapshot(input))) {
+        throw new ConfigurationError('Page generation input snapshot could not be persisted');
+      }
+    } catch {
+      // The snapshot is also the durable inventory for eventual image deletion.
+      // Do not call providers without it or disclose raw database failures.
+      throw new ConfigurationError('Page generation input snapshot could not be persisted');
     }
   }
 
@@ -552,6 +588,9 @@ function buildCompletionInput(
     openaiRequestId: renderResult.openaiRequestId,
     promptMetadata,
     stageTimingsMs,
+    ...(renderResult.imageModel === undefined ? {} : { imageModel: renderResult.imageModel }),
+    ...(renderResult.providerModelId === undefined ? {} : { providerModelId: renderResult.providerModelId }),
+    ...(renderResult.provider === undefined ? {} : { provider: renderResult.provider }),
   };
 }
 
@@ -559,13 +598,43 @@ function appendInputImageSnapshot(
   snapshot: PageGenerationInputSnapshot,
   inputImages: PageGenerationInputImage[],
 ): PageGenerationInputSnapshot {
+  const references: PageGenerationInputSnapshotReference[] = inputImages.flatMap((image, index) => {
+    if (image.role !== 'entity_reference' || image.reference === undefined) {
+      return [];
+    }
+    if (image.label !== image.reference.subjectLabel) {
+      throw new ConfigurationError('Page reference image label changed while preparing generation');
+    }
+    return [{ ...image.reference, modelInputOrder: index + 1 }];
+  });
+  if (snapshot.references !== undefined && !sameReferenceSnapshots(snapshot.references, references)) {
+    throw new ConfigurationError('Page reference images changed while preparing generation');
+  }
   return {
     ...snapshot,
+    ...(references.length > 0 || snapshot.references !== undefined ? { references } : {}),
     inputImages: inputImages.map((image) => ({
       role: image.role,
       label: image.label,
     })),
   };
+}
+
+function sameReferenceSnapshots(
+  expected: PageGenerationInputSnapshotReference[],
+  actual: PageGenerationInputSnapshotReference[],
+): boolean {
+  return expected.length === actual.length && expected.every((reference, index) => {
+    const image = actual[index];
+    return image !== undefined
+      && reference.entityId === image.entityId
+      && reference.stateId === image.stateId
+      && reference.refId === image.refId
+      && reference.s3Key === image.s3Key
+      && reference.imageModel === image.imageModel
+      && reference.subjectLabel === image.subjectLabel
+      && reference.modelInputOrder === image.modelInputOrder;
+  });
 }
 
 async function compilePromptSafely(
@@ -799,6 +868,7 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
   const requiresPlanner = value.requires_planner;
   const previousPageStatus = value.previous_page_status;
   const previousGenerationMode = value.previous_generation_mode;
+  const rawRenderStyle = value.render_style;
 
   if (
     typeof pageId !== 'string' ||
@@ -807,7 +877,8 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
     (quality !== 'medium' && quality !== 'high') ||
     typeof requiresPlanner !== 'boolean' ||
     !isPageStatus(previousPageStatus) ||
-    !(previousGenerationMode === null || previousGenerationMode === 'standard' || previousGenerationMode === 'thinking')
+    !(previousGenerationMode === null || previousGenerationMode === 'standard' || previousGenerationMode === 'thinking') ||
+    !(rawRenderStyle === undefined || rawRenderStyle === 'color' || rawRenderStyle === 'monochrome')
   ) {
     return null;
   }
@@ -821,6 +892,7 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedPageGene
     requires_planner: requiresPlanner,
     previous_page_status: previousPageStatus,
     previous_generation_mode: previousGenerationMode,
+    render_style: rawRenderStyle ?? 'color',
   };
 }
 

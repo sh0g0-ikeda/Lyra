@@ -45,6 +45,7 @@ describe('createRateLimitMiddleware', () => {
     ['/api/pages/page-1/generate'],
     ['/api/entities/import-image'],
     ['/api/entities/entity-1/generate-reference'],
+    ['/api/entities/entity-1/states/state-1/generate-reference'],
   ])('%s uses the generation bucket', async (path) => {
     const store = new RecordingRateLimitStore();
     const app = createAuthenticatedTestApp(store);

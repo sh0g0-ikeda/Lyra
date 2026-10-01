@@ -50,7 +50,7 @@ describe('mobile store billing configuration', () => {
     expect(createMobileStoreBillingConfig({ MOBILE_STORE_BILLING_ENABLED: false }, true)).toBeNull();
   });
 
-  it('productionでsandboxまたはtest purchaseを許可すると起動を拒否する', () => {
+  it('productionのGoogle test purchaseは無制限に許可しない', () => {
     expect(() =>
       assertMobileStoreBillingRuntimeConfig(
         {
@@ -60,7 +60,24 @@ describe('mobile store billing configuration', () => {
         },
         true,
       ),
-    ).toThrow(/sandbox and test purchases must be disabled/u);
+    ).toThrow(/non-empty allowlist and expiry/u);
+  });
+
+  it('preserves verified Apple Sandbox review support without enabling it by default', () => {
+    expect(createMobileStoreBillingConfig({ ...completeConfig, APPLE_STORE_ALLOW_SANDBOX: true }, true)?.apple.allowSandbox).toBe(true);
+    expect(createMobileStoreBillingConfig(completeConfig, true)?.apple.allowSandbox).toBe(false);
+  });
+
+  it('permits only a bounded existing production Google test allowlist', () => {
+    const now = new Date('2026-10-01T00:00:00Z');
+    const config = createMobileStoreBillingConfig({ ...completeConfig, GOOGLE_PLAY_ALLOW_TEST_PURCHASES: true,
+      GOOGLE_PLAY_TEST_PURCHASE_USER_IDS: '11111111-1111-4111-8111-111111111111', GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT: '2026-10-02T00:00:00Z' }, true, now);
+    expect(config?.google.testPurchaseAllowedUserIds).toEqual(['11111111-1111-4111-8111-111111111111']);
+    expect(config?.google.testPurchasesExpireAt).toEqual(new Date('2026-10-02T00:00:00Z'));
+    for (const expiry of ['2026-09-30T00:00:00Z', '2026-10-16T00:00:00Z', 'not-a-date']) {
+      expect(() => createMobileStoreBillingConfig({ ...completeConfig, GOOGLE_PLAY_ALLOW_TEST_PURCHASES: true,
+        GOOGLE_PLAY_TEST_PURCHASE_USER_IDS: '11111111-1111-4111-8111-111111111111', GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT: expiry }, true, now)).toThrow();
+    }
   });
 
   it('secret不足と同一storeのproduct ID重複を拒否する', () => {

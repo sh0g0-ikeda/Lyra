@@ -18,10 +18,13 @@ export const requiresPanelDialogueSpeaker = (type: PanelDialogueLine['type']): b
 export const isPanelDialogueSpeakerValid = (
   type: PanelDialogueLine['type'],
   entityId: string | null,
-  assignedEntityIds: readonly string[]
+  workEntityIds: readonly string[]
 ): boolean =>
-  !requiresPanelDialogueSpeaker(type) ||
-  (entityId !== null && assignedEntityIds.includes(entityId));
+  // F21: a known work speaker may be off-panel. Even optional-speaker types
+  // must reject unknown IDs; this policy never creates a visible assignment.
+  entityId === null
+    ? !requiresPanelDialogueSpeaker(type)
+    : entityId.length > 0 && workEntityIds.includes(entityId);
 
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

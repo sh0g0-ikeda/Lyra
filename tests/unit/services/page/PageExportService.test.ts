@@ -132,3 +132,20 @@ function buildPageSummary(overrides: Partial<PageSummary> = {}): PageSummary {
     ...overrides,
   };
 }
+
+describe('page provenance delivery',()=>{
+  it.each(['hy4-preview','future-model'])('Mobileは%sのbytesを読み込まない',async(imageModel)=>{
+    const repository=new FakePageRepository();repository.page!.generatedImage!.imageModel=imageModel;
+    const loader=new FakeStoredImageLoader();const service=new PageExportService(repository,loader);
+    await expect(service.exportGeneratedImage('user-1','page-1')).rejects.toMatchObject({statusCode:403});
+    expect(loader.loadedKey).toBeNull();
+  });
+  it('認証済みWeb配信だけHy4を読めるが未知modelは読めない',async()=>{
+    const repository=new FakePageRepository();repository.page!.generatedImage!.imageModel='hy4-preview';
+    const loader=new FakeStoredImageLoader();const service=new PageExportService(repository,loader);
+    await expect(service.exportGeneratedImage('user-1','page-1',null,'authorized_web')).resolves.toMatchObject({mimeType:'image/png'});
+    repository.page!.generatedImage!.imageModel='future-model';loader.loadedKey=null;
+    await expect(service.exportGeneratedImage('user-1','page-1',null,'authorized_web')).rejects.toMatchObject({code:'IMAGE_MODEL_UNAVAILABLE'});
+    expect(loader.loadedKey).toBeNull();
+  });
+});

@@ -61,8 +61,14 @@ durable deletion workflow finishes.
 
 Organization roles are `owner`, `admin`, `billing`, `editor`, and `viewer`.
 Billing authority is separate from editing authority. Public routes are explicitly
-limited to health/readiness, verified Stripe webhooks, static web assets, and the
-organization-invitation acceptance flow where applicable.
+limited to health/readiness, verified provider webhooks, static web assets, the
+capability-only authentication endpoint, the fixed single-use Google linking
+callback, and the organization-invitation acceptance flow where applicable.
+Ordinary login identifies the existing user by the verified stable subject. It
+never changes that subject solely because an email matches. New user and signup
+credit grant share one transaction. Google linking has a separate, recent native
+authentication proof and dedicated Google OAuth challenge; ambiguous provider
+results are reconciled by reads, never by blindly repeating the link mutation.
 
 ## 5. Persistence and tenancy
 
@@ -108,9 +114,12 @@ Episode export runtime wiring is independently gated by
 `EPISODE_EXPORT_ENABLED`, which defaults to false. When enabled, authenticated
 create/status/download routes require personal ownership or active organization
 membership with export capability. Creation commits the job and outbox before a
-best-effort dispatch to `SQS_QUEUE_URL_EXPORT`; status reads and a bounded periodic
-runner recover undispatched rows. Export messages carry only a version and export
-job ID, and a dedicated poller never shares the generation queue or credit path.
+best-effort dispatch to `SQS_QUEUE_URL_EXPORT`, or the existing generation queue
+when no dedicated export queue is configured; status reads and a bounded periodic
+runner recover undispatched rows. The shared queue uses the deployed
+`{job_id, job_type: episode_export}` envelope, and consumers also accept the
+strict versioned export-job envelope. A dedicated poller refuses a shared queue
+so it cannot acknowledge generation messages. Export never consumes credits.
 Completed, unexpired artifacts are delivered only through an HTTPS URL lasting no
 longer than five minutes or the remaining artifact lifetime. Expiry cleanup deletes
 the exact server-derived key before marking it deleted and is safe to retry.
@@ -142,7 +151,10 @@ terminal settlement takes the token-registry lock before the job-row lock, then
 commits the terminal state, retry-count event snapshot, outbox, and deliveries in
 one transaction. Retrying a failed job invalidates its unsent failed deliveries
 in the same statement. Lease-based delivery and provider dispatch must still be
-wired and verified before push delivery is enabled.
+verified before push delivery is enabled. The release candidate includes the
+authenticated registration routes, leased delivery repository, injected APNs/FCM
+providers and a bounded non-overlapping runtime maintenance loop, all gated OFF
+by default. It rechecks recipient, token, deletion and job status before sending.
 
 Account deletion is independently gated by `ACCOUNT_DELETION_ENABLED`, which
 defaults to false. The authenticated API accepts no user, identity, subscription,
@@ -222,6 +234,26 @@ job, changes its status, cancels work, or mutates credits. Any future history wr
 must first authorize the job through personal ownership or active organization
 membership.
 
+Confirmed state-reference copies use a durable exact-key intent before storage
+mutation and serialize confirmation with the user's account-deletion row gate.
+Every new copy intent includes a unique attempt ID and an explicit unresolved,
+succeeded, or not-dispatched state. An unresolved, legacy, malformed, or duplicate
+attempt history blocks further copy admission for that job and personal deletion finalization,
+even after database connection loss. Only a complete successful single-attempt
+storage response or proof that this invocation never dispatched its own attempt
+can settle that attempt; abort, elapsed time, object existence and another retry
+are not settlement evidence. Failure to persist settlement remains fail-closed.
+The intent and historical page-input references remain protected from image/job
+pruning until an explicit cleanup or personal account-deletion workflow handles
+them. Personal cleanup verifies storage-owner and entity scope and excludes
+organization assets. Retaining these job records increases retention; expiry alone
+must not erase the only deletion checkpoint.
+
+Legacy note-only state assignments resolving to the same base reference image
+share one billable image, prompt label, snapshot reference, and attachment.
+Distinct confirmed variant images remain separate. Authorization and freshness
+checks apply to every original assignment before this canonicalization.
+
 ## 7. Credits and billing
 
 Text AI operations are free. Entity preview/import analysis and page generation use
@@ -271,9 +303,10 @@ failure returns a generic HTTP 503 response without infrastructure details.
 The API must remain responsive while generation work is queued. Workers can scale
 independently of the API. Queue depth, oldest message age, job duration, failure
 rate, credit refunds, database capacity, and provider errors are operational signals.
-Episode export has a separate queue, worker process, visibility timeout, outbox
-recovery, and artifact-cleanup loop so document assembly cannot consume image
-generation capacity.
+Episode export supports a separate queue and worker process with its own
+visibility timeout, outbox recovery and artifact cleanup. The current production
+shared generation queue is also supported for compatibility; shared polling uses
+the generation visibility policy and dispatches by the verified job type.
 
 ## 10. Verification gate
 
@@ -289,9 +322,50 @@ Production deployment additionally requires runtime configuration validation,
 migrations as a one-off task, healthy API readiness, worker rollout health, queue
 inspection, and post-deploy log review.
 
-## 11. Related documents
+## 11. Release compatibility additions (2026-10-01)
+
+Server generation quotes pin actor/workspace, operation, current resource revision,
+references, render style, model, quality, tariff and price. Acceptance atomically
+creates the job, debit/ledger, target transition and dispatch intent. Receipts
+reconcile uncertain responses without a new charge. Existing unquoted clients and
+jobs keep their supported contracts; new Mobile paid flows require quotes.
+GENERATION_QUOTES_ENABLED defaults to false until runtime acceptance is complete.
+
+Output provenance is adapter-sourced. Missing historical metadata has a separate
+legacy policy from an unknown model value. Known Web-only output is blocked from
+all common/Mobile display, saved-image and export paths. Dedicated Web delivery
+requires a verified Cognito app-client allowlist, never a platform header. Hy4
+image generation remains unavailable until its actual provider contract is known;
+there is no substitution with an unrelated image model.
+
+The production source lineage differs from main. The release preserves its legacy
+HTTP contracts and scheduled-billing, push, export, page planning and editorial
+behavior while retaining candidate deletion/refund/ownership protections. Applied
+001–041 migrations are immutable. The reviewed production bridge requires a full
+write freeze and explicit operator acknowledgement; it fails closed for unknown
+schemas or legacy lifecycle scheduling that is not proof of object deletion.
+After the export relation rename, an old production image is not a safe rollback.
+
+The release Mobile navigation has four primary tabs and nested creation steps.
+All editing capabilities and stored values remain available; simple display
+changes must not erase aliases, scene entities or unsaved fields. New state UI,
+Google, quote and Web-only-delivery capabilities remain gated until their own
+external and device checks pass. Detailed requirements, compatibility evidence and
+remaining gates are recorded in the documents below, not inferred from test totals.
+
+## 12. Related documents
 
 - `docs/Lyra_StoryAI_SubSpec.md`
 - `docs/runtime-contract-readiness-design.md`
 - `README.md`
 - `migrations/`
+
+- `docs/release-readiness-2026-10-01.md`
+- `docs/release-feature-traceability-2026-10-01.md`
+- `docs/release-ui-traceability-2026-10-01.md`
+- `docs/generation-quotes-atomic-admission-design-2026-10-01.md`
+- `docs/google-identity-link-readiness-2026-10-01.md`
+- `docs/production-lineage-bridge-design-2026-10-01.md`
+- `docs/production-billing-compatibility-2026-10-01.md`
+- `docs/image-provenance-delivery-design-2026-10-01.md`
+- `docs/editorial-layout-compatibility-2026-10-01.md`

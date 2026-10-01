@@ -1,4 +1,4 @@
-import { ConfigurationError, NotFoundError } from '../../domain/errors/index.js';
+import { ConfigurationError, NotFoundError, ResourceStaleError } from '../../domain/errors/index.js';
 import type {
   CreateEntityInput,
   Entity,
@@ -28,6 +28,7 @@ export interface CreateEntityRequest {
 }
 
 export interface UpdateEntityRequest {
+  expectedUpdatedAt?: string;
   entityType?: EntityType;
   name?: string;
   freeDescription?: string | null;
@@ -163,6 +164,10 @@ export class EntityService implements EntityServicePort {
 
     const entity = await this.entityRepository.update(entityId, userId, updateInput, organizationId);
     if (entity === null) {
+      if (input.expectedUpdatedAt !== undefined &&
+          await this.entityRepository.findByIdAndUserId(entityId, userId, organizationId) !== null) {
+        throw new ResourceStaleError();
+      }
       throw new NotFoundError('Entity not found');
     }
 

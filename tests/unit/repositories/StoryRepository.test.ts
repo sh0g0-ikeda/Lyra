@@ -1,6 +1,7 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
+import { computeStateReferenceFingerprint } from '../../../src/domain/state/StateReferenceFingerprint.js';
 import { PostgresStoryRepository } from '../../../src/repositories/StoryRepository.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
@@ -96,8 +97,10 @@ class ExistingSkeletonClient implements DatabaseClient, TransactionRunner {
   }
 }
 
-class EpisodeUpdateCapturingClient implements DatabaseClient {
+class EpisodeUpdateCapturingClient implements DatabaseClient, TransactionRunner {
   public updateValues: readonly unknown[] | null = null;
+  public queries: string[] = [];
+  public updateRowPresent = true;
 
   public constructor(private readonly currentEpisodeRow: Record<string, unknown> = episodeRow()) {}
 
@@ -105,18 +108,29 @@ class EpisodeUpdateCapturingClient implements DatabaseClient {
     text: string,
     values?: readonly unknown[],
   ): Promise<QueryResult<T>> {
+    this.queries.push(text);
     if (text.includes('SELECT episodes.*')) {
       return {
         command: 'SELECT',
         rowCount: 1,
         oid: 0,
         fields: [],
-        rows: [this.currentEpisodeRow] as unknown as T[],
+        rows: [{
+          ...this.currentEpisodeRow,
+          ...(text.includes('FOR UPDATE OF episodes')
+            ? { work_id: '11111111-1111-4111-8111-111111111111' }
+            : {}),
+        }] as unknown as T[],
       };
     }
 
     if (text.includes('UPDATE episodes')) {
       this.updateValues = values ?? [];
+      if (!this.updateRowPresent) {
+        return {
+          command: 'UPDATE', rowCount: 0, oid: 0, fields: [], rows: [],
+        };
+      }
       return {
         command: 'UPDATE',
         rowCount: 1,
@@ -144,6 +158,52 @@ class EpisodeUpdateCapturingClient implements DatabaseClient {
       fields: [],
       rows: [],
     };
+  }
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    return work(this);
+  }
+}
+
+class StartingStateLockClient implements DatabaseClient, TransactionRunner {
+  public readonly queries: string[] = [];
+  public readonly queryValues: Array<readonly unknown[] | undefined> = [];
+
+  public constructor(
+    private readonly referenceSet: Record<string, unknown>,
+    private readonly entityState: Record<string, unknown>,
+    private readonly episodeExists = true,
+  ) {}
+
+  public async query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values?: readonly unknown[],
+  ): Promise<QueryResult<T>> {
+    this.queries.push(text);
+    this.queryValues.push(values);
+    if (text.includes('FOR UPDATE OF episodes')) {
+      if (!this.episodeExists) {
+        return resultRows([]);
+      }
+      return resultRows([{
+        ...episodeRow(),
+        work_id: '11111111-1111-4111-8111-111111111111',
+      }]);
+    }
+    if (text.includes('FOR UPDATE OF reference_sets')) {
+      return resultRows([this.referenceSet]);
+    }
+    if (text.includes('FOR UPDATE OF entity_states')) {
+      return resultRows([this.entityState]);
+    }
+    if (text.includes('UPDATE episodes')) {
+      return resultRows([episodeRow()], 'UPDATE');
+    }
+    return resultRows([]);
+  }
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    return work(this);
   }
 }
 
@@ -499,6 +559,149 @@ describe('PostgresStoryRepository', () => {
     expect(client.updateValues?.[18]).toBeNull();
   });
 
+  it('開始状態の省略は保存済み値を保持し、明示空配列はclearとして保存する', async () => {
+    const client = new EpisodeUpdateCapturingClient({
+      ...episodeRow(),
+      starting_entity_states: [{
+        entity_id: '44444444-4444-4444-8444-444444444444',
+        state_id: '55555555-5555-4555-8555-555555555555',
+      }],
+    });
+    const repository = new PostgresStoryRepository(client, client);
+
+    const unchanged = await repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { title: 'Updated' },
+    );
+    expect(unchanged?.startingEntityStates).toEqual([{
+      entityId: '44444444-4444-4444-8444-444444444444',
+      stateId: '55555555-5555-4555-8555-555555555555',
+    }]);
+    expect(client.updateValues?.[23]).toBe(false);
+
+    await repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { startingEntityStates: [] },
+    );
+    expect(client.updateValues?.[23]).toBe(true);
+    expect(client.updateValues?.[24]).toBe('[]');
+  });
+
+  it('開始状態の早期検証はcurrent primary imageと完全なdescriptorを確認する', async () => {
+    const client = new EpisodeUpdateCapturingClient();
+    const repository = new PostgresStoryRepository(client);
+
+    await expect(repository.validateEpisodeStartingEntityStates(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      [{
+        entityId: '44444444-4444-4444-8444-444444444444',
+        stateId: '55555555-5555-4555-8555-555555555555',
+      }],
+    )).resolves.toBe(false);
+
+    const sql = client.queries.at(-1) ?? '';
+    expect(sql).toContain('reference_sets.primary_ref_id');
+    expect(sql).toContain("primary_image.value->>'s3_key'");
+    expect(sql).toContain('input_fingerprint');
+    expect(sql).toContain("NULLIF(BTRIM(entity_states.name), '')");
+  });
+
+  it('開始状態指定の更新はepisode、reference set、entity stateの順にlockしてから保存する', async () => {
+    const client = new StartingStateLockClient(validStartingStateReferenceSet(), validStartingEntityState());
+    const repository = new PostgresStoryRepository(client, client);
+
+    await expect(repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { startingEntityStates: [startingEntityStateAssignment()] },
+    )).resolves.toMatchObject({ id: '33333333-3333-4333-8333-333333333333' });
+
+    const episodeLock = client.queries.findIndex((query) => query.includes('FOR UPDATE OF episodes'));
+    const referenceSetLock = client.queries.findIndex((query) => query.includes('FOR UPDATE OF reference_sets'));
+    const entityStateLock = client.queries.findIndex((query) => query.includes('FOR UPDATE OF entity_states'));
+    const update = client.queries.findIndex((query) => query.includes('UPDATE episodes'));
+    expect(episodeLock).toBeGreaterThanOrEqual(0);
+    expect(referenceSetLock).toBeGreaterThan(episodeLock);
+    expect(entityStateLock).toBeGreaterThan(referenceSetLock);
+    expect(update).toBeGreaterThan(entityStateLock);
+    expect(client.queries[update]).not.toContain('digest(');
+  });
+
+  it.each([
+    ['current primaryが消えた', { primary_ref_id: 'missing-ref' }, validStartingEntityState()],
+    ['base_ref_idが差し替わった', validStartingStateReferenceSet(), {
+      ...validStartingEntityState(),
+      reference_image: { ...validStartingEntityState().reference_image as Record<string, unknown>, base_ref_id: 'other-ref' },
+    }],
+    ['nameが差し替わった', validStartingStateReferenceSet(), {
+      ...validStartingEntityState(), name: '別の名前',
+    }],
+    ['descriptionが差し替わった', validStartingStateReferenceSet(), {
+      ...validStartingEntityState(), description: '別の説明',
+    }],
+    ['descriptorに非文字列がある', validStartingStateReferenceSet(), {
+      ...validStartingEntityState(),
+      reference_image: { ...validStartingEntityState().reference_image as Record<string, unknown>, s3_key: 1 },
+    }],
+  ])('開始状態の%sをtransaction内再検証でconflictにする', async (_caseName, referenceSet, entityState) => {
+    const client = new StartingStateLockClient(referenceSet, entityState);
+    const repository = new PostgresStoryRepository(client, client);
+
+    await expect(repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { startingEntityStates: [startingEntityStateAssignment()] },
+    )).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('base imageの並行差し替えはtransaction内再検証でconflictにする', async () => {
+    const replacedPrimary = validStartingStateReferenceSet({
+      primary_ref_id: 'replacement-ref',
+      reference_images: [{
+        ref_id: 'replacement-ref', s3_key: 'replacement.png', cdn_url: 'https://cdn.example/replacement.png',
+      }],
+    });
+    const client = new StartingStateLockClient(replacedPrimary, validStartingEntityState());
+    const repository = new PostgresStoryRepository(client, client);
+
+    await expect(repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { startingEntityStates: [startingEntityStateAssignment()] },
+    )).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('開始状態指定で未認可または不存在のepisodeは409ではなくnullを返す', async () => {
+    const client = new StartingStateLockClient(
+      validStartingStateReferenceSet(),
+      validStartingEntityState(),
+      false,
+    );
+    const repository = new PostgresStoryRepository(client, client);
+
+    await expect(repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { startingEntityStates: [startingEntityStateAssignment()] },
+    )).resolves.toBeNull();
+    expect(client.queries.some((query) => query.includes('FOR UPDATE OF reference_sets'))).toBe(false);
+  });
+
+  it('開始状態の再検証で0件更新ならnot foundではなくconflictにする', async () => {
+    const client = new EpisodeUpdateCapturingClient();
+    client.updateRowPresent = false;
+    const repository = new PostgresStoryRepository(client, client);
+
+    await expect(repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { startingEntityStates: [] },
+    )).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
   it('treats null full story draft as an explicit clear during partial updates', async () => {
     const client = new EpisodeUpdateCapturingClient({
       ...episodeRow(),
@@ -614,5 +817,52 @@ function episodeRow(): Record<string, unknown> {
     status: 'draft',
     created_at: new Date('2026-04-22T00:00:00.000Z'),
     updated_at: new Date('2026-04-22T00:00:00.000Z'),
+  };
+}
+
+function startingEntityStateAssignment(): { entityId: string; stateId: string } {
+  return {
+    entityId: '44444444-4444-4444-8444-444444444444',
+    stateId: '55555555-5555-4555-8555-555555555555',
+  };
+}
+
+function validStartingStateReferenceSet(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    entity_id: startingEntityStateAssignment().entityId,
+    primary_ref_id: 'base-ref',
+    reference_images: [{
+      ref_id: 'base-ref',
+      s3_key: 'entities/user-1/base.png',
+      cdn_url: 'https://cdn.example/base.png',
+    }],
+    ...overrides,
+  };
+}
+
+function validStartingEntityState(): Record<string, unknown> {
+  const assignment = startingEntityStateAssignment();
+  const name = '負傷';
+  const description = '頬に傷がある';
+  return {
+    id: assignment.stateId,
+    entity_id: assignment.entityId,
+    name,
+    description,
+    reference_image: {
+      ref_id: 'state-ref',
+      s3_key: 'entities/user-1/state.png',
+      storage_owner_user_id: 'user-1',
+      image_model: 'gpt-image-1',
+      base_ref_id: 'base-ref',
+      created_at: '2026-09-30T00:00:00.000Z',
+      input_fingerprint: computeStateReferenceFingerprint({
+        entityId: assignment.entityId,
+        stateId: assignment.stateId,
+        name,
+        description,
+        baseRefId: 'base-ref',
+      }),
+    },
   };
 }

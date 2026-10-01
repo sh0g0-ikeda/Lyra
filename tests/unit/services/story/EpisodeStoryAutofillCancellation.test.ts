@@ -10,17 +10,21 @@ import type {
 import type {
   EpisodePagePlanExecutionControl,
   EpisodePagePlanProgressReporter,
+  EpisodeStateAutofillOptions,
   PageServicePort,
 } from '../../../../src/services/page/PageService.js';
 import { EpisodeStoryAutofillWorkerService } from '../../../../src/services/story/EpisodeStoryAutofillWorkerService.js';
+import { EpisodeStatePlanError } from '../../../../src/services/page/EpisodeStateAssignmentResolver.js';
 
 class FakeExecutionRepository implements EpisodeStoryAutofillExecutionRepository {
   public job = buildJob();
   public cancellationRequested = false;
   public completed = false;
+  public completeCalls = 0;
   public failed = false;
   public cancelled = false;
   public commitStarted = false;
+  public failureInput: { stateBlocker?: { code: string } } | null = null;
 
   public async claimQueuedEpisodeStoryAutofillJob(): Promise<GenerationJob | null> {
     return this.job;
@@ -56,18 +60,22 @@ class FakeExecutionRepository implements EpisodeStoryAutofillExecutionRepository
     _input: CompleteEpisodeStoryAutofillInput,
   ): Promise<boolean> {
     this.completed = true;
+    this.completeCalls += 1;
     return true;
   }
 
-  public async failEpisodeStoryAutofill(): Promise<boolean> {
+  public async failEpisodeStoryAutofill(input: { stateBlocker?: { code: string } }): Promise<boolean> {
     this.failed = true;
+    this.failureInput = input;
     return true;
   }
 }
 
 class ControlledPageService implements PageServicePort {
   public executionControl: EpisodePagePlanExecutionControl | undefined;
+  public stateOptions: EpisodeStateAutofillOptions | undefined;
   public onAutofill: (() => Promise<void>) | null = null;
+  public result = buildApplyResult();
 
   public async updatePageSettings(): Promise<PageSummary> {
     throw new Error('not used');
@@ -84,14 +92,76 @@ class ControlledPageService implements PageServicePort {
     _progressReporter?: EpisodePagePlanProgressReporter,
     _organizationId?: string | null,
     executionControl?: EpisodePagePlanExecutionControl,
+    stateOptions?: EpisodeStateAutofillOptions,
   ): Promise<EpisodePagePlanApplyResult> {
     this.executionControl = executionControl;
+    this.stateOptions = stateOptions;
     await this.onAutofill?.();
-    return buildApplyResult();
+    return this.result;
   }
 }
 
 describe('EpisodeStoryAutofillWorkerService cancellation', () => {
+  it('状態反映v1はページ保存transaction内でjobを完了しworkerから重複完了しない', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = {
+      ...repository.job.params,
+      state_autofill_version: 'v1',
+      state_assignment_policy: 'overwrite_existing',
+    };
+    const pageService = new ControlledPageService();
+    pageService.result = {
+      ...buildApplyResult(),
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'overwrite_existing',
+      stateTransitions: [],
+    };
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(repository.completeCalls).toBe(0);
+  });
+  it('状態割当の競合は安全なcodeを失敗jobへ残す', async () => {
+    const repository = new FakeExecutionRepository();
+    const pageService = new ControlledPageService();
+    pageService.onAutofill = async () => {
+      throw new EpisodeStatePlanError('STATE_ASSIGNMENT_CONFLICT', 'manual assignment conflict');
+    };
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'failed' });
+    expect(repository.failureInput?.stateBlocker?.code).toBe('STATE_ASSIGNMENT_CONFLICT');
+    expect(repository.commitStarted).toBe(false);
+  });
+  it('受付時に確定した状態反映versionと上書き方針をworkerへ渡す', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = {
+      ...repository.job.params,
+      state_autofill_version: 'v1',
+      state_assignment_policy: 'overwrite_existing',
+    };
+    const pageService = new ControlledPageService();
+    pageService.result = {
+      ...buildApplyResult(),
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'overwrite_existing',
+      stateTransitions: [],
+    };
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.stateOptions).toEqual({
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'overwrite_existing',
+    });
+  });
+
+  it('未知の状態反映versionは旧処理へ読み替えず失敗にする', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = { ...repository.job.params, state_autofill_version: 'unknown' };
+    const pageService = new ControlledPageService();
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'failed' });
+    expect(pageService.executionControl).toBeUndefined();
+    expect(repository.failed).toBe(true);
+  });
   it('コンパイル中に停止要求を検知すると failed にせず cancelled にする', async () => {
     const repository = new FakeExecutionRepository();
     const pageService = new ControlledPageService();

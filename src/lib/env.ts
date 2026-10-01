@@ -59,8 +59,10 @@ const envSchema = z.object({
   REFERENCE_CANDIDATE_TOKEN_SECRET: z.string().min(32).optional(),
   LOCAL_FILE_STORAGE_DIR: z.string().min(1).optional(),
   LOCAL_ASSET_BASE_URL: z.string().url().optional(),
+  OPENAI_EPISODE_TEXT_PROFILE: z.enum(['legacy', 'balanced_v1']).default('legacy'),
   OPENAI_API_KEY: z.string().min(1).optional(),
   OPENAI_IMAGE_MODEL: z.string().min(1).default('gpt-image-2'),
+  GENERATION_QUOTES_ENABLED: z.string().optional().transform((value) => value === 'true'),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(300000),
   LOCAL_IMAGE_FALLBACK_ENABLED: z.string().optional().transform((value) => value === 'true'),
@@ -80,6 +82,10 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === 'true'),
   EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  EPISODE_STATE_AUTOFILL_V1_ENABLED: z
     .string()
     .optional()
     .transform((value) => value === 'true'),
@@ -119,6 +125,10 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => (value === undefined ? true : value === 'true')),
+  ENTITY_STATE_REFERENCE_GENERATION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
   ENTITY_IMPORT_ANALYSIS_ENABLED: z
     .string()
     .optional()
@@ -194,15 +204,38 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === 'true'),
+  GOOGLE_PLAY_TEST_PURCHASE_USER_IDS: z.string().optional(),
+  GOOGLE_PLAY_TEST_PURCHASES_EXPIRE_AT: z.string().optional(),
   GOOGLE_PLAY_PRODUCT_STANDARD_MONTHLY: z.string().min(1).max(255).optional(),
   GOOGLE_PLAY_PRODUCT_PREMIUM_MONTHLY: z.string().min(1).max(255).optional(),
   GOOGLE_PLAY_PRODUCT_CREDITS_200: z.string().min(1).max(255).optional(),
   GOOGLE_PLAY_PRODUCT_CREDITS_1000: z.string().min(1).max(255).optional(),
   GOOGLE_PLAY_PRODUCT_CREDITS_3000: z.string().min(1).max(255).optional(),
+  PUSH_NOTIFICATIONS_ENABLED: z.string().optional().transform((value) => value === 'true'),
+  PUSH_TOKEN_ENCRYPTION_KEY_BASE64: z.string().min(1).optional(),
+  PUSH_TOKEN_HASH_KEY_BASE64: z.string().min(1).optional(),
+  PUSH_TOKEN_ENCRYPTION_KEY_ID: z.string().min(1).max(64).optional(),
+  PUSH_APNS_TEAM_ID: z.string().min(1).max(64).optional(),
+  PUSH_APNS_KEY_ID: z.string().min(1).max(64).optional(),
+  PUSH_APNS_PRIVATE_KEY_BASE64: z.string().min(1).optional(),
+  PUSH_APNS_BUNDLE_ID: z.string().min(1).max(255).optional(),
+  PUSH_APNS_ENVIRONMENT: z.enum(['sandbox', 'production']).default(process.env.NODE_ENV === 'production' ? 'production' : 'sandbox'),
+  PUSH_FCM_SERVICE_ACCOUNT_JSON_BASE64: z.string().min(1).optional(),
+  PUSH_PROVIDER_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(10_000),
+  PUSH_DELIVERY_INTERVAL_MS: z.coerce.number().int().min(5_000).max(300_000).default(30_000),
   AUTH_PROVIDER: z.enum(['supabase', 'cognito']).default('supabase'),
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
+  GOOGLE_SIGN_IN_ENABLED: z.string().optional().transform((value) => value === 'true'),
+  GOOGLE_IDENTITY_LINK_ENABLED: z.string().optional().transform((value) => value === 'true'),
+  GOOGLE_COGNITO_IDP_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_LINK_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_LINK_CLIENT_SECRET: z.string().min(1).optional(),
+  GOOGLE_LINK_REDIRECT_URI: z.string().url().optional(),
+  GOOGLE_LINK_WEB_RETURN_URI: z.string().url().optional(),
+  GOOGLE_LINK_ENCRYPTION_SECRET: z.string().min(32).optional(),
   COGNITO_USER_POOL_ID: z.string().min(1).optional(),
   COGNITO_CLIENT_ID: z.string().min(1).optional(),
+  WEB_IMAGE_DELIVERY_COGNITO_CLIENT_IDS: z.string().default(''),
   COGNITO_ALLOWED_CLIENT_IDS: z.string().min(1).optional(),
   COGNITO_ISSUER: z.string().url().optional(),
   COGNITO_JWKS_URI: z.string().url().optional(),

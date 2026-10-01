@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { PageErrorRecoveryNotice } from '@/components/PageErrorRecoveryNotice';
 import { ApiError } from '@/lib/api';
 
+const confirm = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/confirm', () => ({ confirmAction: confirm }));
+
 vi.mock('react-native', () => ({
   StyleSheet: { create: <T,>(styles: T): T => styles },
   Text: 'text',
@@ -75,6 +78,12 @@ describe('PageErrorRecoveryNotice', () => {
 
     rendered.press();
 
+    expect(rendered.actions.reloadStale).not.toHaveBeenCalled();
+    const confirmation = confirm.mock.calls.at(-1)?.[0];
+    expect(confirmation.message).toContain('コマ枠');
+    expect(confirmation.message).toContain('セリフ');
+    expect(confirmation.confirmLabel).toContain('置き換え');
+    act(() => confirmation.onConfirm());
     expect(rendered.actions.reloadStale).toHaveBeenCalledTimes(1);
     expect(rendered.actions.retry).not.toHaveBeenCalled();
   });

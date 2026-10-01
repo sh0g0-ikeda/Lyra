@@ -6,6 +6,7 @@ import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresBalloonRepository } from '../../src/repositories/BalloonRepository.js';
 import { PostgresPagePanelStructureRepository } from '../../src/repositories/PagePanelStructureRepository.js';
+import { PostgresPageRepository } from '../../src/repositories/PageRepository.js';
 import { lockStoryEpisodeAdmission } from '../../src/repositories/StoryEpisodeAdmissionLock.js';
 import { PagePanelStructureService } from '../../src/services/page/PagePanelStructureService.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
@@ -29,7 +30,7 @@ describePostgres('page panel structure safety', () => {
       new PoolTransactionDatabase(pool),
       { migrationLockPollMs: 1, migrationLockMaxAttempts: 10 },
     ));
-    expect(applied.at(-1)).toBe('039_connect_generation_terminal_push_outbox.sql');
+    expect(applied.at(-1)).toBe('046_bridge_production_schema_lineage.sql');
   }, 120_000);
 
   afterAll(async () => {
@@ -40,6 +41,309 @@ describePostgres('page panel structure safety', () => {
       assertSafeSchemaName(schemaName);
       await adminPool.query(`DROP SCHEMA ${schemaName} CASCADE`);
       await adminPool.end();
+    }
+  });
+
+  it.each([0, 1, 2])('選択コマ%dの直後へ空コマだけを挿入し既存内容と参照を保つ', async (selectedIndex) => {
+    const ids = createFixtureIds();
+    const service = createService(pool);
+    try {
+      await insertFixture(pool, ids);
+      await pool.query(
+        `UPDATE panels SET panel_role = 'reaction', panel_size = 'large',
+         situation_text = 'Keep existing action',
+         entities = $2::jsonb, composition = $3::jsonb, dialogue_in_panel = FALSE,
+         dialogue = $4::jsonb, sfx_text = 'Boom', background_note = 'Keep location', panel_notes = 'Keep notes'
+         WHERE page_id = $1::uuid`,
+        [ids.pageId, JSON.stringify([{ entity_id: randomUUID(), state_id: randomUUID() }]),
+          JSON.stringify({ source: 'custom', shot_type: 'close_up', custom_note: 'Keep camera' }),
+          JSON.stringify([{ text: 'Keep dialogue', type: 'thought', position: 'top', entity_id: null }])],
+      );
+      const before = await readStructureSnapshot(pool, ids.pageId);
+
+      const result = await service.apply(ids.userId, ids.pageId, {
+        expectedPanelIds: ids.panelIds,
+        operation: { type: 'insert_after', panelId: ids.panelIds[selectedIndex]! },
+      });
+
+      expect(result.createdPanelId).toBeTruthy();
+      expect(ids.panelIds).not.toContain(result.createdPanelId);
+      const expectedIds = [...ids.panelIds];
+      expectedIds.splice(selectedIndex + 1, 0, result.createdPanelId!);
+      expect(result.panelIds).toEqual(expectedIds);
+      expect(result.layoutTemplateId).toBe('standard_4');
+      expect(result.frames.map((frame) => frame.panelId)).toEqual(expectedIds);
+      expect(result.frames.map((frame) => frame.readingOrder)).toEqual([1, 2, 3, 4]);
+      expect(result.balloonReferenceUpdatedCount).toBe(2 - selectedIndex);
+      expect(result.balloonReferenceClearedCount).toBe(0);
+
+      const after = await readStructureSnapshot(pool, ids.pageId);
+      expect(after.panels.map((panel) => panel.id)).toEqual(expectedIds);
+      expect(after.panels.map((panel) => panel.order)).toEqual([1, 2, 3, 4]);
+      for (const original of before.panels) {
+        const persisted = after.panels.find((panel) => panel.id === original.id)!;
+        expect(withoutKeys(persisted, ['order', 'updated_at'])).toEqual(withoutKeys(original, ['order', 'updated_at']));
+      }
+      expect(after.panels[selectedIndex + 1]).toMatchObject({
+        page_id: ids.pageId,
+        panel_role: 'action',
+        panel_size: 'standard',
+        situation_text: null,
+        entities: [],
+        composition: { source: 'custom', gallery_item_id: null, composition_prompt: null, shot_type: null, angle: null, custom_note: null },
+        dialogue_in_panel: true,
+        dialogue: [],
+        sfx_text: null,
+        background_note: null,
+        panel_notes: null,
+      });
+      expect(withoutKeys(after.page, ['layout_config', 'updated_at'])).toEqual(withoutKeys(before.page, ['layout_config', 'updated_at']));
+      expect(after.balloons.map((balloon) => balloon.id)).toEqual(before.balloons.map((balloon) => balloon.id));
+      expect(after.balloons.map((balloon) => withoutKeys(balloon, ['panel_order_reference', 'updated_at']))).toEqual(
+        before.balloons.map((balloon) => withoutKeys(balloon, ['panel_order_reference', 'updated_at'])),
+      );
+      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual(
+        ids.panelIds.map((_, index) => index + 1 + (index > selectedIndex ? 1 : 0)),
+      );
+      await expect(readLayoutMetadata(pool, ids.pageId)).resolves.toMatchObject({
+        story_page_purpose: 'keep me', type: 'template', template_id: 'standard_4', panel_count: 4,
+      });
+    } finally {
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it('古いsnapshotやページ外の選択コマ・所有者の場合に直後追加を一切保存しない', async () => {
+    const ids = createFixtureIds();
+    const foreignIds = createFixtureIds();
+    const service = createService(pool);
+    try {
+      await insertFixture(pool, ids);
+      await insertFixture(pool, foreignIds);
+      const before = await readStructureSnapshot(pool, ids.pageId);
+      const foreignBefore = await readStructureSnapshot(pool, foreignIds.pageId);
+      await expect(service.apply(ids.userId, ids.pageId, {
+        expectedPanelIds: [ids.panelIds[1], ids.panelIds[0], ids.panelIds[2]],
+        operation: { type: 'insert_after', panelId: ids.panelIds[1] },
+      })).rejects.toMatchObject({ code: 'CONFLICT' });
+      await expect(service.apply(ids.userId, ids.pageId, {
+        expectedPanelIds: ids.panelIds,
+        operation: { type: 'insert_after', panelId: foreignIds.panelIds[0] },
+      })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+      await expect(service.apply(foreignIds.userId, ids.pageId, {
+        expectedPanelIds: ids.panelIds,
+        operation: { type: 'insert_after', panelId: ids.panelIds[0] },
+      })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+      await expect(readStructureSnapshot(pool, foreignIds.pageId)).resolves.toEqual(foreignBefore);
+    } finally {
+      await removeFixture(pool, ids);
+      await removeFixture(pool, foreignIds);
+    }
+  });
+
+  it('8コマ直前の挿入だけ成功し9コマ目の追加を一切保存しない', async () => {
+    const ids = createFixtureIds();
+    const service = createService(pool);
+    try {
+      await insertFixture(pool, ids);
+      let panelIds: string[] = ids.panelIds;
+      while (panelIds.length < 8) {
+        panelIds = (await service.apply(ids.userId, ids.pageId, {
+          expectedPanelIds: panelIds,
+          operation: { type: 'insert_after', panelId: ids.panelIds[0] },
+        })).panelIds;
+      }
+      const before = await readStructureSnapshot(pool, ids.pageId);
+      expect(before.panels).toHaveLength(8);
+      expect(before.frames).toHaveLength(8);
+      await expect(service.apply(ids.userId, ids.pageId, {
+        expectedPanelIds: panelIds,
+        operation: { type: 'insert_after', panelId: ids.panelIds[0] },
+      })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+    } finally {
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it('同じsnapshotから同時に直後追加する場合に1件だけ保存する', async () => {
+    const ids = createFixtureIds();
+    const service = createService(pool);
+    try {
+      await insertFixture(pool, ids);
+      const results = await Promise.allSettled([0, 1].map(() => service.apply(ids.userId, ids.pageId, {
+        expectedPanelIds: ids.panelIds,
+        operation: { type: 'insert_after', panelId: ids.panelIds[1] },
+      })));
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.find((result) => result.status === 'rejected')).toMatchObject({
+        status: 'rejected', reason: { code: 'CONFLICT' },
+      });
+      const panelIds = await readPanelIds(pool, ids.pageId);
+      expect(panelIds).toHaveLength(4);
+      expect(panelIds.slice(0, 2)).toEqual(ids.panelIds.slice(0, 2));
+      expect(panelIds[3]).toBe(ids.panelIds[2]);
+      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([1, 2, 4]);
+    } finally {
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it('直後追加のFrame保存失敗時に新規コマ・順序・吹き出し・レイアウトを全てrollbackする', async () => {
+    const ids = createFixtureIds();
+    const repository = new PostgresPagePanelStructureRepository(new PoolTransactionDatabase(pool));
+    try {
+      await insertFixture(pool, ids);
+      const before = await readStructureSnapshot(pool, ids.pageId);
+      await expect(repository.apply(ids.userId, ids.pageId, {
+        expectedPanelIds: ids.panelIds,
+        operation: { type: 'insert_after', panelId: ids.panelIds[0] },
+        replacementLayout: {
+          templateId: 'standard_4',
+          frameDefinitions: [1, 2, 3, 4].map((readingOrder) => ({
+            panelId: null, vertices: rectangle(readingOrder),
+            borderStyle: 'invalid' as PanelFrameBorderStyle,
+            borderWidth: 3, borderColor: '#000000', zIndex: 1, readingOrder,
+          })),
+        },
+      })).rejects.toMatchObject({ code: '23514' });
+      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+    } finally {
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it.each(['confirmed', 'generating'])('Pageが%sの場合に直後追加を一切保存しない', async (status) => {
+    const ids = createFixtureIds();
+    try {
+      await insertFixture(pool, ids);
+      await pool.query('UPDATE pages SET status = $2 WHERE id = $1::uuid', [ids.pageId, status]);
+      const before = await readStructureSnapshot(pool, ids.pageId);
+      await expect(createService(pool).apply(ids.userId, ids.pageId, {
+        expectedPanelIds: ids.panelIds,
+        operation: { type: 'insert_after', panelId: ids.panelIds[0] },
+      })).rejects.toMatchObject({ code: 'CONFLICT' });
+      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+    } finally {
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it.each(['page_generate', 'episode_story_autofill', 'episode_page_skeleton'])(
+    'activeな%sがある場合に直後追加を一切保存しない',
+    async (jobType) => {
+      const ids = createFixtureIds();
+      try {
+        await insertFixture(pool, ids);
+        await pool.query(
+          `INSERT INTO generation_jobs (id, user_id, job_type, status, credit_cost, params)
+           VALUES ($1::uuid, $2::uuid, $3, 'queued', 1, $4::jsonb)`,
+          [randomUUID(), ids.userId, jobType, JSON.stringify({ page_id: ids.pageId, episode_id: ids.episodeId })],
+        );
+        const before = await readStructureSnapshot(pool, ids.pageId);
+        await expect(createService(pool).apply(ids.userId, ids.pageId, {
+          expectedPanelIds: ids.panelIds,
+          operation: { type: 'insert_after', panelId: ids.panelIds[0] },
+        })).rejects.toMatchObject({ code: 'CONFLICT' });
+        await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+      } finally {
+        await removeFixture(pool, ids);
+      }
+    },
+  );
+
+  it('選択コマが削除済みの場合に古いsnapshotで直後追加を一切保存しない', async () => {
+    const ids = createFixtureIds();
+    const service = createService(pool);
+    try {
+      await insertFixture(pool, ids);
+      await service.apply(ids.userId, ids.pageId, {
+        expectedPanelIds: ids.panelIds,
+        operation: { type: 'delete', panelId: ids.panelIds[1] },
+      });
+      const before = await readStructureSnapshot(pool, ids.pageId);
+      await expect(service.apply(ids.userId, ids.pageId, {
+        expectedPanelIds: ids.panelIds,
+        operation: { type: 'insert_after', panelId: ids.panelIds[1] },
+      })).rejects.toMatchObject({ code: 'CONFLICT' });
+      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+    } finally {
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it('organization直後追加はactive memberと指定workspaceだけに許可する', async () => {
+    const ids = createFixtureIds();
+    const service = createService(pool);
+    try {
+      await insertFixture(pool, ids);
+      await moveFixtureWorkToOrganization(pool, ids);
+      const request = {
+        expectedPanelIds: ids.panelIds,
+        operation: { type: 'insert_after' as const, panelId: ids.panelIds[0] },
+      };
+      const before = await readStructureSnapshot(pool, ids.pageId);
+      await expect(service.apply(ids.userId, ids.pageId, request)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await expect(service.apply(ids.userId, ids.pageId, request, randomUUID())).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await pool.query(
+        `UPDATE organization_members SET status = 'suspended' WHERE organization_id = $1::uuid`,
+        [ids.organizationId],
+      );
+      await expect(service.apply(ids.userId, ids.pageId, request, ids.organizationId)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+      await pool.query(
+        `UPDATE organization_members SET status = 'active' WHERE organization_id = $1::uuid`,
+        [ids.organizationId],
+      );
+      const result = await service.apply(ids.userId, ids.pageId, request, ids.organizationId);
+      expect(result.panelIds).toEqual([ids.panelIds[0], result.createdPanelId, ids.panelIds[1], ids.panelIds[2]]);
+      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([1, 3, 4]);
+    } finally {
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it('旧注記と不正な旧IDも含む状態割当を課金前検証へ送り読取を止めない', async () => {
+    const ids = createFixtureIds();
+    const entityId = randomUUID();
+    const stateId = randomUUID();
+    try {
+      await insertFixture(pool, ids);
+      await pool.query(
+        `INSERT INTO entities (id, work_id, user_id, name)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'State guard character')`,
+        [entityId, ids.workId, ids.userId],
+      );
+      await pool.query(
+        `INSERT INTO entity_states (id, entity_id, costume_note)
+         VALUES ($1::uuid, $2::uuid, 'legacy note')`,
+        [stateId, entityId],
+      );
+      const repository = new PostgresPageRepository(new PoolTransactionDatabase(pool));
+      const assign = async (assignedStateId: string): Promise<void> => {
+        await pool.query(
+          'UPDATE panels SET entities = $2::jsonb WHERE id = $1::uuid',
+          [ids.panelIds[0], JSON.stringify([{ entity_id: entityId, state_id: assignedStateId }])],
+        );
+      };
+
+      await assign(stateId);
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
+
+      await pool.query(
+        `UPDATE entity_states SET name = 'Wounded', description = 'Scar on left cheek' WHERE id = $1::uuid`,
+        [stateId],
+      );
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
+
+      await assign('invalid-legacy-state-id');
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
+
+      await assign(randomUUID());
+      expect((await repository.findGenerationContextByIdAndUserId(ids.pageId, ids.userId))?.hasVariantState).toBe(true);
+    } finally {
+      await removeFixture(pool, ids);
     }
   });
 
@@ -163,7 +467,7 @@ describePostgres('page panel structure safety', () => {
     }
   });
 
-  it('生成admissionが先行する場合にcommit後のactive jobを再確認して更新しない', async () => {
+  it.each(['append', 'insert_after'] as const)('生成admissionが先行する場合にcommit後のactive jobを再確認して%sを拒否する', async (type) => {
     const ids = createFixtureIds();
     const service = createService(pool);
     const blocker = await pool.connect();
@@ -174,7 +478,7 @@ describePostgres('page panel structure safety', () => {
 
       const pendingApply = service.apply(ids.userId, ids.pageId, {
         expectedPanelIds: ids.panelIds,
-        operation: { type: 'append' },
+        operation: type === 'append' ? { type } : { type, panelId: ids.panelIds[0] },
       });
       await expectPromiseToRemainPending(pendingApply);
       await blocker.query(
@@ -458,6 +762,30 @@ async function readPanelIds(pool: Pool, pageId: string): Promise<string[]> {
 interface FrameSnapshot {
   panel_id: string | null;
   vertices: unknown;
+}
+
+interface StructureSnapshot {
+  page: Record<string, unknown>;
+  panels: Array<Record<string, unknown>>;
+  frames: Array<Record<string, unknown>>;
+  balloons: Array<Record<string, unknown>>;
+}
+
+async function readStructureSnapshot(pool: Pool, pageId: string): Promise<StructureSnapshot> {
+  const result = await pool.query<{ snapshot: StructureSnapshot }>(
+    `SELECT jsonb_build_object(
+       'page', to_jsonb(pages),
+       'panels', (SELECT jsonb_agg(to_jsonb(panels) ORDER BY panels."order") FROM panels WHERE page_id = pages.id),
+       'frames', (SELECT jsonb_agg(to_jsonb(panel_frames) ORDER BY reading_order) FROM panel_frames WHERE page_id = pages.id),
+       'balloons', (SELECT jsonb_agg(to_jsonb(balloons) ORDER BY z_index) FROM balloons WHERE page_id = pages.id)
+     ) AS snapshot FROM pages WHERE id = $1::uuid`,
+    [pageId],
+  );
+  return result.rows[0]!.snapshot;
+}
+
+function withoutKeys(value: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)));
 }
 
 async function readFrames(pool: Pool, pageId: string): Promise<FrameSnapshot[]> {

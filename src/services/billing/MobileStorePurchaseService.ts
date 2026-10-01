@@ -48,6 +48,8 @@ export interface MobileStorePurchaseResult {
   creditPackageCode: CreditPackageCode | null;
   creditsChanged: number;
   isDuplicate: boolean;
+  scheduledPlanCode?: ConsumerPaidPlanCode | null;
+  scheduledPlanEffectiveAt?: Date | null;
 }
 
 export interface AppleStorePurchaseVerifierPort {
@@ -112,6 +114,8 @@ export interface MobileStorePurchaseServiceDependencies {
   identifierSecret: string;
   allowAppleSandbox: boolean;
   allowGoogleTestPurchases: boolean;
+  googleTestPurchaseAllowedUserIds?: ReadonlySet<string> | null;
+  googleTestPurchasesExpireAt?: Date | null;
   googlePackageName: string;
   clock?: Clock;
 }
@@ -172,9 +176,11 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     }
 
     return {
+      store: record.store ?? null,
       planCode: record.planCode,
       status: record.state === 'cancelled' ? 'canceled' : 'active',
       currentPeriodEnd: record.expiresAt,
+      scheduledPlanCode: record.scheduledPlanCode ?? null, scheduledPlanEffectiveAt: record.scheduledEffectiveAt ?? null,
       cancelAtPeriodEnd:
         record.state === 'cancelled' || record.autoRenewEnabled === false,
     };
@@ -185,14 +191,11 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     signedTransaction: string;
     environment: StorePurchaseEnvironment;
   }): Promise<MobileStorePurchaseResult> {
-    if (input.environment === 'sandbox' && !this.dependencies.allowAppleSandbox) {
-      throw new ValidationError('Store purchase could not be verified');
-    }
     const verified = await this.dependencies.appleVerifier.verifyTransaction({
       signedTransaction: input.signedTransaction,
       environment: input.environment,
     });
-    if (verified.store !== 'apple' || verified.environment !== input.environment) {
+    if (verified.store !== 'apple' || (verified.environment === 'sandbox' && !this.dependencies.allowAppleSandbox)) {
       throw new ValidationError('Store purchase could not be verified');
     }
 
@@ -206,7 +209,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     const verified = await this.dependencies.googleVerifier.verifyPurchase({
       purchaseToken: input.purchaseToken,
     });
-    this.assertAllowedGooglePurchase(verified);
+    this.assertAllowedGooglePurchase(verified, input.userId);
     const result = await this.applyVerifiedPurchase(verified, input.userId);
     await this.completeGooglePurchase(input.purchaseToken, verified);
     return result;
@@ -228,7 +231,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
       const verified = await this.dependencies.googleVerifier.verifyPurchase({
         purchaseToken,
       });
-      this.assertAllowedGooglePurchase(verified);
+      if (!this.isAllowedGooglePurchase(verified, input.userId)) continue;
       results.push(await this.applyVerifiedPurchase(verified, input.userId));
       await this.completeGooglePurchase(purchaseToken, verified);
     }
@@ -254,7 +257,15 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     data: string;
     publishTime: Date | null;
   }): Promise<void> {
-    const notification = parseGoogleRtdn(input.data);
+    let notification: ParsedGoogleRtdn;
+    try { notification = parseGoogleRtdn(input.data); }
+    catch {
+      // This service is reached only after Pub/Sub OIDC validation. ACK malformed
+      // authenticated messages only after durable, idempotent failure recording.
+      await this.recordUnknownGoogleEvent({ eventId: input.messageId, state: 'failed',
+        occurredAt: input.publishTime ?? this.clock(), providerEventType: 'google.invalid_notification' });
+      return;
+    }
     if (notification.packageName !== this.dependencies.googlePackageName) {
       throw new ValidationError('Store notification could not be verified');
     }
@@ -291,7 +302,11 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     const verified = await this.dependencies.googleVerifier.verifyPurchase({
       purchaseToken: notification.purchaseToken,
     });
-    this.assertAllowedGooglePurchase(verified);
+    if (!this.isAllowedGooglePurchase(verified, null)) {
+      await this.recordUnknownGoogleEvent({ eventId: input.messageId, state: 'pending', occurredAt,
+        providerEventType: 'google.test_purchase_ignored' });
+      return;
+    }
     await this.applyVerifiedPurchase(
       {
         ...verified,
@@ -319,7 +334,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
           signedTransaction,
           environment,
         });
-        if (verified.store === 'apple' && verified.environment === environment) {
+        if (verified.store === 'apple' && (verified.environment === 'production' || this.dependencies.allowAppleSandbox)) {
           return verified;
         }
       } catch (error) {
@@ -333,13 +348,19 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     throw new ValidationError('Store purchase could not be verified');
   }
 
-  private assertAllowedGooglePurchase(verified: VerifiedStorePurchase): void {
-    if (
-      verified.store !== 'google' ||
-      (verified.isTestPurchase && !this.dependencies.allowGoogleTestPurchases)
-    ) {
-      throw new ValidationError('Store purchase could not be verified');
-    }
+  private assertAllowedGooglePurchase(verified: VerifiedStorePurchase, requestedUserId: string | null): void {
+    if (!this.isAllowedGooglePurchase(verified, requestedUserId)) throw new ValidationError('Store purchase could not be verified');
+  }
+
+  private isAllowedGooglePurchase(verified: VerifiedStorePurchase, requestedUserId: string | null): boolean {
+    if (verified.store !== 'google') throw new ValidationError('Store purchase could not be verified');
+    if (!verified.isTestPurchase) return true;
+    const expiresAt = this.dependencies.googleTestPurchasesExpireAt ?? null;
+    const allowed = this.dependencies.googleTestPurchaseAllowedUserIds ?? null;
+    if (!this.dependencies.allowGoogleTestPurchases || (expiresAt !== null && this.clock().getTime() >= expiresAt.getTime())) return false;
+    if (allowed === null) return true; // Only non-production config can produce an unrestricted test scope.
+    return requestedUserId !== null ? allowed.has(requestedUserId)
+      : verified.accountBinding !== null && [...allowed].some(userId => createGooglePlayObfuscatedAccountId(this.dependencies.identifierSecret, userId) === verified.accountBinding);
   }
 
   private async completeGooglePurchase(
@@ -367,6 +388,11 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
     if (product === null) {
       throw new ValidationError('Store purchase could not be verified');
     }
+
+    const renewalProduct = verified.renewalProductId == null ? null
+      : this.dependencies.productCatalog.resolve(verified.store, verified.renewalProductId);
+    if (verified.renewalProductId != null && renewalProduct?.kind !== 'subscription')
+      throw new ValidationError('Store purchase could not be verified');
 
     const externalPurchaseKey = this.key(
       `${verified.store}:external-purchase`,
@@ -460,7 +486,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
         }
         if (
           existing !== null &&
-          !isSameProduct(existing, product, verified.productId)
+          !isCompatibleProduct(existing, product, verified.productId)
         ) {
           throw new ValidationError('Store purchase could not be verified');
         }
@@ -504,6 +530,8 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
                 incomingState: verified.state,
                 incomingObservedAt: verified.observedAt,
               });
+        const scheduled = transition.ignoredAsStale ? scheduledStateFromPurchase(existing)
+          : resolveScheduledState({ existing, product, renewalProduct, verified });
         const purchase =
           existing === null
             ? await this.dependencies.storePurchaseRepository.createPurchase(
@@ -524,6 +552,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
                   transactionKey,
                   expiresAt: verified.expiresAt,
                   autoRenewEnabled: verified.autoRenewEnabled,
+                  scheduledProductId: scheduled.productId, scheduledPlanCode: scheduled.planCode, scheduledEffectiveAt: scheduled.effectiveAt,
                   lastObservedAt: transition.observedAt,
                 },
                 client,
@@ -533,6 +562,10 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
               : await this.dependencies.storePurchaseRepository.updatePurchase(
                   existing.id,
                   {
+                    productId: verified.productId,
+                    planCode: product.kind === 'subscription' ? product.planCode : null,
+                    creditPackageCode: product.kind === 'credit_pack' ? product.creditPackageCode : null,
+                    scheduledProductId: scheduled.productId, scheduledPlanCode: scheduled.planCode, scheduledEffectiveAt: scheduled.effectiveAt,
                     state: transition.state,
                     transactionKey,
                     expiresAt: verified.expiresAt,
@@ -542,6 +575,8 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
                   client,
                 );
 
+        const effectiveProduct = this.dependencies.productCatalog.resolve(purchase.store, purchase.productId);
+        if (effectiveProduct === null) throw new ValidationError('Store purchase could not be verified');
         const effectiveTransactionKey = purchase.transactionKey;
         const operation = operationForPurchase(purchase, effectiveTransactionKey);
         const eventRecorded =
@@ -568,7 +603,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
         ) {
           creditsChanged = await this.grantCredits(
             purchase,
-            product,
+            effectiveProduct,
             effectiveTransactionKey,
             client,
           );
@@ -579,7 +614,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
         ) {
           creditsChanged = await this.reverseCredits(
             purchase,
-            product,
+            effectiveProduct,
             effectiveTransactionKey,
             client,
           );
@@ -628,6 +663,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
       linked.id,
       {
         state: 'expired',
+        scheduledProductId: null, scheduledPlanCode: null, scheduledEffectiveAt: null,
         transactionKey: linked.transactionKey,
         expiresAt: input.observedAt,
         autoRenewEnabled: false,
@@ -1065,12 +1101,12 @@ function isHistoricalSubscriptionTerminal(
   );
 }
 
-function isSameProduct(
+function isCompatibleProduct(
   existing: StorePurchaseRecord,
   product: StoreProductDefinition,
   productId: string,
 ): boolean {
-  return (
+  return (existing.kind === 'subscription' && product.kind === 'subscription') || (
     existing.productId === productId &&
     existing.kind === product.kind &&
     existing.planCode ===
@@ -1079,6 +1115,62 @@ function isSameProduct(
       (product.kind === 'credit_pack' ? product.creditPackageCode : null)
   );
 }
+
+interface ScheduledSubscriptionState {
+  productId: string | null;
+  planCode: ConsumerPaidPlanCode | null;
+  effectiveAt: Date | null;
+}
+
+function resolveScheduledState(input: {
+  existing: StorePurchaseRecord | null;
+  product: StoreProductDefinition;
+  renewalProduct: StoreProductDefinition | null;
+  verified: VerifiedStorePurchase;
+}): ScheduledSubscriptionState {
+  if (input.product.kind !== 'subscription' || ['expired', 'refunded', 'revoked', 'failed'].includes(input.verified.state)) {
+    return emptyScheduledState();
+  }
+  if (input.renewalProduct?.kind === 'subscription') {
+    if (input.renewalProduct.productId === input.product.productId) {
+      return emptyScheduledState();
+    }
+    return {
+      productId: input.renewalProduct.productId,
+      planCode: input.renewalProduct.planCode,
+      effectiveAt: input.verified.expiresAt,
+    };
+  }
+  if (input.verified.autoRenewEnabled === false) {
+    return emptyScheduledState();
+  }
+  if (
+    input.existing !== null
+    && (
+      input.existing.productId !== input.verified.productId
+      || input.existing.scheduledProductId === input.verified.productId
+    )
+  ) {
+    return emptyScheduledState();
+  }
+  return scheduledStateFromPurchase(input.existing);
+}
+
+function scheduledStateFromPurchase(purchase: StorePurchaseRecord | null): ScheduledSubscriptionState {
+  if (purchase === null) {
+    return emptyScheduledState();
+  }
+  return {
+    productId: purchase.scheduledProductId ?? null,
+    planCode: purchase.scheduledPlanCode ?? null,
+    effectiveAt: purchase.scheduledEffectiveAt ?? null,
+  };
+}
+
+function emptyScheduledState(): ScheduledSubscriptionState {
+  return { productId: null, planCode: null, effectiveAt: null };
+}
+
 
 function emptyBalance(userId: string): CreditBalance {
   return {
@@ -1132,6 +1224,7 @@ function toResult(
     productKind: purchase.kind,
     planCode: purchase.planCode,
     creditPackageCode: purchase.creditPackageCode,
+    scheduledPlanCode: purchase.scheduledPlanCode ?? null, scheduledPlanEffectiveAt: purchase.scheduledEffectiveAt ?? null,
     creditsChanged,
     isDuplicate,
   };
@@ -1162,6 +1255,7 @@ const googleRtdnSchema = z
       .object({
         version: z.string().max(32).optional(),
         notificationType: z.number().int(),
+        subscriptionId: z.string().min(1).max(255).optional(),
         purchaseToken: z.string().min(1).max(8_192),
       })
       .strict()

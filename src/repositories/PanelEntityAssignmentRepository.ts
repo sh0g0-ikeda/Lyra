@@ -320,11 +320,9 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
 
       const assignedEntityIds = new Set(assignments.map((assignment) => assignment.entityId));
       const speakerEntityIds = toPanelSpeakerEntityIds(panel.dialogue);
-      if (speakerEntityIds.some((entityId) => !assignedEntityIds.has(entityId))) {
-        return { status: 'dialogue_speaker_not_assigned' };
-      }
-
-      const entityIds = [...assignedEntityIds].sort();
+      // Off-panel speakers are valid, but every visible subject and voice must
+      // still belong to this authorized work under the same transaction lock.
+      const entityIds = [...new Set([...assignedEntityIds, ...speakerEntityIds])].sort();
       if (entityIds.length > 0) {
         const entityResult = await transactionClient.query<EntityIdRow>(
           `

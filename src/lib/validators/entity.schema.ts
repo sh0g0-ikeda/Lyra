@@ -170,6 +170,7 @@ export const createEntityBodySchema = z.object({
 
 export const updateEntityBodySchema = z
   .object({
+    expected_updated_at: z.string().datetime({ offset: true }).optional(),
     entity_type: entityTypeSchema.optional(),
     name: z.string().trim().min(1).max(100).optional(),
     free_description: z.string().max(2000).nullable().optional(),
@@ -182,7 +183,7 @@ export const updateEntityBodySchema = z
     speech_profile: jsonObjectSchema.optional(),
   })
   .strict()
-  .refine((body) => Object.keys(body).length > 0, {
+  .refine((body) => Object.keys(body).some((key) => key !== 'expected_updated_at'), {
     message: 'At least one field is required',
   });
 

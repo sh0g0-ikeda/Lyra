@@ -16,7 +16,7 @@ describe('mobile accessibility semantic closure', () => {
   it('ラジオ形式の選択肢とそのモーダルを支援技術へ公開する', () => {
     const segmentedControl = readMobileSource('src/components/SegmentedControl.tsx');
     const pagesScreen = readMobileSource('src/screens/PagesScreen.tsx');
-    const charactersScreen = readMobileSource('src/screens/CharactersScreen.tsx');
+    const charactersScreen = readMobileSource('src/components/CharacterChoiceField.tsx');
 
     for (const source of [segmentedControl, pagesScreen, charactersScreen]) {
       expect(source).toContain('accessibilityRole="radio"');
@@ -87,7 +87,7 @@ describe('mobile accessibility semantic closure', () => {
       ['src/screens/PagesScreen.tsx', 'chip', 'minHeight'],
       ['src/screens/PagesScreen.tsx', 'panelDisclosureHeader', 'minHeight'],
       ['src/screens/PagesScreen.tsx', 'templateModalClose', 'height'],
-      ['src/screens/CharactersScreen.tsx', 'choiceModalClose', 'height'],
+      ['src/components/CharacterChoiceField.tsx', 'choiceModalClose', 'height'],
       ['src/screens/CharactersScreen.tsx', 'groupHeader', 'minHeight'],
       ['src/screens/CharactersScreen.tsx', 'smallLink', 'minHeight'],
       ['src/screens/CharactersScreen.tsx', 'smallDangerLink', 'minHeight']
