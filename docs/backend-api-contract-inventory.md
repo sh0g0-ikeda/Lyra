@@ -58,7 +58,7 @@ Endpoint count: 150
 | `/api/episodes/:id/pages` | GET | Authenticated | Strict JSON | `pagesResponseSchema` | Optional opaque cursor (1-100; max 512 chars) | `src/routes/pages.ts` |
 | `/api/episodes/:id/scenes` | GET | Authenticated | Strict JSON | `scenesResponseSchema` | Complete collection | `src/routes/scenes.ts` |
 | `/api/episodes/:id/scenes` | POST | Authenticated | Strict JSON | `sceneSchema` | Complete collection | `src/routes/scenes.ts` |
-| `/api/exports/:jobId` | GET | Authenticated | Strict JSON | `episodeExportStatusResponseSchema` | Complete collection | `src/routes/episodeExports.ts` |
+| `/api/exports/:jobId` | GET | Authenticated | Strict JSON | `episodeExportLegacyStatusResponseSchema`, `episodeExportStatusResponseSchema` | Complete collection | `src/routes/episodeExports.ts` |
 | `/api/exports/:jobId/download` | GET | Authenticated | Redirect | Authenticated short-lived HTTPS artifact URL | Complete collection | `src/routes/episodeExports.ts` |
 | `/api/generation-quotes` | POST | Authenticated | Strict JSON | `generationQuoteResponseSchema` | Complete collection | `src/routes/generationQuotes.ts` |
 | `/api/generation-quotes/:id` | GET | Authenticated | Strict JSON | `generationQuoteReceiptSchema` | Complete collection | `src/routes/generationQuotes.ts` |
@@ -138,7 +138,7 @@ Endpoint count: 150
 | `/api/web/entities/:id/states/:state_id/reference-candidate-image` | GET | Authenticated | Binary | Authenticated image bytes | Complete collection | `src/routes/entities.ts` |
 | `/api/web/entities/:id/states/:state_id/reference-image` | GET | Authenticated | Binary | Authenticated image bytes | Complete collection | `src/routes/entities.ts` |
 | `/api/web/episodes/:episodeId/exports` | POST | Authenticated | Strict JSON | `episodeExportAcceptedResponseSchema` | Complete collection | `src/routes/episodeExports.ts` |
-| `/api/web/exports/:jobId` | GET | Authenticated | Strict JSON | `episodeExportStatusResponseSchema` | Complete collection | `src/routes/episodeExports.ts` |
+| `/api/web/exports/:jobId` | GET | Authenticated | Strict JSON | `episodeExportLegacyStatusResponseSchema`, `episodeExportStatusResponseSchema` | Complete collection | `src/routes/episodeExports.ts` |
 | `/api/web/exports/:jobId/download` | GET | Authenticated | Redirect | Verified Cognito Web client and scoped export authorization; short-lived artifact download redirect | Complete collection | `src/routes/episodeExports.ts` |
 | `/api/web/jobs/:id` | GET | Authenticated | Strict JSON | `generationJobResponseSchema` | Complete collection | `src/routes/jobs.ts` |
 | `/api/web/pages/:id/image` | GET | Authenticated | Binary | Authenticated image bytes | Complete collection | `src/routes/pages.ts` |

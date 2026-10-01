@@ -2,9 +2,10 @@ import { requireWebImageDeliveryAccess } from './webImageDelivery.js';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import {
   episodeExportAcceptedResponseSchema,
+  episodeExportLegacyStatusResponseSchema,
   episodeExportStatusResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
-import { ValidationError } from '../domain/errors/index.js';
+import { ConflictError, ValidationError } from '../domain/errors/index.js';
 import {
   createEpisodeExportBodySchema,
   episodeExportIdempotencyKeySchema,
@@ -91,12 +92,17 @@ export function createEpisodeExportRoutes(
     const jobId = parseUuid(c, 'jobId');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'export');
+    const version = parseExportContractVersion(c);
     const result = await dependencies.episodeExportService.getExport(
       user.id,
       jobId,
       organizationId,
     );
     c.header('Cache-Control', 'no-store');
+    if (version === 'v1') {
+      const downloadUrl = await legacyDownloadUrl(result, () => dependencies.episodeExportService.createDownload(user.id, jobId, organizationId));
+      return c.json(assertMobileResponseContract(episodeExportLegacyStatusResponseSchema, toLegacyStatusResponse(result, downloadUrl)));
+    }
     return c.json(
       assertMobileResponseContract(
         episodeExportStatusResponseSchema,
@@ -171,6 +177,7 @@ export function createEpisodeExportRoutes(
     const jobId = parseUuid(c, 'jobId');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'export');
+    const version = parseExportContractVersion(c);
     const result = await dependencies.episodeExportService.getExport(
       user.id,
       jobId,
@@ -178,6 +185,10 @@ export function createEpisodeExportRoutes(
       'authorized_web',
     );
     c.header('Cache-Control', 'no-store');
+    if (version === 'v1') {
+      const downloadUrl = await legacyDownloadUrl(result, () => dependencies.episodeExportService.createDownload(user.id, jobId, organizationId, 'authorized_web'));
+      return c.json(assertMobileResponseContract(episodeExportLegacyStatusResponseSchema, toLegacyStatusResponse(result, downloadUrl)));
+    }
     return c.json(
       assertMobileResponseContract(
         episodeExportStatusResponseSchema,
@@ -211,6 +222,36 @@ function parseUuid(c: Context<AppEnv>, name: 'episodeId' | 'jobId'): string {
     throw new ValidationError(`${name} must be a valid UUID`);
   }
   return parsed.data;
+}
+
+function parseExportContractVersion(c: Context<AppEnv>): 'v1' | 'v2' {
+  const value = c.req.query('export_contract');
+  if (value === undefined || value === 'v1') return 'v1';
+  if (value === 'v2') return 'v2';
+  throw new ValidationError('export_contract must be v1 or v2');
+}
+
+async function legacyDownloadUrl(status: EpisodeExportStatus, download: () => Promise<{ url: string }>): Promise<string | undefined> {
+  if (status.status !== 'completed' || !status.downloadReady) return undefined;
+  try {
+    // Reuse the scoped, audience-checked download path; metadata alone never grants access.
+    return (await download()).url;
+  } catch (error) {
+    // Expiry, deletion or a signer outage can race a status read. Metadata remains usable.
+    if (error instanceof ConflictError) return undefined;
+    throw error;
+  }
+}
+
+function toLegacyStatusResponse(status: EpisodeExportStatus, downloadUrl: string | undefined): Record<string, unknown> {
+  return {
+    id: status.jobId, episode_id: status.episodeId, format: status.format, filename: status.filename,
+    status: status.status, progress_stage: status.progressStage, progress_percent: status.progressPercent,
+    error_code: status.error?.code ?? null, message_key: null,
+    expires_at: status.expiresAt.toISOString(), completed_at: status.completedAt?.toISOString() ?? null,
+    cancel_supported: false, cancel_reason_code: 'EXPORT_CANCEL_UNSUPPORTED',
+    ...(downloadUrl === undefined ? {} : { download_url: downloadUrl }),
+  };
 }
 
 function toStatusResponse(status: EpisodeExportStatus) {

@@ -7,7 +7,7 @@ import {
   generationJobHistoryResponseSchema,
   generationJobResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
-import { ValidationError } from '../domain/errors/index.js';
+import { NotFoundError, ValidationError } from '../domain/errors/index.js';
 import {
   decodeGenerationJobHistoryCursor,
   encodeGenerationJobHistoryCursor,
@@ -31,6 +31,11 @@ import { assertMobileResponseContract } from './mobileResponseContract.js';
 const uuidParamSchema = z.string().uuid();
 const DEFAULT_JOB_HISTORY_LIMIT = 25;
 const MAX_JOB_HISTORY_LIMIT = 100;
+const LEGACY_JOB_TYPES = ['page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton'] as const;
+const V2_JOB_TYPES = [...LEGACY_JOB_TYPES, 'entity_import_analysis'] as const;
+// Negotiate before querying so pagination contains only types the client can parse.
+// The version changes representation only; ownership and image delivery remain independent.
+type JobContractVersion = 'v1' | 'v2';
 const episodeStateSourceFieldSchema = z.enum([
   'story_full_draft', 'introduction', 'middle', 'climax', 'ending_hook',
   'scene_location', 'scene_time', 'scene_atmosphere',
@@ -86,6 +91,9 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     const user = c.get('user');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const version = parseJobContractVersion(c);
+    const allowedJobTypes = version === 'v2' ? V2_JOB_TYPES : LEGACY_JOB_TYPES;
+    const requestedJobTypes = parseJobFilter(c.req.query('type'), allowedJobTypes, 'type') as GenerationJobType[];
     const limit = parseJobHistoryLimit(c.req.query('limit'));
     const encodedCursor = c.req.query('cursor');
     const cursor = encodedCursor === undefined
@@ -96,7 +104,7 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
       limit,
       cursor,
       ...(c.req.query('status') === undefined ? {} : { statuses: parseJobFilter(c.req.query('status'), ['queued', 'processing', 'completed', 'failed', 'canceled', 'cancelled'], 'status').map((status) => status === 'canceled' ? 'cancelled' : status) as GenerationJobStatus[] }),
-      ...(c.req.query('type') === undefined ? {} : { jobTypes: parseJobFilter(c.req.query('type'), ['page_generate', 'entity_generate', 'entity_import_analysis', 'episode_story_autofill', 'episode_page_skeleton'], 'type') as GenerationJobType[] }),
+      jobTypes: requestedJobTypes.length > 0 ? requestedJobTypes : allowedJobTypes,
     });
 
     const canEdit = await canEditJobs(c, dependencies, organizationId);
@@ -117,7 +125,9 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     const jobId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const version = parseJobContractVersion(c);
     const job = await dependencies.jobService.getJob(user.id, jobId, organizationId);
+    requireSupportedJobType(job, version);
 
     const payload = await toJobResponse(job, 'mobile', await canEditJobs(c, dependencies, organizationId));
     return c.json(assertMobileResponseContract(generationJobResponseSchema, payload));
@@ -137,6 +147,10 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     const jobId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const version = parseJobContractVersion(c);
+    if (version === 'v1') {
+      requireSupportedJobType(await dependencies.jobService.getJob(user.id, jobId, organizationId), version);
+    }
     const job = await dependencies.jobService.cancelJob(user.id, jobId, organizationId);
 
     const payload = await toJobResponse(job);
@@ -150,13 +164,26 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     const jobId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const version = parseJobContractVersion(c);
     const job = await dependencies.jobService.getJob(user.id, jobId, organizationId);
+    requireSupportedJobType(job, version);
 
     const payload = await toJobResponse(job, 'authorized_web', await canEditJobs(c, dependencies, organizationId));
     return c.json(assertMobileResponseContract(generationJobResponseSchema, payload));
   });
 
   return app;
+}
+
+function parseJobContractVersion(c: Context<AppEnv>): JobContractVersion {
+  const raw = c.req.query('job_contract');
+  if (raw === undefined || raw === 'v1') return 'v1';
+  if (raw === 'v2') return 'v2';
+  throw new ValidationError('job_contract must be v1 or v2');
+}
+
+function requireSupportedJobType(job: GenerationJob, version: JobContractVersion): void {
+  if (version === 'v1' && job.jobType === 'entity_import_analysis') throw new NotFoundError('Job not found');
 }
 
 async function canEditJobs(c: Context<AppEnv>, dependencies: JobRouteDependencies, organizationId: string | null): Promise<boolean> {

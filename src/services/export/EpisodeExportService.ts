@@ -36,6 +36,9 @@ export interface EpisodeExportAccepted {
 
 export interface EpisodeExportStatus {
   jobId: string;
+  episodeId: string;
+  format: EpisodeExportFormat;
+  filename: string;
   status: EpisodeExportJobStatus;
   progressStage: string;
   progressPercent: number;
@@ -140,6 +143,9 @@ export class EpisodeExportService implements EpisodeExportServicePort {
     await this.bestEffortDispatch(job);
     return {
       jobId: job.id,
+      episodeId: job.episodeId,
+      format: job.format,
+      filename: job.filename,
       status: job.status,
       progressStage: job.progressStage,
       progressPercent: job.progressPercent,

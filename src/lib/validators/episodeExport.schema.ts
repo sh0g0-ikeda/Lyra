@@ -25,7 +25,6 @@ export const createEpisodeExportBodySchema = z
     filename: z
       .string()
       .trim()
-      .min(1)
       .max(EPISODE_EXPORT_MAX_FILENAME_LENGTH)
       .optional(),
   })

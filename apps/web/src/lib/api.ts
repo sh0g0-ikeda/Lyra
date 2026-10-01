@@ -571,11 +571,11 @@ export class LyraApiClient {
   }
 
   public async getJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
-    return normalizeGenerationJobRecord(await this.request<GenerationJobWireRecord>(`/api/jobs/${jobId}${organizationQuery(organizationId)}`));
+    return normalizeGenerationJobRecord(await this.request<GenerationJobWireRecord>(`/api/jobs/${jobId}${jobContractQuery(organizationId)}`));
   }
 
   public async cancelJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
-    return normalizeGenerationJobRecord(await this.request<GenerationJobWireRecord>(`/api/jobs/${jobId}/cancel${organizationQuery(organizationId)}`, {
+    return normalizeGenerationJobRecord(await this.request<GenerationJobWireRecord>(`/api/jobs/${jobId}/cancel${jobContractQuery(organizationId)}`, {
       method: 'POST',
     }));
   }
@@ -843,6 +843,12 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | null 
   } catch {
     return null;
   }
+}
+
+function jobContractQuery(organizationId: string | null | undefined): string {
+  const params = new URLSearchParams(organizationQuery(organizationId));
+  params.set('job_contract', 'v2');
+  return `?${params.toString()}`;
 }
 
 function organizationQuery(organizationId: string | null | undefined): string {

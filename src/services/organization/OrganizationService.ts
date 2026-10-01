@@ -14,6 +14,10 @@ import {
   ValidationError,
 } from '../../domain/errors/index.js';
 import type {
+  OrganizationCollectionPage,
+  OrganizationCollectionPageRequest,
+} from '../../domain/organizationPagination.js';
+import type {
   Organization,
   OrganizationAuditLog,
   OrganizationCapability,
@@ -23,6 +27,7 @@ import type {
   OrganizationMemberRole,
   OrganizationStatus,
   OrganizationUsageEvent,
+  OrganizationUsageSummary,
   OrganizationWorkspaceSummary,
 } from '../../domain/types/organization.js';
 import { roleHasCapability } from '../../domain/types/organization.js';
@@ -30,6 +35,7 @@ import type { DatabaseClient } from '../../lib/db.js';
 import type {
   OrganizationListCursor,
   OrganizationRepository,
+  OrganizationCollectionPaginationRepository,
   OrganizationWorkspacePage,
   OrganizationWorkspacePaginationRepository,
 } from '../../repositories/OrganizationRepository.js';
@@ -110,7 +116,18 @@ export interface RecordOrganizationAuditEventRequest {
   metadata?: Record<string, unknown>;
 }
 
+export interface OrganizationUsagePageResult {
+  page: OrganizationCollectionPage<OrganizationUsageEvent>;
+  summary: OrganizationUsageSummary;
+}
+
 export interface OrganizationServicePort {
+  listMembersPage(userId: string, organizationId: string, page: OrganizationCollectionPageRequest): Promise<OrganizationCollectionPage<OrganizationMember>>;
+  listInvitationsPage(userId: string, organizationId: string, page: OrganizationCollectionPageRequest): Promise<OrganizationCollectionPage<OrganizationInvitation>>;
+  listUsageEventsPage(userId: string, organizationId: string, page: OrganizationCollectionPageRequest): Promise<OrganizationUsagePageResult>;
+  listAuditLogsPage(userId: string, organizationId: string, page: OrganizationCollectionPageRequest): Promise<OrganizationCollectionPage<OrganizationAuditLog>>;
+  getUsageSummary(userId: string, organizationId: string): Promise<OrganizationUsageSummary>;
+
   listWorkspaces(userId: string): Promise<OrganizationWorkspaceSummary[]>;
   listWorkspacesPage(
     userId: string,
@@ -189,7 +206,7 @@ export interface OrganizationServicePort {
 export class OrganizationService implements OrganizationServicePort {
   public constructor(
     private readonly organizationRepository:
-      OrganizationRepository & Partial<OrganizationWorkspacePaginationRepository>,
+      OrganizationRepository & Partial<OrganizationWorkspacePaginationRepository & OrganizationCollectionPaginationRepository>,
     private readonly invitationEmailService?: OrganizationInvitationEmailServicePort,
     private readonly invitationUrlBuilder: InvitationUrlBuilder = new InvitationUrlBuilder('http://localhost:5173'),
   ) {}
@@ -1170,6 +1187,61 @@ export class OrganizationService implements OrganizationServicePort {
     throw new ForbiddenError('You do not have permission for this organization action');
   }
 
+  public async listMembersPage(
+    userId: string,
+    organizationId: string,
+    page: OrganizationCollectionPageRequest,
+  ): Promise<OrganizationCollectionPage<OrganizationMember>> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    return requireCollectionPaginationRepository(this.organizationRepository).listMembersPage(organizationId, page);
+  }
+
+  public async listInvitationsPage(
+    userId: string,
+    organizationId: string,
+    page: OrganizationCollectionPageRequest,
+  ): Promise<OrganizationCollectionPage<OrganizationInvitation>> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    return requireCollectionPaginationRepository(this.organizationRepository).listInvitationsPage(organizationId, page);
+  }
+
+  public async listUsageEventsPage(
+    userId: string,
+    organizationId: string,
+    page: OrganizationCollectionPageRequest,
+  ): Promise<OrganizationUsagePageResult> {
+    await this.requireMembership(organizationId, userId, 'view_usage');
+    const [pagedEvents, summary] = await Promise.all([
+      requireCollectionPaginationRepository(this.organizationRepository).listUsageEventsPage(organizationId, page),
+      requireCollectionPaginationRepository(this.organizationRepository).summarizeUsageEvents(organizationId),
+    ]);
+    return { page: pagedEvents, summary };
+  }
+
+  public async listAuditLogsPage(
+    userId: string,
+    organizationId: string,
+    page: OrganizationCollectionPageRequest,
+  ): Promise<OrganizationCollectionPage<OrganizationAuditLog>> {
+    const member = await this.requireMembership(organizationId, userId);
+    if (roleHasCapability(member.role, 'view_audit_logs')) {
+      return requireCollectionPaginationRepository(this.organizationRepository).listAuditLogsPage(organizationId, page);
+    }
+    if (roleHasCapability(member.role, 'view_billing')) {
+      return requireCollectionPaginationRepository(this.organizationRepository).listAuditLogsByActionPrefixesPage(
+        organizationId,
+        BILLING_AUDIT_ACTION_PREFIXES,
+        page,
+      );
+    }
+    throw new ForbiddenError('You do not have permission for this organization action');
+  }
+
+  public async getUsageSummary(userId: string, organizationId: string): Promise<OrganizationUsageSummary> {
+    await this.requireMembership(organizationId, userId, 'view_usage');
+    return requireCollectionPaginationRepository(this.organizationRepository).summarizeUsageEvents(organizationId);
+  }
+
   public async recordGenerationCompleted(input: RecordOrganizationGenerationRequest): Promise<void> {
     await this.recordGenerationEvent('generation.completed', input);
   }
@@ -1477,4 +1549,15 @@ function emptyOrgBalance(organizationId: string): OrganizationCreditBalance {
     monthlyExpiresAt: null,
     updatedAt: new Date(0),
   };
+}
+
+function requireCollectionPaginationRepository(
+  repository: OrganizationRepository & Partial<OrganizationCollectionPaginationRepository>,
+): OrganizationCollectionPaginationRepository {
+  if (repository.listMembersPage === undefined || repository.listInvitationsPage === undefined ||
+      repository.listUsageEventsPage === undefined || repository.listAuditLogsPage === undefined ||
+      repository.listAuditLogsByActionPrefixesPage === undefined || repository.summarizeUsageEvents === undefined) {
+    throw new ConfigurationError('Organization collection pagination is not configured');
+  }
+  return repository as OrganizationRepository & OrganizationCollectionPaginationRepository;
 }

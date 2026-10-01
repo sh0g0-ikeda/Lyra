@@ -86,6 +86,9 @@ describe('EpisodeExportService', () => {
 
     expect(result).toEqual({
       jobId,
+      episodeId,
+      format: 'pdf',
+      filename: 'safe-name.pdf',
       status: 'queued',
       progressStage: 'queued',
       progressPercent: 0,

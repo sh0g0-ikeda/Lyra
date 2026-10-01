@@ -873,6 +873,10 @@ class FakeOrganizationService {
     return buildWorkspace();
   }
 
+  public async getUsageSummary(): Promise<import('../../../src/domain/types/organization.js').OrganizationUsageSummary> {
+    return { currentMonthTotalCredits: 0, byMember: [], byWork: [], byGenerationType: [] };
+  }
+
   public async listUsageEvents(userId: string, organizationId: string): Promise<unknown[]> {
     await this.requireMembership(organizationId, userId, 'view_usage');
     return [

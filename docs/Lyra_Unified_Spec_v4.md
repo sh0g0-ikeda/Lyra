@@ -331,10 +331,33 @@ reconcile uncertain responses without a new charge. Existing unquoted clients an
 jobs keep their supported contracts; new Mobile paid flows require quotes.
 GENERATION_QUOTES_ENABLED defaults to false until runtime acceptance is complete.
 
+Unversioned generation-job history and detail preserve the four production Mobile
+job types. Clients request `job_contract=v2` to receive `entity_import_analysis`;
+history applies that type selection before pagination, and an unversioned import
+detail/cancel request is not found before mutation. Active-resource and native push
+eligibility remain limited to their existing job types. Safe nested page-image job
+metadata accepts the bounded public provenance fields while omitting image locations.
+
+Unversioned export status preserves the production Mobile flat DTO, including
+episode, format, filename, progress and cancellation metadata. A completed artifact's
+optional `download_url` is obtained through the existing scoped, audience-checked,
+expiry-bounded download service. `export_contract=v2` selects nested progress/error
+and `download_ready`; new Mobile clients explicitly request it. Blank filenames use
+the existing safe default. Contract negotiation never changes ownership or image
+delivery authorization.
+
+Organization member, invitation, usage and audit-log lists preserve production
+`limit`/`cursor` pagination with strict cursor validation and authorization on every
+page. Usage totals cover the complete month independently of page size; legacy
+unpaged response bounds do not truncate those totals. See
+`docs/organization-pagination-compatibility-design-2026-10-02.md`.
+
 Output provenance is adapter-sourced. Missing historical metadata has a separate
 legacy policy from an unknown model value. Known Web-only output is blocked from
 all common/Mobile display, saved-image and export paths. Dedicated Web delivery
-requires a verified Cognito app-client allowlist, never a platform header. Hy4
+requires a verified Cognito app-client allowlist, never a platform header. A
+client ID shared with Mobile must never be allowlisted: enablement requires a
+dedicated Web client and rejection tests with both old and new Mobile tokens. Hy4
 image generation remains unavailable until its actual provider contract is known;
 there is no substitution with an unrelated image model.
 

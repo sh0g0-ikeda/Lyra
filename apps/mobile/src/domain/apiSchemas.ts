@@ -87,6 +87,27 @@ export const episodeExportStatusResponseSchema = z
   })
   .strict();
 
+// Deployed Mobile clients consume this default representation. The nested DTO above
+// is available only with export_contract=v2; both stay strict at the HTTP boundary.
+export const episodeExportLegacyStatusResponseSchema = z.object({
+  id: idSchema.max(128),
+  episode_id: idSchema.max(128),
+  format: z.enum(['pdf', 'zip']),
+  filename: z.string().min(1).max(160),
+  status: episodeExportStatusSchema,
+  progress_stage: z.string().min(1).max(100),
+  progress_percent: z.number().int().min(0).max(100),
+  error_code: z.string().min(1).max(128).nullable(),
+  message_key: z.string().min(1).max(128).nullable(),
+  expires_at: z.string().datetime({ offset: true }).max(64),
+  completed_at: z.string().datetime({ offset: true }).max(64).nullable(),
+  cancel_supported: z.literal(false),
+  cancel_reason_code: z.literal('EXPORT_CANCEL_UNSUPPORTED'),
+  download_url: z.string().url().max(2048).optional(),
+}).strict().refine((value) => value.status === 'completed' || value.download_url === undefined, {
+  message: 'download_url is only available after export completion', path: ['download_url'],
+});
+
 const creditBalanceSchema = z.object({
   monthly_credits: z.number().int().nonnegative(),
   purchased_credits: z.number().int().nonnegative(),
@@ -528,6 +549,7 @@ export const organizationUsageResponseSchema = z
   .object({
     usage_events: z.array(organizationUsageEventSchema),
     summary: organizationUsageSummarySchema,
+    next_cursor: z.string().min(1).max(1024).nullable().optional(),
   })
   .strict();
 
@@ -547,6 +569,7 @@ export const organizationAuditLogSchema = z
 export const organizationAuditLogsResponseSchema = z
   .object({
     audit_logs: z.array(organizationAuditLogSchema),
+    next_cursor: z.string().min(1).max(1024).nullable().optional(),
   })
   .strict();
 
@@ -581,6 +604,7 @@ export const organizationResponseSchema = z
 export const organizationMembersResponseSchema = z
   .object({
     members: z.array(organizationMemberSchema),
+    next_cursor: z.string().min(1).max(1024).nullable().optional(),
   })
   .strict();
 
@@ -617,6 +641,7 @@ export const organizationInvitationSchema = z
 export const organizationInvitationsResponseSchema = z
   .object({
     invitations: z.array(organizationInvitationSchema),
+    next_cursor: z.string().min(1).max(1024).nullable().optional(),
   })
   .strict();
 
@@ -1042,6 +1067,7 @@ const pageGenerationJobResultSchema = z
     request_kind: z.enum(['initial', 'regenerate']).optional(),
     generated_image: z
       .object({
+        ...imageProvenanceFields,
         generation_mode: pageGenerationModeSchema.nullable().optional(),
         generated_at: timestampSchema.nullable().optional(),
       })

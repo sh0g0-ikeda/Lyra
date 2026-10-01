@@ -6,6 +6,8 @@ import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresGenerationJobRepository } from '../../src/repositories/GenerationJobRepository.js';
 import { decodeGenerationJobHistoryCursor, encodeGenerationJobHistoryCursor } from '../../src/domain/pagination.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { createJobRoutes } from '../../src/routes/jobs.js';
+import { generationJobsResponseSchema as productionJobsSchema } from '../fixtures/production-mobile-2debe8c/jobSchemas.js';
 const databaseUrl = process.env.DATABASE_URL;
 const suite = process.env.APP_ENV === 'test' && databaseUrl !== undefined ? describe : describe.skip;
 suite('generation job reporting compatibility', () => {
@@ -58,6 +60,38 @@ suite('generation job reporting compatibility', () => {
     const two = await repository.listHistory({ userId:owner,limit:1,cursor:decodeGenerationJobHistoryCursor(deployed),statuses:['queued'],jobTypes:['entity_import_analysis'] });
     expect(new Set([...one.jobs,...two.jobs].map((entry)=>entry.id))).toEqual(new Set([first,second])); expect(two.nextCursor).toBeNull();
     expect((await repository.listHistory({ userId:owner,limit:25,cursor:null,statuses:['failed'],jobTypes:['entity_import_analysis'] })).jobs).toEqual([]);
+  });
+  it('keeps real paginated HTTP history readable by production Mobile while v2 sees imports', async () => {
+    const owner = await user();
+    const importId = await job(owner, null, 'entity_import_analysis');
+    const entityId = await job(owner);
+    const pageId = await job(owner, null, 'page_generate');
+    const outsiderId = await job(await user());
+    for (const jobId of [importId, entityId, pageId]) await ledger(owner, jobId, -1);
+    const repository = new PostgresGenerationJobRepository(new TestDatabase(pool));
+    const app = createJobRoutes({
+      authMiddleware: async (c, next) => { c.set('user', { id: owner, supabaseId: owner, email: 'test@example.invalid', displayName: null, planCode: 'free' }); await next(); },
+      rateLimitMiddleware: async (_c, next) => next(),
+      jobService: {
+        listJobHistory: (userId, input) => repository.listHistory({ userId, ...input }),
+        getJob: async () => { throw new Error('Not used'); },
+        cancelJob: async () => { throw new Error('Not used'); },
+        hideJobFromHistory: async () => { throw new Error('Not used'); },
+      },
+    });
+    const first = await app.request('/jobs?limit=1');
+    expect(first.status).toBe(200);
+    const one = productionJobsSchema.parse(await first.json());
+    expect(one.jobs).toHaveLength(1);
+    expect(one.next_cursor).not.toBeNull();
+    const second = await app.request(`/jobs?limit=1&cursor=${encodeURIComponent(one.next_cursor!)}`);
+    const two = productionJobsSchema.parse(await second.json());
+    expect(new Set([...one.jobs, ...two.jobs].map((entry) => entry.id))).toEqual(new Set([entityId, pageId]));
+    expect(two.next_cursor).toBeNull();
+    const upgraded = await (await app.request('/jobs?job_contract=v2')).json();
+    expect(new Set(upgraded.jobs.map((entry: { id: string }) => entry.id))).toEqual(new Set([importId, entityId, pageId]));
+    expect(JSON.stringify(upgraded)).not.toContain(outsiderId);
+    expect(productionJobsSchema.safeParse(upgraded).success).toBe(false);
   });
 });
 class TestDatabase implements DatabaseClient, TransactionRunner {

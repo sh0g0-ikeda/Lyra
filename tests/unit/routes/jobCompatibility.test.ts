@@ -18,7 +18,7 @@ function setup(current = job, organizationService?: { requireMembership: (...arg
 describe('deployed job response compatibility', () => {
   it('parses production status/type filters and its cursor while preserving the continuation encoding', async () => {
     const encoded = Buffer.from(JSON.stringify({ active_rank: 1, created_at: now.toISOString(), id })).toString('base64url');
-    const { app, service } = setup(); const response = await app.request(`/jobs?status=canceled,failed&type=entity_import_analysis,entity_generate&cursor=${encoded}`);
+    const { app, service } = setup(); const response = await app.request(`/jobs?job_contract=v2&status=canceled,failed&type=entity_import_analysis,entity_generate&cursor=${encoded}`);
     expect(response.status).toBe(200);
     expect(service.listJobHistory).toHaveBeenCalledWith(id, expect.objectContaining({ statuses: ['cancelled', 'failed'], jobTypes: ['entity_import_analysis', 'entity_generate'], cursor: expect.objectContaining({ activeRank: 1, createdAt: now, id }) }));
     const cursor = decodeGenerationJobHistoryCursor(encoded); expect(encodeGenerationJobHistoryCursor(cursor)).toBe(encoded);

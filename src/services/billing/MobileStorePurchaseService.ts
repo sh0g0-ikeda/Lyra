@@ -439,7 +439,21 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
             externalPurchaseKey,
             client,
           );
-        if (existing === null && requestedUserId === null) {
+        const linkedPurchase =
+          linkedPurchaseKey === null || linkedPurchaseKey === externalPurchaseKey
+            ? null
+            : await this.dependencies.storePurchaseRepository.findPurchaseForUpdate(
+                verified.store,
+                linkedPurchaseKey,
+                client,
+              );
+        if (
+          linkedPurchase !== null
+          && (linkedPurchase.kind !== 'subscription' || product.kind !== 'subscription')
+        ) {
+          throw new ValidationError('Store purchase could not be verified');
+        }
+        if (existing === null && linkedPurchase === null && requestedUserId === null) {
           await this.recordUnknownStoreEvent({
             store: verified.store,
             eventKey,
@@ -451,7 +465,7 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
           return null;
         }
 
-        const userId = existing?.userId ?? requestedUserId;
+        const userId = existing?.userId ?? linkedPurchase?.userId ?? requestedUserId;
         if (userId === null) {
           return null;
         }
@@ -461,6 +475,15 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
           existing.userId !== requestedUserId
         ) {
           throw new ForbiddenError('Store purchase belongs to another account');
+        }
+        if (
+          linkedPurchase !== null
+          && (
+            linkedPurchase.userId !== userId
+            || (requestedUserId !== null && linkedPurchase.userId !== requestedUserId)
+          )
+        ) {
+          throw new ForbiddenError('Linked store purchase belongs to another account');
         }
         const user =
           requestedUser ??
@@ -902,23 +925,22 @@ export class MobileStorePurchaseService implements MobileStorePurchaseServicePor
         existing.transactionKey !== null &&
         transactionKey !== existing.transactionKey
       ) {
-        const eventRecorded =
-          await this.dependencies.storePurchaseRepository.recordEventIfNew(
-            {
-              purchaseId: existing.id,
-              store: 'google',
-              eventKey,
-              transactionKey,
-              operation: 'reverse',
-              providerEventType: 'google.voided_purchase',
-              state: 'refunded',
-              occurredAt: input.occurredAt,
-            },
-            client,
-          );
-        if (eventRecorded && !user.accountDeleted) {
-          await this.reverseCredits(existing, product, transactionKey, client);
-        }
+        // A voided historical order supplies no historical expiration. Its
+        // allowance was replaced on renewal; the current purchase expiration
+        // cannot justify reversing the current, independently paid allowance.
+        await this.dependencies.storePurchaseRepository.recordEventIfNew(
+          {
+            purchaseId: existing.id,
+            store: 'google',
+            eventKey,
+            transactionKey,
+            operation: 'reverse',
+            providerEventType: 'google.voided_purchase',
+            state: 'refunded',
+            occurredAt: input.occurredAt,
+          },
+          client,
+        );
         return;
       }
 

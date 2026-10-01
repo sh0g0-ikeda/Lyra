@@ -329,6 +329,7 @@ export interface ListJobsInput {
 
 const jobListQuery = (input: ListJobsInput): string => {
   const params = new URLSearchParams();
+  params.set('job_contract', 'v2');
   if (input.organizationId !== undefined && input.organizationId !== null && input.organizationId.trim().length > 0) {
     params.set('organization_id', input.organizationId);
   }
@@ -1192,8 +1193,10 @@ export class LyraMobileApiClient {
   }
 
   public getExportJob(jobId: string, organizationId?: string | null): Promise<ExportJobRecord> {
+    const params = new URLSearchParams(organizationQuery(organizationId));
+    params.set('export_contract', 'v2');
     return this.request(
-      `/api/exports/${jobId}${organizationQuery(organizationId)}`,
+      `/api/exports/${jobId}?${params.toString()}`,
       episodeExportStatusResponseSchema
     );
   }
@@ -1510,7 +1513,7 @@ export class LyraMobileApiClient {
     organizationId?: string | null
   ): Promise<CompatibleGenerationJobRecord> {
     return this.request(
-      `/api/jobs/${jobId}${organizationQuery(organizationId)}`,
+      `/api/jobs/${jobId}${jobListQuery({ organizationId })}`,
       generationJobCompatibilitySchema
     );
   }
@@ -1520,7 +1523,7 @@ export class LyraMobileApiClient {
   }
 
   public cancelJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
-    return this.request(`/api/jobs/${jobId}/cancel${organizationQuery(organizationId)}`, generationJobSchema, {
+    return this.request(`/api/jobs/${jobId}/cancel${jobListQuery({ organizationId })}`, generationJobSchema, {
       method: 'POST'
     });
   }
