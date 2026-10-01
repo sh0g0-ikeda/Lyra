@@ -4703,7 +4703,7 @@ function StudioShell(props: {
             <option value="en">{translateUiString(uiLanguage, 'English')}</option>
           </select>
         </label>
-        {imageDeliverySessionQuery.data?.user.id ? <GoogleIdentityLinkPanel
+        {imageDeliverySessionQuery.data?.user?.id ? <GoogleIdentityLinkPanel
           config={props.googleLinkConfig} userId={imageDeliverySessionQuery.data.user.id}
           api={api} language={uiLanguage} onLogout={props.onLogout}
         /> : null}

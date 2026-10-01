@@ -11,6 +11,8 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:4173',
     headless: true,
+    screenshot: 'only-on-failure',
+    trace: 'retain-on-failure',
   },
   webServer: {
     command: 'bun run dev -- --host 127.0.0.1 --port 4173',

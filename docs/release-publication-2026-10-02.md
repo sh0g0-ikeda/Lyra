@@ -61,3 +61,18 @@ fixture suite's final cleanup hit its default five-second hook limit while
 closing and dropping the accumulated test schemas. The resulting hook failure
 kept CI red and skipped the later build/browser stages. Its bounded test-only
 cleanup correction must not change migration checks or production lock limits.
+
+Run [36905774289](https://github.com/sh0g0-ikeda/Lyra/actions/runs/36905774289)
+then passed every backend, migration, invariant, build/lint and Mobile stage, but
+13 of 14 Web browser smokes failed. The newly requested `/api/me` fell through
+the common mock to `{}`, and an unchecked nested `user.id` render access crashed
+the authenticated console. The Web correction guards missing/null identity,
+models the real session response, and adds both missing-identity regressions.
+It preserves the server and capability checks. Browser runtime-error diagnostics
+also cover errors caught by the app's render boundary; source details are in
+`web-session-render-compatibility-design-2026-10-01.md`.
+
+Separately, the exact e6f9ae4 source passed all 2,519 native tests, migrations
+001–046 and 66 deployment invariants on local PostgreSQL 18.3 using Bun 1.3.14,
+the version named by the production Dockerfile. This does not test the ARM64
+container or replace the updated Web candidate's GitHub browser gate.
