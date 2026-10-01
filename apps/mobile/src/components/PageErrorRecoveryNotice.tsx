@@ -3,8 +3,10 @@ import type { UiLanguage } from '@/domain/types';
 import { commonGuidanceMessages } from '@/lib/commonGuidanceMessages';
 import { confirmStaleDraftReload } from '@/lib/confirmStaleDraftReload';
 import { ApiError } from '@/lib/api';
+import type { OperationErrorContext } from '@/lib/operationErrorContext';
 
 interface PageErrorRecoveryNoticeProps {
+  context?: OperationErrorContext | undefined;
   error: unknown;
   language: UiLanguage;
   onAccount: () => void;
@@ -16,6 +18,7 @@ interface PageErrorRecoveryNoticeProps {
 }
 
 export function PageErrorRecoveryNotice({
+  context,
   error,
   language,
   onAccount,
@@ -44,7 +47,9 @@ export function PageErrorRecoveryNotice({
         workspace: onAccount
       }}
       error={error}
+      context={context}
       language={language}
+      retryMode="refresh"
       recoveryActionLabel={stale ? copy.reloadPageAction : undefined}
       recoveryMessage={stale ? `${copy.reloadWarning}\n${copy.reloadFields.page}` : undefined}
     />

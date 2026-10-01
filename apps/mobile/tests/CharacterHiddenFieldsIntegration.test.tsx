@@ -17,8 +17,9 @@ vi.mock('@tanstack/react-query',()=>({useQueryClient:()=>queryClient,
  useInfiniteQuery:()=>({...query({pages}),hasNextPage:false,isFetchingNextPage:false,fetchNextPage:vi.fn()}),
  useQuery:()=>query(undefined),
  useMutation:(options:{mutationFn:()=>Promise<unknown>;onSuccess?:(value:unknown)=>Promise<void>;onError?:(error:unknown)=>void})=>{
- const run=async():Promise<unknown>=>{try{const value=await options.mutationFn();await options.onSuccess?.(value);return value;}catch(error){options.onError?.(error);throw error;}};
- return {mutateAsync:run,mutate:()=>{void run();},isPending:false,error:null};}
+ const [error,setError]=React.useState<unknown>(null);
+ const run=async():Promise<unknown>=>{try{const value=await options.mutationFn();await options.onSuccess?.(value);setError(null);return value;}catch(error){setError(error);options.onError?.(error);throw error;}};
+ return {mutateAsync:run,mutate:()=>{void run();},isPending:false,error,reset:()=>setError(null)};}
 }));
 vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity},hasCapability:()=>true,language:'ja',logout:vi.fn(),selection:{workId:'work',entityId:'entity',organizationId:null},session:{organizations:[],capabilities:{}},sessionKey:'user',tokens:null,trackJob:vi.fn(),updateSelection:vi.fn()})}));
 vi.mock('@/state/dirtyState',()=>({useDirtyState:()=>({resolveDirtyEditors:vi.fn().mockResolvedValue(true)}),useDirtyEditorRegistration:(input:typeof registration)=>{registration=input;}}));
@@ -56,6 +57,20 @@ beforeEach(()=>{
 afterEach(async()=>{await act(async()=>root?.unmount());root=undefined;});
 const render=async():Promise<void>=>{await act(async()=>{root=create(<CharactersScreen/>);});};
 describe('非表示alias・既存空欄と構造化値の実画面payload保全',()=>{
+ it('保存失敗をdirty guardと重複させずキャラクター入力を保持しrefreshだけを実行する',async()=>{
+  const failure=new Error('private provider detail');updateEntity.mockRejectedValue(failure);
+  await render();
+  const name=():ReactTestRenderer['root']=>root!.root.findAllByType('FormField').find(node=>node.props.label==='名前')!;
+  await act(async()=>name().props.onChangeText('Local name'));
+  await act(async()=>{await expect(registration.save()).rejects.toBe(failure);});
+  const notices=root!.root.findAllByType('ActionableErrorNotice');
+  expect(notices).toHaveLength(1);
+  expect(notices[0].props.context).toEqual({operation:'saveCharacter',retainedDraft:'character'});
+  expect(name().props.value).toBe('Local name');
+  await act(async()=>notices[0].props.actions.retry());
+  expect(updateEntity).toHaveBeenCalledOnce();
+  expect(name().props.value).toBe('Local name');
+ });
  it('alias入力を表示せず名前だけ保存した時は構造化値を送信しない',async()=>{
   await render();expect(root!.root.findAllByType('FormField').some(node=>/別名|alias/i.test(node.props.label))).toBe(false);
   const name=root!.root.findAllByType('FormField').find(node=>node.props.value==='Hero')!;

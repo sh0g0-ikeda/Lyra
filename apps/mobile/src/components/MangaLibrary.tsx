@@ -42,7 +42,7 @@ export function MangaLibrary({
   return (
     <Screen title={t(language, 'navigation.library')} subtitle={t(language, 'navigation.libraryHelp')} testID="manga-library">
       {context.error === null ? null : (
-        <ActionableErrorNotice error={context.error} language={language} actions={{ retry: context.retry, login: () => void logout() }} />
+        <ActionableErrorNotice context={{ operation: 'loadHierarchy' }} retryMode="refresh" error={context.error} language={language} actions={{ retry: context.retry, login: () => void logout() }} />
       )}
       <PrimaryButton
         label={t(language, hasCapability('create_work') ? 'navigation.createManga' : 'navigation.chooseWork')}
@@ -74,7 +74,7 @@ export function MangaLibrary({
           <Text style={styles.title}>{work?.title} / {chapter?.title ?? t(language, 'chapter')} / {episode.title ?? t(language, 'episode')}</Text>
           <Text style={styles.help}>{t(language, 'navigation.resumeAt', { step: t(language, resumeStep) })}</Text>
           {progressError === null ? null : (
-            <ActionableErrorNotice error={progressError} language={language} actions={{ retry: onRetryProgress, login: () => void logout() }} />
+            <ActionableErrorNotice context={{ operation: 'loadProgress' }} retryMode="refresh" error={progressError} language={language} actions={{ retry: onRetryProgress, login: () => void logout() }} />
           )}
           <PrimaryButton
             label={t(language, 'navigation.resume')}

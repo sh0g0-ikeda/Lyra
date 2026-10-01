@@ -17,7 +17,7 @@ describe('ページ画面の取得エラー回復契約', () => {
   it('必須取得と補助取得のエラーを分離する', () => {
     expect(source).toContain('currentQueryError({');
     expect(source).toContain('supportingQueryError({');
-    expect(source).toContain('primaryPageFailure?.retry()');
+    expect(source).toContain('failure.retry()');
   });
 
   it('ページ一覧の解決後に補助取得を開始する', () => {

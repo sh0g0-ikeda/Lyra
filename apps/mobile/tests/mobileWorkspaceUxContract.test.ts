@@ -43,7 +43,7 @@ describe('mobile workspace navigation and editor UX contract', () => {
 
   it('キャラクター種別の直後に画像取り込みを置く', () => {
     const source = renderSource('CharactersScreen');
-    const type = source.indexOf('<SegmentedControl onChange={setEntityType}');
+    const type = source.indexOf('<SegmentedControl onChange={changeEntityType}');
     const imageImport = source.indexOf("onLayout={recordSectionOffset('import')}");
     const firstStructuredGroup = source.indexOf('<CollapsibleGroup');
 

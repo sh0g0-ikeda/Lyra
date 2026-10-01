@@ -242,7 +242,9 @@ export function WorkspaceContextPicker({ context }: WorkspaceContextPickerProps)
             },
           }}
           error={context.error}
+          context={{ operation: 'loadHierarchy' }}
           language={language}
+          retryMode="refresh"
         />
       )}
       <Text style={styles.label}>{t(language, 'works')}</Text>

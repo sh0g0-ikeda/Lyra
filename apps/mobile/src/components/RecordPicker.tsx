@@ -117,7 +117,7 @@ export function RecordPicker<T extends { id: string }>({
                 accessibilityLabel={t(language, "generated.components.RecordPicker.search.options.03c69ad2")}
                 onChangeText={setQuery}
                 placeholder={searchPlaceholder ?? t(language, "generated.components.RecordPicker.search.3c2220c0")}
-                placeholderTextColor={colors.disabled}
+                placeholderTextColor={colors.placeholder}
                 returnKeyType="search"
                 style={styles.search}
                 value={query}

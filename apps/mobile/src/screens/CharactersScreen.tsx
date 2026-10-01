@@ -60,9 +60,11 @@ import type { AssetQuoteTarget } from '@/domain/assetGenerationQuote';
 import { useAssetGenerationQuote } from '@/hooks/useAssetGenerationQuote';
 import { assetQuoteMessages } from '@/lib/assetQuoteMessages';
 import { pageWorkflowMessage } from '@/lib/pageWorkflowMessages';
+import { collectOperationFailures, operationFailure } from '@/lib/operationErrorContext';
 import { canDisplayMobileImage, imageAccessNotice } from '@/domain/imageAccess';
 import type { EntityRecord, EntityStateRecord, EntityType, SceneRecord } from '@/domain/types';
 import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
+import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { config } from '@/lib/config';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
 import { appendAiProviderDisclosure } from '@/lib/aiProviderDisclosure';
@@ -512,6 +514,23 @@ const genericFieldKeys = [
   'movement',
   'visual_anchor'
 ];
+
+// Adopted new-person form defaults (front-end design §2/§6, reference §4.4).
+// Never use these when hydrating a saved record or applying imported suggestions.
+const newCharacterDefaults: Readonly<DraftRecord> = {
+  gender_expression: 'male',
+  age_range: 'twenties',
+  skin_tone: 'fair',
+  first_impression: 'bright_friendly',
+  standing_style: 'upright_neat',
+  default_expression: 'soft_smile',
+};
+
+const newStructuredDraft = (entityType: EntityType): DraftRecord =>
+  draftFromRecord(
+    entityType === 'character' ? newCharacterDefaults : {},
+    entityType === 'character' ? characterFieldKeys : genericFieldKeys,
+  );
 
 const genericFieldLabels: Record<string, ScreenTranslationKey> = {
   category: 'screen.characters.genericField.category',
@@ -1629,8 +1648,12 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [promptSupplement, setPromptSupplement] = useState('');
-  const [structuredDraft, setStructuredDraft] = useState<DraftRecord>(() => draftFromRecord({}, characterFieldKeys));
+  const [structuredDraft, setStructuredDraft] = useState<DraftRecord>(() =>
+    selection.entityId === null
+      ? newStructuredDraft('character')
+      : draftFromRecord({}, characterFieldKeys));
   const [structuredExtras, setStructuredExtras] = useState('');
+  const [draftResetVersion, setDraftResetVersion] = useState(0);
   const [candidateToken, setCandidateToken] = useState('');
   const [importResult, setImportResult] = useState<string | null>(null);
   const [lastImportedCandidateToken, setLastImportedCandidateToken] = useState<string | null>(null);
@@ -1645,15 +1668,18 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   const [selectedEntityStateId, setSelectedEntityStateId] = useState<string | null>(null);
   const [entityStateDraft, setEntityStateDraft] = useState<EntityStateDraft>(emptyEntityStateDraft);
   const lastSyncedEntityId = useRef<string | null>(null);
+  const lastSyncedDraftScope = useRef<string | null>(null);
   const lastSyncedEntityStateId = useRef<string | null>(null);
   const [entityStale, setEntityStale] = useState(false);
   const [stateEditorResetVersion, setStateEditorResetVersion] = useState(0);
   const [discardedStateCandidate, setDiscardedStateCandidate] = useState<InitialStateCandidate | undefined>(undefined);
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
+  const [reloadError, setReloadError] = useState<Error | null>(null);
   const screenScrollRef = useRef<ScrollView | null>(null);
   const [sectionOffsets, setSectionOffsets] = useState({ editor: 0, import: 0 });
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
+  const draftScope = JSON.stringify([sessionKey, organizationId, activeWorkId, selection.entityId]);
 
   const activeFieldKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
 
@@ -1708,7 +1734,9 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     structuredFields: toStructuredFieldsPayload(entityType, structuredDraft, structuredExtras),
   };
   const quoteCopy = assetQuoteMessages(language);
-  const entityDraftRevision = JSON.stringify([visibleEntityDraft, lastImportedCandidateToken]);
+  const entityDraftRevision = JSON.stringify([
+    draftScope, draftResetVersion, visibleEntityDraft, lastImportedCandidateToken,
+  ]);
   const entityDraftRevisionRef = useRef(entityDraftRevision);
   useLayoutEffect(() => { entityDraftRevisionRef.current = entityDraftRevision; }, [entityDraftRevision]);
 
@@ -1738,11 +1766,15 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         });
   const entityDirty =
     selectedEntity === null
-      ? name.trim().length > 0 ||
-        description.trim().length > 0 ||
-        promptSupplement.trim().length > 0 ||
-        structuredExtras.trim().length > 0 ||
-        Object.values(structuredDraft).some((value) => value.trim().length > 0)
+      ? selection.entityId === null && (
+          name.trim().length > 0 ||
+          description.trim().length > 0 ||
+          promptSupplement.trim().length > 0 ||
+          structuredExtras.trim().length > 0 ||
+          activeFieldKeys.some((key) =>
+            (structuredDraft[key] ?? '').trim() !==
+            (entityType === 'character' ? newCharacterDefaults[key] ?? '' : ''))
+        )
       : pendingEntityUpdatePayload !== null &&
         hasEntityUpdateChanges(pendingEntityUpdatePayload);
 
@@ -1854,15 +1886,16 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   };
 
   const applyEntitySnapshot = useCallback((snapshot: EntityRecord | null): void => {
+    setDraftResetVersion((version) => version + 1);
     lastSyncedEntityId.current = snapshot?.id ?? null;
-    if (snapshot !== null) {
-      setEntityEditorMode('edit');
-    }
+    setEntityEditorMode(snapshot !== null || selection.entityId !== null ? 'edit' : 'create');
     setEntityType(snapshot?.entity_type ?? 'character');
     setName(snapshot?.name ?? '');
     setDescription(snapshot?.free_description ?? '');
     setPromptSupplement(snapshot?.prompt_supplement ?? '');
-    setStructuredDraft(structuredDraftFromRecord(snapshot?.structured_fields ?? {}, snapshot?.entity_type ?? 'character'));
+    setStructuredDraft(snapshot === null && selection.entityId === null
+      ? newStructuredDraft('character')
+      : structuredDraftFromRecord(snapshot?.structured_fields ?? {}, snapshot?.entity_type ?? 'character'));
     setStructuredExtras(extrasFromRecord(snapshot?.structured_fields ?? {}, snapshot?.entity_type === 'character' ? characterFieldKeys : genericFieldKeys));
     setImportResult(null);
     setLastImportedCandidateToken(null);
@@ -1872,15 +1905,20 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     setSelectedEntityStateId(null);
     setEntityStateDraft(emptyEntityStateDraft());
     lastSyncedEntityStateId.current = null;
-  }, [setEntityEditorMode, setEntityType, setName, setDescription, setPromptSupplement,
+  }, [selection.entityId, setDraftResetVersion, setEntityEditorMode, setEntityType, setName, setDescription, setPromptSupplement,
     setStructuredDraft, setStructuredExtras, setImportResult, setLastImportedCandidateToken,
     setLastImportedCandidateEntityId, setCandidateToken, setLocalJob, setSelectedEntityStateId,
     setEntityStateDraft]);
 
   useEffect(() => {
-    if (lastSyncedEntityId.current === (selectedEntity?.id ?? null) && entityDirty) return;
+    // A null snapshot in the same scope is an existing local draft, not a new
+    // initialization request. In particular, clearing defaults must stay cleared.
+    if (lastSyncedDraftScope.current === draftScope &&
+      lastSyncedEntityId.current === (selectedEntity?.id ?? null) &&
+      (selectedEntity === null || entityDirty)) return;
+    lastSyncedDraftScope.current = draftScope;
     applyEntitySnapshot(selectedEntity);
-  }, [applyEntitySnapshot, entityDirty, selectedEntity]);
+  }, [applyEntitySnapshot, draftScope, entityDirty, selectedEntity]);
 
   const entityReloadScope = JSON.stringify([sessionKey, organizationId, activeWorkId, selectedEntity?.id ?? null]);
   const entityReloadScopeRef = useRef(entityReloadScope);
@@ -1898,12 +1936,16 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     setEntityStateDraft(entityStateDraftFromRecord(selectedEntityState));
   }, [selectedEntityState, selectedEntityStateId]);
 
-  useEffect(() => {
+  const changeEntityType = (nextEntityType: EntityType): void => {
+    setEntityType(nextEntityType);
     setStructuredDraft((current) => {
-      const nextKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
-      return Object.fromEntries(nextKeys.map((key) => [key, current[key] ?? '']));
+      const nextKeys = nextEntityType === 'character' ? characterFieldKeys : genericFieldKeys;
+      const nextDraft = Object.fromEntries(nextKeys.map((key) => [key, current[key] ?? '']));
+      // A type round trip within a new form retains edits, including explicit
+      // blanks. Payload builders still select only the active entity type's keys.
+      return selection.entityId === null ? { ...current, ...nextDraft } : nextDraft;
     });
-  }, [entityType]);
+  };
 
   useEffect(() => {
     const nextCandidateToken = activeReferenceCandidate?.candidate_token ?? '';
@@ -1969,6 +2011,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
       await invalidateEntities();
     },
     onError: (error) => {
+      if (entityReloadScopeRef.current !== entityReloadScope) return;
       if (isResourceStaleError(error)) {
         setEntityStale(true);
       }
@@ -1987,16 +2030,19 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   const saveExistingEntityMutation = updateEntityMutation.mutateAsync;
 
   const discardEntityDraft = useCallback((): void => {
+    setDraftResetVersion((version) => version + 1);
     setEntityEditorMode(selectedEntity === null ? 'create' : 'edit');
     setEntityType(selectedEntity?.entity_type ?? 'character');
     setName(selectedEntity?.name ?? '');
     setDescription(selectedEntity?.free_description ?? '');
     setPromptSupplement(selectedEntity?.prompt_supplement ?? '');
     setStructuredDraft(
-      structuredDraftFromRecord(
-        selectedEntity?.structured_fields ?? {},
-        selectedEntity?.entity_type ?? 'character'
-      )
+      selectedEntity === null && selection.entityId === null
+        ? newStructuredDraft('character')
+        : structuredDraftFromRecord(
+            selectedEntity?.structured_fields ?? {},
+            selectedEntity?.entity_type ?? 'character'
+          )
     );
     setStructuredExtras(
       extrasFromRecord(
@@ -2013,6 +2059,8 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     setDirtySaveError(null);
   }, [
     selectedEntity,
+    selection.entityId,
+    setDraftResetVersion,
     setCandidateToken,
     setDescription,
     setDirtySaveError,
@@ -2051,16 +2099,19 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
       }
       await saveExistingEntityMutation();
     } catch (error) {
-      setDirtySaveError(
-        error instanceof Error
-          ? error
-          : new Error(t(language, "generated.screens.CharactersScreen.unsaved.changes.could.not.be.saved.88963a72"))
-      );
+      if (entityReloadScopeRef.current === entityReloadScope) {
+        setDirtySaveError(
+          error instanceof Error
+            ? error
+            : new Error(t(language, "generated.screens.CharactersScreen.unsaved.changes.could.not.be.saved.88963a72"))
+        );
+      }
       throw error;
     }
   }, [
     activeWorkId,
     entityDirty,
+    entityReloadScope,
     language,
     name,
     saveExistingEntityMutation,
@@ -2272,12 +2323,13 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
 
   const beginNewEntityDraft = (): void => {
     const reset = (): void => {
+      setDraftResetVersion((version) => version + 1);
       setEntityEditorMode('create');
       setEntityType('character');
       setName('');
       setDescription('');
       setPromptSupplement('');
-      setStructuredDraft(draftFromRecord({}, characterFieldKeys));
+      setStructuredDraft(newStructuredDraft('character'));
       setStructuredExtras('');
       setCandidateToken('');
       setImportResult(null);
@@ -2342,27 +2394,40 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     });
   };
 
-  const characterErrors = [
-    entitiesQuery.error,
-    generationAvailabilityQuery.error,
-    referenceQuery.error,
-    entityStatesQuery.error,
-    scenesQuery.error,
-    jobQuery.error,
-    createEntityMutation.error,
-    updateEntityMutation.error,
-    deleteEntityMutation.error,
-    generateReferenceMutation.error,
-    confirmReferenceMutation.error,
-    deleteReferenceMutation.error,
-    downloadReferenceMutation.error,
-    createEntityStateMutation.error,
-    updateEntityStateMutation.error,
-    dirtySaveError,
-  ].filter(
-    (error): error is Error =>
-      error instanceof Error
-  );
+  useResetOnScopeChange(JSON.stringify([entityReloadScope, selectedEntityStateId]), [
+    createEntityMutation.reset,
+    updateEntityMutation.reset,
+    deleteEntityMutation.reset,
+    generateReferenceMutation.reset,
+    confirmReferenceMutation.reset,
+    deleteReferenceMutation.reset,
+    downloadReferenceMutation.reset,
+    createEntityStateMutation.reset,
+    updateEntityStateMutation.reset,
+    () => setDirtySaveError(null),
+    () => setReloadError(null)
+  ]);
+  const entityStateDirty = JSON.stringify(entityStateDraft) !== JSON.stringify(entityStateDraftFromRecord(selectedEntityState));
+  const characterErrors = collectOperationFailures([
+    operationFailure('loadCharacters', entitiesQuery.error),
+    operationFailure('loadCharacters', selectedEntityQuery.error),
+    operationFailure('loadGenerationAvailability', generationAvailabilityQuery.error),
+    operationFailure('loadReference', referenceQuery.error),
+    operationFailure('loadCharacterStates', entityStatesQuery.error),
+    operationFailure('loadScenes', scenesQuery.error),
+    operationFailure('loadJob', jobQuery.error),
+    operationFailure('createCharacter', createEntityMutation.error, entityDirty ? 'character' : undefined),
+    operationFailure('saveCharacter', updateEntityMutation.error, entityDirty ? 'character' : undefined),
+    operationFailure('deleteCharacter', deleteEntityMutation.error, entityDirty ? 'character' : undefined),
+    operationFailure('prepareReference', generateReferenceMutation.error, entityDirty ? 'character' : undefined),
+    operationFailure('confirmReference', confirmReferenceMutation.error),
+    operationFailure('deleteReference', deleteReferenceMutation.error),
+    operationFailure('downloadReference', downloadReferenceMutation.error),
+    operationFailure('createCharacterState', createEntityStateMutation.error, entityStateDirty ? 'characterState' : undefined),
+    operationFailure('saveCharacterState', updateEntityStateMutation.error, entityStateDirty ? 'characterState' : undefined),
+    operationFailure('loadCharacters', reloadError, entityDirty ? 'character' : undefined),
+    operationFailure('saveCharacter', dirtySaveError, entityDirty ? 'character' : undefined)
+  ]);
 
   const typeOptions = entityTypes.map((option) => ({
     value: option.value,
@@ -2370,6 +2435,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   }));
   const refreshCharacters = (): void => {
     void invalidateEntities();
+    if (selection.entityId !== null) void selectedEntityQuery.refetch();
     void invalidateReference();
     void invalidateEntityStates();
     void scenesQuery.refetch();
@@ -2392,8 +2458,9 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         />
       ) : null}
       {activeWorkId === null ? <Notice message={t(language, 'selectWorkFirst')} tone="warning" /> : null}
-      {characterErrors.length === 0 ? null : (
+      {characterErrors.map((failure, index) => (
         <ActionableErrorNotice
+          key={`${failure.context.operation}-${index}`}
           actions={{
             characters: () => scrollToCharacterSection('editor'),
             credits: () => {
@@ -2426,10 +2493,12 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
               });
             }
           }}
-          error={characterErrors[0]}
+          context={failure.context}
+          error={failure.error}
           language={language}
+          retryMode="refresh"
         />
-      )}
+      ))}
       {entityStale ? (
         <View style={styles.buttonRow}>
           <Notice
@@ -2441,7 +2510,12 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
             onPress={() => {
               confirmStaleDraftReload({
                 language, scope: 'character',
-                onConfirm: () => { void reloadStaleEntity().catch((cause: unknown) => setDirtySaveError(cause instanceof Error ? cause : new Error('Character reload failed'))); }
+                onConfirm: () => {
+                  setReloadError(null);
+                  void reloadStaleEntity().catch((cause: unknown) => {
+                    if (entityReloadScopeRef.current === entityReloadScope) setReloadError(cause instanceof Error ? cause : new Error('Character reload failed'));
+                  });
+                }
               });
             }}
             variant="secondary"
@@ -2480,8 +2554,16 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
 
       <View onLayout={recordSectionOffset('editor')}>
         <Section collapsible persistKey="characters:editor" subtitle={editorMessage(language, 'optionalFields')} title={entityEditorMode === 'create' ? editorMessage(language, 'createCharacter') : t(language, "generated.screens.CharactersScreen.character.editor.669746e4")}>
+        {selection.entityId !== null && selectedEntity === null ? (
+          <Notice
+            announce
+            message={editorMessage(language, selectedEntityQuery.error == null ? 'characterLoading' : 'characterLoadRequired')}
+            tone={selectedEntityQuery.error == null ? 'info' : 'warning'}
+          />
+        ) : (
+        <>
         <FormField label={t(language, 'name')} maxLength={100} onChangeText={setName} value={name} />
-        <SegmentedControl onChange={setEntityType} options={typeOptions} value={entityType} />
+        <SegmentedControl onChange={changeEntityType} options={typeOptions} value={entityType} />
         <View
           onLayout={recordSectionOffset('import')}
           style={styles.inlineImport}
@@ -2584,6 +2666,8 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
             </>
           )}
         </View>
+        </>
+        )}
         </Section>
       </View>
 

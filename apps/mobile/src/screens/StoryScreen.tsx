@@ -54,6 +54,8 @@ import { t } from '@/lib/i18n';
 import { editorMessage } from '@/lib/editorUiMessages';
 import { ApiError } from '@/lib/api';
 import { userErrorMessage } from '@/lib/userMessages';
+import { collectOperationFailures, operationFailure } from '@/lib/operationErrorContext';
+import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { navigationRef } from '@/navigation/navigationRef';
 import { useAppState } from '@/state/appState';
 import { useDirtyEditorRegistration, useDirtyState } from '@/state/dirtyState';
@@ -217,6 +219,33 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     scene: sceneDirty
   });
 
+  const storyEditorRevision = JSON.stringify({
+    episode: {
+      draft: episodeDraft,
+      estimatedPages,
+      id: selectedEpisode?.id ?? null,
+      title: episodeTitle,
+      startingEntityStates: startingEntityStatesDraft
+    },
+    scene: {
+      atmosphere: sceneAtmosphere,
+      entityIds: sceneEntityIds,
+      id: sceneId,
+      location: sceneLocation,
+      order: sceneOrder,
+      time: sceneTime
+    }
+  });
+
+  const currentStoryDraftRef = useRef({ scope: episodeScopeKey, revision: storyEditorRevision });
+  useLayoutEffect(() => {
+    currentStoryDraftRef.current = { scope: episodeScopeKey, revision: storyEditorRevision };
+  }, [episodeScopeKey, storyEditorRevision]);
+
+  const storyErrorScope = JSON.stringify([sessionKey, organizationId, selectedWork?.id, selectedChapter?.id, selectedEpisode?.id, sceneId]);
+  const storyErrorScopeRef = useRef(storyErrorScope);
+  useLayoutEffect(() => { storyErrorScopeRef.current = storyErrorScope; }, [storyErrorScope]);
+
   const estimatedPagesInvalid = parseIntInRange(estimatedPages, 1, MAX_ESTIMATED_PAGES) === null;
   const sceneOrderInvalid = parseIntInRange(sceneOrder, 1, MAX_STORY_ORDER) === null;
   useEffect(() => {
@@ -304,6 +333,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       await invalidateEpisodes();
     },
     onError: (error) => {
+      if (currentStoryDraftRef.current.scope !== episodeScopeKey) return;
       if (isResourceStaleError(error)) {
         setStaleResource({ id: selectedEpisode?.id ?? '', kind: 'episode' });
       }
@@ -431,15 +461,18 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
         }
       }
     } catch (error) {
-      setDirtySaveError(
-        error instanceof Error
-          ? error
-          : new Error(t(language, "generated.screens.StoryScreen.unsaved.changes.could.not.be.saved.88963a72"))
-      );
+      if (storyErrorScopeRef.current === storyErrorScope) {
+        setDirtySaveError(
+          error instanceof Error
+            ? error
+            : new Error(t(language, "generated.screens.StoryScreen.unsaved.changes.could.not.be.saved.88963a72"))
+        );
+      }
       throw error;
     }
   }, [
     episodeDirty,
+    storyErrorScope,
     estimatedPagesInvalid,
     language,
     sceneDirty,
@@ -451,29 +484,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     selectedScene,
     setDirtySaveError,
   ]);
-
-  const storyEditorRevision = JSON.stringify({
-    episode: {
-      draft: episodeDraft,
-      estimatedPages,
-      id: selectedEpisode?.id ?? null,
-      title: episodeTitle,
-      startingEntityStates: startingEntityStatesDraft
-    },
-    scene: {
-      atmosphere: sceneAtmosphere,
-      entityIds: sceneEntityIds,
-      id: sceneId,
-      location: sceneLocation,
-      order: sceneOrder,
-      time: sceneTime
-    }
-  });
-
-  const currentStoryDraftRef = useRef({ scope: episodeScopeKey, revision: storyEditorRevision });
-  useLayoutEffect(() => {
-    currentStoryDraftRef.current = { scope: episodeScopeKey, revision: storyEditorRevision };
-  }, [episodeScopeKey, storyEditorRevision]);
 
   useDirtyEditorRegistration({
     id: 'story-editor',
@@ -695,19 +705,29 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     })();
   };
 
-  const storyErrors = [
-    worksQuery.error,
-    entitiesQuery.error,
-    chaptersQuery.error,
-    episodesQuery.error,
-    scenesQuery.error,
-    updateEpisodeMutation.error,
-    createSceneMutation.error,
-    updateSceneMutation.error,
-    deleteSceneMutation.error,
-    dirtySaveError,
-    improveEpisodeMutation.error
-  ].filter((error): error is Error => error instanceof Error);
+  useResetOnScopeChange(storyErrorScope, [
+    updateEpisodeMutation.reset,
+    createSceneMutation.reset,
+    updateSceneMutation.reset,
+    deleteSceneMutation.reset,
+    improveEpisodeMutation.reset,
+    () => setDirtySaveError(null)
+  ]);
+
+  const storyErrors = collectOperationFailures([
+    operationFailure('loadWorks', worksQuery.error),
+    operationFailure('loadWorks', selectedWorkQuery.error),
+    operationFailure('loadCharacters', entitiesQuery.error),
+    operationFailure('loadChapters', chaptersQuery.error),
+    operationFailure('loadEpisodes', episodesQuery.error),
+    operationFailure('loadScenes', scenesQuery.error),
+    operationFailure('saveEpisode', updateEpisodeMutation.error, episodeDirty ? 'episode' : undefined),
+    operationFailure('createScene', createSceneMutation.error, sceneDirty ? 'scene' : undefined),
+    operationFailure('saveScene', updateSceneMutation.error, sceneDirty ? 'scene' : undefined),
+    operationFailure('deleteScene', deleteSceneMutation.error, sceneDirty ? 'scene' : undefined),
+    operationFailure('saveStoryDrafts', dirtySaveError, episodeDirty || sceneDirty ? 'story' : undefined),
+    operationFailure('improveEpisode', improveEpisodeMutation.error, episodeDirty ? 'episode' : undefined)
+  ]).filter((failure) => failure.error !== workspaceContext.error);
 
   const refreshing =
     worksQuery.isFetching ||
@@ -746,8 +766,9 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
           tone="info"
         />
       ) : null}
-      {storyErrors.length === 0 ? null : (
+      {storyErrors.map((failure, index) => (
         <ActionableErrorNotice
+          key={`${failure.context.operation}-${index}`}
           actions={{
             characters: () => navigateAfterDirtyCheck('Characters'),
             credits: () => navigateAfterDirtyCheck('Account'),
@@ -762,10 +783,12 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
             retry: refreshStory,
             workspace: () => navigateAfterDirtyCheck('Account')
           }}
-          error={storyErrors[0]}
+          context={failure.context}
+          error={failure.error}
           language={language}
+          retryMode="refresh"
         />
-      )}
+      ))}
       {activeStaleResource === null ? null : (
         <View style={styles.buttonRow}>
           <Notice

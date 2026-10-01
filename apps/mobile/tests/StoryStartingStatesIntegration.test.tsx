@@ -27,8 +27,9 @@ vi.mock('@tanstack/react-query', () => ({
   useInfiniteQuery: ({ queryKey }: { queryKey: string[] }) => ({ ...query({ pages: [queryKey[0] === 'works' ? { works } : { entities }] }), hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn() }),
   useQuery: ({ queryKey }: { queryKey: string[] }) => query(queryKey[0] === 'chapters' ? { chapters } : queryKey[0] === 'episodes' ? { episodes: [episode] } : queryKey[0] === 'scenes' ? { scenes } : works[0]),
   useMutation: (options: { mutationFn: () => Promise<unknown>; onSuccess?: (value: unknown) => Promise<void>; onError?: (error: unknown) => void }) => {
-    const run = async (): Promise<unknown> => { try { const value = await options.mutationFn(); await options.onSuccess?.(value); return value; } catch (error) { options.onError?.(error); throw error; } };
-    return { mutateAsync: run, mutate: () => { void run(); }, isPending: false, error: null, reset: vi.fn() };
+    const [error, setError] = React.useState<unknown>(null);
+    const run = async (): Promise<unknown> => { try { const value = await options.mutationFn(); setError(null); await options.onSuccess?.(value); return value; } catch (error) { setError(error); options.onError?.(error); throw error; } };
+    return { mutateAsync: run, mutate: () => { void run(); }, isPending: false, error, reset: () => setError(null) };
   }
 }));
 vi.mock('react-native', () => ({ Pressable: 'button', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
@@ -43,7 +44,7 @@ vi.mock('@/components/StoryCollaborationPanel', () => ({ StoryCollaborationPanel
 vi.mock('@/components/WorkspaceHierarchyNavigator', () => ({ WorkspaceHierarchyNavigator: () => null }));
 vi.mock('@/components/WorkspaceContextPicker', () => ({ useWorkspaceContextSelection: () => ({}) }));
 vi.mock('@/components/Notice', () => ({ Notice: () => null }));
-vi.mock('@/components/ActionableErrorNotice', () => ({ ActionableErrorNotice: () => null }));
+vi.mock('@/components/ActionableErrorNotice', () => ({ ActionableErrorNotice: (props: Record<string, unknown>) => React.createElement('error-notice', props) }));
 vi.mock('@/lib/confirm', () => ({ confirmAction: vi.fn(), confirmDestructiveAction: vi.fn() }));
 vi.mock('@/lib/confirmStaleDraftReload', () => ({ confirmStaleDraftReload: (input: unknown) => confirmReload(input) }));
 vi.mock('@/lib/aiProviderDisclosure', () => ({ appendAiProviderDisclosure: (value: string) => value }));
@@ -80,6 +81,42 @@ describe('Story既存保存と開始状態の統合', () => {
     expect(payload).not.toHaveProperty('starting_entity_states');
     expect(payload).not.toHaveProperty('introduction');
     expect(payload).not.toHaveProperty('entities_involved');
+  });
+  it('保存失敗で処理名と保持範囲を表示しdirty guard経由の同一エラーを重複させない', async () => {
+    const failure = new Error('provider detail');
+    updateEpisode.mockRejectedValue(failure);
+    await render();
+    await act(async () => field('タイトル').props.onChangeText('Local title'));
+    const body = (): ReactTestRenderer['root'] => root!.root.findAllByType('field').find(node => node.props.maxLength === 8000)!;
+    const pagesField = (): ReactTestRenderer['root'] => root!.root.findAllByType('field').find(node => node.props.keyboardType === 'numeric')!;
+    await act(async () => body().props.onChangeText('Local story'));
+    await act(async () => pagesField().props.onChangeText('7'));
+    await changeStates([]);
+    await act(async () => { await expect(registration.save()).rejects.toBe(failure); });
+    const errors = root!.root.findAllByType('error-notice');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].props.context).toEqual({ operation: 'saveEpisode', retainedDraft: 'episode' });
+    expect(errors[0].props.retryMode).toBe('refresh');
+    expect(field('タイトル').props.value).toBe('Local title');
+    expect(body().props.value).toBe('Local story');
+    expect(pagesField().props.value).toBe('7');
+    expect(root!.root.findByType('starting-states').props.value).toEqual([]);
+    await act(async () => errors[0].props.actions.retry());
+    expect(updateEpisode).toHaveBeenCalledOnce();
+    expect(field('タイトル').props.value).toBe('Local title');
+  });
+  it('話を切り替えた後の別draftへ前の保存失敗を表示しない', async () => {
+    updateEpisode.mockRejectedValue(new Error('old operation failed'));
+    await render();
+    await act(async () => field('タイトル').props.onChangeText('Old draft'));
+    await act(async () => { await expect(registration.save()).rejects.toThrow(); });
+    expect(root!.root.findAllByType('error-notice')).toHaveLength(1);
+    episode = { ...episode, id: 'next-episode', title: 'Next saved title' };
+    selection = { ...selection, episodeId: 'next-episode' };
+    await render();
+    await act(async () => field('タイトル').props.onChangeText('Next local draft'));
+    expect(root!.root.findAllByType('error-notice')).toHaveLength(0);
+    expect(field('タイトル').props.value).toBe('Next local draft');
   });
   it('開始状態だけを明示クリアしても既存dirty保存を通り空配列を送信する', async () => {
     await render(); await changeStates([]);

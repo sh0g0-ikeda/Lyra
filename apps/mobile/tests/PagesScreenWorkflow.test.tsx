@@ -19,7 +19,14 @@ vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn(), setQueryData: vi.fn() }),
   useInfiniteQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'pages' ? queryData.pages : queryData.entities, isSuccess: true, isFetching: false, hasNextPage: queryKey[0] === 'pages' ? false : moreEntities, isFetchingNextPage: false, fetchNextPage: fetchEntities, error: null }),
   useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'panels' ? queryData.panels : queryKey[0] === 'frames' ? queryData.frames : queryKey[0] === 'scenes' ? queryData.scenes : queryKey[0] === 'page-generation-readiness' ? queryData.readiness : queryKey[0] === 'page-layout-templates' ? queryData.templates : undefined, isSuccess: true, isFetching: false, isLoading: false, error: null, refetch: vi.fn() }),
-  useMutation: () => ({ mutate: action, mutateAsync: action, isPending: false, error: null, reset: vi.fn() })
+  useMutation: (options: { mutationFn: (...args: unknown[]) => Promise<unknown>; onSuccess?: (value: unknown) => Promise<void> }) => {
+    const [error, setError] = React.useState<unknown>(null);
+    const run = async (...args: unknown[]): Promise<unknown> => {
+      try { const value = await options.mutationFn(...args); await options.onSuccess?.(value); setError(null); return value; }
+      catch (cause) { setError(cause); throw cause; }
+    };
+    return { mutate: (...args: unknown[]) => { void run(...args).catch(() => undefined); }, mutateAsync: run, isPending: false, error, reset: () => setError(null) };
+  }
 }));
 vi.mock('@/state/appState', () => ({ useAppState: () => ({ api, hasCapability: () => true, language: 'ja', logout: action, selection: { organizationId: null, workId: 'work', chapterId: 'chapter', episodeId: 'episode', pageId: 'page', entityId: null }, session: { capabilities: { generation_quotes: true } }, sessionKey: 'user', tokens: null, trackJob: action, updateSelection: action }) }));
 vi.mock('@/state/dirtyState', () => ({ useDirtyEditorRegistration: vi.fn(), useDirtyState: () => ({ resolveDirtyEditors: vi.fn().mockResolvedValue(true), hasDirtyEditors: false }) }));
@@ -69,6 +76,19 @@ vi.mock('@/components/WorkspaceHierarchyNavigator', () => ({ WorkspaceHierarchyN
 beforeEach(() => { action.mockReset(); quoteOpen.mockReset(); fetchEntities.mockReset(); moreEntities=false; queryData.entities.pages=[{entities:[]}]; panels[0].entities=[]; panels[0].dialogue=[]; });
 afterEach(async () => { await act(async () => root?.unmount()); });
 describe('実際のPagesScreenの工程構成', () => {
+  it('ページ保存失敗の処理名と保持範囲を保ちrefreshで保存を再送信しない', async () => {
+    action.mockRejectedValue(new Error('server detail'));
+    await act(async () => { root = create(<PagesScreen />); });
+    const style = (): ReactTestRenderer['root'] => root!.root.findAllByType('field').find(node => node.props.label === '参考にしたい作品・画風')!;
+    await act(async () => style().props.onChangeText('保持する画風'));
+    await act(async () => root!.root.findAllByType('button').find(node => node.props.label === '保存')!.props.onPress());
+    const notice = root!.root.findByType('PageErrorRecoveryNotice');
+    expect(notice.props.context).toEqual({ operation: 'savePage', retainedDraft: 'page' });
+    expect(style().props.value).toBe('保持する画風');
+    await act(async () => notice.props.onRetry());
+    expect(action).toHaveBeenCalledOnce();
+    expect(style().props.value).toBe('保持する画風');
+  });
   it('ステップ変更で保存やAIを呼ばずページ入力を保持し実コマ設定をpreviewに使う', async () => {
     await act(async () => { root = create(<PagesScreen />); });
     const style = (): ReactTestRenderer['root'] => root!.root.findAllByType('field').find((node) => node.props.label === '参考にしたい作品・画風')!;

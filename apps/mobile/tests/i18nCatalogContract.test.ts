@@ -10,6 +10,7 @@ import { componentTranslations } from '@/lib/i18nComponentMessages';
 import { generatedTranslations } from '@/lib/i18nGenerated';
 import { screenTranslations } from '@/lib/i18nScreenMessages';
 import { sharedTranslations } from '@/lib/i18nSharedMessages';
+import { operationErrorMessages } from '@/lib/operationErrorMessages';
 
 const sourceRoot = path.resolve(__dirname, '../src');
 
@@ -42,6 +43,7 @@ describe('Mobile i18n catalog contract', () => {
       componentTranslations,
       screenTranslations,
       sharedTranslations,
+      operationErrorMessages,
       entityStateMessages,
       panelInsertionMessages,
       imageAccessMessages

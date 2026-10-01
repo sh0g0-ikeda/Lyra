@@ -385,6 +385,15 @@ and original source cleanup before journal scrubbing; organization assets remain
 under organization authorization. Actual storage policy/retention acceptance is
 required before enablement. See the local design and audit follow-up below.
 
+New unsaved person forms show the six editable basic defaults selected by the
+frontend design; existing blanks, imported suggestions, aliases and hidden fields
+are not backfilled. Unresolved existing selections remain read-only until their
+snapshot loads. Editor errors retain operation and local draft context. Successful
+mutation receipts survive failed refreshes, while ambiguous state confirmations
+retain an explicit unknown outcome through state navigation and reconciliation.
+Read recovery never silently repeats a paid mutation. Targeted rendered-style
+contrast is tested locally; native layout and accessibility acceptance remain open.
+
 ## 12. Related documents
 
 - `docs/Lyra_StoryAI_SubSpec.md`
@@ -405,3 +414,7 @@ required before enablement. See the local design and audit follow-up below.
 - `docs/state-copy-fenced-recovery-local-design-2026-10-02.md`
 - `docs/account-deletion-fenced-references-local-design-2026-10-02.md`
 - `docs/release-readiness-audit-2026-10-02.md`
+
+- `docs/mobile-new-character-defaults-design-2026-10-01.md`
+- `docs/mobile-operation-error-context-design-2026-10-01.md`
+- `docs/mobile-state-operation-outcomes-design-2026-10-01.md`

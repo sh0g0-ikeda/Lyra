@@ -76,7 +76,7 @@ export function FormField({
         onContentSizeChange={onContentSizeChange}
         onFocus={() => setFocused(true)}
         placeholder={placeholder}
-        placeholderTextColor={colors.disabled}
+        placeholderTextColor={editable ? colors.placeholder : colors.disabled}
         returnKeyType={returnKeyType ?? (multiline ? 'default' : 'done')}
         scrollEnabled={multiline}
         style={[
@@ -151,7 +151,7 @@ const styles = StyleSheet.create({
   },
   help: {
     ...textStyles.caption,
-    color: colors.mutedSoft
+    color: colors.muted
   },
   helpDisclosure: {
     alignItems: 'center',

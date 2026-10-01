@@ -123,7 +123,7 @@ const styles = StyleSheet.create({
   },
   description: {
     ...textStyles.caption,
-    color: colors.mutedSoft
+    color: colors.muted
   },
   proposal: {
     borderTopColor: colors.border,

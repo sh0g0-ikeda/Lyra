@@ -18,6 +18,7 @@ import { PageCreationStepActions, PageCreationStepNavigation, PageWorkflowSectio
 import { PageSettingsPreview } from '@/components/PageSettingsPreview';
 import { inferPageCreationStep, nextPageInSequence, type PageCreationStep } from '@/domain/pageCreationWorkflow';
 import { pageWorkflowMessage } from '@/lib/pageWorkflowMessages';
+import { collectOperationFailures, operationFailure } from '@/lib/operationErrorContext';
 import { PageGenerationQuoteDialog } from '@/components/PageGenerationQuoteDialog';
 import { PageGenerationResultModal } from '@/components/PageGenerationResultModal';
 import { usePageGenerationQuote } from '@/hooks/usePageGenerationQuote';
@@ -138,7 +139,6 @@ import {
   hasUnsavedNewPanelDraft,
   isLegacyPageGenerationCapabilityUnavailable
 } from '@/lib/pageGenerationCompatibility';
-import { userErrorMessage } from '@/lib/userMessages';
 import type { MobileTabParamList } from '@/navigation/tabs';
 import { useAppState } from '@/state/appState';
 import { useDirtyEditorRegistration, useDirtyState } from '@/state/dirtyState';
@@ -232,10 +232,6 @@ const readStyleReference = (layoutConfig: Record<string, unknown>): { title: str
     title: readRecordString(styleReference, 'title'),
     notes: readRecordString(styleReference, 'notes')
   };
-};
-
-const generationErrorMessage = (error: unknown, language: 'ja' | 'en'): string | null => {
-  return error === null || error === undefined ? null : userErrorMessage(error, language);
 };
 
 const formatPageStatus = (status: PageRecord['status'], language: 'ja' | 'en'): string => {
@@ -2154,26 +2150,27 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const mutationErrors = [
-    updatePageMutation.error,
-    autofillPageFromScenesMutation.error,
-    applyTemplateMutation.error,
-    applyFrameTemplateMutation.error,
-    replaceFramesMutation.error,
-    createPanelMutation.error,
-    updatePanelMutation.error,
-    deletePanelMutation.error,
-    reorderPanelMutation.error,
-    changePanelRoleMutation.error,
-    pageSkeletonMutation.error,
-    pageStoryAutofillMutation.error,
-    cancelPageDesignJobMutation.error,
-    generatePageMutation.error,
-    confirmPageMutation.error,
-    reopenPageMutation.error,
-    exportPagesMutation.error,
-    openWebEditorMutation.error
-  ].filter((error): error is Error => error instanceof Error);
+  const mutationErrors = collectOperationFailures([
+    operationFailure('savePage', updatePageMutation.error, pageDirty ? 'page' : undefined),
+    operationFailure('autofillScenes', autofillPageFromScenesMutation.error, pageDirty ? 'page' : undefined),
+    operationFailure('applyLayout', applyTemplateMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('applyFrameLayout', applyFrameTemplateMutation.error, framesDirty ? 'frames' : undefined),
+    operationFailure('saveFrames', replaceFramesMutation.error, framesDirty ? 'frames' : undefined),
+    operationFailure('createPanel', createPanelMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('savePanel', updatePanelMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('deletePanel', deletePanelMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('reorderPanels', reorderPanelMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('changePanelRole', changePanelRoleMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('createPageSkeleton', pageSkeletonMutation.error),
+    operationFailure('autofillStory', pageStoryAutofillMutation.error),
+    operationFailure('cancelPageDesign', cancelPageDesignJobMutation.error),
+    operationFailure('generatePage', generatePageMutation.error),
+    operationFailure('generateMonochromePage', generateMonochromePageMutation.error),
+    operationFailure('confirmPage', confirmPageMutation.error),
+    operationFailure('reopenPage', reopenPageMutation.error),
+    operationFailure('exportPages', exportPagesMutation.error),
+    operationFailure('openWebEditor', openWebEditorMutation.error)
+  ]);
   const pagesError = currentQueryError({
     data: pagesQuery.data,
     enabled: activeEpisodeId !== null,
@@ -2216,59 +2213,56 @@ export function PagesScreen(): React.JSX.Element {
     enabled: pageHierarchyReady && activeWorkId !== null,
     error: entitiesQuery.error
   });
-  const queryFailures = [
+  const queryFailures = collectOperationFailures([
     {
-      error: pagesError,
+      ...operationFailure('loadPages', pagesError),
       retry: () => {
         void pagesQuery.refetch();
       }
     },
     {
-      error: selectedPageError,
+      ...operationFailure('loadPage', selectedPageError),
       retry: () => {
         void selectedPageQuery.refetch();
       }
     },
     {
-      error: panelsError,
+      ...operationFailure('loadPanels', panelsError),
       retry: () => {
         void panelsQuery.refetch();
       }
     },
     {
-      error: framesError,
+      ...operationFailure('loadFrames', framesError),
       retry: () => {
         void framesQuery.refetch();
       }
     },
     {
-      error: pageLayoutTemplatesError,
+      ...operationFailure('loadLayouts', pageLayoutTemplatesError),
       retry: () => {
         void pageLayoutTemplatesQuery.refetch();
       }
     },
     {
-      error: pageGenerationReadinessError,
+      ...operationFailure('loadReadiness', pageGenerationReadinessError),
       retry: () => {
         void pageGenerationReadinessQuery.refetch();
       }
     },
     {
-      error: scenesError,
+      ...operationFailure('loadScenes', scenesError),
       retry: () => {
         void scenesQuery.refetch();
       }
     },
     {
-      error: entitiesError,
+      ...operationFailure('loadCharacters', entitiesError),
       retry: () => {
         void entitiesQuery.refetch();
       }
     },
-  ].filter(
-    (failure): failure is { error: Error; retry: () => void } =>
-      failure.error instanceof Error
-  );
+  ]);
 
   const toggleExportPage = (pageId: string): void => {
     if (!pages.some((page) => page.id === pageId && canUseMobilePageImage(page))) return;
@@ -2358,7 +2352,6 @@ export function PagesScreen(): React.JSX.Element {
 
   const panelRoleSegments = labelOptions(panelRoleOptions, language);
   const panelSizeSegments = labelOptions(panelSizeOptions, language);
-  const errorMessage = generationErrorMessage(generatePageMutation.error, language);
   const readiness = pageGenerationReadinessQuery.data ?? null;
   const pageRequiresReopen = selectedPage?.status === 'confirmed';
   const serverGenerationBlocked =
@@ -2374,17 +2367,10 @@ export function PagesScreen(): React.JSX.Element {
     void invalidatePageLayoutTemplates();
     void invalidatePageReadiness();
   };
-  const primaryPageFailure =
-    queryFailures[0] ??
-    (mutationErrors[0] === undefined
-      ? null
-      : {
-          error: mutationErrors[0],
-          retry: () => {
-            void invalidatePages();
-          }
-        });
-  const primaryPageError = primaryPageFailure?.error ?? null;
+  const pageFailures = collectOperationFailures([
+    ...queryFailures,
+    ...mutationErrors.map((failure) => ({ ...failure, retry: refreshPages }))
+  ]);
   const navigateAfterDirtyCheck = (
     target: 'Account' | 'Characters'
   ): void => {
@@ -2475,9 +2461,11 @@ export function PagesScreen(): React.JSX.Element {
           }}
           sessionKey={sessionKey}
         />
-      {primaryPageError === null ? null : (
+      {pageFailures.map((failure, index) => (
         <PageErrorRecoveryNotice
-          error={primaryPageError}
+          key={`${failure.context.operation}-${index}`}
+          context={failure.context}
+          error={failure.error}
           language={language}
           onAccount={() => navigateAfterDirtyCheck('Account')}
           onCharacters={() => navigateAfterDirtyCheck('Characters')}
@@ -2493,10 +2481,10 @@ export function PagesScreen(): React.JSX.Element {
             void reloadAfterPageStale();
           }}
           onRetry={() => {
-            primaryPageFailure?.retry();
+            failure.retry();
           }}
         />
-      )}
+      ))}
 
       <Section collapsible persistKey="pages:list" title={editorMessage(language, 'pageList')} subtitle={editorMessage(language, 'pageListHelp')}>
         <PageThumbnailPicker
@@ -3177,7 +3165,6 @@ export function PagesScreen(): React.JSX.Element {
             />
           )}
         </View>
-        {errorMessage === null ? null : <Notice message={errorMessage} tone="danger" />}
         {pageStale ? (
           <View style={styles.usage}>
             <Notice

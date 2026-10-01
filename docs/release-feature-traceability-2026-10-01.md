@@ -11,7 +11,7 @@ UI の U01–32 は別の `release-ui-traceability-2026-10-01.md` で追跡す�
 | F01 | 明示的な白黒／カラー、省略は従来カラー | render_style を job／quote／snapshot／prompt に固定。白黒は保存前 grayscale PNG。Web／Mobile の選択と adapter 回帰 | 実生成品質と旧ストア端末 |
 | F02 | 同人物の default／負傷等の参照を同時保持 | PageReferenceIdentity、PageGenerationInputImageBuilder。旧 note-only の同じ base は重複課金しないが別の確定状態画像は保持 | 実生成での人物同一性 |
 | F03 | 別人物に複製せず状態名＋自由入力 | entity state repository/service、EntityStateEditor、状態名・description 表示。暗黙 stack／画像合成なし | 状態受付 flag OFF、実機 |
-| F04 | 確定 default → preview → 選択 → 確定 | EntityStateReferenceService、EntityStateReferenceRepository、quoted state preview。所有者／entity／revision／job／candidate を検証 | 状態 flag OFF。DB切断／遅延copyのローカル再現・未確定試行の停止ガードは追加済み。未確定試行の復旧設計と実S3受入は未了（2026-10-02追補） |
+| F04 | 確定 default → preview → 選択 → 確定 | EntityStateReferenceService、EntityStateReferenceRepository、quoted state preview。所有者／entity／revision／job／candidate を検証 | 状態 flag OFF。v2 journal・条件付き書込・marker・正確version削除による復旧を既定OFFで実装し、模擬storageとPG16/18で競合検証済み。Mobileは確定receiptとread失敗／結果不明を分離。実S3の権限・保持・競合受入は未了。legacy不明結果を自動解除しない |
 | F05 | 旧確定画像を保持、編集の未反映表示 | EntityStatePresentation、EntityStateEditor と候補失敗／再生成／revision 回帰。base gallery 不変 | 実画像・実機 |
 | F06 | コマ default／状態別参照、同人物複数状態 | EntityStatePicker、pageEntityStateOptions、PageReferenceIdentity。未確定参照は受付／課金前に停止。旧注記状態も保持 | gate と実機 |
 | F07 | 話開始状態の明示保存、空は default | migration041、EpisodeStartingStatesEditor、starting states API。省略保持／明示 [] 解除 | gate と実機 |

@@ -25,7 +25,7 @@ describe('MOB-ENTITY-002 latest character UI contract', () => {
     const orderedMarkers = [
       'persistKey="characters:list"',
       "label={t(language, 'name')}",
-      '<SegmentedControl onChange={setEntityType}',
+      '<SegmentedControl onChange={changeEntityType}',
       "onLayout={recordSectionOffset('import')}",
       "editorMessage(language, 'additionalDetails')",
       'persistKey="characters:reference-set"'

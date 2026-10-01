@@ -135,6 +135,7 @@ describe('AccountScreen organization feature guard', () => {
       mutationFn: () => Promise<unknown>;
       onSuccess?: (result: unknown) => void | Promise<void>;
     }) => ({
+      reset: vi.fn(),
       isError: false,
       isPending: false,
       mutateAsync: vi.fn(async () => {
@@ -158,6 +159,40 @@ describe('AccountScreen organization feature guard', () => {
       }
       return { data: undefined, isError: false, isFetching: false, isLoading: false, refetch: vi.fn() };
     });
+  });
+
+  it.each([
+    ['cancelJob', 'Cancel job', 'Cancellation is unconfirmed'],
+    ['hideJob', 'Hide job history', 'history visibility only'],
+    ['retryGenerationJob', 'Retry job', 'Charge/refund status is unconfirmed']
+  ])('identifies %s and its exact job while recovery refreshes without replaying it', async (method, label, guidance) => {
+    const refetch = vi.fn().mockResolvedValue(undefined);
+    mocks.useInfiniteQuery.mockReturnValue({ data: { pages: [{ jobs: [] }] }, refetch });
+    const replay = vi.fn();
+    mocks.useMutation.mockImplementation((options: { mutationFn: unknown }) => ({
+      isError: String(options.mutationFn).includes(method),
+      error: String(options.mutationFn).includes(method) ? new ApiError('private backend detail', 0, 'REQUEST_TIMEOUT') : null,
+      variables: { id: 'job-target-42' },
+      mutateAsync: replay,
+      isPending: false,
+      reset: vi.fn()
+    }));
+    mocks.useAppState.mockReturnValue({
+      api: {}, language: 'en', logout: vi.fn(), selection: { organizationId: null },
+      session: refreshedSession, sessionKey: 'user-1', setLanguage: vi.fn(),
+      setSession: vi.fn(), updateSelection: mocks.updateSelection
+    });
+    let renderer: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<AccountScreen />); });
+    const notice = renderer!.root.findAllByType('notice').find(node => String(node.props.message).includes(label));
+    expect(notice).toBeDefined();
+    expect(notice!.props.message).toContain('job-target-42');
+    expect(notice!.props.message).toContain(guidance);
+    expect(notice!.props.message).not.toContain('private backend detail');
+    expect(notice!.props.actionLabel).toBe('Refresh status');
+    await act(async () => notice!.props.onAction());
+    expect(refetch).toHaveBeenCalledOnce();
+    expect(replay).not.toHaveBeenCalled();
   });
 
   it('updates the session and opens the new workspace with an empty production selection after creation', async () => {

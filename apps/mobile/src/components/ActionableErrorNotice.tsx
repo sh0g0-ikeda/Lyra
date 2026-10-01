@@ -6,6 +6,7 @@ import {
   type ErrorRecoveryTarget
 } from '@/lib/errorRecovery';
 import { userErrorMessage } from '@/lib/userMessages';
+import { errorRefreshLabel, operationErrorMessage, operationRecoveryTarget, type OperationErrorContext } from '@/lib/operationErrorContext';
 
 export type ErrorRecoveryActions = Partial<
   Record<ErrorRecoveryTarget, () => void>
@@ -19,6 +20,8 @@ interface ActionableErrorNoticeProps {
   tone?: 'warning' | 'danger';
   recoveryMessage?: string;
   recoveryActionLabel?: string;
+  context?: OperationErrorContext | undefined;
+  retryMode?: 'action' | 'refresh';
 }
 
 export function ActionableErrorNotice({
@@ -28,9 +31,11 @@ export function ActionableErrorNotice({
   target,
   tone = 'warning',
   recoveryMessage,
-  recoveryActionLabel
+  recoveryActionLabel,
+  context,
+  retryMode = 'action'
 }: ActionableErrorNoticeProps): React.JSX.Element {
-  const resolvedTarget = target ?? errorRecoveryTarget(error);
+  const resolvedTarget = target ?? (context === undefined ? errorRecoveryTarget(error) : operationRecoveryTarget(error, context));
   const onAction =
     resolvedTarget === null || resolvedTarget === undefined
       ? undefined
@@ -38,21 +43,24 @@ export function ActionableErrorNotice({
 
   return (
     <Notice
+      announce
       actionLabel={
         resolvedTarget !== null &&
         resolvedTarget !== undefined &&
         onAction !== undefined
-          ? recoveryActionLabel ?? errorRecoveryActionLabel(resolvedTarget, language)
+          ? recoveryActionLabel ?? (resolvedTarget === 'retry' && retryMode === 'refresh'
+            ? errorRefreshLabel(language)
+            : errorRecoveryActionLabel(resolvedTarget, language))
           : undefined
       }
       actionTestID={
         resolvedTarget !== null &&
         resolvedTarget !== undefined &&
         onAction !== undefined
-          ? `error-recovery-${resolvedTarget}`
+          ? `error-recovery-${resolvedTarget}${context === undefined ? '' : `-${context.operation}`}`
           : undefined
       }
-      message={recoveryMessage ?? userErrorMessage(error, language)}
+      message={context === undefined ? recoveryMessage ?? userErrorMessage(error, language) : operationErrorMessage(error, context, language, recoveryMessage)}
       onAction={onAction}
       tone={tone}
     />

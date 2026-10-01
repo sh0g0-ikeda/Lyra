@@ -53,7 +53,7 @@ recovery authority, retained ordinary markers, controlled versioning history and
 no unmanaged replication/restore. Configuration attestation records an operator's
 assertion; it neither inspects nor enforces those AWS settings.
 
-## Final local verification
+## Preserved state-recovery checkpoint verification
 
 The combined candidate passes 2,769 tests in 356 files in each of these runs:
 
@@ -124,3 +124,40 @@ make a release check pass.
 
 No item above authorizes merging, deployment, production migrations, store/OTA
 submission, a paid build, purchasing, persistent access changes or paid generation.
+
+## Adopted frontend requirements follow-up
+
+The frontend design at `01c1bf6dc1057f1731770d4118e7508eee884433` selects new-form
+defaults, operation-specific failure/outcome context and readable dark controls.
+A bounded follow-up from `138d62c` closes the identified local omissions:
+
+- Six editable existing-domain defaults apply only to fresh person drafts. Saved
+  blank/null values, hidden fields, aliases and imported suggestions are preserved.
+  Unresolved existing selections cannot accept edits that a delayed read discards
+- Core editor, hierarchy and job-action errors retain operation/target and proven
+  local draft facts. Confirmed writes are separated from failed subsequent reads;
+  refresh never silently repeats a mutation or infers credit settlement
+- Named-state confirmations preserve valid receipts. Unknown outcomes keep the
+  same original request across state selection. Explicit reconciliation renews
+  the original completed job's token; generic conflicts do not prove settlement.
+  A successful read of changed saved values permits an explicit return to editing
+  while retaining the uncertainty notice
+- Actual rendered-style foreground/background/ancestor-opacity combinations cover
+  changed active help text, placeholders, inputs, notices and selected panels.
+  Targeted text ratios exceed 4.5:1 and essential input boundaries exceed 3:1.
+  This does not certify every screen or actual native accessibility
+
+The combined Mobile suite passes **1,011 tests in 186 files**, typecheck, full lint,
+generated contracts and mojibake checks. Backend TypeScript, Web lint/build and the
+150-route inventory pass again. An independent bounded review found no remaining
+local blocker in these repaired flows and checked the final file hashes. The
+source SHA and offline-export results are recorded in the delivered manifest.
+
+The full backend suite also passes again on disposable PostgreSQL 18.3:
+2,769 tests in 356 files. The new UI changes do not modify backend, Web, package locks, migrations or shared
+API schemas from `138d62c`. Clothing search and page-number selection implement
+documented alternatives. Unsupported detailed example presets, frequency ranking
+and a full PC state editor are not added by inference. Branded authentication
+domain/mail are separately retained infrastructure proposals, not newly imposed
+Google release prerequisites. Real layouts, devices, provider images and external
+configuration remain unverified.

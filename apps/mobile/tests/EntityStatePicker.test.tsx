@@ -2,6 +2,7 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { EntityStatePicker } from '@/components/EntityStatePicker';
+import { renderedContrast } from './helpers/renderedContrast';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.mock('@/lib/config', () => ({ config: { apiBaseUrl: 'https://api.example' } }));
 const test = vi.hoisted(() => ({ states: [] as unknown[], language: 'ja' }));
@@ -11,6 +12,17 @@ vi.mock('react-native', () => ({ Pressable: 'button', Text: 'text', View: 'view'
 vi.mock('@/components/ResilientImage', () => ({ ResilientImage: 'image' }));
 const base = { entity_id: 'entity', scene_id: null, costume_note: null, costume_ref_id: null, condition_note: null, hair_note: null, expression_default: 'neutral', extra_note: null, created_at: '2026-01-01T00:00:00Z' };
 describe('EntityStatePicker', () => {
+  it.each([null, 'ready'])('選択状態が%sの場合に有効な状態captionが4.5:1以上になる', (selectedStateId) => {
+    test.states = [{ ...base, id: 'ready', name: '外傷', description: '傷', reference_status: 'confirmed', reference_image: { ref_id: 'ref', created_at: base.created_at } }];
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(<EntityStatePicker entityId="entity" entityName="アキラ" selectedStateId={selectedStateId} onSelect={vi.fn()} />); });
+    const stateOption = renderer.root.findAllByType('button')[1];
+    expect(stateOption.props.disabled).toBe(false);
+    for (const text of stateOption.findAllByType('text')) {
+      expect(renderedContrast(text)).toBeGreaterThanOrEqual(4.5);
+    }
+    act(() => renderer.unmount());
+  });
   it('defaultと確定状態の名前・thumbnailを表示しstate IDだけを返す', () => {
     test.states = [{ ...base, id: 'ready', name: '外傷', description: '傷', reference_status: 'confirmed', reference_image: { ref_id: 'ref', created_at: base.created_at } }, { ...base, id: 'draft', name: '着替え', description: '別衣装', reference_status: 'draft' }];
     const select = vi.fn(); let renderer!: ReturnType<typeof create>;

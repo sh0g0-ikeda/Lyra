@@ -10,7 +10,7 @@ export const entityStateMessages = {
     legacyName: '旧形式の状態',
     legacy: '旧形式の状態です。保存済みの衣装・表情などは保持されます。',
     draft: '未確定', confirmed: '確定済み', stale: '変更が画像に未反映',
-    retained: '以前の確定画像は保持されています。変更を反映するには新しいプレビューを確定してください。',
+    retained: '最後に読み込んだ状態には確定画像の参照情報があります。現在の入力が画像に反映されているとは限りません。最新の状態を読み込んで確認してください。',
     preview: 'プレビューを生成（{cost}クレジット）', previewConfirm: '「{name}」の状態画像をdefault画像から生成します。{cost}クレジットを消費します。基本画像と以前の確定画像は変更されません。',
     noBalance: '残高を確認してからプレビューしてください。', insufficient: 'クレジットが不足しています。マイページで残高を確認してください。',
     processing: '状態画像を生成しています。完了後に候補を選択して確定してください。',
@@ -21,7 +21,16 @@ export const entityStateMessages = {
     refresh: '最新の状態を読み込む', noStates: '保存済みの状態はありません。',
     missing: '保存済みの状態が見つかりません。変更せず保持しています。', notReady: '未確定または変更が未反映の状態は新しく選択できません。',
     returnPages: 'ページ設定に戻る', imageUnavailable: '画像を読み込めませんでした。',
-    selected: '選択中', error: '状態の操作を完了できませんでした。入力と以前の確定画像は保持されています。'
+    selected: '選択中', error: '状態を読み込めませんでした。最新表示を読み込み直してください。',
+    checkResult: '先の操作結果が未確認です。最新の一覧を確認して状態を選び直してください。',
+    readFailed: '状態・参照画像・ジョブの読み込みに失敗しました。表示は最新ではない可能性があります。現在の入力はこの画面に残りますが、未保存の変更はバックアップされていません。再読込は入力を置換せず、保存・確定・生成を再実行しません。',
+    saveUnknown: '「{name}」の状態の保存結果を確認できません。通信または応答の確認に問題がありました。現在の入力はこの画面に残りますが、未保存の変更はバックアップされていません。保存が完了している可能性があります。再送せず最新の一覧を読み込み、保存済みの状態を選び直してください。この保存操作は画像生成を開始しません。',
+    reconcileConfirmation: '同じ候補の確定結果を照合',
+    continueEditingUnconfirmed: '確定結果を未確認のまま編集に戻る',
+    confirmationHeld: '「{name}」の前の状態画像の確定結果は未確認のままです。保存内容の変更を読み込んだ後、編集を続けることを選びました。現在の入力はこの画面に残っています。新たな保存・プレビューは別の操作で、前の確定結果や課金・返金を確認するものではありません。',
+    confirmUnknown: '「{name}」の状態画像の確定結果を確認できません。通信または応答の確認に問題がありました。画面には最後に読み込んだ状態を表示していますが、サーバー上の画像は変更されている可能性があります。現在の入力はこの画面にのみ残ります。最新の状態を読み込み、必要なら「同じ候補の確定結果を照合」で元の確定要求を明示的に再送してください。照合は新たなプレビューを生成しません。プレビューの課金・返金状況はこのエラーでは未確認です。見積・ジョブで確認してください。',
+    savedRefreshFailed: '「{name}」の状態は保存済みですが、最新表示の読み込みに失敗しました。保存の完了応答を受領しています。表示は最新ではない可能性があります。再保存は不要です。最新表示の再読込では現在の入力を置換せず、保存・生成を再実行しません。',
+    confirmedRefreshFailed: '「{name}」の状態画像は確定済みですが、最新表示の読み込みに失敗しました。確定の完了応答を受領しています。表示は最新ではない可能性があります。再確定は不要です。最新表示の再読込では現在の入力を置換せず、確定・生成を再実行しません。プレビューの課金・返金状況は見積・ジョブで確認してください。'
   },
   en: {
     title: 'Character states', default: 'default (base)', newState: 'Add a state', name: 'State name', description: 'Description',
@@ -33,7 +42,7 @@ export const entityStateMessages = {
     legacyName: 'Legacy state',
     legacy: 'This is a legacy state. Its saved outfit, expression, and other notes are preserved.',
     draft: 'Draft', confirmed: 'Confirmed', stale: 'Changes not reflected in image',
-    retained: 'The previous confirmed image is preserved. Confirm a new preview to apply your changes.',
+    retained: 'The last loaded state includes a confirmed image reference. It may not reflect current input. Reload the state to check the latest result.',
     preview: 'Generate preview ({cost} credit)', previewConfirm: 'Generate the “{name}” state image from its default reference for {cost} credit. The base and previous confirmed images will not change.',
     noBalance: 'Check the balance before generating a preview.', insufficient: 'Insufficient credits. Check your balance in My Page.',
     processing: 'Generating the state image. Select and confirm a candidate when it is ready.',
@@ -44,7 +53,16 @@ export const entityStateMessages = {
     refresh: 'Reload latest state', noStates: 'No saved states yet.',
     missing: 'The saved state could not be found. Its selection is preserved.', notReady: 'Draft or outdated states cannot be newly selected.',
     returnPages: 'Return to page settings', imageUnavailable: 'The image could not be loaded.',
-    selected: 'Selected', error: 'The state action could not be completed. Your input and previous confirmed image are preserved.'
+    selected: 'Selected', error: 'The state could not be loaded. Reload the latest display.',
+    checkResult: 'The previous result is unconfirmed. Review the latest list and select the state again.',
+    readFailed: 'Loading states, reference images, or jobs failed. Displayed data may be out of date. Current input remains on this screen; unsaved changes are not backed up. Reloading does not replace input or repeat a save, confirmation, or generation.',
+    saveUnknown: '“{name}”: The state save result could not be confirmed because the connection or response could not be verified. Current input remains on this screen; unsaved changes are not backed up. The save may have completed. Reload the list and select the saved state before submitting again. This save does not start image generation.',
+    reconcileConfirmation: 'Reconcile the same confirmation',
+    continueEditingUnconfirmed: 'Return to editing with confirmation unresolved',
+    confirmationHeld: '“{name}”: The previous state image confirmation is still unconfirmed. You chose to continue editing after loading changed saved values. Current input remains on this screen. Further saves or previews are separate actions and do not establish the previous confirmation, charge, or refund outcome.',
+    confirmUnknown: '“{name}”: The state image confirmation result could not be confirmed because the connection or response could not be verified. The last loaded state is shown, but the server image may have changed. Current input remains only on this screen. Reload the latest state, then use “Reconcile the same confirmation” if needed to explicitly resubmit the original confirmation. Reconciliation does not generate a new preview. This error does not confirm preview charges or refunds; check the quote and job.',
+    savedRefreshFailed: '“{name}”: The state was saved, but refreshing the display failed. The save was acknowledged. Displayed data may be out of date. Saving again is unnecessary. Reloading does not replace current input or repeat a save or generation.',
+    confirmedRefreshFailed: '“{name}”: The state image was confirmed, but refreshing the display failed. The confirmation was acknowledged. Displayed data may be out of date. Confirming again is unnecessary. Reloading does not replace current input or repeat confirmation or generation. Check the quote and job for preview charges or refunds.'
   }
 } as const;
 export function stateMessage(language: UiLanguage, key: keyof typeof entityStateMessages.ja, params: Record<string, string | number> = {}): string {

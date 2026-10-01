@@ -12,6 +12,16 @@ vi.mock('react-native', () => ({
 }));
 
 describe('Notice', () => {
+  it('announces an actionable error once while keeping the recovery button separately accessible', async () => {
+    let tree: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<Notice announce message="Save episode failed" actionLabel="Refresh status" onAction={vi.fn()} />);
+    });
+    const alerts = tree!.root.findAllByProps({ accessibilityRole: 'alert' });
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].props.accessibilityLiveRegion).toBe('polite');
+    expect(tree!.root.findByType('pressable').props.accessibilityRole).toBe('button');
+  });
   it('renders a labelled recovery command when both label and handler are present', async () => {
     const onAction = vi.fn();
     let tree: ReturnType<typeof create> | null = null;

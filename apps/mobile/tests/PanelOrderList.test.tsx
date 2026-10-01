@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PanelOrderList } from '@/components/PanelOrderList';
 import { colors } from '@/constants/theme';
 import type { PanelRecord } from '@/domain/types';
+import { renderedContrast } from './helpers/renderedContrast';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -130,9 +131,11 @@ describe('PanelOrderList', () => {
     expect(flatten(unselected.parent!.parent!.props.style).backgroundColor).not.toBe(colors.primary);
     for (const node of selected.findAllByType('text')) {
       expect([colors.primaryText, colors.primary]).toContain(flatten(node.props.style).color);
+      expect(renderedContrast(node)).toBeGreaterThanOrEqual(4.5);
     }
     const selectedMenu = selected.parent!.parent!.findByType('more-horizontal');
     expect(selectedMenu.props.color).toBe(colors.primaryText);
+    expect(renderedContrast(selectedMenu, selectedMenu.props.color)).toBeGreaterThanOrEqual(3);
     act(() => {
       renderer!.update(
         <PanelOrderList language={language} onChangeRole={vi.fn()} onDelete={vi.fn()}
@@ -175,6 +178,9 @@ describe('PanelOrderList', () => {
     const movePrevious = button('1つ前へ移動');
     const moveNext = button('1つ後へ移動');
     expect(movePrevious.props.disabled).toBe(true);
+    const deleteAction = button('コマを削除');
+    expect(deleteAction.props.disabled).toBe(false);
+    expect(renderedContrast(deleteAction.findByType('text'))).toBeGreaterThanOrEqual(4.5);
 
     act(() => moveNext.props.onClick());
     expect(onMove).toHaveBeenCalledWith('panel-1', 'down');

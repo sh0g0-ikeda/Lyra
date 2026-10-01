@@ -56,7 +56,7 @@ import {
   loadStoryHierarchyExpansion,
   saveStoryHierarchyExpansion
 } from '@/lib/storage';
-import { userErrorMessage } from '@/lib/userMessages';
+import { errorRefreshLabel, operationErrorMessage, type ErrorOperation, type OperationErrorContext, type OperationFailure } from '@/lib/operationErrorContext';
 
 type StoryHierarchyApi = Pick<
   LyraMobileApiClient,
@@ -464,7 +464,12 @@ export function StoryHierarchySheet({
   const [titleIntent, setTitleIntent] = useState<TitleIntent | null>(null);
   const [titleValue, setTitleValue] = useState('');
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<unknown>(null);
+  const [failure, setFailure] = useState<(OperationFailure & { scope: string; titleIntent: TitleIntent | null }) | null>(null);
+  const errorScope = JSON.stringify([sessionKey, userId, organizationId]);
+  const error = failure?.scope === errorScope ? failure.error : null;
+  const recordFailure = (cause: unknown, context: OperationErrorContext, intent: TitleIntent | null = null): void => {
+    setFailure({ error: cause, context, scope: errorScope, titleIntent: intent });
+  };
 
   useEffect(() => {
     let active = true;
@@ -588,12 +593,13 @@ export function StoryHierarchySheet({
 
   const openTitleIntent = (intent: TitleIntent, initialValue = ''): void => {
     setMenuTarget(null);
-    setError(null);
+    setFailure(null);
     setTitleValue(initialValue);
     setTitleIntent(intent);
   };
 
   const titleHasStaleConflict = error instanceof ApiError && error.code === 'RESOURCE_STALE';
+  const titleAlreadyConfirmed = error !== null && failure?.context.confirmed === true && failure.titleIntent === titleIntent;
 
   const reloadTitleFromIntent = async (): Promise<void> => {
     if (titleIntent === null || pending) {
@@ -614,21 +620,30 @@ export function StoryHierarchySheet({
         const episodes = await episodesFor(titleIntent.chapter.id, true);
         setTitleValue(episodes.find((episode) => episode.id === titleIntent.episode.id)?.title ?? '');
       }
-      setError(null);
+      setFailure(null);
     } catch (reloadError) {
-      setError(reloadError);
+      recordFailure(reloadError, { operation: 'reloadTitle', retainedDraft: 'title' }, titleIntent);
     } finally {
       setPending(false);
     }
   };
 
   const submitTitle = async (): Promise<void> => {
-    if (titleIntent === null || !titleValid || pending) {
+    if (titleIntent === null || !titleValid || pending || titleAlreadyConfirmed) {
       return;
     }
     const title = titleValue.trim();
+    const titleOperations: Record<TitleIntent['kind'], ErrorOperation> = {
+      'create-work': 'createWork', 'rename-work': 'renameWork',
+      'create-chapter': 'createChapter', 'rename-chapter': 'renameChapter',
+      'create-episode': 'createEpisode', 'rename-episode': 'renameEpisode'
+    };
+    const targetLabel = titleIntent.kind === 'rename-work' ? titleIntent.work.title
+      : titleIntent.kind === 'rename-chapter' ? titleForChapter(titleIntent.chapter, language)
+      : titleIntent.kind === 'rename-episode' ? titleForEpisode(titleIntent.episode, language) : title;
+    let confirmed = false;
     setPending(true);
-    setError(null);
+    setFailure(null);
     try {
       if (titleIntent.kind === 'create-work') {
         const created = await api.createWork({
@@ -641,11 +656,13 @@ export function StoryHierarchySheet({
           ending_point: null,
           overall_flow: null
         }, organizationId);
+        confirmed = true;
         setExpandedWorkIds((current) => new Set([...current, created.id]));
         await invalidateWorks();
         onSelectWork(created.id);
       } else if (titleIntent.kind === 'rename-work') {
         await api.updateWork(titleIntent.work.id, { title, expected_updated_at: titleIntent.work.updated_at }, organizationId);
+        confirmed = true;
         onWorkRenamed(titleIntent.work.id, title);
         await invalidateWorks();
       } else if (titleIntent.kind === 'create-chapter') {
@@ -666,12 +683,14 @@ export function StoryHierarchySheet({
           }
           created = await create(true);
         }
+        confirmed = true;
         setExpandedWorkIds((current) => new Set([...current, titleIntent.work.id]));
         setExpandedChapterIds((current) => new Set([...current, created.id]));
         await invalidateChapters(titleIntent.work.id);
         onSelectChapter(titleIntent.work.id, created.id);
       } else if (titleIntent.kind === 'rename-chapter') {
         await api.updateChapter(titleIntent.chapter.id, { title, expected_updated_at: titleIntent.chapter.updated_at }, organizationId);
+        confirmed = true;
         onChapterRenamed(titleIntent.chapter.id, title);
         await invalidateChapters(titleIntent.work.id);
       } else if (titleIntent.kind === 'create-episode') {
@@ -692,6 +711,7 @@ export function StoryHierarchySheet({
           }
           created = await create(true);
         }
+        confirmed = true;
         setExpandedWorkIds((current) => new Set([...current, titleIntent.work.id]));
         setExpandedChapterIds((current) => new Set([...current, titleIntent.chapter.id]));
         await queryClient.invalidateQueries({
@@ -700,6 +720,7 @@ export function StoryHierarchySheet({
         onSelectEpisode(titleIntent.work.id, titleIntent.chapter.id, created.id);
       } else {
         await api.updateEpisode(titleIntent.episode.id, { title, expected_updated_at: titleIntent.episode.updated_at }, organizationId);
+        confirmed = true;
         onEpisodeRenamed(titleIntent.episode.id, title);
         await queryClient.invalidateQueries({
           queryKey: episodesQueryKey(sessionKey, titleIntent.chapter.id, organizationId)
@@ -708,7 +729,7 @@ export function StoryHierarchySheet({
       setTitleIntent(null);
       setTitleValue('');
     } catch (submitError) {
-      setError(submitError);
+      recordFailure(submitError, { operation: titleOperations[titleIntent.kind], targetLabel, retainedDraft: confirmed ? undefined : 'title', confirmed }, titleIntent);
     } finally {
       setPending(false);
     }
@@ -720,12 +741,14 @@ export function StoryHierarchySheet({
   ): Promise<void> => {
     setMenuTarget(null);
     setPending(true);
-    setError(null);
+    setFailure(null);
+    let confirmed = false;
     try {
       await api.moveChapter(target.chapter.id, direction, organizationId);
+      confirmed = true;
       await invalidateChapters(target.work.id);
     } catch (moveError) {
-      setError(moveError);
+      recordFailure(moveError, { operation: 'moveChapter', targetLabel: titleForChapter(target.chapter, language), confirmed });
     } finally {
       setPending(false);
     }
@@ -737,12 +760,14 @@ export function StoryHierarchySheet({
   ): Promise<void> => {
     setMenuTarget(null);
     setPending(true);
-    setError(null);
+    setFailure(null);
+    let confirmed = false;
     const crossChapter =
       (direction === 'up' && target.episodeIndex === 0) ||
       (direction === 'down' && target.episodeIndex === target.episodeCount - 1);
     try {
       const movedEpisode = await api.moveEpisode(target.episode.id, direction, organizationId, crossChapter);
+      confirmed = true;
       if (
         crossChapter &&
         selectedEpisodeId === target.episode.id &&
@@ -753,7 +778,7 @@ export function StoryHierarchySheet({
       await invalidateAllEpisodes();
       await invalidateChapters(target.work.id);
     } catch (moveError) {
-      setError(moveError);
+      recordFailure(moveError, { operation: 'moveEpisode', targetLabel: titleForEpisode(target.episode, language), confirmed });
     } finally {
       setPending(false);
     }
@@ -769,9 +794,11 @@ export function StoryHierarchySheet({
       }),
       onConfirm: () => {
         setPending(true);
-        setError(null);
+        setFailure(null);
+        let confirmed = false;
         void api.deleteChapter(target.chapter.id, organizationId)
           .then(async () => {
+            confirmed = true;
             setExpandedChapterIds((current) => {
               const next = new Set(current);
               next.delete(target.chapter.id);
@@ -781,7 +808,7 @@ export function StoryHierarchySheet({
             await invalidateChapters(target.work.id);
             await invalidateAllEpisodes();
           })
-          .catch(setError)
+          .catch((cause: unknown) => recordFailure(cause, { operation: 'deleteChapter', targetLabel: titleForChapter(target.chapter, language), confirmed }))
           .finally(() => setPending(false));
       }
     });
@@ -797,15 +824,17 @@ export function StoryHierarchySheet({
       }),
       onConfirm: () => {
         setPending(true);
-        setError(null);
+        setFailure(null);
+        let confirmed = false;
         void api.deleteEpisode(target.episode.id, organizationId)
           .then(async () => {
+            confirmed = true;
             onEpisodeDeleted(target.episode.id);
             await queryClient.invalidateQueries({
               queryKey: episodesQueryKey(sessionKey, target.chapter.id, organizationId)
             });
           })
-          .catch(setError)
+          .catch((cause: unknown) => recordFailure(cause, { operation: 'deleteEpisode', targetLabel: titleForEpisode(target.episode, language), confirmed }))
           .finally(() => setPending(false));
       }
     });
@@ -933,6 +962,31 @@ export function StoryHierarchySheet({
     return items;
   };
 
+  const failureContext = failure === null ? null : {
+    ...failure.context,
+    retainedDraft: failure.titleIntent === titleIntent ? failure.context.retainedDraft : undefined
+  };
+  const refreshConfirmedOperation = (): void => {
+    if (pending || failure === null) return;
+    setPending(true);
+    void Promise.all([
+      invalidateWorks(), invalidateAllEpisodes(),
+      queryClient.invalidateQueries({ queryKey: ['chapters', sessionKey] })
+    ]).then(() => {
+      setFailure(null);
+      if (failure.titleIntent !== null) { setTitleIntent(null); setTitleValue(''); }
+    }).catch((cause: unknown) => recordFailure(cause, failure.context, failure.titleIntent))
+      .finally(() => setPending(false));
+  };
+  const errorNotice = error === null || failureContext === null ? null : (
+    <Notice
+      announce
+      message={operationErrorMessage(error, failureContext, language)}
+      actionLabel={failureContext.confirmed === true ? errorRefreshLabel(language) : undefined}
+      onAction={failureContext.confirmed === true ? refreshConfirmedOperation : undefined}
+      tone="warning"
+    />
+  );
   const titleDialogHeading = titleIntent === null
     ? ''
     : titleIntent.kind === 'create-work'
@@ -984,7 +1038,7 @@ export function StoryHierarchySheet({
               </Pressable>
             </View>
           </View>
-          {error === null ? null : <Notice message={userErrorMessage(error, language)} tone="danger" />}
+          {titleIntent === null ? errorNotice : null}
           {!canEdit ? (
             <Notice
               message={t(language, "generated.components.StoryHierarchySheet.your.role.can.select.items.but.cannot.ed.3edca1a1")}
@@ -1109,6 +1163,7 @@ export function StoryHierarchySheet({
                 style={styles.titleDialog}
               >
                 <Text style={styles.dialogTitle}>{titleDialogHeading}</Text>
+                {errorNotice}
                 <TextInput
                   accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.title.d8135461")}
                   autoCapitalize="sentences"
@@ -1118,7 +1173,7 @@ export function StoryHierarchySheet({
                   onChangeText={setTitleValue}
                   onSubmitEditing={() => void submitTitle()}
                   placeholder={t(language, "generated.components.StoryHierarchySheet.enter.a.title.d4d3374f")}
-                  placeholderTextColor={colors.disabled}
+                  placeholderTextColor={colors.placeholder}
                   returnKeyType="done"
                   style={styles.titleInput}
                   value={titleValue}
@@ -1144,7 +1199,7 @@ export function StoryHierarchySheet({
                     variant="ghost"
                   />
                   <PrimaryButton
-                    disabled={!titleValid || titleHasStaleConflict}
+                    disabled={!titleValid || titleHasStaleConflict || titleAlreadyConfirmed}
                     label={titleIntent?.kind.startsWith('create-')
                       ? t(language, "generated.components.StoryHierarchySheet.add.8b69f421")
                       : t(language, "generated.components.StoryHierarchySheet.save.80b89d5e")}
@@ -1349,7 +1404,7 @@ const styles = StyleSheet.create({
   },
   titleInput: {
     backgroundColor: colors.field,
-    borderColor: colors.borderStrong,
+    borderColor: colors.controlBorder,
     borderRadius: radius.sm,
     borderWidth: 1,
     color: colors.ink,

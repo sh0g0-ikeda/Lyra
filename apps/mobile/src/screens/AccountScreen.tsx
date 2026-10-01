@@ -8,6 +8,9 @@ import { FormField } from '@/components/FormField';
 import { JobStatusCard } from '@/components/JobStatusCard';
 import { MobileStoreBillingPanel } from '@/components/MobileStoreBillingPanel';
 import { Notice } from '@/components/Notice';
+import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
+import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
+import type { ErrorOperation } from '@/lib/operationErrorContext';
 import { OrganizationManagementModal } from '@/components/OrganizationManagementModal';
 import { OrganizationManagementPanel } from '@/components/OrganizationManagementPanel';
 import { billingPlanMessage } from '@/lib/billingPlanMessages';
@@ -281,6 +284,14 @@ export function AccountScreen(): React.JSX.Element {
     }
   });
   const jobs = jobsQuery.data?.pages.flatMap((page) => page.jobs) ?? [];
+  useResetOnScopeChange(JSON.stringify([sessionKey, organizationId]), [
+    cancelJobMutation.reset, hideJobMutation.reset, retryJobMutation.reset
+  ]);
+  const jobActionFailures = [
+    { operation: 'cancelJob', mutation: cancelJobMutation },
+    { operation: 'hideJob', mutation: hideJobMutation },
+    { operation: 'retryJob', mutation: retryJobMutation }
+  ] satisfies { operation: ErrorOperation; mutation: Pick<typeof cancelJobMutation, 'error' | 'variables' | 'isError'> }[];
 
   const loadDeletionPreview = async (): Promise<void> => {
     setDeletionResult(null);
@@ -650,9 +661,17 @@ export function AccountScreen(): React.JSX.Element {
             />
           ))
         )}
-        {cancelJobMutation.isError ? <Notice message={userErrorMessage(cancelJobMutation.error, language)} tone="danger" /> : null}
-        {hideJobMutation.isError ? <Notice message={userErrorMessage(hideJobMutation.error, language)} tone="danger" /> : null}
-        {retryJobMutation.isError ? <Notice message={userErrorMessage(retryJobMutation.error, language)} tone="danger" /> : null}
+        {jobActionFailures.filter(({ mutation }) => mutation.isError).map(({ operation, mutation }) => (
+          <ActionableErrorNotice
+            key={operation}
+            actions={{ retry: () => { void refreshJobs(); } }}
+            context={{ operation, targetLabel: mutation.variables?.id }}
+            error={mutation.error}
+            language={language}
+            retryMode="refresh"
+            target="retry"
+          />
+        ))}
         {jobsQuery.hasNextPage ? (
           <PrimaryButton
             label={t(language, "generated.screens.AccountScreen.load.more.72433fbc")}
