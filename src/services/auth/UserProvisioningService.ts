@@ -45,6 +45,15 @@ export class UserProvisioningService implements UserProvisioningPort {
 
     const userByEmail = await this.userRepository.findByEmail(email);
     if (userByEmail !== null) {
+      // A concurrent first login can commit after the subject lookup but before
+      // this email lookup. Only an exact verified-subject match is the same user.
+      if (userByEmail.supabaseId === supabaseId) {
+        return {
+          user: await this.syncUserEmail(userByEmail, supabaseId, email),
+          isNewUser: false,
+        };
+      }
+
       // Verified email is not proof that a different authentication subject owns
       // the existing account. Genuine provider migrations use an approved offline
       // mapping; ordinary login never reassigns assets, balances or identities.

@@ -2,13 +2,14 @@
 
 ## Source identity
 
-The published candidate uses the runtime and test source from local commit
+The initial published commit `f83018e14c4ccaf658351f126594ac56130c9f6d` uses
+the runtime and test source from local commit
 `a847ba15dfd33105d00c13bf2fa547315840b0dd`, plus the recovery review and local model
 from `3bd2bd57ad4bbc8d0217a8cf7154230374635fc9`. Publication-only documentation
 removes private operational observations and an original conversation identifier.
 No runtime, migration or client behavior is changed by those documentation edits.
 
-The GitHub commit is created from the complete reviewed tree, with the existing
+That initial GitHub commit was created from the complete reviewed tree, with the existing
 public PR #220 commit `2bb4e2dabd24c3116c5dae86a177754b367e245d` as its parent.
 Its commit SHA therefore differs from the local work commits. The draft PR targets
 main and includes the earlier integration chain. The exact remote commit and its
@@ -34,3 +35,21 @@ Publication and CI do not authorize merge, migration, deployment or store releas
 The production, provider, visual and device gates in
 `release-readiness-2026-10-01.md` remain. The recovery packet is a design with local
 model evidence; its future storage protocol is not implemented or accepted in S3.
+
+## CI-discovered correction
+
+The initial run [36903079413](https://github.com/sh0g0-ikeda/Lyra/actions/runs/36903079413)
+passed the full PostgreSQL 16 Vitest suite (2,512 tests) and the complete Mobile job
+(926 tests, 20/20 Expo doctor checks, Android and iOS local exports). Its additional
+PostgreSQL 18.3 integration suite found an intermittent same-subject first-login
+race: the subject lookup missed, another transaction committed, and the email
+lookup then incorrectly required account linking. That integration stage failed
+1 of 193 tests; later backend/build/browser stages in that run were skipped.
+
+The correction and deterministic interleaving regression are separate source
+changes after a847ba1; the updated candidate must not be described as runtime
+byte-identical to that earlier commit. The verified identity subject must match
+the stored subject exactly before reusing a concurrently created account.
+Different-subject email collisions still require explicit linking, and this path
+must not grant another signup bonus. Final CI evidence belongs to the latest
+exact PR head, not this failed initial run.

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { AuthenticatedUser } from '../../../../src/domain/types/user.js';
 import type { UserRepository } from '../../../../src/repositories/UserRepository.js';
@@ -13,6 +13,8 @@ import type {
 class FakeUserRepository implements UserRepository {
   public existingUserBySupabaseId: AuthenticatedUser | null = null;
   public existingUserByEmail: AuthenticatedUser | null = null;
+  public firstSubjectLookupReturnsNull = false;
+  public findBySupabaseIdCalls = 0;
   public firstEmailLookupReturnsNull = false;
   public findByEmailCalls = 0;
   public insertedUser: AuthenticatedUser = buildUser();
@@ -23,6 +25,10 @@ class FakeUserRepository implements UserRepository {
   public linkByEmailCalls: Array<{ email: string; supabaseId: string }> = [];
 
   public async findBySupabaseId(): Promise<AuthenticatedUser | null> {
+    this.findBySupabaseIdCalls += 1;
+    if (this.firstSubjectLookupReturnsNull && this.findBySupabaseIdCalls === 1) {
+      return null;
+    }
     return this.existingUserBySupabaseId;
   }
 
@@ -169,6 +175,44 @@ describe('UserProvisioningService', () => {
     expect(repository.linkByEmailCalls).toEqual([]);expect(credits.signupBonusUserIds).toEqual([]);
   });
 
+  it.each([undefined, 'federated'] as const)(
+    'subject検索後の同時作成をemail検索で発見した場合は同じユーザーを返す（provider: %s）',
+    async (identityProvider) => {
+      const repository = new FakeUserRepository();
+      repository.existingUserByEmail = buildUser();
+      const insert = vi.spyOn(repository, 'insertSupabaseUser');
+      const creditService = new FakeCreditService();
+      const service = new UserProvisioningService(repository, creditService);
+
+      await expect(service.provisionFromSupabaseClaims({
+        sub: ' supabase-1 ',
+        email: 'USER@example.com',
+        identityProvider,
+      })).resolves.toEqual({ user: repository.existingUserByEmail, isNewUser: false });
+
+      expect(repository.findBySupabaseIdCalls).toBe(1);
+      expect(repository.findByEmailCalls).toBe(1);
+      expect(insert).not.toHaveBeenCalled();
+      expect(repository.updateEmailCalls).toEqual([]);
+      expect(repository.linkByEmailCalls).toEqual([]);
+      expect(creditService.signupBonusUserIds).toEqual([]);
+    },
+  );
+
+  it('email検索で見つかった同一subjectのメール表記だけを同期する', async () => {
+    const repository = new FakeUserRepository();
+    repository.existingUserByEmail = buildUser({ email: 'USER@example.com' });
+    const creditService = new FakeCreditService();
+
+    await expect(new UserProvisioningService(repository, creditService)
+      .provisionFromSupabaseClaims({ sub: 'supabase-1', email: 'user@example.com' }))
+      .resolves.toEqual({ user: repository.updatedUser, isNewUser: false });
+
+    expect(repository.updateEmailCalls).toEqual([{ supabaseId: 'supabase-1', email: 'user@example.com' }]);
+    expect(repository.linkByEmailCalls).toEqual([]);
+    expect(creditService.signupBonusUserIds).toEqual([]);
+  });
+
   it('a concurrent native signup email collision also requires verified offline reconciliation', async () => {
     const repository = new FakeUserRepository();repository.existingUserByEmail = buildUser({supabaseId:'old-provider-sub'});
     repository.firstEmailLookupReturnsNull = true;repository.insertError = { code: '23505' };
@@ -232,6 +276,7 @@ describe('UserProvisioningService', () => {
 
   it('同時作成競合で既存化したユーザーを返す', async () => {
     const repository = new FakeUserRepository();
+    repository.firstSubjectLookupReturnsNull = true;
     repository.insertError = { code: '23505' };
     repository.existingUserBySupabaseId = buildUser({ email: 'new@example.com' });
     const creditService = new FakeCreditService();
@@ -246,6 +291,8 @@ describe('UserProvisioningService', () => {
       user: repository.existingUserBySupabaseId,
       isNewUser: false,
     });
+    expect(repository.findBySupabaseIdCalls).toBe(2);
+    expect(repository.findByEmailCalls).toBe(1);
     expect(creditService.signupBonusUserIds).toEqual([]);
   });
 
