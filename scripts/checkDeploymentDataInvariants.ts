@@ -1,3 +1,4 @@
+import { confirmedFencedStateReferenceAttemptSql, readableStateReferencePredicateSql } from '../src/repositories/FencedStateReferenceReadGuard.js';
 import { UNRESOLVED_STATE_REFERENCE_COPY_SQL } from '../src/repositories/StateReferenceCopyHistory.js';
 import { pathToFileURL } from 'node:url';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
@@ -202,7 +203,56 @@ export const SCHEMA_026_DEPLOYMENT_DATA_INVARIANT_QUERIES: readonly DeploymentDa
   },
 ];
 
+// Recorded evidence is necessary, not proof of the actual remote storage policy.
+// These checks run after migration 047 during the release write freeze.
+export const FENCED_STATE_REFERENCE_INVARIANT_QUERIES: readonly DeploymentDataInvariantQuery[] = [
+  {
+    name: 'state_reference_copy_attempts.unresolved',
+    sql: `SELECT attempt_token::text AS id FROM state_reference_copy_attempts
+      WHERE /* state_reference_copy_attempts.unresolved */ state IN ('unresolved', 'fencing')
+      ORDER BY attempt_token LIMIT $1`,
+  },
+  {
+    name: 'state_reference_copy_attempts.scope_key',
+    sql: `SELECT attempt_token::text AS id FROM state_reference_copy_attempts
+      WHERE /* state_reference_copy_attempts.scope_key */ scrubbed_at IS NULL AND s3_key IS DISTINCT FROM
+        'state-reference-v2/' || attempt_token::text || '/' || encode(sha256(convert_to(
+          '["state-reference-fenced-v2","' || owner_user_id::text || '","' || entity_id::text || '","'
+          || attempt_token::text || '","' || CASE mime_type WHEN 'image/png' THEN 'png'
+            WHEN 'image/jpeg' THEN 'jpeg' WHEN 'image/webp' THEN 'webp' END || '"]', 'UTF8')), 'hex')
+          || '.' || CASE mime_type WHEN 'image/png' THEN 'png' WHEN 'image/jpeg' THEN 'jpeg' WHEN 'image/webp' THEN 'webp' END
+      ORDER BY attempt_token LIMIT $1`,
+  },
+  {
+    name: 'state_reference_copy_attempts.confirmed_evidence',
+    sql: `SELECT attempt.attempt_token::text AS id FROM state_reference_copy_attempts attempt
+      WHERE /* state_reference_copy_attempts.confirmed_evidence */ attempt.state = 'confirmed'
+        AND NOT (${confirmedFencedStateReferenceAttemptSql('attempt')})
+      ORDER BY attempt.attempt_token LIMIT $1`,
+  },
+  {
+    name: 'state_reference_copy_attempts.completed_personal_scrub',
+    sql: `SELECT attempt.attempt_token::text AS id FROM state_reference_copy_attempts attempt
+      INNER JOIN users ON users.id = attempt.owner_user_id
+      WHERE /* state_reference_copy_attempts.completed_personal_scrub */ attempt.organization_id IS NULL
+        AND attempt.scrubbed_at IS NULL AND (users.account_deleted_at IS NOT NULL
+          OR EXISTS (SELECT 1 FROM account_deletion_requests requests
+            WHERE requests.user_id = users.id AND requests.status = 'completed'))
+      ORDER BY attempt.attempt_token LIMIT $1`,
+  },
+  {
+    name: 'entity_states.fenced_reference_evidence',
+    sql: `SELECT entity_states.id::text AS id FROM entity_states
+      INNER JOIN entities ON entities.id = entity_states.entity_id
+      INNER JOIN works ON works.id = entities.work_id
+      WHERE /* entity_states.fenced_reference_evidence */ entity_states.reference_image->>'s3_key' LIKE 'state-reference-v2/%'
+        AND NOT (${readableStateReferencePredicateSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })})
+      ORDER BY entity_states.id LIMIT $1`,
+  },
+];
+
 export const DEPLOYMENT_DATA_INVARIANT_QUERIES: readonly DeploymentDataInvariantQuery[] = [
+  ...FENCED_STATE_REFERENCE_INVARIANT_QUERIES,
   ...SCHEMA_026_DEPLOYMENT_DATA_INVARIANT_QUERIES.filter(
     (query) => !['credit_ledger.type', 'credit_ledger.amount_sign'].includes(query.name),
   ),

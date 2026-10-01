@@ -47,6 +47,17 @@ class FakeReferenceRepository implements ImageStorageReferenceRepository {
 }
 
 describe('ImageStoragePruningService', () => {
+  it('never selects a v2 image or same-key marker even when saved pruning is enabled', async () => {
+    const key = 'state-reference-v2/00000000-0000-0000-0000-000000000001/' + 'a'.repeat(64) + '.png';
+    const storage = new FakeStorage(new Map([['saved/', [{ key, lastModified: new Date(0) }]]]));
+    const service = new ImageStoragePruningService(storage, new FakeReferenceRepository(new Set()));
+    const input = { prefixes: ['saved/'], olderThanHours: 1, protectRecentCandidateHours: 1,
+      maxDeletes: 10, dryRun: false, includeSavedUnreferenced: true };
+    expect((await service.prune(input)).deleteCandidates).toEqual([]);
+    await expect(service.prune({ ...input, prefixes: ['state-reference-v2/'] })).rejects.toThrow(ValidationError);
+    expect(storage.deleted).toEqual([]);
+  });
+
   it('dry-run selects only old unprotected tmp and session objects', async () => {
     const storage = new FakeStorage(
       new Map([

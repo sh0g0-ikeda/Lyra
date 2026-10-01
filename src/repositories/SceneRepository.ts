@@ -1,3 +1,4 @@
+import { readableStateReferenceSql } from './FencedStateReferenceReadGuard.js';
 import type { QueryResultRow } from 'pg';
 import type {
   CreateEntityStateInput,
@@ -126,6 +127,11 @@ const currentBaseReferenceIdSql = `(SELECT rs.primary_ref_id FROM reference_sets
       CASE WHEN jsonb_typeof(rs.reference_images) = 'array' THEN rs.reference_images ELSE '[]'::jsonb END
     ) AS image WHERE image->>'ref_id' = rs.primary_ref_id AND COALESCE(image->>'s3_key', '') <> '')
   LIMIT 1)`;
+
+const readableEntityStateReferenceSql = readableStateReferenceSql({
+  descriptor: 'entity_states.reference_image', entityId: 'entity_states.entity_id', stateId: 'entity_states.id',
+  organizationId: '(SELECT work_scope.organization_id FROM entities entity_scope INNER JOIN works work_scope ON work_scope.id = entity_scope.work_id WHERE entity_scope.id = entity_states.entity_id)',
+});
 
 const sceneSelectColumns = `
   scenes.id,
@@ -412,7 +418,8 @@ export class PostgresSceneRepository implements SceneRepository {
         extra_note
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id
+      RETURNING entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id,
+        ${readableEntityStateReferenceSql} AS reference_image
       `,
       [
         entityId,
@@ -438,7 +445,8 @@ export class PostgresSceneRepository implements SceneRepository {
   ): Promise<EntityState[]> {
     const result = await this.client.query<EntityStateRow>(
       `
-      SELECT entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id
+      SELECT entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id,
+        ${readableEntityStateReferenceSql} AS reference_image
       FROM entity_states
       INNER JOIN entities ON entities.id = entity_states.entity_id
       INNER JOIN works ON works.id = entities.work_id
@@ -504,7 +512,8 @@ export class PostgresSceneRepository implements SceneRepository {
             )
           )
         )
-      RETURNING entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id
+      RETURNING entity_states.*, ${currentBaseReferenceIdSql} AS base_reference_id,
+        ${readableEntityStateReferenceSql} AS reference_image
       `,
       [
         stateId,

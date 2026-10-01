@@ -92,6 +92,8 @@ describePostgres('forward-only production lineage bridge', () => {
         expect(JSON.stringify(report)).not.toContain(ids.userId);
         const applied = await upgrade(db);
         expect(applied).toContain(PRODUCTION_BRIDGE_FILENAME);
+        expect(applied.at(-1)).toBe('047_add_state_reference_copy_attempts.sql');
+        expect((await pool.query("SELECT to_regclass('state_reference_copy_attempts') AS journal")).rows[0]?.journal).toBe('state_reference_copy_attempts');
         for (const row of history) {
             expect((await pool.query('SELECT applied_at FROM schema_migrations WHERE filename=$1', [row.filename])).rows[0]?.applied_at).toEqual(row.applied_at);
         }
@@ -366,7 +368,8 @@ describePostgres('forward-only production lineage bridge', () => {
     it('fresh candidateはbridge opt-in不要で通常順に適用する', async () => {
         const { db } = await database(false);
         const applied = await withPostgresTestMigrationLock(admin, () => runPendingMigrations(db));
-        expect(applied.at(-1)).toBe(PRODUCTION_BRIDGE_FILENAME);
+        expect(applied).toContain(PRODUCTION_BRIDGE_FILENAME);
+        expect(applied.at(-1)).toBe('047_add_state_reference_copy_attempts.sql');
         expect((await checkDeploymentDataInvariants(db)).violations).toEqual([]);
         await expect(runPendingMigrations(db)).resolves.toEqual([]);
     }, 120000);

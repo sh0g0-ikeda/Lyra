@@ -21,6 +21,7 @@ describe('state release preflight', () => {
     expect(sqls.every((sql) => /^\s*(SELECT|WITH)\b/u.test(sql))).toBe(true);
     expect(sqls.join('\n')).toContain('account_deletion_requests');
     expect(sqls.join('\n')).toContain('starting_entity_states');
+    expect(sqls.join('\n')).not.toContain('state_reference_copy_attempts');
   });
 
   it('履歴が不明なschemaでは列を参照する後続検査を停止する', async () => {
@@ -48,5 +49,6 @@ describe('state release preflight', () => {
     expect((await checkStateReleasePreflight(db, 41)).ok).toBe(true);
     expect(sqls.join('\n')).toContain('CASE WHEN jsonb_typeof(starting_entity_states)');
     expect(sqls.join('\n')).toContain('entity_states.variant_shape');
+    expect(sqls.join('\n')).not.toContain('state_reference_copy_attempts');
   });
 });

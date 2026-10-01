@@ -13,6 +13,7 @@ import type {
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { buildEntityStateReferenceImageKey } from '../domain/state/StateReferenceImageKey.js';
 import { readStateReferenceCopyHistory, type StateReferenceCopyAttempt } from './StateReferenceCopyHistory.js';
+import { readableStateReferenceSql } from './FencedStateReferenceReadGuard.js';
 
 export interface EntityStateReferenceRepository {
   findContextByIdAndUserId(
@@ -94,7 +95,7 @@ export class PostgresEntityStateReferenceRepository implements EntityStateRefere
              entity_states.name AS state_name,
              entity_states.description AS state_description,
              COALESCE(entity_states.updated_at, entity_states.created_at) AS state_revision,
-             entity_states.reference_image AS state_reference_image,
+             ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })} AS state_reference_image,
              reference_sets.primary_ref_id AS base_ref_id,
              primary_image.value->>'s3_key' AS base_s3_key
       FROM entity_states
@@ -149,6 +150,7 @@ export class PostgresEntityStateReferenceRepository implements EntityStateRefere
     const attemptId = randomUUID();
     const admission = await this.client.transaction(async (client) => {
       const { confirmed, history } = await lockAndValidateConfirmation(client, input);
+      await assertNoLiveFencedAttempt(client, input);
       if (confirmed !== null) return { confirmed, attemptId: null, copyRequired: false };
       const succeeded = history.find((entry) => entry.state === 'succeeded'
         && entry.s3_key === input.descriptor.s3Key && entry.ref_id === input.descriptor.refId);
@@ -187,6 +189,7 @@ export class PostgresEntityStateReferenceRepository implements EntityStateRefere
       return await this.client.transaction(async (client) => {
         const { confirmed, history } = await lockAndValidateConfirmation(client, input,
           admission.copyRequired ? admittedAttemptId : undefined);
+        await assertNoLiveFencedAttempt(client, input);
         const attempt = history.find((entry) => entry.attempt_id === admittedAttemptId);
         if (attempt === undefined || attempt.s3_key !== input.descriptor.s3Key
           || attempt.ref_id !== input.descriptor.refId
@@ -255,6 +258,16 @@ export class PostgresEntityStateReferenceRepository implements EntityStateRefere
   }
 }
 
+async function assertNoLiveFencedAttempt(client: DatabaseClient, input: ConfirmEntityStateReferenceInput): Promise<void> {
+  const result = await client.query(
+    `SELECT attempt_token FROM state_reference_copy_attempts
+     WHERE (job_id=$1::uuid AND state<>'effects_fenced')
+       OR (entity_id=$2::uuid AND state_id=$3::uuid AND state IN ('unresolved','fencing')) LIMIT 1`,
+    [input.jobId, input.entityId, input.stateId],
+  );
+  if (result.rows.length !== 0) throw new ConflictError('State reference copy must continue through its admitted recovery protocol');
+}
+
 function assertCopyDestination(input: ConfirmEntityStateReferenceInput): void {
   const expectedKey = buildEntityStateReferenceImageKey({
     userId: input.userId,
@@ -268,7 +281,7 @@ function assertCopyDestination(input: ConfirmEntityStateReferenceInput): void {
   }
 }
 
-async function lockAndValidateConfirmation(
+export async function lockAndValidateConfirmation(
   client: DatabaseClient,
   input: ConfirmEntityStateReferenceInput,
   ownedAttemptId?: string,
@@ -570,7 +583,7 @@ export function parseStateReferenceDescriptor(value: unknown): EntityStateRefere
   };
 }
 
-function toPersistedDescriptor(descriptor: EntityStateReferenceDescriptor): Record<string, string> {
+export function toPersistedDescriptor(descriptor: EntityStateReferenceDescriptor): Record<string, string> {
   return {
     ref_id: descriptor.refId,
     s3_key: descriptor.s3Key,

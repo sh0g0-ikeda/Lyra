@@ -7,6 +7,7 @@ import {
   NotFoundError,
 } from '../../domain/errors/index.js';
 import { buildEntityStateReferenceImageKey } from '../../domain/state/StateReferenceImageKey.js';
+import { isReservedFencedStateReferenceNamespace } from '../../domain/state/FencedStateReferenceKey.js';
 import { computeStateReferenceFingerprint } from '../../domain/state/StateReferenceFingerprint.js';
 import type { GenerationJob } from '../../domain/types/job.js';
 import {
@@ -35,6 +36,7 @@ import {
 } from '../generation/GenerationCapacityGuard.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import type { EntityGenerationQueuePort } from './EntityGenerationQueue.js';
+import type { FencedStateReferenceConfirmationPort } from './FencedStateReferenceConfirmationService.js';
 import {
   NoopEntityGenerationRecoveryService,
   type EntityGenerationRecoveryServicePort,
@@ -87,6 +89,7 @@ export interface EntityStateReferenceServiceDependencies {
   recoveryService?: EntityGenerationRecoveryServicePort;
   capacityLimits?: GenerationCapacityLimits;
   organizationService?: OrganizationServicePort;
+  fencedConfirmationService?: FencedStateReferenceConfirmationPort;
 }
 
 export class EntityStateReferenceService implements EntityStateReferenceServicePort {
@@ -229,6 +232,11 @@ export class EntityStateReferenceService implements EntityStateReferenceServiceP
     },
     organizationId: string | null = null,
   ): Promise<ConfirmedEntityStateReference> {
+    // Recover durable work before reading mutable readiness or candidate data.
+    // The coordinator authorizes this scope and uses only the admitted intent.
+    await this.dependencies.fencedConfirmationService?.recoverPendingReference({
+      userId, organizationId, entityId, stateId,
+    });
     const context = await this.requireReadyContext(userId, entityId, stateId, organizationId);
     const job = await this.dependencies.generationJobRepository.findByIdAndUserId(
       input.jobId,
@@ -259,22 +267,25 @@ export class EntityStateReferenceService implements EntityStateReferenceServiceP
       inputFingerprint: fingerprint,
     };
 
+    const confirmationInput = {
+      userId, organizationId, entityId, stateId, jobId: input.jobId,
+      candidateS3Key: input.candidateS3Key, expectedStateRevision: input.expectedStateRevision,
+      descriptor,
+    };
+    // Already-confirmed legacy references remain on their original protocol.
+    // V2 handles its own existing attempts even when new admission is disabled.
+    if (!existingMatchesCandidate || isReservedFencedStateReferenceNamespace(context.referenceImage?.s3Key ?? '')) {
+      const fenced = await this.dependencies.fencedConfirmationService?.tryConfirmReference(confirmationInput);
+      if (fenced !== undefined && fenced !== null) return fenced;
+    }
+
     // State settlement requires an explicit adapter contract. A generic base
     // copy may retry invisibly and cannot establish this attempt's completion.
     if (this.dependencies.imageStorage.finalizeStateReferenceImage === undefined) {
       throw new ConfigurationError('State reference image storage is not configured');
     }
 
-    return this.dependencies.stateRepository.confirmReference({
-      userId,
-      organizationId,
-      entityId,
-      stateId,
-      jobId: input.jobId,
-      candidateS3Key: input.candidateS3Key,
-      expectedStateRevision: input.expectedStateRevision,
-      descriptor,
-    }, async () => {
+    return this.dependencies.stateRepository.confirmReference(confirmationInput, async () => {
       const finalized = await this.finalizeCandidateImage({
         userId, entityId, stateId, refId: candidate.refId, candidateS3Key: input.candidateS3Key,
       });

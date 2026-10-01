@@ -1,3 +1,4 @@
+import { readableStateReferenceSql } from './FencedStateReferenceReadGuard.js';
 ﻿import { readImageProvenance, toImageProvenanceRecord } from '../domain/generation/ImageAccessPolicy.js';
 import type { QueryResultRow } from 'pg';
 import type {
@@ -830,7 +831,7 @@ export class PostgresPageRepository
                    WHERE base_image.value->>'ref_id' = reference_sets.primary_ref_id
                      AND NULLIF(base_image.value->>'s3_key', '') IS NOT NULL
                  ),
-                 'reference_image', entity_states.reference_image
+                 'reference_image', ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })}
                ) ORDER BY entity_states.created_at ASC, entity_states.id ASC), '[]'::jsonb)
                FROM entity_states
                INNER JOIN entities ON entities.id = entity_states.entity_id

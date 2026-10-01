@@ -5,6 +5,7 @@ import { resolveAccountDeletionConfig } from './AccountDeletionConfig.js';
 import type { Env } from '../../lib/env.js';
 import type { DatabaseClient, TransactionRunner } from '../../lib/db.js';
 import { PostgresAccountDeletionRepository } from '../../repositories/AccountDeletionRepository.js';
+import type { PersonalStateReferenceFencingPort } from '../../services/entity/FencedStateReferenceConfirmationService.js';
 import { AccountDeletionService } from '../../services/account/AccountDeletionService.js';
 export interface AccountDeletionRecoveryRuntime {
   service: Pick<AccountDeletionService, 'recoverPendingRequests'>;
@@ -13,14 +14,14 @@ export interface AccountDeletionRecoveryRuntime {
 }
 /** Reuses the existing API execution environment. It only resumes durable,
  * previously user-confirmed deletion requests; it never creates new requests. */
-export function createAccountDeletionRecoveryRuntime(environment: Env, database: DatabaseClient & TransactionRunner): AccountDeletionRecoveryRuntime | null {
+export function createAccountDeletionRecoveryRuntime(environment: Env, database: DatabaseClient & TransactionRunner, stateReferenceFencing?: PersonalStateReferenceFencingPort): AccountDeletionRecoveryRuntime | null {
   const config = resolveAccountDeletionConfig(environment);
   if (config === null) return null;
   return { intervalMs: config.recoveryIntervalMs, batchSize: config.recoveryBatchSize,
     service: new AccountDeletionService(new PostgresAccountDeletionRepository(database, database),
       createStripeAccountSubscriptionCancellation(config.stripeSecretKey),
       createCognitoAccountIdentityDeletion({ region: config.region, userPoolId: config.userPoolId }),
-      createS3AccountAssetDeletion({ region: config.region, bucket: config.bucket }), config.identityHashSecret),
+      createS3AccountAssetDeletion({ region: config.region, bucket: config.bucket }), config.identityHashSecret, { stateReferenceFencing }),
   };
 }
 export function startAccountDeletionRecovery(runtime: AccountDeletionRecoveryRuntime | null): () => void {

@@ -1,4 +1,5 @@
 ﻿import type { QueryResultRow } from 'pg';
+import { readableStateReferencePredicateSql, readableStateReferenceSql } from './FencedStateReferenceReadGuard.js';
 import { buildPanelFrameTemplateInputs } from '../domain/constants/panelFrameTemplates.js';
 import type {
   Chapter,
@@ -1061,7 +1062,7 @@ export class PostgresStoryRepository
     const result = await this.client.query<{ valid: boolean }>(
       `
       WITH authorized_episode AS (
-        SELECT chapters.work_id
+        SELECT chapters.work_id, works.organization_id
         FROM episodes
         INNER JOIN chapters ON chapters.id = episodes.chapter_id
         INNER JOIN works ON works.id = chapters.work_id
@@ -1430,9 +1431,11 @@ export class PostgresStoryRepository
     const entityStates = await client.query<LockedStartingEntityStateRow>(
       `
       SELECT entity_states.id, entity_states.entity_id, entity_states.name,
-             entity_states.description, entity_states.reference_image
+             entity_states.description,
+             ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })} AS reference_image
       FROM entity_states
       INNER JOIN entities ON entities.id = entity_states.entity_id
+      INNER JOIN works ON works.id = entities.work_id
       WHERE entities.work_id = $1::uuid
         AND entity_states.id::text = ANY($2::text[])
       ORDER BY entity_states.id ASC
@@ -3028,7 +3031,8 @@ const currentPrimaryReferencePredicate = `
 `;
 
 const confirmedStateReferencePredicate = `
-  entity_states.id IS NOT NULL
+  ${readableStateReferencePredicateSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: '(SELECT organization_id FROM authorized_episode)' })}
+  AND entity_states.id IS NOT NULL
   AND NULLIF(BTRIM(entity_states.name), '') IS NOT NULL
   AND NULLIF(BTRIM(entity_states.description), '') IS NOT NULL
   AND jsonb_typeof(entity_states.reference_image) = 'object'

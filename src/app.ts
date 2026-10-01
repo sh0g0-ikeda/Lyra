@@ -328,6 +328,9 @@ import type { AppEnv } from './types/app.js';
 import type { SupabaseJwtClaims } from './domain/types/user.js';
 import type { JWTVerifyGetKey } from 'jose';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
+import {
+  createFencedStateReferenceRuntime, resolveFencedStateReferenceConfig, type FencedStateReferenceRuntime,
+} from './infrastructure/state/FencedStateReferenceRuntime.js';
 
 export interface AppDependencies {
   aiContentReportService?: AiContentReportServicePort;
@@ -343,6 +346,8 @@ export interface AppDependencies {
   entityReferenceUploadService?: EntityReferenceUploadServicePort;
   entityReferenceImageExportService?: EntityReferenceImageExportServicePort;
   entityStateReferenceService?: EntityStateReferenceServicePort;
+  /** Trusted server DI; never sourced from request data or authorization claims. */
+  fencedStateReferenceRuntime?: FencedStateReferenceRuntime;
   entityGenerationQueue?: EntityGenerationQueuePort;
   episodeExportService?: EpisodeExportServicePort;
   episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort | null;
@@ -393,6 +398,7 @@ export interface AppDependencies {
 
 export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   assertProductionRuntimeConfig(env);
+  resolveFencedStateReferenceConfig(env);
 
   const resolvedDependencies = resolveDependencies(dependencies);
   const app = new Hono<AppEnv>();
@@ -830,6 +836,7 @@ function resolveDependencies(
       | 'pushTokenRegistryService'
       | 'webStaticDir'
       | 'readinessCheck'
+      | 'fencedStateReferenceRuntime'
     >
   >,
   'storyEpisodeImprovementPlanner'
@@ -844,6 +851,7 @@ function resolveDependencies(
   pushTokenRegistryService?: PushTokenRegistryServicePort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
+  const fencedStateReferenceRuntime = dependencies.fencedStateReferenceRuntime ?? createFencedStateReferenceRuntime(env, db);
   const creditRepository = new PostgresCreditRepository(db, db);
   const aiContentReportService =
     dependencies.aiContentReportService ?? new AiContentReportService(new StructuredLogAiContentReportSink());
@@ -870,6 +878,7 @@ function resolveDependencies(
             bucket: accountDeletionConfig.bucket,
           }),
           accountDeletionConfig.identityHashSecret,
+          { stateReferenceFencing: fencedStateReferenceRuntime },
         ));
   const creditService = dependencies.creditService ?? new CreditService(creditRepository);
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
@@ -1093,6 +1102,7 @@ function resolveDependencies(
   const entityStateReferenceService =
     dependencies.entityStateReferenceService ??
     new EntityStateReferenceService({
+      fencedConfirmationService: fencedStateReferenceRuntime,
       stateRepository: entityStateReferenceRepository,
       generationJobRepository,
       creditService,

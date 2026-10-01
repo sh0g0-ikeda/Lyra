@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   ClaimAccountDeletionInput,
   AccountDeletionClaimResult,
@@ -140,6 +140,96 @@ describe('AccountDeletionService', () => {
     expect(assets.calls).toEqual([]);
     expect(repository.completed).toBe(false);
     expect(repository.failures).toEqual(['EXTERNAL_REVALIDATION_BLOCKED']);
+  });
+
+  it('v2 assets require acknowledgement without becoming legacy active jobs', async () => {
+    const repository = new FakeRepository();
+    repository.flight.personalStateReferenceCount = 2;
+    const service = buildService(repository);
+    expect(await service.getDeletionPreview('user-1')).toMatchObject({ personalAssetCount: 2, activePersonalJobCount: 0 });
+    expect(await service.requestDeletion({ ...buildInput(), acknowledgePersonalAssets: false }))
+      .toEqual({ status: 'blocked', blockers: [{ code: 'PERSONAL_ASSETS', asset_count: 2 }] });
+    expect(repository.claimInput).toBeNull();
+  });
+
+  it.each(['missing', 'unresolved', 'error', 'false-success'] as const)('v2 %s recovery cannot complete or run legacy actions', async (mode) => {
+    const repository = new FakeRepository();
+    repository.flight.personalStateReferenceCount = 1;
+    repository.flight.activePersonalStripeSubscriptionIds = ['sub-1'];
+    repository.flight.personalAssetKeys = ['legacy-key'];
+    repository.recoverableRequests = [buildRequest({ deletedAssetKeys: ['state-reference-v2/old-checkpoint'], dataAnonymized: true })];
+    const subscriptions = new FakeSubscriptions(); const identity = new FakeIdentity(); const assets = new FakeAssets();
+    const fencePersonalReferences = vi.fn(async () => {
+      if (mode === 'error') throw new Error('private provider detail');
+      return mode === 'false-success';
+    });
+    const service = new AccountDeletionService(repository, subscriptions, identity, assets, 'account-deletion-local-test-secret-only', {
+      stateReferenceFencing: mode === 'missing' ? undefined : { fencePersonalReferences },
+    });
+    expect(await service.recoverPendingRequests(1)).toEqual({ attemptedCount: 1, completedCount: 0 });
+    expect(subscriptions.calls).toEqual([]); expect(identity.calls).toEqual([]); expect(assets.calls).toEqual([]);
+    expect(repository.completed).toBe(false);
+    expect(repository.failures).toEqual(['FENCE_PERSONAL_STATE_REFERENCES_FAILED']);
+  });
+
+  it('claimed v2 fencing precedes all legacy actions and shares the request budget without double counting', async () => {
+    const repository = new FakeRepository(); repository.flight.personalStateReferenceCount = 1;
+    repository.flight.activePersonalStripeSubscriptionIds = ['sub-1']; repository.flight.personalAssetKeys = ['legacy-key'];
+    const order: string[] = [];
+    const service = new AccountDeletionService(repository,
+      { cancelPersonalSubscription: async () => { order.push('subscription'); } },
+      { disableIdentity: async () => { order.push('disable'); }, deleteIdentity: async () => { order.push('identity'); } },
+      { deleteExactObject: async () => { order.push('asset'); } }, 'account-deletion-local-test-secret-only', {
+        maxExternalStepsPerAttempt: 6,
+        stateReferenceFencing: { fencePersonalReferences: async (userId, token, budget) => {
+          expect(userId).toBe('user-1'); expect(token).toBe(buildRequest().processingToken);
+          expect(repository.claimInput).not.toBeNull();
+          budget.beforeRequest(); order.push('v2-read'); budget.beforeRequest(); order.push('v2-marker');
+          repository.flight.personalStateReferenceCount = 0;
+          return true;
+        } },
+      });
+    expect(await service.requestDeletion(buildInput())).toEqual({ status: 'completed', blockers: [] });
+    expect(order).toEqual(['v2-read', 'v2-marker', 'subscription', 'asset', 'disable', 'identity']);
+    expect(repository.continuationCount).toBe(0);
+  });
+
+  it('each nested request consumes the shared default 25-step budget and resumes without failure backoff', async () => {
+    const repository = new FakeRepository(); repository.flight.personalStateReferenceCount = 1;
+    const identity = new FakeIdentity(); let sent = 0;
+    const service = new AccountDeletionService(repository, new FakeSubscriptions(), identity, new FakeAssets(), 'account-deletion-local-test-secret-only', {
+      stateReferenceFencing: { fencePersonalReferences: async (_user, _token, budget) => {
+        for (let index = 0; index < 30; index++) { budget.beforeRequest(); sent++; }
+        return true;
+      } },
+    });
+    expect(await service.requestDeletion(buildInput())).toMatchObject({ status: 'pending_external_action', next_action: 'delete_personal_assets' });
+    expect(sent).toBe(25); expect(repository.continuationCount).toBe(1); expect(repository.failures).toEqual([]);
+    expect(identity.calls).toEqual([]); expect(repository.completed).toBe(false);
+  });
+
+  it('an exhausted nested budget remains a continuation when the adapter sanitizes the thrown error', async () => {
+    const repository = new FakeRepository(); repository.flight.personalStateReferenceCount = 1;
+    let now = 0;
+    const service = new AccountDeletionService(repository, new FakeSubscriptions(), new FakeIdentity(), new FakeAssets(), 'account-deletion-local-test-secret-only', {
+      now: () => now,
+      stateReferenceFencing: { fencePersonalReferences: async (_user, _token, budget) => {
+        expect(budget.remainingTimeMs()).toBe(15_000); budget.beforeRequest(); now = 15_000;
+        throw new Error('sanitized adapter timeout');
+      } },
+    });
+    expect(await service.requestDeletion(buildInput())).toMatchObject({ status: 'pending_external_action' });
+    expect(repository.continuationCount).toBe(1); expect(repository.failures).toEqual([]);
+  });
+
+  it.each([false, true])('reserved namespace is never legacy-deleted even with an old checkpoint (%s)', async (checkpoint) => {
+    const repository = new FakeRepository(); const key = 'state-reference-v2/malformed';
+    repository.flight.personalAssetKeys = [key];
+    repository.claimResult = { kind: 'claimed', request: buildRequest({ deletedAssetKeys: checkpoint ? [key] : [] }) };
+    const assets = new FakeAssets(); const identity = new FakeIdentity();
+    const service = new AccountDeletionService(repository, new FakeSubscriptions(), identity, assets, 'account-deletion-local-test-secret-only');
+    expect(await service.requestDeletion(buildInput())).toMatchObject({ status: 'pending_external_action' });
+    expect(assets.calls).toEqual([]); expect(identity.calls).toEqual([]); expect(repository.completed).toBe(false);
   });
 
   it('唯一ownerとactive personal jobはacknowledgeできないblockerになる', async () => {
@@ -306,6 +396,15 @@ describe('AccountDeletionService', () => {
       next_action: 'delete_personal_assets',
     });
     expect(repository.failures).toEqual(['DELETE_PERSONAL_ASSET_FAILED']);
+  });
+
+  it('a legacy provider failure at the final allowed step still uses its sanitized failure checkpoint', async () => {
+    const repository = new FakeRepository(); repository.flight.personalAssetKeys = ['legacy-asset'];
+    const service = new AccountDeletionService(repository, new FakeSubscriptions(), new FakeIdentity(),
+      { deleteExactObject: async () => { throw new Error('private provider detail'); } },
+      'account-deletion-local-test-secret-only', { maxExternalStepsPerAttempt: 1 });
+    expect(await service.requestDeletion(buildInput())).toMatchObject({ status: 'pending_external_action' });
+    expect(repository.failures).toEqual(['DELETE_PERSONAL_ASSET_FAILED']); expect(repository.continuationCount).toBe(0);
   });
 
   it('1回の処理上限に達した場合はcheckpointを保持してworker継続へ渡す', async () => {

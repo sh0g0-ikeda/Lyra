@@ -129,6 +129,12 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === 'true'),
+  STATE_REFERENCE_COPY_V2_ADMISSION_ENABLED: z.enum(['true', 'false']).optional().transform((value) => value === 'true'),
+  STATE_REFERENCE_COPY_V2_STORAGE_CONTRACT_ATTESTED: z.enum(['true', 'false']).optional().transform((value) => value === 'true'),
+  STATE_REFERENCE_COPY_V2_IMAGE_ROLE_ARN: z.string().min(1).optional(),
+  STATE_REFERENCE_COPY_V2_RECOVERY_ROLE_ARN: z.string().min(1).optional(),
+  STATE_REFERENCE_COPY_V2_EXPECTED_BUCKET_OWNER: z.string().regex(/^\d{12}$/u).optional(),
+  STATE_REFERENCE_COPY_V2_VERSIONING_HISTORY: z.enum(['never-versioned', 'versioned', 'suspended']).optional(),
   ENTITY_IMPORT_ANALYSIS_ENABLED: z
     .string()
     .optional()

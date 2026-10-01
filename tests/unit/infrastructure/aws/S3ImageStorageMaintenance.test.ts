@@ -22,6 +22,12 @@ class FakeS3Client {
 }
 
 describe('S3ImageStorageMaintenance', () => {
+  it.each(['state-reference-v2/00000000-0000-4000-8000-000000000001/' + 'a'.repeat(64) + '.png', 'state-reference-v2/malformed.png'])('refuses reserved v2 deletion before a bare DeleteObject can remove a marker: %s', async (key) => {
+    const client = new FakeS3Client();
+    await expect(new S3ImageStorageMaintenance(client, 'lyra-images').deleteObject(key)).rejects.toBeInstanceOf(ConfigurationError);
+    expect(client.commands).toEqual([]);
+  });
+
   it('lists objects across paginated responses', async () => {
     const client = new FakeS3Client();
     client.responses = [

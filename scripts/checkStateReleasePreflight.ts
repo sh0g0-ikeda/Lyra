@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import type { DatabaseClient } from '../src/lib/db.js';
 import {
   DEPLOYMENT_DATA_INVARIANT_QUERIES,
+  FENCED_STATE_REFERENCE_INVARIANT_QUERIES,
   type DeploymentDataInvariantQuery,
   type DeploymentDataInvariantReport,
   type DeploymentDataInvariantViolation,
@@ -45,7 +46,8 @@ export async function checkStateReleasePreflight(
       WHERE status IN ('queued', 'processing') ORDER BY id LIMIT $1` },
     { name: 'release.active_deletions', sql: `SELECT user_id::text AS id FROM account_deletion_requests
       WHERE status IN ('processing', 'pending_external_action') ORDER BY id LIMIT $1` },
-    ...DEPLOYMENT_DATA_INVARIANT_QUERIES,
+    // This historical preflight must not query the later 047 journal.
+    ...DEPLOYMENT_DATA_INVARIANT_QUERIES.filter((query) => !FENCED_STATE_REFERENCE_INVARIANT_QUERIES.includes(query)),
   ];
   if (schemaVersion === 39) {
     queries.unshift({ name: 'schema_migrations.partial_state_columns', sql: `SELECT table_name || '.' || column_name AS id

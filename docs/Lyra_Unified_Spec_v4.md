@@ -376,6 +376,15 @@ Google, quote and Web-only-delivery capabilities remain gated until their own
 external and device checks pass. Detailed requirements, compatibility evidence and
 remaining gates are recorded in the documents below, not inferred from test totals.
 
+The optional state-copy v2 protocol uses a durable non-cascading journal,
+conditional image writes, retained ordinary markers and exact-version erasure.
+Admission defaults OFF; recovery, read authorization and retention remain active
+for existing v2 attempts when configured. Legacy unknown outcomes are never
+converted to completed evidence. Personal finalization requires verified fencing
+and original source cleanup before journal scrubbing; organization assets remain
+under organization authorization. Actual storage policy/retention acceptance is
+required before enablement. See the local design and audit follow-up below.
+
 ## 12. Related documents
 
 - `docs/Lyra_StoryAI_SubSpec.md`
@@ -392,3 +401,7 @@ remaining gates are recorded in the documents below, not inferred from test tota
 - `docs/production-billing-compatibility-2026-10-01.md`
 - `docs/image-provenance-delivery-design-2026-10-01.md`
 - `docs/editorial-layout-compatibility-2026-10-01.md`
+
+- `docs/state-copy-fenced-recovery-local-design-2026-10-02.md`
+- `docs/account-deletion-fenced-references-local-design-2026-10-02.md`
+- `docs/release-readiness-audit-2026-10-02.md`

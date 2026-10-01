@@ -78,6 +78,13 @@ export class PostgresImageStorageReferenceRepository implements ImageStorageRefe
         WHERE job_type = 'entity_generate'
           AND params->>'target' = 'entity_state'
       ),
+      retained_fenced_state_reference_keys AS (
+        -- All states, including scrubbed terminal rows: the same key retains its
+        -- ordinary marker forever unless a separately reviewed protocol replaces it.
+        SELECT s3_key FROM state_reference_copy_attempts
+        UNION ALL
+        SELECT candidate_s3_key AS s3_key FROM state_reference_copy_attempts WHERE scrubbed_at IS NULL
+      ),
       quoted_import_images AS (
         SELECT params->>'source_s3_key' AS s3_key FROM generation_jobs
         WHERE job_type = 'entity_import_analysis'
@@ -115,6 +122,8 @@ export class PostgresImageStorageReferenceRepository implements ImageStorageRefe
         SELECT s3_key FROM retained_state_reference_copies
         UNION ALL
         SELECT s3_key FROM quoted_import_images
+        UNION ALL
+        SELECT s3_key FROM retained_fenced_state_reference_keys
       ) AS protected_keys
       WHERE s3_key IS NOT NULL
         AND s3_key <> ''

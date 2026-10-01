@@ -15,6 +15,8 @@ import type { LayoutGuideImageRendererPort } from '../page/LayoutGuideImageRende
 import type { PageGenerationLayoutControl } from '../../domain/types/pageGenerationLayout.js';
 import type { BuiltPagePrompt } from '../page/PromptBuilder.js';
 import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
+import { isReservedFencedStateReferenceNamespace } from '../../domain/state/FencedStateReferenceKey.js';
+import { findConfirmedQuotedStateReference } from '../../repositories/FencedStateReferenceReadGuard.js';
 import { ensureAllowedReferenceSourceKey } from '../entity/EntityReferenceSourceKeyPolicy.js';
 
 export interface QuotedPageInputs { prompt: BuiltPagePrompt; inputImages: PageGenerationInputImage[] }
@@ -36,7 +38,7 @@ export class QuotedGenerationInputs implements QuotedGenerationInputsPort {
     if(job.params.quality!==quote.plan.quality || job.params.render_style!==quote.plan.renderStyle || job.generationMode!==quote.plan.generationMode) throw new ConfigurationError('Quoted page options changed');
     const images:PageGenerationInputImage[]=[];
     for(const reference of snapshot.prompt.inputSnapshot.references ?? []){
-      images.push({role:'entity_reference',label:reference.subjectLabel,dataUrl:await this.load(reference.s3Key,reference.entityId),
+      images.push({role:'entity_reference',label:reference.subjectLabel,dataUrl:await this.load(reference.s3Key,reference.entityId,job,reference),
         reference:{entityId:reference.entityId,stateId:reference.stateId,refId:reference.refId,s3Key:reference.s3Key,imageModel:reference.imageModel,subjectLabel:reference.subjectLabel}});
     }
     // New quotes freeze one resolved map. Omitted control means an old quote:
@@ -70,7 +72,7 @@ export class QuotedGenerationInputs implements QuotedGenerationInputsPort {
         || createHash('sha256').update(image.imageData).digest('hex')!==expected.sha256) throw new ConfigurationError('Quoted source candidate changed before execution');
       return {snapshot,inputImages:[{dataUrl:`data:${image.mimeType};base64,${image.imageData.toString('base64')}`}]};
     }
-    const inputImages=key===null ? []:[{dataUrl:await this.load(key,snapshot.entity.entityId)}];
+    const inputImages=key===null ? []:[{dataUrl:await this.load(key,snapshot.entity.entityId,job)}];
     return {snapshot,inputImages};
   }
   private async requireQuote(job:GenerationJob):Promise<GenerationQuote>{
@@ -80,12 +82,21 @@ export class QuotedGenerationInputs implements QuotedGenerationInputsPort {
     if(actor.rows[0]?.active!==true) throw new ConfigurationError('Quoted account is no longer available');
     return quote;
   }
-  private async load(key:string,entityId:string):Promise<string>{
-    const owner=key.split('/')[1];
+  private async load(key:string,entityId:string,job:GenerationJob,
+    reference?:{stateId:string|null;refId:string;imageModel?:string|null}):Promise<string>{
+    const isFenced=isReservedFencedStateReferenceNamespace(key);
+    const confirmed=isFenced ? await findConfirmedQuotedStateReference(this.database,{
+      s3Key:key,entityId,actorUserId:job.userId,organizationId:job.organizationId ?? null,
+      stateId:reference?.stateId,refId:reference?.refId,imageModel:reference?.imageModel,
+    }):null;
+    if(isFenced && confirmed===null) throw new ConfigurationError('Quoted state reference is no longer confirmed');
+    const owner=isFenced ? confirmed?.ownerUserId : key.split('/')[1];
     if(!owner) throw new ConfigurationError('Quoted reference owner is unavailable');
     ensureOwnedEntityReferenceImageKey(key,owner,entityId);
     const image=await this.loader.loadByS3Key(key);
     if(image.imageData.length===0 || image.imageData.length>OPENAI_INPUT_IMAGE_MAX_BYTES) throw new ConfigurationError('Quoted reference image size is invalid');
+    if(confirmed!==null && (image.mimeType!==confirmed.mimeType || image.imageData.length!==confirmed.sizeBytes
+      || createHash('sha256').update(image.imageData).digest('hex')!==confirmed.digest)) throw new ConfigurationError('Quoted state reference image receipt mismatch');
     return `data:${image.mimeType};base64,${image.imageData.toString('base64')}`;
   }
 }

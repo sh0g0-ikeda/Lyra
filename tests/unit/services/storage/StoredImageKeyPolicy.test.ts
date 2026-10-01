@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { buildFencedStateReferenceKey } from '../../../../src/domain/state/FencedStateReferenceKey.js';
 import {
   ensureOwnedEntityReferenceImageKey,
   ensureOwnedPageImageKey,
 } from '../../../../src/services/storage/StoredImageKeyPolicy.js';
 
 describe('StoredImageKeyPolicy', () => {
+  it('allows canonical v2 keys only for the exact owner and entity', () => {
+    const ownerUserId = randomUUID(); const entityId = randomUUID();
+    const key = buildFencedStateReferenceKey({ ownerUserId, entityId, attemptToken: randomUUID(), mimeType: 'image/png' });
+    expect(() => ensureOwnedEntityReferenceImageKey(key, ownerUserId, entityId)).not.toThrow();
+    expect(() => ensureOwnedEntityReferenceImageKey(key, randomUUID(), entityId)).toThrow();
+    expect(() => ensureOwnedEntityReferenceImageKey(key, ownerUserId, randomUUID())).toThrow();
+    expect(() => ensureOwnedEntityReferenceImageKey(key.replace(/\.png$/, '.jpg'), ownerUserId, entityId)).toThrow();
+    expect(() => ensureOwnedEntityReferenceImageKey(key + '/nested.png', ownerUserId, entityId)).toThrow();
+  });
+
   it('allows owned entity reference images under the saved entity prefix', () => {
     expect(() =>
       ensureOwnedEntityReferenceImageKey(

@@ -65,9 +65,11 @@ describe('PostgresEntityStateReferenceRepository', () => {
     expect(database.sql[1]).toContain('FOR UPDATE OF reference_sets');
     expect(database.sql[2]).toContain('FOR UPDATE OF entity_states');
     expect(database.sql[3]).toContain('FROM generation_jobs');
-    expect(database.sql[4]).toContain('state_reference_copies');
-    expect(database.sql[9]).toContain('jsonb_agg');
-    expect(database.sql[10]).toContain('UPDATE entity_states');
+    expect(database.sql[4]).toContain('state_reference_copy_attempts');
+    expect(database.sql[5]).toContain('state_reference_copies');
+    expect(database.sql[10]).toContain('state_reference_copy_attempts');
+    expect(database.sql[11]).toContain('jsonb_agg');
+    expect(database.sql[12]).toContain('UPDATE entity_states');
     expect(database.sql.join('\n')).not.toContain('UPDATE reference_sets');
     expect(result.referenceImage.refId).toBe(`${jobId}-1`);
   });
@@ -114,7 +116,8 @@ describe('PostgresEntityStateReferenceRepository', () => {
       stateRevision: '2026-09-30T00:00:00.001Z',
       referenceImage: input.descriptor,
     });
-    expect(database.sql).toHaveLength(4);
+    expect(database.sql).toHaveLength(5);
+    expect(database.sql[4]).toContain('state_reference_copy_attempts');
   });
 
   it('jobのstate_revisionがconfirm期待値と異なる場合はstaleで更新しない', async () => {
@@ -156,6 +159,9 @@ class ScriptedDatabase implements DatabaseClient, TransactionRunner {
 
   public async query<T extends QueryResultRow>(text: string, values?: readonly unknown[]): Promise<QueryResult<T>> {
     this.sql.push(text);
+    // The dormant v2 guard is an independent read; script the unchanged legacy
+    // transactions below and retain explicit assertions that both guards run.
+    if (text.includes('FROM state_reference_copy_attempts')) return { rows: [], rowCount: 0 } as unknown as QueryResult<T>;
     if (text.includes("SET result = jsonb_set(result, '{state_reference_copies}', $2::jsonb)")) {
       this.history = JSON.parse(String(values?.[1]));
     }

@@ -1,5 +1,6 @@
 import { readImageProvenance, toImageProvenanceRecord } from '../domain/generation/ImageAccessPolicy.js';
 import type { QueryResultRow } from 'pg';
+import { readableStateReferenceSql } from './FencedStateReferenceReadGuard.js';
 import type {
   CreateEntityInput,
   Entity,
@@ -546,7 +547,7 @@ export class PostgresEntityRepository
              entity_states.id AS resolved_state_id,
              entity_states.name AS state_name,
              entity_states.description AS state_description,
-             entity_states.reference_image AS state_reference_image,
+             ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })} AS state_reference_image,
              reference_sets.reference_images,
              reference_sets.primary_ref_id
       FROM requested

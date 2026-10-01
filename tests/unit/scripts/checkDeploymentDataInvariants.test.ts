@@ -138,6 +138,18 @@ class FakeDatabase implements DatabaseClient {
 }
 
 describe('checkDeploymentDataInvariants', () => {
+  it.each(['unresolved', 'scope_key', 'confirmed_evidence', 'completed_personal_scrub'])('reports the fenced journal %s deployment gate', async (check) => {
+    const name = `state_reference_copy_attempts.${check}`;
+    const report = await checkDeploymentDataInvariants(new FakeDatabase(name));
+    expect(report.ok).toBe(false);
+    expect(report.violations).toContainEqual({ name, sampleIds: ['bad-row-1', 'bad-row-2'] });
+  });
+  it('reports a visible v2 state reference without valid journal evidence', async () => {
+    const name = 'entity_states.fenced_reference_evidence';
+    const report = await checkDeploymentDataInvariants(new FakeDatabase(name));
+    expect(report.violations).toContainEqual({ name, sampleIds: ['bad-row-1', 'bad-row-2'] });
+  });
+
   it('未確定・旧形式の状態copy履歴をrelease前のblockerとして報告する', async () => {
     const database = new FakeDatabase('generation_jobs.unresolved_state_reference_copies');
     const report = await checkDeploymentDataInvariants(database);

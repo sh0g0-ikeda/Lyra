@@ -63,10 +63,15 @@ PostgreSQL; no purchases, provider requests, production operations or publicatio
   the immediate pre-restore balance/plan assertions.
 - Broader focused billing, credit, account deletion, repositories, routes and
   provider-adapter suites: 16 suites / 174 tests passed.
-- `git diff --check` passed. The shared checkout's root TypeScript build at handoff
-  was blocked only by concurrent jobs-contract test typing at
-  `tests/unit/routes/jobContractVersion.test.ts:153`; it reported no billing
-  errors. The integrating owner must rerun aggregate checks after all edits.
+- `git diff --check` and the integrating backend TypeScript build passed.
+  The combined release audit records the full regression results separately.
+
+The historical Google refund attribution risk also exists in production source
+`2debe8c3`, whose refund path could additionally downgrade the current plan. This
+is a source-level finding, not evidence of an affected live account. The executed
+RED reproduction used the candidate and synthetic migrated production-schema
+fixtures. The linked-token regression was candidate-specific; production source
+already resolved linked ownership.
 
 The migrated tests retain exact purchase rows across the bridge, restore prior
 hashed transaction/event history without another grant, preserve scheduled plan

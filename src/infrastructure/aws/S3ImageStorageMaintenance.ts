@@ -1,3 +1,4 @@
+import { isReservedFencedStateReferenceNamespace } from '../../domain/state/FencedStateReferenceKey.js';
 import {
   DeleteObjectCommand,
   ListObjectsV2Command,
@@ -115,6 +116,9 @@ export class S3ImageStorageMaintenance implements ImageStorageMaintenancePort {
   }
 
   public async deleteObject(key: string): Promise<void> {
+    if (isReservedFencedStateReferenceNamespace(key)) {
+      throw new ConfigurationError('Reserved state reference objects require verified fencing');
+    }
     validateS3ImageObjectKey(key);
 
     try {

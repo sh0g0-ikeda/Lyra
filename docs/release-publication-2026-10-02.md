@@ -76,3 +76,12 @@ Separately, the exact e6f9ae4 source passed all 2,519 native tests, migrations
 001–046 and 66 deployment invariants on local PostgreSQL 18.3 using Bun 1.3.14,
 the version named by the production Dockerfile. This does not test the ARM64
 container or replace the updated Web candidate's GitHub browser gate.
+
+## Later local audit candidate
+
+The compatibility audit and dormant v2 implementation are recorded in
+`release-readiness-audit-2026-10-02.md`. They are later local changes, not part of
+the initial a847ba1 publication or the remote green 6c0c968 checkpoint. Their
+runtime must not be described as byte-identical to either. Source publication of
+the compatibility follow-up was blocked; no new remote commit or CI result is
+claimed. The delivered exact-revision manifest is authoritative for local tests.

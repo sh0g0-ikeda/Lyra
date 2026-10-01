@@ -216,6 +216,8 @@ const NO_RETAINED_IMAGE_CHECKPOINTS_SQL = `
   AND COALESCE(result->'retained_input_references', 'null'::jsonb) IN ('null'::jsonb, '[]'::jsonb)
   AND COALESCE(result->'state_reference_copies', 'null'::jsonb) IN ('null'::jsonb, '[]'::jsonb)
   AND COALESCE(result->'import_copy_intent', 'null'::jsonb) = 'null'::jsonb
+  AND NOT EXISTS (SELECT 1 FROM state_reference_copy_attempts retained_attempt
+    WHERE retained_attempt.job_id = generation_jobs.id)
 `;
 
 export class PostgresGenerationJobRepository
