@@ -1,5 +1,13 @@
 # 状態画像 copy と退会の追加検証・修正（2026-10-02 JST）
 
+> **旧版の検証記録です。現行の反映・復旧手順には使わないでください。**
+> この文書は `1d51219` を基準にした v1 修正を記録しています。後続の
+> `138d62c` は migration 047 と durable journal、試行 receipt、conditional write、
+> version を指定した削除、recovery を追加しました。「新規 migration はない」
+> 「receipt 設計は含まれない」は当時の版だけに適用されます。現行契約と未完了の
+> 実 S3/IAM 受入は [最新監査](release-readiness-audit-2026-10-02.md) の
+> 状態 copy v2 と公開ゲートを参照してください。v2 記録の導入後に v1 へ戻す運用は不可です。
+
 ## 版と結論
 
 基準版は凍結候補 `1d512194dd0ee506102adc8bb773c2dfcaba28a8`。

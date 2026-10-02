@@ -7,11 +7,14 @@
 候補は main `e5973a7450c951520236353df0a108ba753d065f` を祖先に持つ
 PR216 → 217 → 219 → 220（統合元 `2bb4e2dabd24c3116c5dae86a177754b367e245d`）に、
 今回の UI・機能・安全性・実本番互換の変更を加えたもの。
-実稼働 API のタグが指すコードは `2debe8c3c22633ed077e7b189ddcfa8b209a00dc`。
-main と実本番は別系統なので、main との差分だけでは互換性を判定しない。
+前回調査時に実稼働 API のタグが指していたコードは `2debe8c3c22633ed077e7b189ddcfa8b209a00dc`。
+2026-10-02のローカル統合では実環境へ再照会していないため、現在の反映先SHAとは断定しない。
+前回観測の main と実本番は別系統なので、反映前に実SHA・DB履歴を再確認し、mainとの差分だけでは互換性を判定しない。
 PR215 は設計と機能単位の参照元であり、そのイメージや migration を直接反映しない。
 
-最終 commit と検証結果は `release-validation-2026-10-01.md` で記録する。
+過去候補の commit と検証結果は `release-validation-2026-10-01.md` で記録している。
+今回のローカル統合結果は `uiux-backend-expansion-2026-09-30/実装記録.md` と
+同フォルダの `統合検証manifest-2026-10-02.json` を参照する。
 文書に残る途中 checkpoint は最終 SHA の CI 成功を意味しない。
 GitHub の Git data write は初回 403 で停止した。その後、対象 repository の installation と
 push 権限を確認し、同じ connector の書き込み再試行に成功した。
@@ -84,14 +87,14 @@ PostgreSQL 18.3 の互換試験は実行済みだが、実 DB の履歴・件数
 7. Web 限定配信の検証済み Cognito client allowlist と Web 返却先。Hy4 の生成開始は公式画像契約確認まで不可
 8. 承認された費用上限の下での実 OpenAI の日本語／英語、白黒、複数状態、読み順、品質・原価・timeout・返金試験
 9. browser/native の実画面、safe area／大字／keyboard／dialog back／dirty／保存共有、および下記の実機受入
-10. 状態確定の未確定試行の復旧方式の採否・実装と実 S3 受入。2026-10-02 の追加修正で、DB 切断／SDK 失敗後の
-    遅延 copy を使い捨て DB＋模擬 storage で再現し、未確定履歴が残る間は再 copy と退会完了を防ぐ。
-    SDK は状態 copy だけ単回実行し、完全な成功応答を要求する。停止の安全性と、未確定処理を解決して
-    退会を完了できる運用は別であり、後者は未了。時間経過／HEAD／再試行成功から完了を推測しない。
-    gate OFF でも既発行候補の confirm は可能なので、旧候補・旧形式履歴・旧稼働プロセスがないか確認する。
-    追加検証の版と範囲は `release-state-copy-addendum-2026-10-02.md` を参照する。
-    復旧設計とローカルモデル検証は `review/state-copy-recovery/実行前レビュー.md` に完了記録がある。
-    設計の完了を runtime 実装・実サービス受入の完了とみなさない
+10. 状態 copy v2 の実 S3/IAM/KMS/versioning/lifecycle/replication と recovery 受入。
+    `138d62c` で migration 047、durable journal、conditional write、receipt と recovery runtime が
+    追加された。現行契約と公開条件は `release-readiness-audit-2026-10-02.md` を参照する。
+    `release-state-copy-addendum-2026-10-02.md` は v1 の欠陥再現・修正の履歴資料であり、現行の反映手順ではない。
+    admission OFF でも既発行候補の confirm、journal-aware read/prune/delete/recovery は対象になる。
+    旧候補・旧形式履歴・旧稼働プロセスを確認し、時間経過／HEAD／再試行成功から原試行の終了を推測しない。
+    v2 導入後の rollback は v2 を扱える版に限る。ローカルモデル検証や設定 attestation の成功を、
+    実サービスの IAM 制約・復旧・削除の受入完了とみなさない。
 
 ## 承認後の段階反映手順
 

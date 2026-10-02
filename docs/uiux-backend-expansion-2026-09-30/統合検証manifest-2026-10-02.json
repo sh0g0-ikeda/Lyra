@@ -1,0 +1,347 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-10-02T11:27:54.883Z",
+  "production_ready": false,
+  "integration_branch": "codex/lyra-dots-integration-20261002",
+  "verified_code_commit": "18dceb9cf322c3676d1094feb883b290aa65d612",
+  "note": "A later documentation-only evidence commit may change HEAD; the verified executable and test scopes are identified by the digests below. Historical Dots results are not current proof.",
+  "source_commit": "23878f92a8666efd949f3560cfeea8e4a9cfb6f7",
+  "source_clean": true,
+  "baseline_commit": "2bb4e2dabd24c3116c5dae86a177754b367e245d",
+  "original_checkout": {
+    "head": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "protected_paths": 28,
+    "unchanged": true,
+    "backup_manifest_sha256": "922aeda788a07d56ea04867ce41530873ea8761005d51c4d3a595e717056393b"
+  },
+  "scope_sha256": {
+    "backend": "c2ddb6ae4a317effe338eef8d04e44503997fdccd2bfe8ea5f7fce33ef6322dc",
+    "mobile": "00492155ab3782a951c3de40de5b87c216a3308b93a24c24128c0567f71f9776",
+    "web": "a60eedd350411f5062a3b1a139468741ec57cceed305d17517b91ab58e46a50f"
+  },
+  "checks": [
+    {
+      "name": "Mobile Vitest",
+      "status": "passed",
+      "files": 186,
+      "tests_passed": 1014,
+      "log": "mobile-vitest-final.log",
+      "command": "node node_modules/vitest/vitest.mjs run --maxWorkers=4 (cwd apps/mobile)",
+      "exit_code": 0
+    },
+    {
+      "name": "Mobile TypeScript",
+      "status": "passed",
+      "log": "mobile-typecheck-final.log",
+      "command": "node node_modules/typescript/bin/tsc --noEmit (cwd apps/mobile)",
+      "exit_code": 0
+    },
+    {
+      "name": "Mobile ESLint",
+      "status": "passed",
+      "log": "mobile-lint-final.log",
+      "command": "node node_modules/eslint/bin/eslint.js . --max-warnings=0 (cwd apps/mobile)",
+      "exit_code": 0
+    },
+    {
+      "name": "Android offline JS/assets export",
+      "status": "passed",
+      "signed_artifact": false,
+      "device_test": false,
+      "log": "mobile-android-export-fixed.log",
+      "command": "node node_modules/expo/bin/cli export --platform android --max-workers 2 --output-dir dist/android (cwd apps/mobile)",
+      "exit_code": 0
+    },
+    {
+      "name": "iOS offline JS/assets export",
+      "status": "passed",
+      "signed_artifact": false,
+      "device_test": false,
+      "log": "mobile-ios-export-fixed.log",
+      "command": "node node_modules/expo/bin/cli export --platform ios --max-workers 2 --output-dir dist/ios (cwd apps/mobile)",
+      "exit_code": 0
+    },
+    {
+      "name": "Expo dependency check offline",
+      "status": "passed_with_limitation",
+      "limitation": "Expo explicitly warns that dependency validation is unreliable in offline mode; this is not a full online doctor gate.",
+      "log": "mobile-expo-check-final.log",
+      "command": "node node_modules/expo/bin/cli install --check (cwd apps/mobile, EXPO_OFFLINE=1)",
+      "exit_code": 0
+    },
+    {
+      "name": "Web lint",
+      "status": "passed",
+      "log": "web-lint.log",
+      "command": "npm --prefix apps/web run lint",
+      "exit_code": 0
+    },
+    {
+      "name": "Web TypeScript and production build",
+      "status": "passed_with_warning",
+      "warning": "Existing chunk exceeds 500kB",
+      "log": "web-build.log",
+      "command": "npm --prefix apps/web run build",
+      "exit_code": 0
+    },
+    {
+      "name": "Playwright Web smoke",
+      "status": "passed",
+      "tests_passed": 16,
+      "real_api": false,
+      "browser": "installed Edge",
+      "log": "web-browser.log",
+      "command": "node apps/web/node_modules/@playwright/test/cli.js test --config=.tmp/dots-integration/playwright-local.config.ts",
+      "exit_code": 0
+    },
+    {
+      "name": "Web PC/mobile visual snapshots",
+      "status": "passed",
+      "tests_passed": 4,
+      "real_api": false,
+      "native_device": false,
+      "manual_viewed": true,
+      "log": "web-visual.log",
+      "command": "node apps/web/node_modules/@playwright/test/cli.js test --config=.tmp/dots-integration/playwright-visual.config.ts --grep 'renders the console|初心者向け案内|PCヘッダー|スマホWebで'",
+      "exit_code": 0
+    },
+    {
+      "name": "Mobile generated API contract",
+      "status": "passed",
+      "log": "mobile-contract-check.log",
+      "command": "node scripts/generateMobileApiContract.mjs --check",
+      "exit_code": 0
+    },
+    {
+      "name": "Backend API inventory",
+      "status": "passed",
+      "endpoints": 150,
+      "log": "api-inventory-check.log",
+      "command": "node scripts/auditBackendApiInventory.mjs --check",
+      "exit_code": 0
+    },
+    {
+      "name": "Historical migrations 001-041 Git content unchanged",
+      "status": "passed",
+      "log": "historical-migrations-check.log",
+      "command": "Compare migration 001-041 Git tree entries at 2bb4e2d and HEAD (script included in qa-harness)",
+      "exit_code": 0
+    },
+    {
+      "name": "Backend Vitest",
+      "status": "failed_dependency_resolution",
+      "files_passed": 304,
+      "files_failed": 25,
+      "files_skipped": 27,
+      "tests_passed": 2254,
+      "tests_skipped": 271,
+      "log": "backend-vitest-final.log",
+      "command": "node node_modules/vitest/vitest.mjs run --maxWorkers=4 (APP_ENV=test, NODE_ENV=test, DATABASE_URL unset)",
+      "exit_code": 1
+    },
+    {
+      "name": "Backend native Bun 1.3.11",
+      "status": "failed_dependency_resolution",
+      "tests_passed": 2254,
+      "tests_failed": 25,
+      "errors": 25,
+      "tests_skipped": 321,
+      "log": "backend-bun-final-corrected.log",
+      "command": "bun --no-install test (APP_ENV=test, NODE_ENV=test, DATABASE_URL unset)",
+      "exit_code": 1
+    },
+    {
+      "name": "Backend TypeScript build",
+      "status": "failed_dependency_resolution",
+      "log": "backend-build.log",
+      "command": "npm run build",
+      "exit_code": 2
+    },
+    {
+      "name": "PostgreSQL 16/18 migrations, invariants and lineage acceptance",
+      "status": "not_run",
+      "reason": "Local Docker engine startup fails on dockerInference socket; no native PostgreSQL runtime available. No factory reset or volume removal performed."
+    },
+    {
+      "name": "Expo doctor full gate",
+      "status": "not_run",
+      "reason": "Installed doctor includes network-backed checks without an offline switch; no refused material-fetch or publication action is retried."
+    },
+    {
+      "name": "Signed device and old installed app acceptance",
+      "status": "not_run",
+      "reason": "Awaiting available devices and test environment/account information"
+    },
+    {
+      "name": "Real Google, quote/provider/refund, store purchase/restore, S3/IAM recovery and representative production data acceptance",
+      "status": "not_run",
+      "reason": "No real-provider operation, paid test or environment change authorized/performed in this local integration"
+    }
+  ],
+  "missing_dependency_bodies": [
+    {
+      "name": "@aws-sdk/credential-providers",
+      "version": "3.1078.0",
+      "integrity": "sha512-V9Tr3MrNWUfTGgTMIr+WJaMC/VDbXY57BzrGDuyDZn7+vgZjAEG6nI5nMdfnTGdvV9wq1n0zZPYW2RDfcsWNCw=="
+    },
+    {
+      "name": "@aws-sdk/client-cognito-identity",
+      "version": "3.1078.0",
+      "integrity": "sha512-BYy0X/+GMXlitKShxkdTsCexWwDrn8usY2Y2Z06M5MSi4aRT3Ce5ilyA6OubQUqOWfsmDMYrm8oBNaTIcQFyrg=="
+    },
+    {
+      "name": "@aws-sdk/credential-provider-cognito-identity",
+      "version": "3.972.51",
+      "integrity": "sha512-nXzAwRz0NOiHlG/HHea7oJ2ew2m21XZUU6h2cZMCrlNQqcWjMHCkun4D6E7CWqOxiFG0MeN8Gg5Iakrjv/UXrQ=="
+    }
+  ],
+  "publication": {
+    "production": false,
+    "store": false,
+    "main_merge": false,
+    "github_write": false,
+    "github_retry": false,
+    "remote_ci": false
+  },
+  "required_reruns": [
+    "Fresh frozen dependency installation with integrity verification",
+    "Full required backend gates on Docker production Bun 1.3.14 after dependency repair",
+    "PostgreSQL 16/18 and representative production lineage acceptance",
+    "Signed real-device and real-service acceptance"
+  ],
+  "evidence_archive": "Lyra-Dots-integration-20261002-evidence.tar",
+  "log_directory": "logs",
+  "evidence_paths_note": "Log and visual paths resolve from the extracted evidence archive root. The archive includes source.bundle for Git history, manifest.json, logs, visual snapshots and local QA harnesses; the Git bundle alone does not include ignored logs.",
+  "logs": [
+    {
+      "name": "api-inventory-check.log",
+      "sha256": "2af46e4e17df1c1ca58f07bba1993b3b7c5d562f213963109e3bbf451febbacd",
+      "bytes": 50
+    },
+    {
+      "name": "backend-build.log",
+      "sha256": "24ea9772ed6fd1763caece8fc0e7a3a415663f12fb37b765df90621bffaaa2af",
+      "bytes": 431
+    },
+    {
+      "name": "backend-bun-final-corrected.log",
+      "sha256": "1c23ad3ba2b8beb03038a75dd35bd5b28a0f7ebd666092c8bf4f533e114b2fd8",
+      "bytes": 394159
+    },
+    {
+      "name": "backend-bun-final.log",
+      "sha256": "263d425178a5b4076e72eedd5799662677b36f76e8e2f7163f0d6ace89466ee1",
+      "bytes": 465553
+    },
+    {
+      "name": "backend-vitest-final.log",
+      "sha256": "542d81315a2af92054400c23890592835f0b896b4d88c341693159c1c501ac35",
+      "bytes": 10660
+    },
+    {
+      "name": "backend-vitest.log",
+      "sha256": "28babe795b01303670cfbe055994df9d633a4cb4ff2f674e1c92871273df7c58",
+      "bytes": 11660
+    },
+    {
+      "name": "historical-migrations-check.log",
+      "sha256": "8fccaf3bf84a0c960af13899d0bb6c036eecbc60cb41d4a574841a73603aada7",
+      "bytes": 144
+    },
+    {
+      "name": "layout-guide-targeted-fixed.log",
+      "sha256": "3fbcf755334af631373caada39559a2d9833dacb2fe2c4fbf97601676b54a2d0",
+      "bytes": 257
+    },
+    {
+      "name": "layout-guide-targeted.log",
+      "sha256": "6484bb15352866baf05828db277282b438f0a343ed58978c67a91e6087d3f76b",
+      "bytes": 1222
+    },
+    {
+      "name": "mobile-android-export-fixed.log",
+      "sha256": "a66fc8dc19f410cef5d4e320a455c6a2f0c7b79564ea0c05a14f62a54bace124",
+      "bytes": 1499
+    },
+    {
+      "name": "mobile-android-export.log",
+      "sha256": "419ca916daa757b0e7610db25c97708a9fbf7816012a9b099f1ac5491d42291b",
+      "bytes": 4942
+    },
+    {
+      "name": "mobile-contract-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "name": "mobile-expo-check-final.log",
+      "sha256": "e1dd64d5cdc32bb8d9de45b145444a634096309b0b760945109ce3b1bd3b62c8",
+      "bytes": 82
+    },
+    {
+      "name": "mobile-expo-check.log",
+      "sha256": "33440cf0a6be456cc8bb33fa91f95ee4f4cdd9c5ec97fcce566250ba1ea431e3",
+      "bytes": 1120
+    },
+    {
+      "name": "mobile-ios-export-fixed.log",
+      "sha256": "7cbfbfb2aa1755edfccd4435f16b1406acc9eaa980edf3329c4b7dc712c48957",
+      "bytes": 1481
+    },
+    {
+      "name": "mobile-ios-export.log",
+      "sha256": "32ab490a0715ed0e1075fc77390ddf4da697f9808032dfd6887a89a073134397",
+      "bytes": 4939
+    },
+    {
+      "name": "mobile-lint-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "name": "mobile-lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "name": "mobile-typecheck-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "name": "mobile-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "name": "mobile-vitest-final.log",
+      "sha256": "65d8148719e46305f6ee3dcd0fc9a60df6cc14aa3efc9821b2fcd5926ec1071e",
+      "bytes": 286
+    },
+    {
+      "name": "mobile-vitest.log",
+      "sha256": "6462fa1acfe4867bce8f31f3d89c0a270e35d1f2dc0429da3467560dccbd2657",
+      "bytes": 1698
+    },
+    {
+      "name": "web-browser.log",
+      "sha256": "55c308f216ff239c46293e858c89cf930fbff982321070ebf348e56b2a223b6c",
+      "bytes": 2948
+    },
+    {
+      "name": "web-build.log",
+      "sha256": "4d3688a91b81b5295a64907958a4e4194b86972c2868dea34d50875ade7fe647",
+      "bytes": 1212
+    },
+    {
+      "name": "web-lint.log",
+      "sha256": "1de9a2427690dda34b30426e762c355f123842db25c2ffe402035eef1f8a2bba",
+      "bytes": 248
+    },
+    {
+      "name": "web-visual.log",
+      "sha256": "149381572d36ccf9e4617cb98532c465a95ad133aba26a4e615444c9b2771e06",
+      "bytes": 1421
+    }
+  ]
+}
