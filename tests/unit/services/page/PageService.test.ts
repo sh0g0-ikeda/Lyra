@@ -2532,6 +2532,73 @@ describe('PageService', () => {
     expect(transactionAssignmentService.updates.length).toBeGreaterThan(0);
   });
 
+  it('worker経由の通常話全体反映はpage保存とjob完了を同じtransactionへ渡す', async () => {
+    const context = buildEpisodePlanningContext();
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    let completedJobId: string | null = null;
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(),
+      panelRepository: new FakePanelRepository(),
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+      completeStoryAutofillJob: async (jobId) => {
+        completedJobId = jobId;
+        return true;
+      },
+    });
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), new FakeEpisodePagePlanCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true }, persistence,
+    );
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => undefined },
+    )).resolves.toMatchObject({ compilerUsed: true });
+    expect(completedJobId).toBe('job-1');
+  });
+
+  it('worker経由の通常話全体反映はjob完了できなければ成功を返さない', async () => {
+    const context = buildEpisodePlanningContext();
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(),
+      panelRepository: new FakePanelRepository(),
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+      completeStoryAutofillJob: async () => false,
+    });
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), new FakeEpisodePagePlanCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true }, persistence,
+    );
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => undefined },
+    )).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('worker経由の通常話全体反映は原子的保存が無ければ生成前に拒否する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildEpisodePlanningContext();
+    const compiler = new FakeEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), compiler,
+    );
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => undefined },
+    )).rejects.toBeInstanceOf(ConfigurationError);
+    expect(compiler.inputs).toHaveLength(0);
+  });
+
   it('状態反映v1に必要な全話監査と原子的保存が無い場合は生成前に拒否する', async () => {
     const pageRepository = new FakePageRepository();
     const compiler = new FakeEpisodePagePlanCompiler();

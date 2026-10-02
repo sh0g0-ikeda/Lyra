@@ -70,7 +70,7 @@ describePostgres('panel entity assignment conditional update', () => {
     }
   });
 
-  it('状態反映のjob完了後に例外が起きた場合はpageとjobを一括で戻す', async () => {
+  it('通常の話全体反映もjob完了後に例外が起きた場合はpageとjobを一括で戻す', async () => {
     const ids = createFixtureIds();
     const jobId = randomUUID();
     let inserted = false;
@@ -115,8 +115,6 @@ describePostgres('panel entity assignment conditional update', () => {
             updatedPageCount: 1, updatedPanelCount: 0, updatedAssignmentCount: 0,
             filledFieldCount: 0, compilerUsed: true, compilerProvider: 'openai',
             compilerModel: 'test', compilerPromptVersion: 'test', compilerError: null,
-            stateTransitions: [], statePlanVersion: 'episode_state_plan_v1',
-            stateAssignmentPolicy: 'preserve_existing',
           });
           expect(completed).toBe(true);
           throw new Error('injected failure after job completion');
@@ -130,6 +128,75 @@ describePostgres('panel entity assignment conditional update', () => {
       );
       expect(page.rows[0]?.status).toBe('designing');
       expect(job.rows[0]).toMatchObject({ status: 'processing', result: null });
+    } finally {
+      if (inserted) {
+        await pool.query('DELETE FROM generation_jobs WHERE id = $1::uuid', [jobId]);
+      }
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it('stale recoveryが先にjobをfailedへ確定した場合は通常話全体反映を全て戻す', async () => {
+    const ids = createFixtureIds();
+    const jobId = randomUUID();
+    let inserted = false;
+    try {
+      await insertFixture(pool, ids);
+      await pool.query(
+        `INSERT INTO generation_jobs (
+           id, user_id, job_type, status, credit_cost, params, started_at, commit_started_at,
+           completed_at, error_message
+         ) VALUES (
+           $1::uuid, $2::uuid, 'episode_story_autofill', 'failed', 0,
+           jsonb_build_object('episode_id', $3::text), NOW(), NOW(), NOW(), 'stale recovery won'
+         )`,
+        [jobId, ids.userId, ids.episodeId],
+      );
+      inserted = true;
+      const database = new PoolTransactionDatabase(pool);
+      let activeTransactionClient: DatabaseClient | null = null;
+      const scopedDatabase: DatabaseClient & TransactionRunner = {
+        query: database.query.bind(database),
+        transaction: async <T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> =>
+          database.transaction(async (client) => {
+            activeTransactionClient = client;
+            try {
+              return await work(client);
+            } finally {
+              activeTransactionClient = null;
+            }
+          }),
+      };
+      const repository = new PostgresEpisodePlanPersistenceRepository(scopedDatabase);
+
+      expect(await throwingRejectionOf(repository.withLockedEpisodePlan(
+        { episodeId: ids.episodeId, userId: ids.userId, organizationId: null },
+        async (_context, resources) => {
+          if (activeTransactionClient === null || resources.completeStoryAutofillJob === undefined) {
+            throw new Error('transaction resources missing');
+          }
+          await activeTransactionClient.query(
+            `UPDATE pages SET status = 'generated' WHERE id = $1::uuid`,
+            [ids.pageId],
+          );
+          const completed = await resources.completeStoryAutofillJob(jobId, ids.userId, {
+            updatedPageCount: 1, updatedPanelCount: 0, updatedAssignmentCount: 0,
+            filledFieldCount: 0, compilerUsed: true, compilerProvider: 'openai',
+            compilerModel: 'test', compilerPromptVersion: 'test', compilerError: null,
+          });
+          if (!completed) {
+            throw new Error('atomic job completion lost its status race');
+          }
+        },
+      ))).toThrow('atomic job completion lost its status race');
+      const page = await pool.query<{ status: string }>(
+        'SELECT status FROM pages WHERE id = $1::uuid', [ids.pageId],
+      );
+      const job = await pool.query<{ status: string; error_message: string }>(
+        'SELECT status, error_message FROM generation_jobs WHERE id = $1::uuid', [jobId],
+      );
+      expect(page.rows[0]?.status).toBe('designing');
+      expect(job.rows[0]).toMatchObject({ status: 'failed', error_message: 'stale recovery won' });
     } finally {
       if (inserted) {
         await pool.query('DELETE FROM generation_jobs WHERE id = $1::uuid', [jobId]);

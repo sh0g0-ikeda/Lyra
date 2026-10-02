@@ -96,21 +96,15 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         );
       }
 
+      if (result.jobCompletedAtomically !== true) {
+        throw new ValidationError('Episode story autofill did not finish its atomic save');
+      }
+
       if (stateOptions !== undefined && (
         result.statePlanVersion !== 'episode_state_plan_v1'
         || result.stateAssignmentPolicy !== stateOptions.stateAssignmentPolicy
       )) {
         throw new ValidationError('Episode state autofill did not finish its atomic save');
-      }
-      const completed = stateOptions === undefined
-        ? await this.repository.completeEpisodeStoryAutofill({
-            jobId: job.id,
-            userId: job.userId,
-            result,
-          })
-        : true;
-      if (!completed) {
-        throw new ValidationError('Episode story autofill result could not be committed');
       }
       console.info('episode_story_autofill_completed', {
         jobId: job.id,

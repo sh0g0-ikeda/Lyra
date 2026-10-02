@@ -401,6 +401,10 @@ export class PageService implements PageServicePort {
     stateOptions?: EpisodeStateAutofillOptions,
   ): Promise<EpisodePagePlanApplyResult> {
     await executionControl?.checkpoint();
+    const storyAutofillJobId = executionControl?.jobId;
+    if (storyAutofillJobId !== undefined && this.episodePlanPersistence === undefined) {
+      throw new ConfigurationError('Episode story autofill atomic persistence is not configured');
+    }
     if (stateOptions !== undefined && (
       !this.episodePlanContinuityV3Enabled
       || this.episodePlanReliabilityOptions.inlineRepairEnabled !== true
@@ -557,13 +561,17 @@ export class PageService implements PageServicePort {
                 statePlanVersion: stateOptions.statePlanVersion,
                 stateAssignmentPolicy: stateOptions.stateAssignmentPolicy,
               };
-          if (stateOptions !== undefined) {
-            const completed = await resources.completeStoryAutofillJob!(
-              executionControl!.jobId!, userId, finalResult,
+          if (storyAutofillJobId !== undefined) {
+            if (resources.completeStoryAutofillJob === undefined) {
+              throw new ConfigurationError('Episode story autofill job finalizer is not configured');
+            }
+            const completed = await resources.completeStoryAutofillJob(
+              storyAutofillJobId, userId, finalResult,
             );
             if (!completed) {
-              throw new ConflictError('Episode state autofill job could not be completed atomically');
+              throw new ConflictError('Episode story autofill job could not be completed atomically');
             }
+            return { ...finalResult, jobCompletedAtomically: true };
           }
           return finalResult;
         },

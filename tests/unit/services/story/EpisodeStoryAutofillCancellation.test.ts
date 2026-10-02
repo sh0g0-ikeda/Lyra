@@ -102,6 +102,26 @@ class ControlledPageService implements PageServicePort {
 }
 
 describe('EpisodeStoryAutofillWorkerService cancellation', () => {
+  it('通常の話全体反映もPageService内でjobを完了しworkerから重複完了しない', async () => {
+    const repository = new FakeExecutionRepository();
+    const pageService = new ControlledPageService();
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(repository.completeCalls).toBe(0);
+  });
+
+  it('PageServiceが原子的job完了を証明しない場合は成功にしない', async () => {
+    const repository = new FakeExecutionRepository();
+    const pageService = new ControlledPageService();
+    pageService.result = { ...buildApplyResult(), jobCompletedAtomically: undefined };
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'failed' });
+    expect(repository.completeCalls).toBe(0);
+    expect(repository.failed).toBe(true);
+  });
+
   it('状態反映v1はページ保存transaction内でjobを完了しworkerから重複完了しない', async () => {
     const repository = new FakeExecutionRepository();
     repository.job.params = {
@@ -251,5 +271,6 @@ function buildApplyResult(): EpisodePagePlanApplyResult {
     compilerModel: 'test-model',
     compilerPromptVersion: 'test-version',
     compilerError: null,
+    jobCompletedAtomically: true,
   };
 }

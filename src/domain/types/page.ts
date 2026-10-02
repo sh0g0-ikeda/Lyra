@@ -293,6 +293,7 @@ export interface EpisodePagePlanApplyResult {
   compilerModel: string | null;
   compilerPromptVersion: string | null;
   compilerError: string | null;
+  jobCompletedAtomically?: boolean;
   stateTransitions?: EpisodeStateTransition[];
   statePlanVersion?: 'episode_state_plan_v1';
   stateAssignmentPolicy?: StateAssignmentPolicy;
