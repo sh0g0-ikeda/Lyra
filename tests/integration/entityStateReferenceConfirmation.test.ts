@@ -10,6 +10,7 @@ import { PostgresEntityStateReferenceRepository } from '../../src/repositories/E
 import { PostgresImageStorageReferenceRepository } from '../../src/repositories/ImageStorageReferenceRepository.js';
 import { AccountDeletionService } from '../../src/services/account/AccountDeletionService.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describePostgres = process.env.APP_ENV === 'test' && databaseUrl !== undefined ? describe : describe.skip;
@@ -97,8 +98,7 @@ describePostgres('entity state reference confirmation admission', () => {
       // into a safety assumption: local settlement and remote write are separate.
       expect(deletionResult.status).toBe('blocked');
       const replay = vi.fn(async () => {});
-      await expect(new PostgresEntityStateReferenceRepository(database).confirmReference(input, replay))
-        .rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(await rejectionOf(new PostgresEntityStateReferenceRepository(database).confirmReference(input, replay))).toMatchObject({ code: 'CONFLICT' });
       expect(replay).not.toHaveBeenCalled();
       expect(await intents(pool, input.jobId)).toBeDefined();
       releaseRemote.resolve();
@@ -111,8 +111,7 @@ describePostgres('entity state reference confirmation admission', () => {
         // this request has stopped writing. A fresh confirm must not clear it.
         await pool.query(`UPDATE generation_jobs SET created_at = '1900-01-01', completed_at = '1900-01-02',
           expires_at = '1900-01-03' WHERE id = $1`, [input.jobId]);
-        await expect(new PostgresEntityStateReferenceRepository(database).confirmReference(input, replay))
-          .rejects.toMatchObject({ code: 'CONFLICT' });
+        expect(await rejectionOf(new PostgresEntityStateReferenceRepository(database).confirmReference(input, replay))).toMatchObject({ code: 'CONFLICT' });
         expect(replay).not.toHaveBeenCalled();
         expect((await new PostgresAccountDeletionRepository(database, database).getFlight(input.userId))
           .activePersonalGenerationJobCount).toBeGreaterThan(0);
@@ -151,12 +150,10 @@ describePostgres('entity state reference confirmation admission', () => {
       },
     };
     const copy = vi.fn(async () => {});
-    await expect(new PostgresEntityStateReferenceRepository(failing).confirmReference(input, copy))
-      .rejects.toThrow('descriptor commit failed');
+    expect(await throwingRejectionOf(new PostgresEntityStateReferenceRepository(failing).confirmReference(input, copy))).toThrow('descriptor commit failed');
     expect(copy).toHaveBeenCalledOnce();
     const retry = vi.fn(async () => {});
-    await expect(new PostgresEntityStateReferenceRepository(database).confirmReference(input, retry))
-      .rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(new PostgresEntityStateReferenceRepository(database).confirmReference(input, retry))).toMatchObject({ code: 'CONFLICT' });
     expect(retry).not.toHaveBeenCalled();
     expect(await intents(pool, input.jobId)).toEqual([copyIntent(input, 'unresolved')]);
     expect((await claimDeletion(database, input.userId)).kind).toBe('blocked');
@@ -176,12 +173,10 @@ describePostgres('entity state reference confirmation admission', () => {
       },
     };
     const copy = vi.fn(async () => {});
-    await expect(new PostgresEntityStateReferenceRepository(uncertain).confirmReference(input, copy))
-      .rejects.toThrow('admission acknowledgement lost');
+    expect(await throwingRejectionOf(new PostgresEntityStateReferenceRepository(uncertain).confirmReference(input, copy))).toThrow('admission acknowledgement lost');
     expect(copy).not.toHaveBeenCalled();
     if (unavailable) {
-      await expect(new PostgresEntityStateReferenceRepository(database).confirmReference(input, copy))
-        .rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(await rejectionOf(new PostgresEntityStateReferenceRepository(database).confirmReference(input, copy))).toMatchObject({ code: 'CONFLICT' });
       expect(await intents(pool, input.jobId)).toEqual([copyIntent(input, 'unresolved')]);
       expect((await claimDeletion(database, input.userId)).kind).toBe('blocked');
     } else {
@@ -205,8 +200,7 @@ describePostgres('entity state reference confirmation admission', () => {
         base_ref_id: input.descriptor.baseRefId, image_model: input.descriptor.imageModel,
         created_at: input.descriptor.createdAt, input_fingerprint: input.descriptor.inputFingerprint })]);
     const copy = vi.fn(async () => {});
-    await expect(new PostgresEntityStateReferenceRepository(database).confirmReference(input, copy))
-      .rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(new PostgresEntityStateReferenceRepository(database).confirmReference(input, copy))).toMatchObject({ code: 'CONFLICT' });
     expect(copy).not.toHaveBeenCalled();
     expect((await claimDeletion(database, input.userId)).kind).toBe('blocked');
     expect(await intents(pool, input.jobId)).toEqual([legacy]);
@@ -249,8 +243,7 @@ describePostgres('entity state reference confirmation admission', () => {
       },
     };
     const copy = vi.fn(async () => {});
-    await expect(new PostgresEntityStateReferenceRepository(interleaved).confirmReference(input, copy))
-      .rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(new PostgresEntityStateReferenceRepository(interleaved).confirmReference(input, copy))).toMatchObject({ code: 'CONFLICT' });
     expect(copy).not.toHaveBeenCalled();
     expect(await intents(pool, input.jobId)).toEqual([
       { ...copyIntent(input, 'not_dispatched'), attempt_id: ownAttemptId },
@@ -263,8 +256,7 @@ describePostgres('entity state reference confirmation admission', () => {
     const input = await seed(pool);
     await claimDeletion(database, input.userId);
     const copy = vi.fn(async () => {});
-    await expect(new PostgresEntityStateReferenceRepository(database).confirmReference(input, copy))
-      .rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(new PostgresEntityStateReferenceRepository(database).confirmReference(input, copy))).toMatchObject({ code: 'CONFLICT' });
     expect(copy).not.toHaveBeenCalled();
     expect(await intents(pool, input.jobId)).toBeUndefined();
   });
@@ -294,8 +286,7 @@ describePostgres('entity state reference confirmation admission', () => {
     expect((await new PostgresAccountDeletionRepository(database, database).getFlight(input.userId)).personalAssetKeys)
       .toContain(input.descriptor.s3Key);
     const replayCopy = vi.fn(async () => {});
-    await expect(new PostgresEntityStateReferenceRepository(database).confirmReference(input, replayCopy))
-      .rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(new PostgresEntityStateReferenceRepository(database).confirmReference(input, replayCopy))).toMatchObject({ code: 'CONFLICT' });
     expect(replayCopy).not.toHaveBeenCalled();
   });
 
@@ -311,8 +302,7 @@ describePostgres('entity state reference confirmation admission', () => {
       },
     };
     const copy = vi.fn(async () => {});
-    await expect(new PostgresEntityStateReferenceRepository(interleaved).confirmReference(input, copy))
-      .resolves.toMatchObject({ referenceImage: input.descriptor });
+    expect(await (new PostgresEntityStateReferenceRepository(interleaved).confirmReference(input, copy))).toMatchObject({ referenceImage: input.descriptor });
     expect(copy).toHaveBeenCalledOnce();
     expect((await new PostgresAccountDeletionRepository(database, database).getFlight(input.userId))
       .activePersonalGenerationJobCount).toBe(0);
@@ -337,7 +327,7 @@ describePostgres('entity state reference confirmation admission', () => {
     const copy = vi.fn(async () => {
       if (failure === 'copy') throw new Error('copy failed after remote success');
     });
-    await expect(new PostgresEntityStateReferenceRepository(failing).confirmReference(input, copy)).rejects.toThrow('failed');
+    expect(await throwingRejectionOf(new PostgresEntityStateReferenceRepository(failing).confirmReference(input, copy))).toThrow('failed');
     expect(copy).toHaveBeenCalledOnce();
     expect(await intents(pool, input.jobId)).toEqual([copyIntent(input, failure === 'copy' ? 'unresolved' : 'succeeded')]);
     const persisted = (await pool.query('SELECT reference_image FROM entity_states WHERE id = $1', [input.stateId]))
@@ -352,7 +342,7 @@ describePostgres('entity state reference confirmation admission', () => {
     const retryCopy = vi.fn(async () => {});
     const repository = new PostgresEntityStateReferenceRepository(database);
     if (failure === 'copy') {
-      await expect(repository.confirmReference(input, retryCopy)).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(await rejectionOf(repository.confirmReference(input, retryCopy))).toMatchObject({ code: 'CONFLICT' });
       expect(await intents(pool, input.jobId)).toEqual([copyIntent(input, 'unresolved')]);
     } else {
       const confirmed = await repository.confirmReference(input, retryCopy);
@@ -376,8 +366,7 @@ describePostgres('entity state reference confirmation admission', () => {
       },
     };
     const copy = vi.fn(async () => {});
-    await expect(new PostgresEntityStateReferenceRepository(interleaved).confirmReference(input, copy))
-      .rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(new PostgresEntityStateReferenceRepository(interleaved).confirmReference(input, copy))).toMatchObject({ code: 'CONFLICT' });
     expect(copy).not.toHaveBeenCalled();
     expect(await intents(pool, input.jobId)).toEqual([copyIntent(input, 'not_dispatched')]);
     expect((await new PostgresAccountDeletionRepository(database, database).getFlight(input.userId))

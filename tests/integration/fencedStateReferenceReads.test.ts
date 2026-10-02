@@ -20,6 +20,7 @@ import { GenerationQuoteService } from '../../src/services/generation/Generation
 import { PostgresGenerationQuotePlanResolver } from '../../src/repositories/GenerationQuotePlanResolver.js';
 import { QuotedGenerationInputs } from '../../src/services/generation/QuotedGenerationInputs.js';
 import { LayoutGuideImageRenderer } from '../../src/services/page/LayoutGuideImageRenderer.js';
+import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
 
 const describePostgres = process.env.APP_ENV === 'test' && process.env.DATABASE_URL ? describe : describe.skip;
 const imageData = Buffer.from('89504e470d0a1a0a00000000', 'hex');
@@ -113,7 +114,7 @@ describePostgres('fenced state reference read and retention integration', () => 
     expect((await new PostgresEntityStateReferenceRepository(database).findContextByIdAndUserId(f.entityId,f.stateId,f.userId))?.referenceImage).toBeNull();
     const story=new PostgresStoryRepository(database,database); const states=[{entityId:f.entityId,stateId:f.stateId}];
     expect(await story.validateEpisodeStartingEntityStates(f.episodeId,f.userId,states)).toBe(false);
-    await expect(story.updateEpisode(f.episodeId,f.userId,{startingEntityStates:states})).rejects.toMatchObject({code:'CONFLICT'});
+    expect(await rejectionOf(story.updateEpisode(f.episodeId,f.userId,{startingEntityStates:states}))).toMatchObject({code:'CONFLICT'});
     await setDescriptor(f,null);
     await journal.authorizeDispatch(attempt);
     await journal.confirmObservedImage(attempt,{kind:'image',...receiptIdentity(attempt),digest:source.digest,mimeType:source.mimeType,sizeBytes:source.sizeBytes});
@@ -126,7 +127,7 @@ describePostgres('fenced state reference read and retention integration', () => 
     expect((await new PostgresPageRepository(database).findEpisodePlanningContextByIdAndUserId(f.episodeId,f.userId))?.stateLibrary?.[0]).toMatchObject({referenceReady:true});
     expect((await new PostgresSceneRepository(database).updateEntityState(f.entityId,f.stateId,f.userId,{}))?.referenceImage).toEqual(toPersistedDescriptor(attempt.input.descriptor));
     expect(await story.validateEpisodeStartingEntityStates(f.episodeId,f.userId,states)).toBe(true);
-    await expect(story.updateEpisode(f.episodeId,f.userId,{startingEntityStates:states})).resolves.toMatchObject({startingEntityStates:states});
+    expect(await (story.updateEpisode(f.episodeId,f.userId,{startingEntityStates:states}))).toMatchObject({startingEntityStates:states});
     await setDescriptor(f,{...toPersistedDescriptor(attempt.input.descriptor),image_model:'different-model'});
     expect((await resolved(f))?.s3Key).toBeNull();
   });
@@ -169,7 +170,7 @@ describePostgres('fenced state reference read and retention integration', () => 
     expect(result.prompt.draftPrompt).not.toContain('Unapproved replacement');
     expect(loads).toEqual([attempt.intent.s3Key]);
     bytes=Buffer.from('different image');
-    await expect(inputs.page(job)).rejects.toMatchObject({code:'CONFIGURATION_ERROR'});
+    expect(await rejectionOf(inputs.page(job))).toMatchObject({code:'CONFIGURATION_ERROR'});
   });
 
   it('denies accepted quote reads after fencing before attempting storage', async () => {
@@ -187,7 +188,7 @@ describePostgres('fenced state reference read and retention integration', () => 
         return result;
       }};
     let reads=0;
-    await expect(new QuotedGenerationInputs(raceDatabase,'gpt-image-2',{loadByS3Key:async()=>{reads++;return {imageData,mimeType:'image/png'};}},new LayoutGuideImageRenderer()).page(job)).rejects.toThrow('Quoted state reference is no longer confirmed');
+    expect(await throwingRejectionOf(new QuotedGenerationInputs(raceDatabase,'gpt-image-2',{loadByS3Key:async()=>{reads++;return {imageData,mimeType:'image/png'};}},new LayoutGuideImageRenderer()).page(job))).toThrow('Quoted state reference is no longer confirmed');
     expect(await readKey(f,attempt.intent.s3Key)).toBeNull();
     expect((await resolved(f))?.s3Key).toBeNull();
     if(fence===null) throw new Error('Expected fencing race');
@@ -209,7 +210,7 @@ describePostgres('fenced state reference read and retention integration', () => 
     expect((await inputs.page(job)).inputImages.some(image=>image.role==='entity_reference')).toBe(true);
     await pool.query("UPDATE organization_members SET status='removed' WHERE organization_id=$1 AND user_id=$2",[f.organizationId,member]);
     expect(await readKey(f,attempt.intent.s3Key,member)).toBeNull();
-    await expect(inputs.page(job)).rejects.toMatchObject({code:'NOT_FOUND'});
+    expect(await rejectionOf(inputs.page(job))).toMatchObject({code:'NOT_FOUND'});
   });
 
   it('retains journal image/marker keys and jobs beyond TTL until terminal ownership scrub', async () => {

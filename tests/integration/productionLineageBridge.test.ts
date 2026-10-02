@@ -9,6 +9,7 @@ import { createAccountDeletionIdentityKey } from '../../src/domain/accountDeleti
 import { checkDeploymentDataInvariants } from '../../scripts/checkDeploymentDataInvariants.js';
 import { checkMigrationLineage } from '../../scripts/checkMigrationLineage.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { throwingRejectionOf } from './asyncPostgresAssertions.js';
 const describePostgres = process.env.APP_ENV === 'test' && process.env.DATABASE_URL ? describe : describe.skip;
 const secret = 'synthetic-lineage-identity-hash-key-only-for-tests';
 const currentDir = join(process.cwd(), 'migrations');
@@ -110,15 +111,15 @@ describePostgres('forward-only production lineage bridge', () => {
         expect((await pool.query('SELECT purchased_credits FROM credit_balances WHERE user_id=$1', [ids.userId])).rows[0]?.purchased_credits).toBe(777);
         expect((await pool.query('SELECT layout_config FROM pages WHERE id=$1', [ids.pageId])).rows[0]?.layout_config).toMatchObject({ story_source_scene_ids: [], story_page_purpose: null, story_continuity_note: 'current continuity', other: 'keep' });
         expect((await pool.query('SELECT COUNT(*)::int AS count FROM account_deletion_requests')).rows[0]?.count).toBe(0);
-        await expect(upgrade(db)).resolves.toEqual([]);
+        expect(await (upgrade(db))).toEqual([]);
     }, 120000);
     it('明示quiescenceなし・secretなし・active jobでは変更前に停止する', async () => {
         const { pool, db } = await database();
         const ids = await seed(pool);
-        await expect(runPendingMigrations(db, { accountDeletionIdentityHashSecret: secret })).rejects.toThrow();
-        await expect(runPendingMigrations(db, { allowProductionLineageBridge: true })).rejects.toThrow();
+        expect(await throwingRejectionOf(runPendingMigrations(db, { accountDeletionIdentityHashSecret: secret }))).toThrow();
+        expect(await throwingRejectionOf(runPendingMigrations(db, { allowProductionLineageBridge: true }))).toThrow();
         await pool.query(`UPDATE generation_jobs SET status='queued',completed_at=NULL WHERE id=$1`, [ids.jobId]);
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
         expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toMatchObject({ old: 'export_jobs', candidate: null });
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1', [PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
     }, 120000);
@@ -127,23 +128,23 @@ describePostgres('forward-only production lineage bridge', () => {
         const ids = await seed(pool);
         await pool.query('CREATE TABLE episode_export_jobs (id uuid PRIMARY KEY)');
         expect((await inspectMigrationLineage(db, { migrationsDir: currentDir, accountDeletionIdentityHashSecret: secret })).blockers.length).toBeGreaterThan(0);
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
         await pool.query('DROP TABLE episode_export_jobs');
         await pool.query(`UPDATE mobile_push_tokens SET token_hash=$2 WHERE user_id=$1`, [ids.userId, 'Z'.repeat(64)]);
         const report = await inspectMigrationLineage(db, { migrationsDir: currentDir, accountDeletionIdentityHashSecret: secret });
         expect(report.blockers.length).toBeGreaterThan(0);
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
         expect((await pool.query("SELECT to_regclass(format('%I.%I', current_schema(), 'export_jobs')) AS old")).rows[0]?.old).toBe('export_jobs');
     }, 120000);
     it('prepass途中失敗はrename・schema・migration receiptを全てrollbackする', async () => {
         const { pool, db } = await database();
         await seed(pool,false);
         const failing = adapter(pool, PRODUCTION_BRIDGE_FILENAME);
-        await expect(upgrade(failing)).rejects.toThrow('Injected bridge checkpoint failure');
+        expect(await throwingRejectionOf(upgrade(failing))).toThrow('Injected bridge checkpoint failure');
         expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toMatchObject({ old: 'export_jobs', candidate: null });
         expect((await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema=CURRENT_SCHEMA() AND table_name='account_deletion_requests' AND column_name='identity_key'")).rows).toEqual([]);
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1', [PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
-        await expect(upgrade(db)).resolves.toContain(PRODUCTION_BRIDGE_FILENAME);
+        expect(await (upgrade(db))).toContain(PRODUCTION_BRIDGE_FILENAME);
     }, 120000);
     it('既知legacy alias名を消さずcanonical receiptを追加して移行する', async () => {
         const { pool, db } = await database();
@@ -179,7 +180,7 @@ describePostgres('forward-only production lineage bridge', () => {
         await pool.query(`UPDATE generation_jobs SET status='cancelled',cancelled_at=completed_at WHERE id=$1`, [ids.jobId]);
         const report = await inspectMigrationLineage(db, { accountDeletionIdentityHashSecret: secret });
         expect(report.blockers).toContain('LEGACY_ROWS_VIOLATE_GENERATION_JOBS_CANCELLATION_STATE_CHECK');
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
         expect((await pool.query('SELECT cancel_requested_by FROM generation_jobs WHERE id=$1', [ids.jobId])).rows[0]?.cancel_requested_by).toBeNull();
     }, 120000);
     it('未追跡candidate列・不足履歴・未知履歴を変更前に拒否する', async () => {
@@ -187,34 +188,34 @@ describePostgres('forward-only production lineage bridge', () => {
         await seed(pool);
         await pool.query('ALTER TABLE mobile_push_notification_outbox ADD COLUMN generation_retry_count INTEGER');
         expect((await inspectMigrationLineage(db, { accountDeletionIdentityHashSecret: secret })).blockers).toContain('UNTRACKED_CANDIDATE_SCHEMA');
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
         await pool.query('ALTER TABLE mobile_push_notification_outbox DROP COLUMN generation_retry_count');
         await pool.query("DELETE FROM schema_migrations WHERE filename='019_add_organization_workspaces.sql'");
         expect((await inspectMigrationLineage(db, { accountDeletionIdentityHashSecret: secret })).blockers).toContain('INCOMPLETE_PRODUCTION_HISTORY');
         await pool.query("INSERT INTO schema_migrations(filename) VALUES('019_add_organization_workspaces.sql'),('099_unrecognized.sql')");
         expect((await inspectMigrationLineage(db, { accountDeletionIdentityHashSecret: secret })).blockers).toContain('UNKNOWN_MIGRATION_HISTORY');
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
     }, 120000);
     it('既存primary key欠落を静かに補修せず停止する', async () => {
         const { pool, db } = await database();
         await seed(pool);
         await pool.query('ALTER TABLE mobile_push_notification_deliveries DROP CONSTRAINT mobile_push_notification_deliveries_pkey');
         expect((await inspectMigrationLineage(db, { accountDeletionIdentityHashSecret: secret })).blockers).toContain('UNSUPPORTED_PRIMARY_KEYS');
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
     }, 120000);
     it('後続migration失敗後も元履歴を保ちquiescence確認付きで再開する', async () => {
         const { pool, db } = await database();
         const ids = await seed(pool,false);
-        await expect(upgrade(adapter(pool, '036_add_episode_export_processing_lease.sql'))).rejects.toThrow('Injected bridge checkpoint failure');
+        expect(await throwingRejectionOf(upgrade(adapter(pool, '036_add_episode_export_processing_lease.sql')))).toThrow('Injected bridge checkpoint failure');
         expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toMatchObject({ old: null, candidate: 'episode_export_jobs' });
         const report = await inspectMigrationLineage(db, { accountDeletionIdentityHashSecret: secret });
         expect(report.lineage).toBe('production_bridged');
         expect(report.continuationRequiresQuiescence).toBe(true);
         expect(report.blockers).toEqual([]);
-        await expect(runPendingMigrations(db, { accountDeletionIdentityHashSecret: secret })).rejects.toThrow('quiescence');
+        expect(await throwingRejectionOf(runPendingMigrations(db, { accountDeletionIdentityHashSecret: secret }))).toThrow('quiescence');
         await upgrade(db);
         expect((await pool.query('SELECT id FROM episode_export_jobs WHERE id=$1', [ids.exportId])).rows).toHaveLength(1);
-        await expect(upgrade(db)).resolves.toEqual([]);
+        expect(await (upgrade(db))).toEqual([]);
     }, 120000);
     it('同名でも異なるunique indexとforeign key欠落を拒否する', async () => {
         const { pool, db } = await database();
@@ -222,7 +223,7 @@ describePostgres('forward-only production lineage bridge', () => {
         await pool.query('DROP INDEX idx_export_jobs_idempotency_scope');
         await pool.query('CREATE UNIQUE INDEX idx_export_jobs_idempotency_scope ON export_jobs(id)');
         expect((await inspectMigrationLineage(db, { accountDeletionIdentityHashSecret: secret })).blockers).toContain('UNSUPPORTED_UNIQUE_INDEXES');
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
         await pool.query('ALTER TABLE export_job_outbox DROP CONSTRAINT export_job_outbox_export_job_id_fkey');
         expect((await inspectMigrationLineage(db, { accountDeletionIdentityHashSecret: secret })).blockers).toContain('UNSUPPORTED_FOREIGN_KEYS');
     }, 120000);
@@ -233,7 +234,7 @@ describePostgres('forward-only production lineage bridge', () => {
         const original = createAccountDeletionIdentityKey('different-synthetic-only-existing-key', ids.identityId);
         await pool.query('UPDATE account_deletion_requests SET identity_key=$2 WHERE user_id=$1', [ids.deletedUserId, original]);
         expect((await checkMigrationLineage(db, { accountDeletionIdentityHashSecret: secret })).blockers).toContain('EXISTING_IDENTITY_KEY_MISMATCH');
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
         expect((await pool.query('SELECT identity_key FROM account_deletion_requests WHERE user_id=$1', [ids.deletedUserId])).rows[0]?.identity_key).toBe(original);
     }, 120000);
     it('active export・push lease・account deletionが残る場合は集計だけで停止する', async () => {
@@ -245,14 +246,14 @@ describePostgres('forward-only production lineage bridge', () => {
         const report = await checkMigrationLineage(db, { accountDeletionIdentityHashSecret: secret });
         expect(report.counts).toMatchObject({ active_export_jobs: 1, active_push_deliveries: 1, active_account_deletions: 1 });
         expect(report.blockers).toContain('ACTIVE_WORK_REQUIRES_QUIESCENCE');
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
     }, 120000);
     it('元identity証拠がない削除済みaccountのtombstoneを捏造しない', async () => {
         const { pool, db } = await database();
         const ids = await seed(pool);
         await pool.query('DELETE FROM account_deletion_requests WHERE user_id=$1', [ids.deletedUserId]);
         expect((await checkMigrationLineage(db, { accountDeletionIdentityHashSecret: secret })).blockers).toContain('INVALID_MISSING_DELETION_IDENTITY_RECORD');
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
     }, 120000);
     it('欠落していた正規化列は検証済みlayout値から一度だけ補い他keyを維持する', async () => {
         const { pool, db } = await database();
@@ -269,7 +270,7 @@ describePostgres('forward-only production lineage bridge', () => {
         await seed(pool);
         await pool.query('ALTER TABLE entity_reference_upload_tokens ALTER COLUMN s3_key DROP NOT NULL');
         expect((await checkMigrationLineage(db, { accountDeletionIdentityHashSecret: secret })).blockers).toContain('UNSUPPORTED_NULLABILITY');
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
     }, 120000);
     it('大文字小文字だけ異なるactive email重複を集計だけで拒否する', async () => {
         const { pool, db } = await database();
@@ -284,7 +285,7 @@ describePostgres('forward-only production lineage bridge', () => {
         expect(JSON.stringify(report)).not.toContain(secondEmail);
         expect(JSON.stringify(report)).not.toContain(firstId);
         expect(JSON.stringify(report)).not.toContain(secondId);
-        await expect(upgrade(db)).rejects.toThrow('DUPLICATE_NORMALIZED_ACTIVE_EMAIL');
+        expect(await throwingRejectionOf(upgrade(db))).toThrow('DUPLICATE_NORMALIZED_ACTIVE_EMAIL');
         expect((await pool.query('SELECT id,email FROM users WHERE id=ANY($1::uuid[]) ORDER BY email', [[firstId, secondId]])).rows).toEqual([{ id: firstId, email: firstEmail }, { id: secondId, email: secondEmail }]);
         expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toEqual({ old: 'export_jobs', candidate: null });
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1', [PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
@@ -295,7 +296,7 @@ describePostgres('forward-only production lineage bridge', () => {
         await pool.query('ALTER TABLE users RENAME COLUMN email TO old_email');
         const report = await checkMigrationLineage(db, { accountDeletionIdentityHashSecret: secret });
         expect(report.blockers).toContain('UNSUPPORTED_REQUIRED_COLUMNS');
-        await expect(upgrade(db)).rejects.toThrow();
+        expect(await throwingRejectionOf(upgrade(db))).toThrow();
     }, 120000);
     it('確定済み削除recordにより無効化されるemailはactive重複に数えない', async () => {
         const { pool, db } = await database();
@@ -305,7 +306,7 @@ describePostgres('forward-only production lineage bridge', () => {
         const report = await checkMigrationLineage(db, { accountDeletionIdentityHashSecret: secret });
         expect(report.counts.duplicate_normalized_active_email_groups).toBe(0);
         expect(report.blockers).toContain('INVALID_LEGACY_COMPLETED_DELETION_UNSCRUBBED');
-        await expect(upgrade(db)).rejects.toThrow('LEGACY_COMPLETED_DELETION_UNSCRUBBED');
+        expect(await throwingRejectionOf(upgrade(db))).toThrow('LEGACY_COMPLETED_DELETION_UNSCRUBBED');
     }, 120000);
     it('legacy pending削除は保存されたacknowledgement証拠なしに新workerへ引き継がない', async () => {
         const { pool, db } = await database();
@@ -315,7 +316,7 @@ describePostgres('forward-only production lineage bridge', () => {
         const report = await checkMigrationLineage(db, { accountDeletionIdentityHashSecret: secret });
         expect(report.counts.legacy_pending_deletion_requests).toBe(1);
         expect(report.blockers).toContain('INVALID_LEGACY_PENDING_DELETION_REQUESTS');
-        await expect(upgrade(db)).rejects.toThrow('LEGACY_PENDING_DELETION_REQUESTS');
+        expect(await throwingRejectionOf(upgrade(db))).toThrow('LEGACY_PENDING_DELETION_REQUESTS');
         expect((await pool.query('SELECT to_jsonb(r) AS row FROM account_deletion_requests r WHERE user_id=$1', [ids.deletedUserId])).rows[0]?.row).toEqual(before);
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1', [PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
     }, 120000);
@@ -329,7 +330,7 @@ describePostgres('forward-only production lineage bridge', () => {
         expect(report.counts.legacy_scheduled_asset_records).toBe(1);
         expect(report.blockers).toContain('INVALID_LEGACY_SCHEDULED_ASSET_RECORDS');
         expect(JSON.stringify(report)).not.toContain(historicalKey);
-        await expect(upgrade(db)).rejects.toThrow('LEGACY_SCHEDULED_ASSET_RECORDS');
+        expect(await throwingRejectionOf(upgrade(db))).toThrow('LEGACY_SCHEDULED_ASSET_RECORDS');
         expect((await pool.query('SELECT to_jsonb(r) AS row FROM account_deletion_requests r WHERE user_id=$1', [ids.deletedUserId])).rows[0]?.row).toEqual(before);
         expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toEqual({ old: 'export_jobs', candidate: null });
     }, 120000);
@@ -346,7 +347,7 @@ describePostgres('forward-only production lineage bridge', () => {
         expect(report.counts.legacy_completed_deletion_unscrubbed).toBe(1);
         expect(report.blockers).toContain('INVALID_LEGACY_COMPLETED_DELETION_UNSCRUBBED');
         expect(JSON.stringify(report)).not.toContain(ids.identityId);
-        await expect(upgrade(db)).rejects.toThrow('LEGACY_COMPLETED_DELETION_UNSCRUBBED');
+        expect(await throwingRejectionOf(upgrade(db))).toThrow('LEGACY_COMPLETED_DELETION_UNSCRUBBED');
         expect((await pool.query('SELECT to_jsonb(r) AS row FROM account_deletion_requests r WHERE user_id=$1',[ids.deletedUserId])).rows[0]?.row).toEqual(before);
         expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toEqual({old:'export_jobs',candidate:null});
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1',[PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
@@ -358,7 +359,7 @@ describePostgres('forward-only production lineage bridge', () => {
         const report=await checkMigrationLineage(db,{accountDeletionIdentityHashSecret:secret});
         expect(report.counts.invalid_pending_push_terminal_snapshots).toBe(1);
         expect(report.blockers).toContain('INVALID_PENDING_PUSH_TERMINAL_SNAPSHOTS');
-        await expect(upgrade(db)).rejects.toThrow('PENDING_PUSH_TERMINAL_SNAPSHOTS');
+        expect(await throwingRejectionOf(upgrade(db))).toThrow('PENDING_PUSH_TERMINAL_SNAPSHOTS');
         expect((await pool.query('SELECT to_jsonb(d) AS row FROM mobile_push_notification_deliveries d')).rows).toEqual(before);
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1',[PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
     },120_000);
@@ -374,7 +375,7 @@ describePostgres('forward-only production lineage bridge', () => {
         expect(applied).toContain(PRODUCTION_BRIDGE_FILENAME);
         expect(applied.at(-1)).toBe('047_add_state_reference_copy_attempts.sql');
         expect((await checkDeploymentDataInvariants(db)).violations).toEqual([]);
-        await expect(runPendingMigrations(db)).resolves.toEqual([]);
+        expect(await (runPendingMigrations(db))).toEqual([]);
     }, 120000);
 });
 function adapter(pool: Pool, fail: string | null = null): DatabaseClient & TransactionRunner {

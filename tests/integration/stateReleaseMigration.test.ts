@@ -8,6 +8,7 @@ import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { checkStateReleasePreflight } from '../../scripts/checkStateReleasePreflight.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { rejectionOf } from './asyncPostgresAssertions.js';
 
 const describePostgres = process.env.APP_ENV === 'test' && process.env.DATABASE_URL !== undefined
   ? describe : describe.skip;
@@ -77,7 +78,7 @@ describePostgres('state release migration rehearsal', () => {
       try {
         await blocker.query('BEGIN');
         await blocker.query('LOCK TABLE entity_states IN ACCESS SHARE MODE');
-        await expect(runPendingMigrations(new TestDatabase(boundedPool), { migrationsDir: stateDir })).rejects.toMatchObject({ code: '55P03' });
+        expect(await rejectionOf(runPendingMigrations(new TestDatabase(boundedPool), { migrationsDir: stateDir }))).toMatchObject({ code: '55P03' });
       } finally {
         await blocker.query('ROLLBACK');
         blocker.release();
@@ -98,7 +99,7 @@ describePostgres('state release migration rehearsal', () => {
       await pool.query(`UPDATE episodes SET starting_entity_states = '[{"entity_id":"${entityId}","state_id":null}]'::jsonb WHERE "order" = 1`);
       await pool.query(`UPDATE episodes SET title = 'old writer' WHERE "order" = 1`);
       expect((await pool.query(`SELECT starting_entity_states FROM episodes WHERE "order" = 1`)).rows[0]?.starting_entity_states).toHaveLength(1);
-      await expect(pool.query(`INSERT INTO entity_states (entity_id, name, description) VALUES ($1, '', 'invalid')`, [entityId])).rejects.toMatchObject({ code: '23514' });
+      expect(await rejectionOf(pool.query(`INSERT INTO entity_states (entity_id, name, description) VALUES ($1, '', 'invalid')`, [entityId]))).toMatchObject({ code: '23514' });
       });
     } finally {
       await pool.end();

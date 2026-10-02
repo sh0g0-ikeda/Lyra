@@ -7,6 +7,7 @@ import {TransactionalUserProvisioningService} from '../../src/services/auth/Tran
 import type {ProvisionedUser} from '../../src/services/auth/UserProvisioningService.js';
 import {auditIdentitySubjects} from '../../src/services/auth/IdentitySubjectAudit.js';
 import {withPostgresTestMigrationLock} from './postgresTestMigrationLock.js';
+import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
 const dbDescribe=process.env.APP_ENV==='test'&&process.env.DATABASE_URL?describe:describe.skip;
 dbDescribe('atomic subject-based user provisioning',()=>{
  let admin:Pool,pool:Pool,database:DatabaseClient&TransactionRunner;
@@ -48,9 +49,8 @@ dbDescribe('atomic subject-based user provisioning',()=>{
     committed.push(await service.provisionFromSupabaseClaims({ sub: otherSub, email }));
    });
 
-   await expect(new TransactionalUserProvisioningService(interleaved)
-    .provisionFromSupabaseClaims({ sub, email: email.toUpperCase(), identityProvider }))
-    .rejects.toMatchObject({ code: 'ACCOUNT_LINK_REQUIRED', statusCode: 409 });
+   expect(await rejectionOf(new TransactionalUserProvisioningService(interleaved)
+    .provisionFromSupabaseClaims({ sub, email: email.toUpperCase(), identityProvider }))).toMatchObject({ code: 'ACCOUNT_LINK_REQUIRED', statusCode: 409 });
 
    expect(committed).toHaveLength(1);
    expect(committed[0].isNewUser).toBe(true);
@@ -58,8 +58,8 @@ dbDescribe('atomic subject-based user provisioning',()=>{
    expect((await database.query('SELECT id FROM users WHERE supabase_id = $1', [sub])).rows).toEqual([]);
   },
  );
- it('a signup ledger failure rolls back the new user instead of permanently losing the bonus',async()=>{const sub=randomUUID(),email=`${sub}@example.invalid`;const failing:DatabaseClient&TransactionRunner={query:database.query,transaction:async(fn)=>database.transaction(async(client)=>fn({query:async(sql,args)=>{if(sql.includes('INSERT INTO credit_ledger'))throw new Error('Injected ledger failure');return client.query(sql,args);}}))};await expect(new TransactionalUserProvisioningService(failing).provisionFromSupabaseClaims({sub,email})).rejects.toThrow('Injected ledger failure');expect((await pool.query('SELECT count(*)::int n FROM users WHERE supabase_id=$1',[sub])).rows[0].n).toBe(0);const retried=await new TransactionalUserProvisioningService(database).provisionFromSupabaseClaims({sub,email});expect(retried.isNewUser).toBe(true);expect((await pool.query('SELECT purchased_credits FROM credit_balances WHERE user_id=$1',[retried.user.id])).rows[0].purchased_credits).toBe(30);});
- it('native and federated email collisions never rewrite an existing subject or create a second bonus',async()=>{const native=randomUUID(),email=`${native}@example.invalid`;const service=new TransactionalUserProvisioningService(database);const first=await service.provisionFromSupabaseClaims({sub:native,email});for(const claims of [{sub:randomUUID(),email},{sub:randomUUID(),email,identityProvider:'federated' as const}])await expect(service.provisionFromSupabaseClaims(claims)).rejects.toMatchObject({code:'ACCOUNT_LINK_REQUIRED'});expect((await pool.query('SELECT supabase_id FROM users WHERE id=$1',[first.user.id])).rows[0].supabase_id).toBe(native);expect((await pool.query("SELECT count(*)::int n FROM credit_ledger WHERE user_id=$1 AND type='signup_bonus'",[first.user.id])).rows[0].n).toBe(1);});
+ it('a signup ledger failure rolls back the new user instead of permanently losing the bonus',async()=>{const sub=randomUUID(),email=`${sub}@example.invalid`;const failing:DatabaseClient&TransactionRunner={query:database.query,transaction:async(fn)=>database.transaction(async(client)=>fn({query:async(sql,args)=>{if(sql.includes('INSERT INTO credit_ledger'))throw new Error('Injected ledger failure');return client.query(sql,args);}}))};expect(await throwingRejectionOf(new TransactionalUserProvisioningService(failing).provisionFromSupabaseClaims({sub,email}))).toThrow('Injected ledger failure');expect((await pool.query('SELECT count(*)::int n FROM users WHERE supabase_id=$1',[sub])).rows[0].n).toBe(0);const retried=await new TransactionalUserProvisioningService(database).provisionFromSupabaseClaims({sub,email});expect(retried.isNewUser).toBe(true);expect((await pool.query('SELECT purchased_credits FROM credit_balances WHERE user_id=$1',[retried.user.id])).rows[0].purchased_credits).toBe(30);});
+ it('native and federated email collisions never rewrite an existing subject or create a second bonus',async()=>{const native=randomUUID(),email=`${native}@example.invalid`;const service=new TransactionalUserProvisioningService(database);const first=await service.provisionFromSupabaseClaims({sub:native,email});for(const claims of [{sub:randomUUID(),email},{sub:randomUUID(),email,identityProvider:'federated' as const}])expect(await rejectionOf(service.provisionFromSupabaseClaims(claims))).toMatchObject({code:'ACCOUNT_LINK_REQUIRED'});expect((await pool.query('SELECT supabase_id FROM users WHERE id=$1',[first.user.id])).rows[0].supabase_id).toBe(native);expect((await pool.query("SELECT count(*)::int n FROM credit_ledger WHERE user_id=$1 AND type='signup_bonus'",[first.user.id])).rows[0].n).toBe(1);});
 
  it('subject audit uses a real read-only transaction and never remaps matching email',async()=>{
   const rows=(await pool.query<{supabase_id:string;email:string}>('SELECT supabase_id,email FROM users ORDER BY id')).rows;

@@ -16,6 +16,7 @@ import {ModeSelector} from '../../src/services/page/ModeSelector.js';
 import {PageAtomicGenerationService} from '../../src/services/page/PageAtomicGenerationService.js';
 import type {SaveAndGeneratePageInput} from '../../src/services/page/PageSaveAndGenerate.js';
 import {PostgresGenerationQuotePlanResolver} from '../../src/repositories/GenerationQuotePlanResolver.js';
+import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
 
 const run=process.env.APP_ENV==='test' && process.env.DATABASE_URL ? describe : describe.skip;
 run('legacy atomic save-and-generate compatibility',()=>{
@@ -48,21 +49,21 @@ run('legacy atomic save-and-generate compatibility',()=>{
   expect(job.result.input_snapshot).toMatchObject({renderStyle:'monochrome',panelCount:1});
   const snapshot=(await pool.query('SELECT plan FROM generation_quotes WHERE id=$1',[job.params.quote_id])).rows[0].plan.snapshot;
   expect(snapshot.prompt.draftPrompt).toContain('approved saved scene');
-  await expect(instance.saveAndGenerate(ids.userId,ids.pageId,{...ids.input,page:{storyPagePurpose:'different'}})).rejects.toMatchObject({code:'CONFLICT'});
+  expect(await rejectionOf(instance.saveAndGenerate(ids.userId,ids.pageId,{...ids.input,page:{storyPagePurpose:'different'}}))).toMatchObject({code:'CONFLICT'});
   expect((await state(ids)).debits).toBe(1);
  });
  it.each(['UPDATE panels','INSERT INTO panel_frames','INSERT INTO generation_jobs','INSERT INTO credit_ledger','SET accepted_job_id','SET params=params ||'])('%s失敗ならdraft・job・charge・receiptをまとめてrollbackする',async(failSql)=>{
-  const ids=await fixture();await expect(service(failSql).saveAndGenerate(ids.userId,ids.pageId,ids.input)).rejects.toThrow('Injected atomic failure');expect(await state(ids)).toMatchObject({status:'editing',scene:'before',credits:30,jobs:0,debits:0});
+  const ids=await fixture();expect(await throwingRejectionOf(service(failSql).saveAndGenerate(ids.userId,ids.pageId,ids.input))).toThrow('Injected atomic failure');expect(await state(ids)).toMatchObject({status:'editing',scene:'before',credits:30,jobs:0,debits:0});
   expect((await pool.query('SELECT id FROM generation_quotes WHERE user_id=$1',[ids.userId])).rows).toEqual([]);
  });
  it('stale・残高不足・foreign・不一致panelは書込前またはrollbackで拒否する',async()=>{
   const ids=await fixture();const instance=service();
-  await expect(instance.saveAndGenerate(ids.userId,ids.pageId,{...ids.input,expectedUpdatedAt:'2000-01-01T00:00:00Z'})).rejects.toMatchObject({code:'PAGE_STALE'});
-  await expect(instance.saveAndGenerate(randomUUID(),ids.pageId,ids.input)).rejects.toMatchObject({code:'NOT_FOUND'});
-  await expect(instance.saveAndGenerate(ids.userId,ids.pageId,ids.input,randomUUID())).rejects.toBeDefined();
-  await expect(instance.saveAndGenerate(ids.userId,ids.pageId,{...ids.input,panels:[{...ids.input.panels[0]!,id:randomUUID()}]})).rejects.toMatchObject({code:'VALIDATION_ERROR'});
+  expect(await rejectionOf(instance.saveAndGenerate(ids.userId,ids.pageId,{...ids.input,expectedUpdatedAt:'2000-01-01T00:00:00Z'}))).toMatchObject({code:'PAGE_STALE'});
+  expect(await rejectionOf(instance.saveAndGenerate(randomUUID(),ids.pageId,ids.input))).toMatchObject({code:'NOT_FOUND'});
+  expect(await rejectionOf(instance.saveAndGenerate(ids.userId,ids.pageId,ids.input,randomUUID()))).toBeDefined();
+  expect(await rejectionOf(instance.saveAndGenerate(ids.userId,ids.pageId,{...ids.input,panels:[{...ids.input.panels[0]!,id:randomUUID()}]}))).toMatchObject({code:'VALIDATION_ERROR'});
   await pool.query('UPDATE credit_balances SET purchased_credits=2 WHERE user_id=$1',[ids.userId]);
-  await expect(instance.saveAndGenerate(ids.userId,ids.pageId,ids.input)).rejects.toMatchObject({code:'INSUFFICIENT_CREDITS'});
+  expect(await rejectionOf(instance.saveAndGenerate(ids.userId,ids.pageId,ids.input))).toMatchObject({code:'INSUFFICIENT_CREDITS'});
   expect(await state(ids)).toMatchObject({status:'editing',scene:'before',credits:2,jobs:0,debits:0});
  });
  it('queue結果不明は確定済みreceiptを返し同key再送でも二重chargeしない',async()=>{
@@ -80,7 +81,7 @@ run('legacy atomic save-and-generate compatibility',()=>{
   expect(blocked.blockers.map(blocker=>blocker.code)).toContain('DIALOGUE_SPEAKER_REQUIRED');
   expect(await state(ids)).toMatchObject({credits:2,jobs:0,debits:0});
   expect((await pool.query('SELECT id FROM generation_quotes WHERE user_id=$1',[ids.userId])).rows).toEqual([]);
-  await expect(instance.getGenerationReadiness(randomUUID(),ids.pageId)).rejects.toMatchObject({code:'NOT_FOUND'});
+  expect(await rejectionOf(instance.getGenerationReadiness(randomUUID(),ids.pageId))).toMatchObject({code:'NOT_FOUND'});
  });
 
  it('canonical base/旧note状態は重複せず確定variantのみ追加参照として保存課金する',async()=>{
@@ -99,7 +100,7 @@ run('legacy atomic save-and-generate compatibility',()=>{
   }
   const assignment=(entityId:string,stateId:string|null)=>({entityId,stateId,role:'primary' as const,expression:'calm' as const,customExpression:null,action:'standing_firm' as const,customAction:null,position:'center' as const,facingDirection:null,effectNote:null});
   ids.input.panels[0]!.entities=entityIds.map(id=>assignment(id,null));ids.input.panels[1]!.entities=[assignment(entityId,legacyId)];ids.input.panels[2]!.entities=[assignment(entityId,variantId)];
-  await expect(service().saveAndGenerate(ids.userId,ids.pageId,ids.input)).rejects.toMatchObject({code:'VALIDATION_ERROR'});
+  expect(await rejectionOf(service().saveAndGenerate(ids.userId,ids.pageId,ids.input))).toMatchObject({code:'VALIDATION_ERROR'});
   expect(await state(ids)).toMatchObject({scene:'before',credits:30,jobs:0,debits:0});
   const image={ref_id:'injured-image',s3_key:`saved/${ids.userId}/entities/${entityId}/states/${variantId}/injured-image.png`,storage_owner_user_id:ids.userId,image_model:'gpt-image-2',base_ref_id:'base',created_at:'2026-01-01T00:00:00Z',input_fingerprint:computeStateReferenceFingerprint({entityId,stateId:variantId,name:'injured',description:'Scar',baseRefId:'base'})};
   await pool.query('UPDATE entity_states SET reference_image=$2::jsonb WHERE id=$1',[variantId,JSON.stringify(image)]);
@@ -112,7 +113,7 @@ run('legacy atomic save-and-generate compatibility',()=>{
  it('退会開始後はdraft・job・debitを一切作らない',async()=>{
   const ids=await fixture();await pool.query('UPDATE users SET account_deletion_started_at=NOW() WHERE id=$1',[ids.userId]);
   expect((await service().getGenerationReadiness(ids.userId,ids.pageId)).blockers.map(blocker=>blocker.code)).toContain('GENERATION_DISABLED');
-  await expect(service().saveAndGenerate(ids.userId,ids.pageId,ids.input)).rejects.toMatchObject({code:'CONFLICT'});
+  expect(await rejectionOf(service().saveAndGenerate(ids.userId,ids.pageId,ids.input))).toMatchObject({code:'CONFLICT'});
   expect(await state(ids)).toMatchObject({scene:'before',credits:30,jobs:0,debits:0});
  });
 
@@ -122,7 +123,7 @@ run('legacy atomic save-and-generate compatibility',()=>{
   await pool.query("INSERT INTO organization_members(organization_id,user_id,role,status,joined_at) VALUES($1,$2,'viewer','active',NOW())",[organizationId,ids.userId]);
   await pool.query('INSERT INTO organization_credit_balances(organization_id,purchased_credits) VALUES($1,20)',[organizationId]);
   await pool.query('UPDATE works SET organization_id=$2 WHERE id=$1',[ids.workId,organizationId]);
-  await expect(service().saveAndGenerate(ids.userId,ids.pageId,ids.input,organizationId)).rejects.toMatchObject({code:'FORBIDDEN'});
+  expect(await rejectionOf(service().saveAndGenerate(ids.userId,ids.pageId,ids.input,organizationId))).toMatchObject({code:'FORBIDDEN'});
   expect((await state(ids)).jobs).toBe(0);
   await pool.query("UPDATE organization_members SET role='editor' WHERE organization_id=$1",[organizationId]);
   const first=await service().saveAndGenerate(ids.userId,ids.pageId,ids.input,organizationId);

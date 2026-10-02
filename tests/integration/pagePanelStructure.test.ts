@@ -10,6 +10,7 @@ import { PostgresPageRepository } from '../../src/repositories/PageRepository.js
 import { lockStoryEpisodeAdmission } from '../../src/repositories/StoryEpisodeAdmissionLock.js';
 import { PagePanelStructureService } from '../../src/services/page/PagePanelStructureService.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { rejectionOf } from './asyncPostgresAssertions.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const shouldRunPostgresTest = process.env.APP_ENV === 'test' && databaseUrl !== undefined;
@@ -103,10 +104,10 @@ describePostgres('page panel structure safety', () => {
       expect(after.balloons.map((balloon) => withoutKeys(balloon, ['panel_order_reference', 'updated_at']))).toEqual(
         before.balloons.map((balloon) => withoutKeys(balloon, ['panel_order_reference', 'updated_at'])),
       );
-      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual(
+      expect(await (readBalloonReferences(pool, ids.pageId))).toEqual(
         ids.panelIds.map((_, index) => index + 1 + (index > selectedIndex ? 1 : 0)),
       );
-      await expect(readLayoutMetadata(pool, ids.pageId)).resolves.toMatchObject({
+      expect(await (readLayoutMetadata(pool, ids.pageId))).toMatchObject({
         story_page_purpose: 'keep me', type: 'template', template_id: 'standard_4', panel_count: 4,
       });
     } finally {
@@ -123,20 +124,20 @@ describePostgres('page panel structure safety', () => {
       await insertFixture(pool, foreignIds);
       const before = await readStructureSnapshot(pool, ids.pageId);
       const foreignBefore = await readStructureSnapshot(pool, foreignIds.pageId);
-      await expect(service.apply(ids.userId, ids.pageId, {
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, {
         expectedPanelIds: [ids.panelIds[1], ids.panelIds[0], ids.panelIds[2]],
         operation: { type: 'insert_after', panelId: ids.panelIds[1] },
-      })).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(service.apply(ids.userId, ids.pageId, {
+      }))).toMatchObject({ code: 'CONFLICT' });
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, {
         expectedPanelIds: ids.panelIds,
         operation: { type: 'insert_after', panelId: foreignIds.panelIds[0] },
-      })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-      await expect(service.apply(foreignIds.userId, ids.pageId, {
+      }))).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(await rejectionOf(service.apply(foreignIds.userId, ids.pageId, {
         expectedPanelIds: ids.panelIds,
         operation: { type: 'insert_after', panelId: ids.panelIds[0] },
-      })).rejects.toMatchObject({ code: 'NOT_FOUND' });
-      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
-      await expect(readStructureSnapshot(pool, foreignIds.pageId)).resolves.toEqual(foreignBefore);
+      }))).toMatchObject({ code: 'NOT_FOUND' });
+      expect(await (readStructureSnapshot(pool, ids.pageId))).toEqual(before);
+      expect(await (readStructureSnapshot(pool, foreignIds.pageId))).toEqual(foreignBefore);
     } finally {
       await removeFixture(pool, ids);
       await removeFixture(pool, foreignIds);
@@ -158,11 +159,11 @@ describePostgres('page panel structure safety', () => {
       const before = await readStructureSnapshot(pool, ids.pageId);
       expect(before.panels).toHaveLength(8);
       expect(before.frames).toHaveLength(8);
-      await expect(service.apply(ids.userId, ids.pageId, {
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, {
         expectedPanelIds: panelIds,
         operation: { type: 'insert_after', panelId: ids.panelIds[0] },
-      })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+      }))).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(await (readStructureSnapshot(pool, ids.pageId))).toEqual(before);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -185,7 +186,7 @@ describePostgres('page panel structure safety', () => {
       expect(panelIds).toHaveLength(4);
       expect(panelIds.slice(0, 2)).toEqual(ids.panelIds.slice(0, 2));
       expect(panelIds[3]).toBe(ids.panelIds[2]);
-      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([1, 2, 4]);
+      expect(await (readBalloonReferences(pool, ids.pageId))).toEqual([1, 2, 4]);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -197,7 +198,7 @@ describePostgres('page panel structure safety', () => {
     try {
       await insertFixture(pool, ids);
       const before = await readStructureSnapshot(pool, ids.pageId);
-      await expect(repository.apply(ids.userId, ids.pageId, {
+      expect(await rejectionOf(repository.apply(ids.userId, ids.pageId, {
         expectedPanelIds: ids.panelIds,
         operation: { type: 'insert_after', panelId: ids.panelIds[0] },
         replacementLayout: {
@@ -208,8 +209,8 @@ describePostgres('page panel structure safety', () => {
             borderWidth: 3, borderColor: '#000000', zIndex: 1, readingOrder,
           })),
         },
-      })).rejects.toMatchObject({ code: '23514' });
-      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+      }))).toMatchObject({ code: '23514' });
+      expect(await (readStructureSnapshot(pool, ids.pageId))).toEqual(before);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -221,11 +222,11 @@ describePostgres('page panel structure safety', () => {
       await insertFixture(pool, ids);
       await pool.query('UPDATE pages SET status = $2 WHERE id = $1::uuid', [ids.pageId, status]);
       const before = await readStructureSnapshot(pool, ids.pageId);
-      await expect(createService(pool).apply(ids.userId, ids.pageId, {
+      expect(await rejectionOf(createService(pool).apply(ids.userId, ids.pageId, {
         expectedPanelIds: ids.panelIds,
         operation: { type: 'insert_after', panelId: ids.panelIds[0] },
-      })).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+      }))).toMatchObject({ code: 'CONFLICT' });
+      expect(await (readStructureSnapshot(pool, ids.pageId))).toEqual(before);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -243,11 +244,11 @@ describePostgres('page panel structure safety', () => {
           [randomUUID(), ids.userId, jobType, JSON.stringify({ page_id: ids.pageId, episode_id: ids.episodeId })],
         );
         const before = await readStructureSnapshot(pool, ids.pageId);
-        await expect(createService(pool).apply(ids.userId, ids.pageId, {
+        expect(await rejectionOf(createService(pool).apply(ids.userId, ids.pageId, {
           expectedPanelIds: ids.panelIds,
           operation: { type: 'insert_after', panelId: ids.panelIds[0] },
-        })).rejects.toMatchObject({ code: 'CONFLICT' });
-        await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+        }))).toMatchObject({ code: 'CONFLICT' });
+        expect(await (readStructureSnapshot(pool, ids.pageId))).toEqual(before);
       } finally {
         await removeFixture(pool, ids);
       }
@@ -264,11 +265,11 @@ describePostgres('page panel structure safety', () => {
         operation: { type: 'delete', panelId: ids.panelIds[1] },
       });
       const before = await readStructureSnapshot(pool, ids.pageId);
-      await expect(service.apply(ids.userId, ids.pageId, {
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, {
         expectedPanelIds: ids.panelIds,
         operation: { type: 'insert_after', panelId: ids.panelIds[1] },
-      })).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+      }))).toMatchObject({ code: 'CONFLICT' });
+      expect(await (readStructureSnapshot(pool, ids.pageId))).toEqual(before);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -285,21 +286,21 @@ describePostgres('page panel structure safety', () => {
         operation: { type: 'insert_after' as const, panelId: ids.panelIds[0] },
       };
       const before = await readStructureSnapshot(pool, ids.pageId);
-      await expect(service.apply(ids.userId, ids.pageId, request)).rejects.toMatchObject({ code: 'NOT_FOUND' });
-      await expect(service.apply(ids.userId, ids.pageId, request, randomUUID())).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, request))).toMatchObject({ code: 'NOT_FOUND' });
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, request, randomUUID()))).toMatchObject({ code: 'NOT_FOUND' });
       await pool.query(
         `UPDATE organization_members SET status = 'suspended' WHERE organization_id = $1::uuid`,
         [ids.organizationId],
       );
-      await expect(service.apply(ids.userId, ids.pageId, request, ids.organizationId)).rejects.toMatchObject({ code: 'NOT_FOUND' });
-      await expect(readStructureSnapshot(pool, ids.pageId)).resolves.toEqual(before);
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, request, ids.organizationId))).toMatchObject({ code: 'NOT_FOUND' });
+      expect(await (readStructureSnapshot(pool, ids.pageId))).toEqual(before);
       await pool.query(
         `UPDATE organization_members SET status = 'active' WHERE organization_id = $1::uuid`,
         [ids.organizationId],
       );
       const result = await service.apply(ids.userId, ids.pageId, request, ids.organizationId);
       expect(result.panelIds).toEqual([ids.panelIds[0], result.createdPanelId, ids.panelIds[1], ids.panelIds[2]]);
-      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([1, 3, 4]);
+      expect(await (readBalloonReferences(pool, ids.pageId))).toEqual([1, 3, 4]);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -371,8 +372,8 @@ describePostgres('page panel structure safety', () => {
         ids.panelIds[0],
         ids.panelIds[1],
       ]);
-      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([2, 3, 1]);
-      await expect(readLayoutMetadata(pool, ids.pageId)).resolves.toMatchObject({
+      expect(await (readBalloonReferences(pool, ids.pageId))).toEqual([2, 3, 1]);
+      expect(await (readLayoutMetadata(pool, ids.pageId))).toMatchObject({
         story_page_purpose: 'keep me',
         panel_count: 3,
       });
@@ -396,9 +397,9 @@ describePostgres('page panel structure safety', () => {
       expect(result.layoutTemplateId).toBe('climax_2');
       expect(result.balloonReferenceUpdatedCount).toBe(2);
       expect(result.balloonReferenceClearedCount).toBe(1);
-      await expect(readPanelIds(pool, ids.pageId)).resolves.toEqual([ids.panelIds[0], ids.panelIds[2]]);
-      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([1, null, 2]);
-      await expect(readLayoutMetadata(pool, ids.pageId)).resolves.toMatchObject({
+      expect(await (readPanelIds(pool, ids.pageId))).toEqual([ids.panelIds[0], ids.panelIds[2]]);
+      expect(await (readBalloonReferences(pool, ids.pageId))).toEqual([1, null, 2]);
+      expect(await (readLayoutMetadata(pool, ids.pageId))).toMatchObject({
         story_page_purpose: 'keep me',
         type: 'template',
         template_id: 'climax_2',
@@ -414,23 +415,23 @@ describePostgres('page panel structure safety', () => {
     const service = createService(pool);
     try {
       await insertFixture(pool, ids);
-      await expect(service.apply(ids.userId, ids.pageId, {
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, {
         expectedPanelIds: [ids.panelIds[1]!, ids.panelIds[0]!, ids.panelIds[2]!],
         operation: { type: 'append' },
-      })).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(readPanelIds(pool, ids.pageId)).resolves.toEqual(ids.panelIds);
+      }))).toMatchObject({ code: 'CONFLICT' });
+      expect(await (readPanelIds(pool, ids.pageId))).toEqual(ids.panelIds);
 
       await pool.query(
         `INSERT INTO generation_jobs (id, user_id, job_type, status, credit_cost, params)
          VALUES ($1::uuid, $2::uuid, 'page_generate', 'queued', 1, $3::jsonb)`,
         [randomUUID(), ids.userId, JSON.stringify({ page_id: ids.pageId })],
       );
-      await expect(service.apply(ids.userId, ids.pageId, {
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, {
         expectedPanelIds: ids.panelIds,
         operation: { type: 'append' },
-      })).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(readPanelIds(pool, ids.pageId)).resolves.toEqual(ids.panelIds);
-      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([1, 2, 3]);
+      }))).toMatchObject({ code: 'CONFLICT' });
+      expect(await (readPanelIds(pool, ids.pageId))).toEqual(ids.panelIds);
+      expect(await (readBalloonReferences(pool, ids.pageId))).toEqual([1, 2, 3]);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -443,7 +444,7 @@ describePostgres('page panel structure safety', () => {
       await insertFixture(pool, ids);
       const invalidBorderStyle = 'invalid' as PanelFrameBorderStyle;
 
-      await expect(repository.apply(ids.userId, ids.pageId, {
+      expect(await rejectionOf(repository.apply(ids.userId, ids.pageId, {
         expectedPanelIds: ids.panelIds,
         operation: { type: 'delete', panelId: ids.panelIds[1]! },
         replacementLayout: {
@@ -458,11 +459,11 @@ describePostgres('page panel structure safety', () => {
             readingOrder,
           })),
         },
-      })).rejects.toBeDefined();
+      }))).toBeDefined();
 
-      await expect(readPanelIds(pool, ids.pageId)).resolves.toEqual(ids.panelIds);
-      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([1, 2, 3]);
-      await expect(readFrames(pool, ids.pageId)).resolves.toHaveLength(3);
+      expect(await (readPanelIds(pool, ids.pageId))).toEqual(ids.panelIds);
+      expect(await (readBalloonReferences(pool, ids.pageId))).toEqual([1, 2, 3]);
+      expect(await (readFrames(pool, ids.pageId))).toHaveLength(3);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -489,8 +490,8 @@ describePostgres('page panel structure safety', () => {
       );
       await blocker.query('COMMIT');
 
-      await expect(pendingApply).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(readPanelIds(pool, ids.pageId)).resolves.toEqual(ids.panelIds);
+      expect(await rejectionOf(pendingApply)).toMatchObject({ code: 'CONFLICT' });
+      expect(await (readPanelIds(pool, ids.pageId))).toEqual(ids.panelIds);
     } finally {
       await blocker.query('ROLLBACK').catch(() => undefined);
       blocker.release();
@@ -505,16 +506,16 @@ describePostgres('page panel structure safety', () => {
       await insertFixture(pool, ids);
       await moveFixtureWorkToOrganization(pool, ids);
 
-      await expect(service.apply(ids.userId, ids.pageId, {
+      expect(await (service.apply(ids.userId, ids.pageId, {
         expectedPanelIds: ids.panelIds,
         operation: { type: 'reorder', panelIds: [ids.panelIds[1]!, ids.panelIds[0]!, ids.panelIds[2]!] },
-      }, ids.organizationId)).resolves.toMatchObject({
+      }, ids.organizationId))).toMatchObject({
         panelIds: [ids.panelIds[1], ids.panelIds[0], ids.panelIds[2]],
       });
-      await expect(service.apply(ids.userId, ids.pageId, {
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, {
         expectedPanelIds: [ids.panelIds[1]!, ids.panelIds[0]!, ids.panelIds[2]!],
         operation: { type: 'reorder', panelIds: ids.panelIds },
-      }, null)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      }, null))).toMatchObject({ code: 'NOT_FOUND' });
 
       await pool.query(
         `UPDATE organization_members
@@ -522,10 +523,10 @@ describePostgres('page panel structure safety', () => {
          WHERE organization_id = $1::uuid AND user_id = $2::uuid`,
         [ids.organizationId, ids.userId],
       );
-      await expect(service.apply(ids.userId, ids.pageId, {
+      expect(await rejectionOf(service.apply(ids.userId, ids.pageId, {
         expectedPanelIds: [ids.panelIds[1]!, ids.panelIds[0]!, ids.panelIds[2]!],
         operation: { type: 'reorder', panelIds: ids.panelIds },
-      }, ids.organizationId)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      }, ids.organizationId))).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await removeFixture(pool, ids);
     }
@@ -546,28 +547,28 @@ describePostgres('page panel structure safety', () => {
         operation: { type: 'reorder', panelIds: newPanelIds },
       });
 
-      await expect(balloonRepository.createBalloon(
+      expect(await rejectionOf(balloonRepository.createBalloon(
         ids.pageId,
         ids.userId,
         balloonInput(1),
         null,
         oldPanelIds,
-      )).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(balloonRepository.updateBalloon(
+      ))).toMatchObject({ code: 'CONFLICT' });
+      expect(await rejectionOf(balloonRepository.updateBalloon(
         balloonIds[0]!,
         ids.userId,
         { panelOrderReference: 2 },
         null,
         oldPanelIds,
-      )).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(balloonRepository.replaceBalloonsByPageIdAndUserId(
+      ))).toMatchObject({ code: 'CONFLICT' });
+      expect(await rejectionOf(balloonRepository.replaceBalloonsByPageIdAndUserId(
         ids.pageId,
         ids.userId,
         [balloonInput(1)],
         null,
         oldPanelIds,
-      )).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([2, 1, 3]);
+      ))).toMatchObject({ code: 'CONFLICT' });
+      expect(await (readBalloonReferences(pool, ids.pageId))).toEqual([2, 1, 3]);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -586,14 +587,14 @@ describePostgres('page panel structure safety', () => {
         operation: { type: 'delete', panelId: ids.panelIds[2]! },
       });
 
-      await expect(balloonRepository.createBalloon(
+      expect(await rejectionOf(balloonRepository.createBalloon(
         ids.pageId,
         ids.userId,
         balloonInput(3),
         null,
         newPanelIds,
-      )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([1, 2, null]);
+      ))).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(await (readBalloonReferences(pool, ids.pageId))).toEqual([1, 2, null]);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -623,11 +624,11 @@ describePostgres('page panel structure safety', () => {
       await expectPromiseToRemainPending(structureDelete);
       pausingDatabase.continueAfterPageLock();
 
-      await expect(balloonUpdate).resolves.toMatchObject({ panelOrderReference: 3 });
-      await expect(structureDelete).resolves.toMatchObject({
+      expect(await (balloonUpdate)).toMatchObject({ panelOrderReference: 3 });
+      expect(await (structureDelete)).toMatchObject({
         panelIds: [ids.panelIds[0], ids.panelIds[1]],
       });
-      await expect(readBalloonReferences(pool, ids.pageId)).resolves.toEqual([null, 2, null]);
+      expect(await (readBalloonReferences(pool, ids.pageId))).toEqual([null, 2, null]);
     } finally {
       pausingDatabase.continueAfterPageLock();
       await removeFixture(pool, ids);

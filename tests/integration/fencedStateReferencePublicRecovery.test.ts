@@ -12,6 +12,7 @@ import { PostgresGenerationJobRepository } from '../../src/repositories/Generati
 import { EntityStateReferenceService } from '../../src/services/entity/EntityStateReferenceService.js';
 import { FencedStateReferenceConfirmationService } from '../../src/services/entity/FencedStateReferenceConfirmationService.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
 
 const describePostgres = process.env.APP_ENV === 'test' && process.env.DATABASE_URL ? describe : describe.skip;
 const source = { imageData: Buffer.alloc(100), mimeType: 'image/png' as const, sizeBytes: 100,
@@ -83,10 +84,10 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it('recovers a lost PUT response before rejecting the original stale candidate, then accepts a current candidate', async () => {
     const f = fixture(); const input = await seed(pool);
-    await expect(f.confirm(input)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(input))).toMatchObject({ code: 'CONFLICT' });
     const [admitted] = await f.rows(input);
     const next = await editAndSeedCandidate(pool, input);
-    await expect(f.confirm(input)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(input))).toMatchObject({ code: 'CONFLICT' });
     expect(f.recovery.observe).toHaveBeenCalledOnce();
     expect(f.recovery.fenceAndErase).toHaveBeenCalledOnce();
     expect((await f.rows(input))[0]).toMatchObject({ state: 'effects_fenced', descriptor: admitted.descriptor,
@@ -98,7 +99,7 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it.each([true, false])('a new candidate alone recovers the previous scope with image present=%s', async (storeImage) => {
     const f = fixture(); const input = await seed(pool); f.controls.storeImage = storeImage;
-    await expect(f.confirm(input)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(input))).toMatchObject({ code: 'CONFLICT' });
     const [admitted] = await f.rows(input);
     const next = await editAndSeedCandidate(pool, input); f.controls.storeImage = true;
     const confirmed = await f.confirm(next);
@@ -111,16 +112,16 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it('recovers before readiness checks when the base reference is removed', async () => {
     const f = fixture(); const input = await seed(pool);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     await pool.query("UPDATE reference_sets SET primary_ref_id=NULL,reference_images='[]'::jsonb WHERE entity_id=$1", [input.entityId]);
-    await expect(f.confirm(input)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(input))).toMatchObject({ code: 'CONFLICT' });
     expect((await f.rows(input))[0].state).toBe('effects_fenced');
     expect(f.imageCreator.createImage).toHaveBeenCalledOnce();
   });
 
   it('recovers the same valid candidate with admission OFF without loading or creating a second image', async () => {
     const f = fixture(); const input = await seed(pool);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     expect((await f.confirm(input, { admissionEnabled: false })).referenceImage.refId).toBe(input.descriptor.refId);
     expect(f.imageCreator.loadSource).toHaveBeenCalledOnce();
     expect(f.imageCreator.createImage).toHaveBeenCalledOnce();
@@ -131,7 +132,7 @@ describePostgres('public state confirmation recovers durable stale copies', () =
     const f = fixture(); const input = await seed(pool); f.controls.loseNextResponse = false;
     const original = await f.confirm(input);
     const next = await editAndSeedCandidate(pool, input);
-    await expect(f.confirm(input)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(input))).toMatchObject({ code: 'CONFLICT' });
     await f.confirm(next);
     expect((await f.rows(input)).map((row) => row.state)).toEqual(['confirmed', 'confirmed']);
     expect(f.objects.get(original.referenceImage.s3Key)?.kind).toBe('image');
@@ -140,11 +141,11 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it('holds existing pending work when recovery configuration is missing or observation is unknown', async () => {
     const f = fixture(); const input = await seed(pool);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     const next = await editAndSeedCandidate(pool, input);
-    await expect(f.confirm(next, { missingRecovery: true })).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(next, { missingRecovery: true }))).toThrow();
     vi.spyOn(f.recovery, 'observe').mockRejectedValue(new Error('Unknown storage identity'));
-    await expect(f.confirm(next)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(next))).toMatchObject({ code: 'CONFLICT' });
     expect((await f.rows(input))[0].state).toBe('unresolved');
     expect(f.imageCreator.loadSource).toHaveBeenCalledOnce();
     expect(f.imageCreator.createImage).toHaveBeenCalledOnce();
@@ -154,11 +155,11 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it('does not recover a different actor, organization, entity or state', async () => {
     const f = fixture(); const input = await seed(pool);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     const other = await seed(pool);
     for (const mutation of [{ userId: other.userId }, { organizationId: randomUUID() },
       { entityId: other.entityId }, { stateId: other.stateId }]) {
-      await expect(f.confirm({ ...input, ...mutation })).rejects.toThrow();
+      expect(await throwingRejectionOf(f.confirm({ ...input, ...mutation }))).toThrow();
     }
     expect(f.recovery.observe).not.toHaveBeenCalled();
     expect(f.recovery.fenceAndErase).not.toHaveBeenCalled();
@@ -167,9 +168,9 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it('requires live organization membership even when the admitted actor still owns the image', async () => {
     const f = fixture(); const input = await seed(pool, true);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     await pool.query("UPDATE organization_members SET status='removed' WHERE organization_id=$1 AND user_id=$2", [input.organizationId, input.userId]);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     expect(f.recovery.observe).not.toHaveBeenCalled();
     expect(f.recovery.fenceAndErase).not.toHaveBeenCalled();
     expect((await f.rows(input))[0].state).toBe('unresolved');
@@ -177,7 +178,7 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it('does not adopt an observed image after the same organization actor is downgraded to viewer', async () => {
     const f = fixture(); const input = await seed(pool, true);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     const observe = f.recovery.observe;
     vi.spyOn(f.recovery, 'observe').mockImplementationOnce(async (intent) => {
       await pool.query("UPDATE organization_members SET role='viewer' WHERE organization_id=$1 AND user_id=$2", [input.organizationId,input.userId]);
@@ -185,7 +186,7 @@ describePostgres('public state confirmation recovers durable stale copies', () =
       if (receipt?.kind !== 'image') throw new Error('Expected admitted image');
       return receipt;
     });
-    await expect(f.confirm(input)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(input))).toMatchObject({ code: 'CONFLICT' });
     expect(observe).toHaveBeenCalledOnce();
     expect(f.recovery.fenceAndErase).not.toHaveBeenCalled();
     expect((await f.rows(input))[0].state).toBe('unresolved');
@@ -198,7 +199,7 @@ describePostgres('public state confirmation recovers durable stale copies', () =
       await pool.query("UPDATE organization_members SET role='viewer' WHERE organization_id=$1 AND user_id=$2", [input.organizationId,input.userId]);
       return source;
     });
-    await expect(f.confirm(input)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(input))).toMatchObject({ code: 'CONFLICT' });
     expect(await f.rows(input)).toHaveLength(0);
     expect(f.imageCreator.createImage).not.toHaveBeenCalled();
     expect(f.recovery.fenceAndErase).not.toHaveBeenCalled();
@@ -211,7 +212,7 @@ describePostgres('public state confirmation recovers durable stale copies', () =
       await pool.query("UPDATE organization_members SET role='viewer' WHERE organization_id=$1 AND user_id=$2", [input.organizationId,input.userId]);
       return authorize(attempt);
     });
-    await expect(f.confirm(input)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(input))).toMatchObject({ code: 'CONFLICT' });
     expect((await f.rows(input))[0]).toMatchObject({ state: 'unresolved', dispatch_started_at: null });
     expect(f.imageCreator.createImage).not.toHaveBeenCalled();
     expect(f.recovery.fenceAndErase).not.toHaveBeenCalled();
@@ -219,7 +220,7 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it('lets an active organization editor fence an orphaned attempt without adopting or rebinding its image', async () => {
     const f = fixture(); const input = await seed(pool, true);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     const [original] = await f.rows(input);
     const next = await candidateForOtherMember(pool, input);
     await pool.query("UPDATE organization_members SET status='removed' WHERE organization_id=$1 AND user_id=$2", [input.organizationId,input.userId]);
@@ -235,12 +236,12 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it.each(['viewer', 'removed', 'cross-organization'] as const)('does not let a %s caller fence another organization member image', async (mode) => {
     const f = fixture(); const input = await seed(pool, true);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     const next = await candidateForOtherMember(pool, input);
     if (mode === 'viewer') await pool.query("UPDATE organization_members SET role='viewer' WHERE organization_id=$1 AND user_id=$2", [next.organizationId,next.userId]);
     if (mode === 'removed') await pool.query("UPDATE organization_members SET status='removed' WHERE organization_id=$1 AND user_id=$2", [next.organizationId,next.userId]);
     if (mode === 'cross-organization') next.organizationId = (await seed(pool, true)).organizationId;
-    await expect(f.confirm(next)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(next))).toThrow();
     expect(f.recovery.observe).not.toHaveBeenCalled();
     expect(f.recovery.fenceAndErase).not.toHaveBeenCalled();
     expect((await f.rows(input))[0].state).toBe('unresolved');
@@ -248,14 +249,14 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it('rechecks the recovering editor membership after selecting another member pending attempt', async () => {
     const f = fixture(); const input = await seed(pool, true);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     const next = await candidateForOtherMember(pool, input);
     const claim = f.journal.claimFencing.bind(f.journal);
     vi.spyOn(f.journal, 'claimFencing').mockImplementation(async (attempt, request) => {
       await pool.query("UPDATE organization_members SET status='removed' WHERE organization_id=$1 AND user_id=$2", [next.organizationId,next.userId]);
       return claim(attempt, request);
     });
-    await expect(f.confirm(next)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(next))).toMatchObject({ code: 'CONFLICT' });
     expect(f.journal.claimFencing).toHaveBeenCalledOnce();
     expect(f.recovery.fenceAndErase).not.toHaveBeenCalled();
     expect((await f.rows(input))[0].state).toBe('unresolved');
@@ -274,13 +275,13 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it('rechecks account authorization after observation before claiming an ordinary fence', async () => {
     const f = fixture(); const input = await seed(pool);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     const next = await editAndSeedCandidate(pool, input);
     vi.spyOn(f.recovery, 'observe').mockImplementation(async () => {
       await pool.query('UPDATE users SET account_deletion_started_at=NOW() WHERE id=$1', [input.userId]);
       return { kind: 'absent' };
     });
-    await expect(f.confirm(next)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(next))).toMatchObject({ code: 'CONFLICT' });
     expect(f.recovery.observe).toHaveBeenCalledOnce();
     expect(f.recovery.fenceAndErase).not.toHaveBeenCalled();
     expect((await f.rows(input))[0].state).toBe('unresolved');
@@ -288,12 +289,12 @@ describePostgres('public state confirmation recovers durable stale copies', () =
 
   it('never settles legacy unknown copy history while recovering a v2 blocker', async () => {
     const f = fixture(); const input = await seed(pool);
-    await expect(f.confirm(input)).rejects.toThrow();
+    expect(await throwingRejectionOf(f.confirm(input))).toThrow();
     const next = await editAndSeedCandidate(pool, input);
     const history = [{ attempt_id: randomUUID(), state: 'unresolved', s3_key: next.descriptor.s3Key,
       entity_id: next.entityId, state_id: next.stateId, ref_id: next.descriptor.refId }];
     await pool.query("UPDATE generation_jobs SET result=result||jsonb_build_object('state_reference_copies',$2::jsonb) WHERE id=$1", [next.jobId, JSON.stringify(history)]);
-    await expect(f.confirm(next)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(f.confirm(next))).toMatchObject({ code: 'CONFLICT' });
     expect((await f.rows(input))[0].state).toBe('effects_fenced');
     expect((await pool.query('SELECT result FROM generation_jobs WHERE id=$1', [next.jobId])).rows[0].result.state_reference_copies).toEqual(history);
     expect(f.imageCreator.createImage).toHaveBeenCalledOnce();

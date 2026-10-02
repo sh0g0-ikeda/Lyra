@@ -15,6 +15,7 @@ import { PostgresStorePurchaseRepository } from '../../src/repositories/StorePur
 import { MobileStorePurchaseService } from '../../src/services/billing/MobileStorePurchaseService.js';
 import { checkDeploymentDataInvariants } from '../../scripts/checkDeploymentDataInvariants.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { throwingRejectionOf } from './asyncPostgresAssertions.js';
 
 const databaseDescribe = process.env.APP_ENV === 'test' && process.env.DATABASE_URL
   ? describe : describe.skip;
@@ -177,9 +178,9 @@ databaseDescribe('migrated production store replay and refund safety', () => {
   it('移行済みlinked tokenのbinding不一致では購入とcreditを変更しない', async () => {
     const fixture = fixtures.get('binding')!;
     const { service, completions, verified } = serviceFor(fixture, true, randomUUID());
-    await expect(service.handleGoogleRtdn(rtdn(`bad-binding-${fixture.userId}`, {
+    expect(await throwingRejectionOf(service.handleGoogleRtdn(rtdn(`bad-binding-${fixture.userId}`, {
       subscriptionNotification: { notificationType: 4, purchaseToken: verified.externalPurchaseId },
-    }))).rejects.toThrow('Store purchase account binding does not match');
+    })))).toThrow('Store purchase account binding does not match');
     expect(await balance(fixture.userId)).toEqual({ monthly_credits: 50, purchased_credits: 7 });
     expect((await pool.query('SELECT state FROM mobile_store_purchases WHERE user_id=$1', [fixture.userId])).rows).toEqual([{ state: 'active' }]);
     expect(completions).toHaveLength(0);

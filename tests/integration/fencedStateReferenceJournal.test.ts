@@ -9,6 +9,7 @@ import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresFencedStateReferenceRepository, type FencedStateReferenceAttempt } from '../../src/repositories/FencedStateReferenceRepository.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describePostgres = process.env.APP_ENV === 'test' && databaseUrl !== undefined ? describe : describe.skip;
@@ -113,7 +114,7 @@ describePostgres('fenced state reference durable journal', () => {
         return result;
       },
     });
-    await expect(faulty.admit(input, source)).rejects.toThrow('commit acknowledgement lost');
+    expect(await throwingRejectionOf(faulty.admit(input, source))).toThrow('commit acknowledgement lost');
     const retry = await repository.admit(input, source);
     expect(retry.newlyAdmitted).toBe(false);
     expect((await pool.query('SELECT count(*)::int AS count FROM state_reference_copy_attempts WHERE job_id=$1', [input.jobId])).rows[0]?.count).toBe(1);
@@ -125,7 +126,7 @@ describePostgres('fenced state reference durable journal', () => {
       query: database.query.bind(database),
       transaction: async (work) => { await database.transaction(work); throw new Error('dispatch commit lost'); },
     });
-    await expect(faulty.authorizeDispatch(attempt)).rejects.toThrow('dispatch commit lost');
+    expect(await throwingRejectionOf(faulty.authorizeDispatch(attempt))).toThrow('dispatch commit lost');
     expect(await repository.authorizeDispatch(attempt)).toBe(false);
   });
 
@@ -146,7 +147,7 @@ describePostgres('fenced state reference durable journal', () => {
     const attempt = requiredAttempt((await repository.admit(await seed(pool), source)).attempt);
     await repository.authorizeDispatch(attempt);
     const receipt = { ...imageReceipt(attempt), [field]: field === 'sizeBytes' ? 101 : 'wrong' } as FencedImageReceipt;
-    await expect(repository.confirmObservedImage(attempt, receipt)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(repository.confirmObservedImage(attempt, receipt))).toMatchObject({ code: 'CONFLICT' });
     expect((await pool.query('SELECT state FROM state_reference_copy_attempts WHERE attempt_token=$1', [attempt.intent.attemptToken])).rows[0]?.state).toBe('unresolved');
   });
 
@@ -157,9 +158,9 @@ describePostgres('fenced state reference durable journal', () => {
       query: database.query.bind(database),
       transaction: (work) => database.transaction(async (client) => { await work(client); throw new Error('rollback injected'); }),
     });
-    await expect(faulty.confirmObservedImage(attempt, imageReceipt(attempt))).rejects.toThrow('rollback injected');
+    expect(await throwingRejectionOf(faulty.confirmObservedImage(attempt, imageReceipt(attempt)))).toThrow('rollback injected');
     expect((await pool.query('SELECT reference_image FROM entity_states WHERE id=$1', [attempt.input.stateId])).rows[0]?.reference_image).toBeNull();
-    await expect(repository.confirmObservedImage(attempt, imageReceipt(attempt))).resolves.toMatchObject({ entityId: attempt.input.entityId });
+    expect(await (repository.confirmObservedImage(attempt, imageReceipt(attempt)))).toMatchObject({ entityId: attempt.input.entityId });
   });
 
   it('fencingをclaimした場合に同時の画像採用を遮断し二つのfencerが収束する', async () => {
@@ -170,11 +171,11 @@ describePostgres('fenced state reference durable journal', () => {
       repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' }),
     ]);
     expect(first.state).toBe('fencing');
-    await expect(repository.confirmObservedImage(attempt, imageReceipt(attempt))).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(repository.confirmObservedImage(attempt, imageReceipt(attempt)))).toMatchObject({ code: 'CONFLICT' });
     const receipt = markerReceipt(attempt);
     expect((await Promise.all([repository.completeFencing(first, receipt), repository.completeFencing(second, receipt)])).map((item) => item.state))
       .toEqual(['effects_fenced', 'effects_fenced']);
-    await expect(repository.completeFencing(first, { ...receipt, eTag: '"different-marker"' })).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(repository.completeFencing(first, { ...receipt, eTag: '"different-marker"' }))).toMatchObject({ code: 'CONFLICT' });
   });
 
   it('fencing完了前には再受付せず完了後にだけ新しいkeyを作る', async () => {
@@ -194,12 +195,12 @@ describePostgres('fenced state reference durable journal', () => {
       const attempt = requiredAttempt((await repository.admit(input, source)).attempt);
       if (mode === 'stale') await pool.query('UPDATE entity_states SET description=$2 WHERE id=$1', [input.stateId, 'changed']);
       else await pool.query('UPDATE users SET account_deletion_started_at=NOW() WHERE id=$1', [input.userId]);
-      await expect(repository.authorizeDispatch(attempt)).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(repository.confirmObservedImage(attempt, imageReceipt(attempt))).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(await rejectionOf(repository.authorizeDispatch(attempt))).toMatchObject({ code: 'CONFLICT' });
+      expect(await rejectionOf(repository.confirmObservedImage(attempt, imageReceipt(attempt)))).toMatchObject({ code: 'CONFLICT' });
       if (mode === 'stale') {
         expect((await repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' })).state).toBe('fencing');
       } else {
-        await expect(repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' })).rejects.toMatchObject({ code: 'CONFLICT' });
+        expect(await rejectionOf(repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' }))).toMatchObject({ code: 'CONFLICT' });
         const processingToken = randomUUID();
         await startDeletion(pool, input.userId, processingToken);
         expect((await repository.claimFencing(attempt, { reason: 'account_deletion', processingToken })).state).toBe('fencing');
@@ -212,14 +213,14 @@ describePostgres('fenced state reference durable journal', () => {
     const attempt = requiredAttempt((await repository.admit(input, source)).attempt);
     await repository.authorizeDispatch(attempt);
     await repository.confirmObservedImage(attempt, imageReceipt(attempt));
-    await expect(repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' })).rejects.toMatchObject({ code: 'CONFLICT' });
-    await expect(repository.claimFencing(attempt, { reason: 'account_deletion', processingToken: randomUUID() })).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' }))).toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(repository.claimFencing(attempt, { reason: 'account_deletion', processingToken: randomUUID() }))).toMatchObject({ code: 'CONFLICT' });
     const processingToken = randomUUID();
     await startDeletion(pool, input.userId, processingToken);
     expect((await repository.listPersonalPendingFences(input.userId, processingToken)).map((item) => item.intent.attemptToken)).toEqual([attempt.intent.attemptToken]);
     const claimed = await repository.claimFencing(attempt, { reason: 'account_deletion', processingToken });
     await pool.query('UPDATE account_deletion_requests SET processing_token=$2 WHERE user_id=$1', [input.userId, randomUUID()]);
-    await expect(repository.completeFencing(claimed, markerReceipt(attempt))).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(repository.completeFencing(claimed, markerReceipt(attempt)))).toMatchObject({ code: 'CONFLICT' });
   });
 
   it('jobとwork削除後もjournalとfencing証拠が残る', async () => {
@@ -228,7 +229,7 @@ describePostgres('fenced state reference durable journal', () => {
     await pool.query('UPDATE generation_jobs SET result=NULL WHERE id=$1', [input.jobId]);
     await pool.query('DELETE FROM generation_jobs WHERE id=$1', [input.jobId]);
     await pool.query('DELETE FROM works WHERE user_id=$1', [input.userId]);
-    await expect(repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' })).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' }))).toMatchObject({ code: 'CONFLICT' });
     const processingToken = randomUUID();
     await startDeletion(pool, input.userId, processingToken);
     const fence = await repository.claimFencing(attempt, { reason: 'account_deletion', processingToken });
@@ -240,7 +241,7 @@ describePostgres('fenced state reference durable journal', () => {
     const input = await seed(pool);
     const history = [{ attempt_id: randomUUID(), state: 'unresolved', s3_key: input.descriptor.s3Key, entity_id: input.entityId, state_id: input.stateId, ref_id: input.descriptor.refId }];
     await pool.query("UPDATE generation_jobs SET result=result||jsonb_build_object('state_reference_copies',$2::jsonb) WHERE id=$1", [input.jobId, JSON.stringify(history)]);
-    await expect(repository.admit(input, source)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(repository.admit(input, source))).toMatchObject({ code: 'CONFLICT' });
     expect((await pool.query('SELECT count(*)::int AS count FROM state_reference_copy_attempts WHERE job_id=$1', [input.jobId])).rows[0]?.count).toBe(0);
   });
 
@@ -248,8 +249,8 @@ describePostgres('fenced state reference durable journal', () => {
     const attempt = requiredAttempt((await repository.admit(await seed(pool), source)).attempt);
     const fence = await repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' });
     await repository.completeFencing(fence, markerReceipt(attempt));
-    await expect(pool.query("UPDATE state_reference_copy_attempts SET state='unresolved' WHERE attempt_token=$1", [attempt.intent.attemptToken])).rejects.toMatchObject({ code: '23514' });
-    await expect(pool.query('DELETE FROM state_reference_copy_attempts WHERE attempt_token=$1', [attempt.intent.attemptToken])).rejects.toMatchObject({ code: '23514' });
+    expect(await rejectionOf(pool.query("UPDATE state_reference_copy_attempts SET state='unresolved' WHERE attempt_token=$1", [attempt.intent.attemptToken]))).toMatchObject({ code: '23514' });
+    expect(await rejectionOf(pool.query('DELETE FROM state_reference_copy_attempts WHERE attempt_token=$1', [attempt.intent.attemptToken]))).toMatchObject({ code: '23514' });
   });
 
   it('marker receiptのDB rollback後に同じmarker証拠で再開できる', async () => {
@@ -259,7 +260,7 @@ describePostgres('fenced state reference durable journal', () => {
       query: database.query.bind(database),
       transaction: (work) => database.transaction(async (client) => { await work(client); throw new Error('marker receipt rollback'); }),
     });
-    await expect(faulty.completeFencing(fence, markerReceipt(fence))).rejects.toThrow('marker receipt rollback');
+    expect(await throwingRejectionOf(faulty.completeFencing(fence, markerReceipt(fence)))).toThrow('marker receipt rollback');
     expect((await pool.query('SELECT state,marker_receipt FROM state_reference_copy_attempts WHERE attempt_token=$1', [attempt.intent.attemptToken])).rows[0])
       .toEqual({ state: 'fencing', marker_receipt: null });
     expect((await repository.completeFencing(fence, markerReceipt(fence))).state).toBe('effects_fenced');
@@ -268,19 +269,17 @@ describePostgres('fenced state reference durable journal', () => {
   it('source版またはowner scopeが違う場合に同じ試行として扱わない', async () => {
     const input = await seed(pool);
     const attempt = requiredAttempt((await repository.admit(input, source)).attempt);
-    await expect(repository.admit(input, { ...source, sourceRevision: { eTag: '"another-source"' } })).rejects.toMatchObject({ code: 'CONFLICT' });
-    await expect(repository.findActiveAttempt({ ...input, expectedStateRevision: '2026-09-29T00:00:00.000Z' })).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(repository.admit(input, { ...source, sourceRevision: { eTag: '"another-source"' } }))).toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(repository.findActiveAttempt({ ...input, expectedStateRevision: '2026-09-29T00:00:00.000Z' }))).toMatchObject({ code: 'CONFLICT' });
     expect(await repository.findByKeyAndScope({ s3Key: attempt.intent.s3Key, ownerUserId: randomUUID(), entityId: input.entityId, organizationId: null })).toBeNull();
     expect(await repository.findByKeyAndScope({ s3Key: attempt.intent.s3Key, ownerUserId: input.userId, entityId: input.entityId, organizationId: randomUUID() })).toBeNull();
-    await expect(pool.query('UPDATE state_reference_copy_attempts SET source_revision=$2::jsonb WHERE attempt_token=$1', [attempt.intent.attemptToken, JSON.stringify({ eTag: '"different"' })]))
-      .rejects.toMatchObject({ code: '23514' });
+    expect(await rejectionOf(pool.query('UPDATE state_reference_copy_attempts SET source_revision=$2::jsonb WHERE attempt_token=$1', [attempt.intent.attemptToken, JSON.stringify({ eTag: '"different"' })]))).toMatchObject({ code: '23514' });
   });
 
   it('消去証拠のないscrubは拒否し個人退会後の終端scrubは復活できない', async () => {
     const input = await seed(pool);
     const attempt = requiredAttempt((await repository.admit(input, source)).attempt);
-    await expect(pool.query('UPDATE state_reference_copy_attempts SET scrubbed_at=NOW() WHERE attempt_token=$1', [attempt.intent.attemptToken]))
-      .rejects.toMatchObject({ code: '23514' });
+    expect(await rejectionOf(pool.query('UPDATE state_reference_copy_attempts SET scrubbed_at=NOW() WHERE attempt_token=$1', [attempt.intent.attemptToken]))).toMatchObject({ code: '23514' });
     const fence = await repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' });
     await repository.completeFencing(fence, markerReceipt(fence));
     await startDeletion(pool, input.userId, randomUUID());
@@ -291,8 +290,8 @@ describePostgres('fenced state reference durable journal', () => {
     const row = (await pool.query('SELECT * FROM state_reference_copy_attempts WHERE attempt_token=$1', [attempt.intent.attemptToken])).rows[0];
     expect(row).toMatchObject({ state: 'effects_fenced',actor_user_id: null,descriptor: null,marker_receipt: markerReceipt(fence) });
     expect(await repository.findByKeyAndScope({ s3Key: attempt.intent.s3Key,ownerUserId: input.userId,entityId: input.entityId,organizationId: null })).toBeNull();
-    await expect(pool.query('UPDATE state_reference_copy_attempts SET scrubbed_at=NULL WHERE attempt_token=$1', [attempt.intent.attemptToken])).rejects.toMatchObject({ code: '23514' });
-    await expect(repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' })).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await rejectionOf(pool.query('UPDATE state_reference_copy_attempts SET scrubbed_at=NULL WHERE attempt_token=$1', [attempt.intent.attemptToken]))).toMatchObject({ code: '23514' });
+    expect(await rejectionOf(repository.claimFencing(attempt, { reason: 'unconfirmed_recovery' }))).toMatchObject({ code: 'CONFLICT' });
   });
 });
 

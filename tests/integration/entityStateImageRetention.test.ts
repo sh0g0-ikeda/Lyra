@@ -222,14 +222,14 @@ describePostgres('entity state image retention', () => {
       { deleteExactObject: async (key) => { deletedKeys.push(key); } },
       'integration-only-identity-key-secret',
     );
-    await expect(service.requestDeletion({
+    expect(await (service.requestDeletion({
       userId: ids.userId,
       identityId: `entity-state-retention-${ids.userId}`,
       confirmation: 'DELETE',
       acknowledgePersonalSubscriptions: true,
       acknowledgeStoreBilling: true,
       acknowledgePersonalAssets: true,
-    })).resolves.toEqual({ status: 'completed', blockers: [] });
+    }))).toEqual({ status: 'completed', blockers: [] });
     expect(deletedKeys.sort()).toEqual([...flight.personalAssetKeys].sort());
     expect((await pool.query('SELECT result FROM generation_jobs WHERE id = $1::uuid', [ids.jobId]))
       .rows[0]?.result).toBeNull();

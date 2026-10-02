@@ -16,6 +16,7 @@ import type { EntityReferenceUploadStoragePort } from '../../src/services/entity
 import { computeStateReferenceFingerprint } from '../../src/domain/state/StateReferenceFingerprint.js';
 import { PostgresGenerationQuotePlanResolver } from '../../src/repositories/GenerationQuotePlanResolver.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
 
 const describePostgres = process.env.APP_ENV === 'test' && process.env.DATABASE_URL ? describe : describe.skip;
 
@@ -67,14 +68,14 @@ describePostgres('atomic generation quotes', () => {
       expect(result.quoteToken).toHaveLength(43);
       expect(result.quote.expiresAt.getTime()-Date.now()).toBeGreaterThan(290_000);
     }
-    await expect(money(ids.userId)).resolves.toEqual({ purchased_credits:30, debits:0, jobs:0 });
+    expect(await (money(ids.userId))).toEqual({ purchased_credits:30, debits:0, jobs:0 });
   });
   it('同時・重複受付は1jobと1控除と1dispatchだけを保存し期限後もreceiptを返す', async () => {
     const ids = await fixture(); const instance=service(); const requestKey=randomUUID();
     const issued = await instance.issue(ids.userId, { operation:'page_generate', targetId:ids.pageId, renderStyle:'monochrome' });
     const receipts = await Promise.all(Array.from({length:4},()=>instance.accept(ids.userId,issued.quote.id,issued.quoteToken,requestKey)));
     expect(new Set(receipts.map((receipt)=>receipt.quote.acceptedJobId)).size).toBe(1);
-    await expect(money(ids.userId)).resolves.toEqual({ purchased_credits:27,debits:1,jobs:1 });
+    expect(await (money(ids.userId))).toEqual({ purchased_credits:27,debits:1,jobs:1 });
     await pool.query(`UPDATE generation_quotes SET expires_at=NOW()-INTERVAL '1 hour' WHERE id=$1`,[issued.quote.id]);
     const repeated=await instance.accept(ids.userId,issued.quote.id,issued.quoteToken,requestKey);
     expect(repeated.quote.acceptedJobId).toBe(receipts[0]?.quote.acceptedJobId);
@@ -86,24 +87,24 @@ describePostgres('atomic generation quotes', () => {
     const ids=await fixture(); const instance=service();
     const stale=await instance.issue(ids.userId,{operation:'page_generate',targetId:ids.pageId});
     await pool.query(`UPDATE panels SET situation_text='Changed' WHERE id=$1`,[ids.panelId]);
-    await expect(instance.accept(ids.userId,stale.quote.id,stale.quoteToken,randomUUID())).rejects.toMatchObject({code:'CONFLICT'});
+    expect(await rejectionOf(instance.accept(ids.userId,stale.quote.id,stale.quoteToken,randomUUID()))).toMatchObject({code:'CONFLICT'});
     const expired=await instance.issue(ids.userId,{operation:'page_generate',targetId:ids.pageId});
     await pool.query(`UPDATE generation_quotes SET expires_at=NOW()-INTERVAL '1 second' WHERE id=$1`,[expired.quote.id]);
-    await expect(instance.accept(ids.userId,expired.quote.id,expired.quoteToken,randomUUID())).rejects.toMatchObject({code:'CONFLICT'});
-    await expect(instance.accept(randomUUID(),stale.quote.id,stale.quoteToken,randomUUID())).rejects.toMatchObject({code:'NOT_FOUND'});
-    await expect(instance.accept(ids.userId,stale.quote.id,'invalid-token',randomUUID())).rejects.toMatchObject({code:'NOT_FOUND'});
-    await expect(money(ids.userId)).resolves.toEqual({purchased_credits:30,debits:0,jobs:0});
+    expect(await rejectionOf(instance.accept(ids.userId,expired.quote.id,expired.quoteToken,randomUUID()))).toMatchObject({code:'CONFLICT'});
+    expect(await rejectionOf(instance.accept(randomUUID(),stale.quote.id,stale.quoteToken,randomUUID()))).toMatchObject({code:'NOT_FOUND'});
+    expect(await rejectionOf(instance.accept(ids.userId,stale.quote.id,'invalid-token',randomUUID()))).toMatchObject({code:'NOT_FOUND'});
+    expect(await (money(ids.userId))).toEqual({purchased_credits:30,debits:0,jobs:0});
   });
   it('残高不足や最終receipt保存失敗はjob・控除・page変更をrollbackする', async () => {
     const ids=await fixture(); const instance=service();
     const issued=await instance.issue(ids.userId,{operation:'page_generate',targetId:ids.pageId});
     await pool.query(`UPDATE credit_balances SET purchased_credits=2 WHERE user_id=$1`,[ids.userId]);
-    await expect(instance.accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID())).rejects.toMatchObject({code:'INSUFFICIENT_CREDITS'});
-    await expect(money(ids.userId)).resolves.toEqual({purchased_credits:2,debits:0,jobs:0});
+    expect(await rejectionOf(instance.accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID()))).toMatchObject({code:'INSUFFICIENT_CREDITS'});
+    expect(await (money(ids.userId))).toEqual({purchased_credits:2,debits:0,jobs:0});
     await pool.query(`UPDATE credit_balances SET purchased_credits=30 WHERE user_id=$1`,[ids.userId]);
     const failing=testDatabase(pool, 'SET accepted_job_id');
-    await expect(service(failing).accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID())).rejects.toThrow('Injected receipt failure');
-    await expect(money(ids.userId)).resolves.toEqual({purchased_credits:30,debits:0,jobs:0});
+    expect(await throwingRejectionOf(service(failing).accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID()))).toThrow('Injected receipt failure');
+    expect(await (money(ids.userId))).toEqual({purchased_credits:30,debits:0,jobs:0});
     expect((await pool.query(`SELECT status FROM pages WHERE id=$1`,[ids.pageId])).rows[0]).toEqual({status:'editing'});
     expect((await instance.receipt(ids.userId,issued.quote.id)).quote.acceptedJobId).toBeNull();
   });
@@ -121,7 +122,7 @@ describePostgres('atomic generation quotes', () => {
     await pool.query('UPDATE generation_quotes SET dispatch_next_attempt_at=NOW() WHERE id=$1',[issued.quote.id]);
     await dispatcher.dispatchQuote(issued.quote.id);
     expect(sent).toEqual([accepted.quote.acceptedJobId,accepted.quote.acceptedJobId]);
-    await expect(money(ids.userId)).resolves.toEqual({purchased_credits:27,debits:1,jobs:1});
+    expect(await (money(ids.userId))).toEqual({purchased_credits:27,debits:1,jobs:1});
   });
 
   it('受付後のコマ編集でも実行は承認済みsnapshotを使いモデル変更は拒否する', async () => {
@@ -140,7 +141,7 @@ describePostgres('atomic generation quotes', () => {
     expect(issued.quote.plan.referenceCount).toBe(0);
     expect(issued.quote.plan.amountCredits).toBe(3);
     expect(inputs.inputImages.at(-1)?.dataUrl).toBe(`data:image/png;base64,${new LayoutGuideImageRenderer().render(inputs.prompt.layoutControl!.frames,{numberFrames:true})!.imageData.toString('base64')}`);
-    await expect(new QuotedGenerationInputs(database,'different-model',loader,new LayoutGuideImageRenderer()).page(job!)).rejects.toMatchObject({code:'CONFIGURATION_ERROR'});
+    expect(await rejectionOf(new QuotedGenerationInputs(database,'different-model',loader,new LayoutGuideImageRenderer()).page(job!))).toMatchObject({code:'CONFIGURATION_ERROR'});
   });
 
   it('法人quoteは法人残高だけを控除しrole変更後の受付を拒否する', async () => {
@@ -151,7 +152,7 @@ describePostgres('atomic generation quotes', () => {
     await pool.query('UPDATE works SET organization_id=$2 WHERE id=$1',[ids.workId,organizationId]);
     const instance=service();const issued=await instance.issue(ids.userId,{operation:'page_generate',targetId:ids.pageId},organizationId);
     await pool.query(`UPDATE organization_members SET role='viewer' WHERE organization_id=$1`,[organizationId]);
-    await expect(instance.accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID(),organizationId)).rejects.toMatchObject({code:'FORBIDDEN'});
+    expect(await rejectionOf(instance.accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID(),organizationId))).toMatchObject({code:'FORBIDDEN'});
     await pool.query(`UPDATE organization_members SET role='editor' WHERE organization_id=$1`,[organizationId]);
     const accepted=await instance.accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID(),organizationId);
     expect(accepted).toMatchObject({chargedCredits:3,refundedCredits:0});
@@ -176,7 +177,7 @@ describePostgres('atomic generation quotes', () => {
     expect(base.quote.plan).toMatchObject({amountCredits:1,referenceCount:0});
     expect(state.quote.plan).toMatchObject({amountCredits:1,referenceCount:1});
     await pool.query(`UPDATE entity_states SET description='Changed injury' WHERE id=$1`,[stateId]);
-    await expect(instance.accept(ids.userId,state.quote.id,state.quoteToken,randomUUID())).rejects.toMatchObject({code:'CONFLICT'});
+    expect(await rejectionOf(instance.accept(ids.userId,state.quote.id,state.quoteToken,randomUUID()))).toMatchObject({code:'CONFLICT'});
     const baseReceipt=await instance.accept(ids.userId,base.quote.id,base.quoteToken,randomUUID());
     expect(baseReceipt.chargedCredits).toBe(1);
     await new PostgresGenerationJobRepository(database).markFailed(baseReceipt.quote.acceptedJobId!,'Fixture completion');
@@ -225,7 +226,7 @@ describePostgres('atomic generation quotes', () => {
     await worker.processJob(jobId);await worker.processJob(jobId);
     expect(calls).toBe(1);
     expect((await new PostgresGenerationJobRepository(database).findByIdAndUserId(jobId,f.userId))?.errorMessage).toBeNull();
-    await expect(money(f.userId)).resolves.toEqual({purchased_credits:29,debits:1,jobs:1});
+    expect(await (money(f.userId))).toEqual({purchased_credits:29,debits:1,jobs:1});
     const receipt=await f.instance.receipt(f.userId,issued.quote.id);expect(receipt).toMatchObject({jobStatus:'completed',chargedCredits:1,refundedCredits:0});
     const copyKey=`tmp/${f.userId}/entities/imports/${jobId}.png`;
     expect((await new PostgresAccountDeletionRepository(database,database).getFlight(f.userId)).personalAssetKeys).toEqual(expect.arrayContaining([f.sourceKey,copyKey]));
@@ -242,24 +243,24 @@ describePostgres('atomic generation quotes', () => {
     await worker.processJob(jobId);await worker.processJob(jobId);
     await new PostgresQuotedImportExecutionRepository(database).recoverExpired();
     expect(calls).toBe(1);
-    await expect(f.instance.receipt(f.userId,issued.quote.id)).resolves.toMatchObject({jobStatus:'failed',chargedCredits:1,refundedCredits:1});
+    expect(await (f.instance.receipt(f.userId,issued.quote.id))).toMatchObject({jobStatus:'failed',chargedCredits:1,refundedCredits:1});
     expect(await new PostgresGenerationJobRepository(database).prepareRetry(jobId,3)).toBe(false);
-    await expect(money(f.userId)).resolves.toEqual({purchased_credits:30,debits:1,jobs:1});
+    expect(await (money(f.userId))).toEqual({purchased_credits:30,debits:1,jobs:1});
 
     const stopped=await importFixture();const stoppedQuote=await stopped.instance.issue(stopped.userId,stopped.request);
     const stoppedReceipt=await stopped.instance.accept(stopped.userId,stoppedQuote.quote.id,stoppedQuote.quoteToken,randomUUID());
     await pool.query(`UPDATE generation_jobs SET status='processing',started_at=NOW()-INTERVAL '25 minutes' WHERE id=$1`,[stoppedReceipt.quote.acceptedJobId]);
     await new PostgresQuotedImportExecutionRepository(database).recoverExpired();
     await new PostgresQuotedImportExecutionRepository(database).recoverExpired();
-    await expect(stopped.instance.receipt(stopped.userId,stoppedQuote.quote.id)).resolves.toMatchObject({jobStatus:'failed',chargedCredits:1,refundedCredits:1});
+    expect(await (stopped.instance.receipt(stopped.userId,stoppedQuote.quote.id))).toMatchObject({jobStatus:'failed',chargedCredits:1,refundedCredits:1});
   });
 
   it('import画像の見積後変更は課金前に拒否し受付後変更はprovider前に失敗返金する', async () => {
     const f=await importFixture();const issued=await f.instance.issue(f.userId,f.request);
     const load=f.storage.loadUploadedImage;
     f.storage.loadUploadedImage=async(input)=>{const image=await load(input);return image===null?null:{...image,eTag:'"changed"'};};
-    await expect(f.instance.accept(f.userId,issued.quote.id,issued.quoteToken,randomUUID())).rejects.toMatchObject({code:'CONFLICT'});
-    await expect(money(f.userId)).resolves.toEqual({purchased_credits:30,debits:0,jobs:0});
+    expect(await rejectionOf(f.instance.accept(f.userId,issued.quote.id,issued.quoteToken,randomUUID()))).toMatchObject({code:'CONFLICT'});
+    expect(await (money(f.userId))).toEqual({purchased_credits:30,debits:0,jobs:0});
     f.storage.loadUploadedImage=load;
     const accepted=await f.instance.accept(f.userId,issued.quote.id,issued.quoteToken,randomUUID());
     f.storage.loadUploadedImage=async(input)=>{const image=await load(input);return image===null?null:{...image,eTag:'"changed"'};};
@@ -267,7 +268,7 @@ describePostgres('atomic generation quotes', () => {
     const worker=new QuotedImportWorkerService(database,f.storage,{analyze:async()=>{calls++;throw new Error('Must not run');}});
     expect(await worker.processJob(accepted.quote.acceptedJobId!)).toMatchObject({jobStatus:'failed'});
     expect(calls).toBe(0);
-    await expect(f.instance.receipt(f.userId,issued.quote.id)).resolves.toMatchObject({chargedCredits:1,refundedCredits:1});
+    expect(await (f.instance.receipt(f.userId,issued.quote.id))).toMatchObject({chargedCredits:1,refundedCredits:1});
   });
 
   it('quote受付待機中の編集をlock後に検出して控除しない', async () => {
@@ -279,8 +280,8 @@ describePostgres('atomic generation quotes', () => {
       const state=await Promise.race([accepted.then(()=>'settled',()=>'settled'),new Promise<string>((resolve)=>setTimeout(()=>resolve('pending'),30))]);
       expect(state).toBe('pending');
       await blocker.query(`UPDATE panels SET situation_text='Changed while admission waited' WHERE id=$1`,[ids.panelId]);await blocker.query('COMMIT');
-      await expect(accepted).rejects.toMatchObject({code:'CONFLICT'});
-      await expect(money(ids.userId)).resolves.toEqual({purchased_credits:30,debits:0,jobs:0});
+      expect(await rejectionOf(accepted)).toMatchObject({code:'CONFLICT'});
+      expect(await (money(ids.userId))).toEqual({purchased_credits:30,debits:0,jobs:0});
     }finally{await blocker.query('ROLLBACK');blocker.release();}
   });
 
@@ -312,15 +313,15 @@ describePostgres('atomic generation quotes', () => {
     expect(issued.quote.expiresAt.getTime()).toBe(expiresAt);
     expect(issued.quote.plan).toMatchObject({referenceCount:1,amountCredits:1});
     imageData=Buffer.from('89504e470d0a1a0a11111111','hex');
-    await expect(instance.accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID())).rejects.toMatchObject({code:'CONFLICT'});
-    await expect(money(ids.userId)).resolves.toEqual({purchased_credits:30,debits:0,jobs:0});
+    expect(await rejectionOf(instance.accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID()))).toMatchObject({code:'CONFLICT'});
+    expect(await (money(ids.userId))).toEqual({purchased_credits:30,debits:0,jobs:0});
     imageData=Buffer.from('89504e470d0a1a0a00000000','hex');
     const accepted=await instance.accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID());
     const job=await new PostgresGenerationJobRepository(database).findByIdAndUserId(accepted.quote.acceptedJobId!,ids.userId);
     const inputs=new QuotedGenerationInputs(database,'gpt-image-2',loader,new LayoutGuideImageRenderer());
     expect((await inputs.entity(job!)).inputImages).toHaveLength(1);
     imageData=Buffer.from('89504e470d0a1a0a22222222','hex');
-    await expect(inputs.entity(job!)).rejects.toMatchObject({code:'CONFIGURATION_ERROR'});
+    expect(await rejectionOf(inputs.entity(job!))).toMatchObject({code:'CONFIGURATION_ERROR'});
     expect((await new PostgresAccountDeletionRepository(database,database).getFlight(ids.userId)).personalAssetKeys).toContain(sourceKey);
     expect((await new PostgresImageStorageReferenceRepository(database).findProtectedImageS3Keys({protectRecentCandidateHours:48})).has(sourceKey)).toBe(true);
   });

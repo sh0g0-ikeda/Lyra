@@ -11,6 +11,7 @@ import { PostgresPageRepository } from '../../src/repositories/PageRepository.js
 import { decodeWorkListCursor, encodeWorkListCursor, decodeEntityListCursor, decodePageListCursor } from '../../src/domain/pagination.js';
 import { StoryService } from '../../src/services/story/StoryService.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { rejectionOf } from './asyncPostgresAssertions.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describePostgres = process.env.APP_ENV === 'test' && databaseUrl ? describe : describe.skip;
@@ -62,7 +63,7 @@ describePostgres('story shipped revision compatibility', () => {
     const ids = await fixture();
     const before = (await repository.findEpisodeByIdAndUserId(ids.episode,ids.user))!;
     await service.updateEpisode(ids.user,ids.episode,{title:'latest',expectedUpdatedAt:before.updatedAt.toISOString()});
-    await expect(service.updateEpisode(ids.user,ids.episode,{title:'stale',startingEntityStates:[],expectedUpdatedAt:before.updatedAt.toISOString()})).rejects.toMatchObject({code:'RESOURCE_STALE'});
+    expect(await rejectionOf(service.updateEpisode(ids.user,ids.episode,{title:'stale',startingEntityStates:[],expectedUpdatedAt:before.updatedAt.toISOString()}))).toMatchObject({code:'RESOURCE_STALE'});
     const latest = await service.updateEpisode(ids.user,ids.episode,{title:'legacy'});
     expect(latest).toMatchObject({title:'legacy',introduction:'keep introduction',version:3,startingEntityStates:[]});
     expect(latest.editHistory).toHaveLength(2);
@@ -79,8 +80,8 @@ describePostgres('story shipped revision compatibility', () => {
     expect(first.updatedAt.getTime()).toBe(before.updatedAt.getTime()+1);
     expect(second.updatedAt.getTime()).toBe(first.updatedAt.getTime()+1);
     expect(second.theme).toBe('keep theme');
-    await expect(service.updateWork(randomUUID(),ids.work,{title:'foreign',expectedUpdatedAt:first.updatedAt.toISOString()})).rejects.toMatchObject({code:'NOT_FOUND'});
-    await expect(service.updateWork(ids.user,ids.work,{title:'foreign org',expectedUpdatedAt:first.updatedAt.toISOString()},randomUUID())).rejects.toMatchObject({code:'NOT_FOUND'});
+    expect(await rejectionOf(service.updateWork(randomUUID(),ids.work,{title:'foreign',expectedUpdatedAt:first.updatedAt.toISOString()}))).toMatchObject({code:'NOT_FOUND'});
+    expect(await rejectionOf(service.updateWork(ids.user,ids.work,{title:'foreign org',expectedUpdatedAt:first.updatedAt.toISOString()},randomUUID()))).toMatchObject({code:'NOT_FOUND'});
   });
   it('entityも同一revision競合を拒否しlegacy部分更新とforeign拒否を維持する', async () => {
     const ids = await fixture();
@@ -98,8 +99,8 @@ describePostgres('story shipped revision compatibility', () => {
     const legacy = await entityService.updateEntity(ids.user,entity.id,{name:'legacy'});
     expect(legacy.freeDescription).toBe('keep');
     expect(legacy.updatedAt.getTime()).toBe(saved.updatedAt.getTime()+1);
-    await expect(entityService.updateEntity(randomUUID(),entity.id,{name:'foreign',expectedUpdatedAt:legacy.updatedAt.toISOString()})).rejects.toMatchObject({code:'NOT_FOUND'});
-    await expect(entityService.updateEntity(ids.user,entity.id,{name:'foreign org',expectedUpdatedAt:legacy.updatedAt.toISOString()},randomUUID())).rejects.toMatchObject({code:'NOT_FOUND'});
+    expect(await rejectionOf(entityService.updateEntity(randomUUID(),entity.id,{name:'foreign',expectedUpdatedAt:legacy.updatedAt.toISOString()}))).toMatchObject({code:'NOT_FOUND'});
+    expect(await rejectionOf(entityService.updateEntity(ids.user,entity.id,{name:'foreign org',expectedUpdatedAt:legacy.updatedAt.toISOString()},randomUUID()))).toMatchObject({code:'NOT_FOUND'});
   });
 
   it('production works cursorは同一timestampをID順で継続しcandidate順とtenant境界を混同しない', async () => {

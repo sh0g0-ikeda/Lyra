@@ -6,6 +6,7 @@ import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresEpisodeExportJobRepository } from '../../src/repositories/EpisodeExportJobRepository.js';
 import { PostgresPageRepository } from '../../src/repositories/PageRepository.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { rejectionOf } from './asyncPostgresAssertions.js';
 const databaseUrl=process.env.DATABASE_URL;
 const suite=process.env.APP_ENV==='test'&&databaseUrl!==undefined?describe:describe.skip;
 class Database implements DatabaseClient,TransactionRunner {
@@ -34,12 +35,12 @@ suite('画像provenanceの実DB保持とexport境界',()=>{
   const webImage={...image,imageModel:'hy4-preview',providerModelId:'hy4-preview',provider:'tencent'};
   await pages.updateGeneratedImageAndState(page,user,{status:'generated',generationMode:'standard',generatedImage:webImage});
   expect(await exports.isSourceSnapshotCurrent(legacyCompatible.job)).toBe(false);
-  await expect(exports.createOrGet({...input,idempotencyKey:randomUUID()})).rejects.toMatchObject({code:'IMAGE_WEB_ONLY'});
+  expect(await rejectionOf(exports.createOrGet({...input,idempotencyKey:randomUUID()}))).toMatchObject({code:'IMAGE_WEB_ONLY'});
   const web=await exports.createOrGet({...input,filename:'web.pdf',requestFingerprint:'b'.repeat(64),idempotencyKey:randomUUID(),audience:'authorized_web'});
   expect(web.job.pageSnapshot[0]).toMatchObject({imageModel:'hy4-preview',provider:'tencent'});
   expect(await exports.isSourceSnapshotCurrent(web.job)).toBe(true);
   await pages.updateGeneratedImageAndState(page,user,{status:'generated',generationMode:'standard',generatedImage:{...image,imageModel:'unregistered'}});
-  await expect(exports.createOrGet({...input,idempotencyKey:randomUUID(),audience:'authorized_web'})).rejects.toMatchObject({code:'IMAGE_MODEL_UNAVAILABLE'});
+  expect(await rejectionOf(exports.createOrGet({...input,idempotencyKey:randomUUID(),audience:'authorized_web'}))).toMatchObject({code:'IMAGE_MODEL_UNAVAILABLE'});
   expect(await exports.isSourceSnapshotCurrent({...web.job,userId:randomUUID()})).toBe(false);
   expect(Number((await pool.query('SELECT COUNT(*) AS n FROM episode_export_jobs')).rows[0].n)).toBe(2);
  });

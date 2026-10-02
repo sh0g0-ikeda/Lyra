@@ -69,7 +69,7 @@ describePostgres('account deletion recovery claim', () => {
     const database = new PoolTransactionDatabase(pool);
     const repository = new PostgresAccountDeletionRepository(database, database);
 
-    await expect(repository.claimNextRecoverable(processingToken)).resolves.toMatchObject({
+    expect(await (repository.claimNextRecoverable(processingToken))).toMatchObject({
       userId,
       status: 'processing',
       processingToken,

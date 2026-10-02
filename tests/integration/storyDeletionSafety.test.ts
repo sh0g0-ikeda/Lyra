@@ -7,6 +7,7 @@ import { PostgresEpisodeExportJobRepository } from '../../src/repositories/Episo
 import { PostgresGenerationJobRepository } from '../../src/repositories/GenerationJobRepository.js';
 import { PostgresStoryRepository } from '../../src/repositories/StoryRepository.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { rejectionOf } from './asyncPostgresAssertions.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const shouldRunPostgresTest = process.env.APP_ENV === 'test' && databaseUrl !== undefined;
@@ -61,10 +62,10 @@ describePostgres('story deletion safety', () => {
         deletionDatabase.release();
       }
 
-      await expect(deletionPromise).resolves.toBe(true);
-      await expect(generationPromise).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(countRows(pool, 'episodes', ids.episodeId)).resolves.toBe(0);
-      await expect(countRows(pool, 'generation_jobs', ids.jobId)).resolves.toBe(0);
+      expect(await (deletionPromise)).toBe(true);
+      expect(await rejectionOf(generationPromise)).toMatchObject({ code: 'CONFLICT' });
+      expect(await (countRows(pool, 'episodes', ids.episodeId))).toBe(0);
+      expect(await (countRows(pool, 'generation_jobs', ids.jobId))).toBe(0);
     } finally {
       deletionDatabase.release();
       await removeFixture(pool, ids);
@@ -90,10 +91,10 @@ describePostgres('story deletion safety', () => {
         generationDatabase.release();
       }
 
-      await expect(generationPromise).resolves.toMatchObject({ id: ids.jobId, status: 'queued' });
-      await expect(deletionPromise).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(countRows(pool, 'episodes', ids.episodeId)).resolves.toBe(1);
-      await expect(countRows(pool, 'generation_jobs', ids.jobId)).resolves.toBe(1);
+      expect(await (generationPromise)).toMatchObject({ id: ids.jobId, status: 'queued' });
+      expect(await rejectionOf(deletionPromise)).toMatchObject({ code: 'CONFLICT' });
+      expect(await (countRows(pool, 'episodes', ids.episodeId))).toBe(1);
+      expect(await (countRows(pool, 'generation_jobs', ids.jobId))).toBe(1);
     } finally {
       generationDatabase.release();
       await removeFixture(pool, ids);
@@ -129,10 +130,10 @@ describePostgres('story deletion safety', () => {
         deletionDatabase.release();
       }
 
-      await expect(deletionPromise).resolves.toBe(true);
-      await expect(retryPromise).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(countRows(pool, 'episodes', ids.episodeId)).resolves.toBe(0);
-      await expect(readGenerationJobStatus(pool, ids.jobId)).resolves.toBe('failed');
+      expect(await (deletionPromise)).toBe(true);
+      expect(await rejectionOf(retryPromise)).toMatchObject({ code: 'CONFLICT' });
+      expect(await (countRows(pool, 'episodes', ids.episodeId))).toBe(0);
+      expect(await (readGenerationJobStatus(pool, ids.jobId))).toBe('failed');
     } finally {
       deletionDatabase.release();
       await removeFixture(pool, ids);
@@ -175,10 +176,10 @@ describePostgres('story deletion safety', () => {
         exportDatabase.release();
       }
 
-      await expect(exportPromise).resolves.toMatchObject({ created: true });
-      await expect(deletionPromise).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(countRows(pool, 'episodes', ids.episodeId)).resolves.toBe(1);
-      await expect(countEpisodeExportRows(pool, ids.episodeId)).resolves.toBe(1);
+      expect(await (exportPromise)).toMatchObject({ created: true });
+      expect(await rejectionOf(deletionPromise)).toMatchObject({ code: 'CONFLICT' });
+      expect(await (countRows(pool, 'episodes', ids.episodeId))).toBe(1);
+      expect(await (countEpisodeExportRows(pool, ids.episodeId))).toBe(1);
     } finally {
       exportDatabase.release();
       await removeFixture(pool, ids);
@@ -194,11 +195,11 @@ describePostgres('story deletion safety', () => {
       await insertFixture(pool, ids);
       await saveGeneratedPageImage(pool, ids);
 
-      await expect(repository.deleteChapter(ids.chapterId, ids.userId)).rejects.toMatchObject({
+      expect(await rejectionOf(repository.deleteChapter(ids.chapterId, ids.userId))).toMatchObject({
         code: 'CONFLICT',
       });
-      await expect(countRows(pool, 'chapters', ids.chapterId)).resolves.toBe(1);
-      await expect(countRows(pool, 'pages', ids.pageId)).resolves.toBe(1);
+      expect(await (countRows(pool, 'chapters', ids.chapterId))).toBe(1);
+      expect(await (countRows(pool, 'pages', ids.pageId))).toBe(1);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -237,10 +238,10 @@ describePostgres('story deletion safety', () => {
         ],
       );
 
-      await expect(repository.deleteEpisode(ids.episodeId, ids.userId)).rejects.toMatchObject({
+      expect(await rejectionOf(repository.deleteEpisode(ids.episodeId, ids.userId))).toMatchObject({
         code: 'CONFLICT',
       });
-      await expect(countRows(pool, 'episodes', ids.episodeId)).resolves.toBe(1);
+      expect(await (countRows(pool, 'episodes', ids.episodeId))).toBe(1);
       const exportCount = await pool.query<{ count: string }>(
         'SELECT COUNT(*)::text AS count FROM episode_export_jobs WHERE id = $1::uuid',
         [exportJobId],
