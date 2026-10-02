@@ -117,14 +117,14 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(renderSource('PagesScreen')).toContain('<StoryGenerationControls');
   });
 
-  it('ページ・コマ・枠の未保存差分は画面遷移を止めず生成前保存だけ維持する', () => {
+  it('ページ・コマ・枠の未保存差分は遷移前に解決し生成前保存も維持する', () => {
     const pageScreen = readSource('src/screens/PagesScreen.tsx');
     const registration = pageScreen.slice(
       pageScreen.indexOf("id: 'pages-editor'"),
       pageScreen.indexOf('const clearPageSelectionAfterSkeleton')
     );
 
-    expect(registration).toContain('blocksNavigation: false');
+    expect(registration).toContain('blocksNavigation: true');
     expect(pageScreen).toContain('await saveAllPageDrafts();');
   });
 
