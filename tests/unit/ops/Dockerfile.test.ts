@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 describe('production Dockerfile', () => {
   it('Web build stageは共有contractのsourceと依存を持つ', async () => {
-    const dockerfile = await readFile(join(process.cwd(), 'Dockerfile'), 'utf8');
+    const dockerfile = (await readFile(join(process.cwd(), 'Dockerfile'), 'utf8')).replace(/\r\n?/gu, '\n');
     const stage = dockerfile.split(' AS web-build\n')[1]?.split('\nFROM ')[0] ?? '';
     expect(stage).toContain('COPY packages /app/packages');
     expect(stage).toContain('COPY --from=deps /app/node_modules /app/node_modules');
@@ -12,7 +12,7 @@ describe('production Dockerfile', () => {
   });
 
   it('実行イメージは脆弱性を含むビルドツールを持たず非rootで起動する', async () => {
-    const dockerfile = await readFile(join(process.cwd(), 'Dockerfile'), 'utf8');
+    const dockerfile = (await readFile(join(process.cwd(), 'Dockerfile'), 'utf8')).replace(/\r\n?/gu, '\n');
     const runtimeStage = dockerfile.slice(dockerfile.lastIndexOf('\nFROM '));
 
     expect(dockerfile).toContain('FROM --platform=$BUILDPLATFORM oven/bun:1.3.14 AS deps');
