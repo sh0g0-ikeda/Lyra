@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PanelEntityAssignment } from '../../src/domain/types/panelEntityAssignment.js';
+import type { EpisodePagePlanApplyResult } from '../../src/domain/types/page.js';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresPanelEntityAssignmentRepository } from '../../src/repositories/PanelEntityAssignmentRepository.js';
@@ -13,6 +14,20 @@ import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
 const databaseUrl = process.env.DATABASE_URL;
 const shouldRunPostgresTest = process.env.APP_ENV === 'test' && databaseUrl !== undefined;
 const describePostgres = shouldRunPostgresTest ? describe : describe.skip;
+const storyAutofillSettlementVariants: Array<[
+  string,
+  Partial<EpisodePagePlanApplyResult>,
+]> = [
+  ['通常の話全体反映', {}],
+  [
+    '状態反映v1',
+    {
+      stateTransitions: [],
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'preserve_existing',
+    },
+  ],
+];
 
 describePostgres('panel entity assignment conditional update', () => {
   let adminPool: Pool;
@@ -70,71 +85,75 @@ describePostgres('panel entity assignment conditional update', () => {
     }
   });
 
-  it('通常の話全体反映もjob完了後に例外が起きた場合はpageとjobを一括で戻す', async () => {
-    const ids = createFixtureIds();
-    const jobId = randomUUID();
-    let inserted = false;
-    try {
-      await insertFixture(pool, ids);
-      await pool.query(
-        `INSERT INTO generation_jobs (
-           id, user_id, job_type, status, credit_cost, params, started_at, commit_started_at
-         ) VALUES (
-           $1::uuid, $2::uuid, 'episode_story_autofill', 'processing', 0,
-           jsonb_build_object('episode_id', $3::text), NOW(), NOW()
-         )`,
-        [jobId, ids.userId, ids.episodeId],
-      );
-      inserted = true;
-      const database = new PoolTransactionDatabase(pool);
-      let activeTransactionClient: DatabaseClient | null = null;
-      const scopedDatabase: DatabaseClient & TransactionRunner = {
-        query: database.query.bind(database),
-        transaction: async <T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> =>
-          database.transaction(async (client) => {
-            activeTransactionClient = client;
-            try {
-              return await work(client);
-            } finally {
-              activeTransactionClient = null;
+  it.each(storyAutofillSettlementVariants)(
+    '%sはjob完了後に例外が起きた場合にpageとjobを一括で戻す',
+    async (_label, stateResult) => {
+      const ids = createFixtureIds();
+      const jobId = randomUUID();
+      let inserted = false;
+      try {
+        await insertFixture(pool, ids);
+        await pool.query(
+          `INSERT INTO generation_jobs (
+             id, user_id, job_type, status, credit_cost, params, started_at, commit_started_at
+           ) VALUES (
+             $1::uuid, $2::uuid, 'episode_story_autofill', 'processing', 0,
+             jsonb_build_object('episode_id', $3::text), NOW(), NOW()
+           )`,
+          [jobId, ids.userId, ids.episodeId],
+        );
+        inserted = true;
+        const database = new PoolTransactionDatabase(pool);
+        let activeTransactionClient: DatabaseClient | null = null;
+        const scopedDatabase: DatabaseClient & TransactionRunner = {
+          query: database.query.bind(database),
+          transaction: async <T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> =>
+            database.transaction(async (client) => {
+              activeTransactionClient = client;
+              try {
+                return await work(client);
+              } finally {
+                activeTransactionClient = null;
+              }
+            }),
+        };
+        const repository = new PostgresEpisodePlanPersistenceRepository(scopedDatabase);
+        expect(await throwingRejectionOf(repository.withLockedEpisodePlan(
+          { episodeId: ids.episodeId, userId: ids.userId, organizationId: null },
+          async (_context, resources) => {
+            if (activeTransactionClient === null || resources.completeStoryAutofillJob === undefined) {
+              throw new Error('transaction resources missing');
             }
-          }),
-      };
-      const repository = new PostgresEpisodePlanPersistenceRepository(scopedDatabase);
-      expect(await throwingRejectionOf(repository.withLockedEpisodePlan(
-        { episodeId: ids.episodeId, userId: ids.userId, organizationId: null },
-        async (_context, resources) => {
-          if (activeTransactionClient === null || resources.completeStoryAutofillJob === undefined) {
-            throw new Error('transaction resources missing');
-          }
-          await activeTransactionClient.query(
-            `UPDATE pages SET status = 'generated' WHERE id = $1::uuid`,
-            [ids.pageId],
-          );
-          const completed = await resources.completeStoryAutofillJob(jobId, ids.userId, {
-            updatedPageCount: 1, updatedPanelCount: 0, updatedAssignmentCount: 0,
-            filledFieldCount: 0, compilerUsed: true, compilerProvider: 'openai',
-            compilerModel: 'test', compilerPromptVersion: 'test', compilerError: null,
-          });
-          expect(completed).toBe(true);
-          throw new Error('injected failure after job completion');
-        },
-      ))).toThrow('injected failure after job completion');
-      const page = await pool.query<{ status: string }>(
-        'SELECT status FROM pages WHERE id = $1::uuid', [ids.pageId],
-      );
-      const job = await pool.query<{ status: string; result: unknown }>(
-        'SELECT status, result FROM generation_jobs WHERE id = $1::uuid', [jobId],
-      );
-      expect(page.rows[0]?.status).toBe('designing');
-      expect(job.rows[0]).toMatchObject({ status: 'processing', result: null });
-    } finally {
-      if (inserted) {
-        await pool.query('DELETE FROM generation_jobs WHERE id = $1::uuid', [jobId]);
+            await activeTransactionClient.query(
+              `UPDATE pages SET status = 'generated' WHERE id = $1::uuid`,
+              [ids.pageId],
+            );
+            const completed = await resources.completeStoryAutofillJob(jobId, ids.userId, {
+              updatedPageCount: 1, updatedPanelCount: 0, updatedAssignmentCount: 0,
+              filledFieldCount: 0, compilerUsed: true, compilerProvider: 'openai',
+              compilerModel: 'test', compilerPromptVersion: 'test', compilerError: null,
+              ...stateResult,
+            });
+            expect(completed).toBe(true);
+            throw new Error('injected failure after job completion');
+          },
+        ))).toThrow('injected failure after job completion');
+        const page = await pool.query<{ status: string }>(
+          'SELECT status FROM pages WHERE id = $1::uuid', [ids.pageId],
+        );
+        const job = await pool.query<{ status: string; result: unknown }>(
+          'SELECT status, result FROM generation_jobs WHERE id = $1::uuid', [jobId],
+        );
+        expect(page.rows[0]?.status).toBe('designing');
+        expect(job.rows[0]).toMatchObject({ status: 'processing', result: null });
+      } finally {
+        if (inserted) {
+          await pool.query('DELETE FROM generation_jobs WHERE id = $1::uuid', [jobId]);
+        }
+        await removeFixture(pool, ids);
       }
-      await removeFixture(pool, ids);
-    }
-  });
+    },
+  );
 
   it('stale recoveryが先にjobをfailedへ確定した場合は通常話全体反映を全て戻す', async () => {
     const ids = createFixtureIds();
