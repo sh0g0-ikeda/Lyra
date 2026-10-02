@@ -16,7 +16,13 @@ const createExpoConfig = require('../app.config.js') as (input: {
 const originalEnvironment = {
   googleServicesJson: process.env.GOOGLE_SERVICES_JSON,
   buildEnvironment: process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT,
+  appVariant: process.env.EXPO_PUBLIC_APP_VARIANT,
   appLinkHost: process.env.EXPO_PUBLIC_APP_LINK_HOST,
+  apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
+  cognitoDomain: process.env.EXPO_PUBLIC_COGNITO_DOMAIN,
+  cognitoClientId: process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID,
+  cognitoRedirectUri: process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI,
+  cognitoLogoutRedirectUri: process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI,
   iosAssociatedDomainsEnabled: process.env.EXPO_PUBLIC_IOS_ASSOCIATED_DOMAINS_ENABLED,
 };
 
@@ -37,7 +43,13 @@ describe('Expo app config', () => {
     for (const [key, value] of Object.entries({
       GOOGLE_SERVICES_JSON: originalEnvironment.googleServicesJson,
       EXPO_PUBLIC_BUILD_ENVIRONMENT: originalEnvironment.buildEnvironment,
+      EXPO_PUBLIC_APP_VARIANT: originalEnvironment.appVariant,
       EXPO_PUBLIC_APP_LINK_HOST: originalEnvironment.appLinkHost,
+      EXPO_PUBLIC_API_BASE_URL: originalEnvironment.apiBaseUrl,
+      EXPO_PUBLIC_COGNITO_DOMAIN: originalEnvironment.cognitoDomain,
+      EXPO_PUBLIC_COGNITO_CLIENT_ID: originalEnvironment.cognitoClientId,
+      EXPO_PUBLIC_COGNITO_REDIRECT_URI: originalEnvironment.cognitoRedirectUri,
+      EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI: originalEnvironment.cognitoLogoutRedirectUri,
       EXPO_PUBLIC_IOS_ASSOCIATED_DOMAINS_ENABLED: originalEnvironment.iosAssociatedDomainsEnabled,
     })) {
       if (value === undefined) {
@@ -105,6 +117,76 @@ describe('Expo app config', () => {
     expect(createExpoConfig({ config: baseConfig }).ios).toMatchObject({
       associatedDomains: ['applinks:preview.lyra-editor.com'],
     });
+  });
+
+  // Staging is an independently installable Android app. Its backend and OAuth
+  // identifiers arrive only from explicitly supplied EAS environment values.
+  it('stagingでは独立package・scheme・callbackとstaging App Linkを出力する', () => {
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
+    process.env.EXPO_PUBLIC_APP_VARIANT = 'staging';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_COGNITO_DOMAIN = 'https://staging.auth.example.com';
+    process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID = 'stagingclientid123';
+    process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/callback';
+    process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/logout';
+
+    expect(createExpoConfig({ config: baseConfig })).toMatchObject({
+      name: 'Lyra Mobile Staging',
+      scheme: 'lyra-mobile-staging',
+      android: {
+        package: 'com.lyra.mobile.staging',
+        intentFilters: [
+          { data: [{ scheme: 'https', host: 'staging.lyra-editor.test', pathPrefix: '/auth/mobile/callback' }] },
+          { data: [{ scheme: 'https', host: 'staging.lyra-editor.test', pathPrefix: '/auth/mobile/logout' }] },
+          { data: [{ scheme: 'https', host: 'staging.lyra-editor.test', pathPrefix: '/invitations/' }] },
+        ],
+      },
+    });
+  });
+
+  it.each([
+    ['EXPO_PUBLIC_API_BASE_URL', 'https://app.lyra-editor.com'],
+    ['EXPO_PUBLIC_COGNITO_CLIENT_ID', '6b2h941o888u2l7ejhv5jog94'],
+    ['EXPO_PUBLIC_COGNITO_REDIRECT_URI', 'lyra-mobile://auth/mobile/callback'],
+    ['EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI', 'lyra-mobile://auth/mobile/logout'],
+  ])('stagingで本番の%sをfail-fastで拒否する', (key, value) => {
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
+    process.env.EXPO_PUBLIC_APP_VARIANT = 'staging';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_COGNITO_DOMAIN = 'https://staging.auth.example.com';
+    process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID = 'stagingclientid123';
+    process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/callback';
+    process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/logout';
+    process.env[key] = value;
+
+    expect(() => createExpoConfig({ config: baseConfig })).toThrow(/staging/);
+  });
+
+  it('stagingで必要な接続先が未供給ならfail-fastで拒否する', () => {
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
+    process.env.EXPO_PUBLIC_APP_VARIANT = 'staging';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'staging.lyra-editor.test';
+    delete process.env.EXPO_PUBLIC_API_BASE_URL;
+
+    expect(() => createExpoConfig({ config: baseConfig })).toThrow(
+      'EXPO_PUBLIC_API_BASE_URL must be supplied by the staging environment',
+    );
+  });
+
+  it('stagingはproduction Firebase設定を引き継がずpushを無効のままにする', () => {
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
+    process.env.EXPO_PUBLIC_APP_VARIANT = 'staging';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_COGNITO_DOMAIN = 'https://staging.auth.example.com';
+    process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID = 'stagingclientid123';
+    process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/callback';
+    process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/logout';
+    process.env.GOOGLE_SERVICES_JSON = '/eas/secrets/production-google-services.json';
+
+    expect(createExpoConfig({ config: baseConfig }).android).not.toHaveProperty('googleServicesFile');
   });
 
   it('productionは固定のapp link host以外をfail-fastで拒否する', () => {

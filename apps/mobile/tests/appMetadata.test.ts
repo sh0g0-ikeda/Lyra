@@ -50,7 +50,10 @@ const easConfig = JSON.parse(
   build?: Record<string, {
     autoIncrement?: boolean;
     channel?: string;
+    distribution?: string;
+    environment?: string;
     env?: Record<string, string>;
+    android?: { buildType?: string };
     ios?: { simulator?: boolean };
   }>;
   submit?: { production?: { android?: { track?: string }; ios?: object } };
@@ -124,6 +127,25 @@ describe('production app metadata', () => {
     });
     expect(easConfig.submit?.production?.android?.track).toBe('internal');
     expect(easConfig.submit?.production?.ios).toBeDefined();
+  });
+
+  it('staging APKは本番versionとOTA channelを共有せず、既存preview runtimeを使う', () => {
+    expect(easConfig.build?.staging).toMatchObject({
+      autoIncrement: false,
+      channel: 'staging',
+      distribution: 'internal',
+      environment: 'preview',
+      env: {
+        EXPO_PUBLIC_BUILD_ENVIRONMENT: 'preview',
+        EXPO_PUBLIC_APP_VARIANT: 'staging',
+        SENTRY_DISABLE_AUTO_UPLOAD: 'true',
+      },
+      android: { buildType: 'apk' },
+    });
+    expect(easConfig.build?.staging?.env).not.toHaveProperty('EXPO_PUBLIC_API_BASE_URL');
+    expect(easConfig.build?.staging?.env).not.toHaveProperty('EXPO_PUBLIC_COGNITO_CLIENT_ID');
+    expect(easConfig.build?.staging?.env).not.toHaveProperty('EXPO_PUBLIC_COGNITO_REDIRECT_URI');
+    expect(easConfig.submit).not.toHaveProperty('staging');
   });
 
   it('remote version管理を単一ソースにし資格情報不要のiOS simulator buildを定義する', () => {
