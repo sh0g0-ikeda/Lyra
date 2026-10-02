@@ -1,5 +1,6 @@
 import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
-import type { OpenAIReasoningEffort } from './StructuredOpenAIResponse.js';
+import { ConfigurationError } from '../../domain/errors/index.js';
+import type { OpenAIReasoningEffort, StructuredOpenAIResponseFailureReason } from './StructuredOpenAIResponse.js';
 import { STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY, STORY_PANEL_POLICY } from './StoryEditorialPrompts.js';
 import {
   EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS,
@@ -8,14 +9,28 @@ import {
 } from '../../domain/constants/generation.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { describeAppLanguage } from '../../domain/types/language.js';
-import { episodePagePlanSuggestionSchema } from '../../lib/validators/episodePagePlan.schema.js';
+import {
+  episodePagePlanSuggestionSchema,
+  type EpisodePagePlanSuggestionPayload,
+} from '../../lib/validators/episodePagePlan.schema.js';
 import type {
   CompiledEpisodePagePlan,
   CompileEpisodePagePlanInput,
   EpisodePagePlanCompilerPort,
 } from '../../services/page/EpisodePagePlanCompiler.js';
 import { OpenAIClient } from './OpenAIClient.js';
-import { requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
+import {
+  requestStructuredOpenAIResponse,
+  StructuredOpenAIResponseError,
+} from './StructuredOpenAIResponse.js';
+
+const EPISODE_PAGE_PLAN_COMPILER_MAX_ATTEMPTS = 2;
+const RETRYABLE_DETAIL_PLAN_FAILURE_REASONS = new Set<StructuredOpenAIResponseFailureReason>([
+  'invalid_json',
+  'invalid_payload',
+  'no_output',
+  'incomplete_max_output_tokens',
+]);
 
 export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPort {
   public constructor(
@@ -27,27 +42,53 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
   public async compilePlan(
     input: CompileEpisodePagePlanInput,
   ): Promise<CompiledEpisodePagePlan> {
-    const validated = await requestStructuredOpenAIResponse({
-      client: this.client,
-      model: this.model,
-      reasoningEffort: this.reasoningEffort,
-      maxOutputTokens: EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS,
-      schemaName: 'episode_page_plan',
-      jsonSchema: episodePagePlanJsonSchema,
-      responseSchema: episodePagePlanSuggestionSchema,
-      errorLabel: 'OpenAI episode page plan compiler',
-      sanitize: sanitizeEpisodePagePlanPayload,
-      input: [
-        {
-          role: 'system',
-          content: [{ type: 'input_text', text: buildSystemPrompt(input.language) }],
-        },
-        {
-          role: 'user',
-            content: [{ type: 'input_text', text: buildUserPrompt(input.compilerBrief) }],
-        },
-      ],
-    });
+    let validated: EpisodePagePlanSuggestionPayload | null = null;
+    for (let attempt = 1; attempt <= EPISODE_PAGE_PLAN_COMPILER_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        validated = await requestStructuredOpenAIResponse({
+          client: this.client,
+          model: this.model,
+          reasoningEffort: this.reasoningEffort,
+          maxOutputTokens: EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS,
+          schemaName: 'episode_page_plan',
+          jsonSchema: episodePagePlanJsonSchema,
+          responseSchema: episodePagePlanSuggestionSchema,
+          errorLabel: 'OpenAI episode page plan compiler',
+          sanitize: sanitizeEpisodePagePlanPayload,
+          input: [
+            {
+              role: 'system',
+              content: [{ type: 'input_text', text: buildSystemPrompt(input.language) }],
+            },
+            {
+              role: 'user',
+              content: [{ type: 'input_text', text: buildUserPrompt(input.compilerBrief) }],
+            },
+          ],
+        });
+        break;
+      } catch (error) {
+        if (
+          !(error instanceof StructuredOpenAIResponseError)
+          || !error.retryable
+          || !RETRYABLE_DETAIL_PLAN_FAILURE_REASONS.has(error.reason)
+          || attempt >= EPISODE_PAGE_PLAN_COMPILER_MAX_ATTEMPTS
+        ) {
+          throw error;
+        }
+        await input.beforeRetry?.();
+        console.warn('episode_page_plan_compiler_retry', {
+          attempt,
+          nextAttempt: attempt + 1,
+          reason: error.reason,
+          requestId: error.requestId,
+        });
+      }
+    }
+
+    if (validated === null) {
+      throw new ConfigurationError('Episode page plan compiler exhausted retry attempts');
+    }
 
     return {
       suggestion: {

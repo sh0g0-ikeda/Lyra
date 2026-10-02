@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIPageEpisodePlanCompiler } from '../../../../src/infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
+import { ConfigurationError } from '../../../../src/domain/errors/index.js';
+import { StructuredOpenAIResponseError } from '../../../../src/infrastructure/openai/StructuredOpenAIResponse.js';
 
 describe('OpenAIPageEpisodePlanCompiler', () => {
   it('chapter/episode/scene brief を episode page plan JSON にコンパイルする', async () => {
@@ -185,4 +187,136 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
       panels: [{ order: 1 }],
     });
   });
+
+  it.each([
+    ['invalid_json', { body: { output_text: '{' }, requestId: 'req-invalid-json' }],
+    ['invalid_payload', { body: { output_text: JSON.stringify({ pages: [] }) }, requestId: 'req-invalid-payload' }],
+    ['no_output', { body: { status: 'completed' }, requestId: 'req-no-output' }],
+    [
+      'incomplete_max_output_tokens',
+      {
+        body: { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } },
+        requestId: 'req-output-limit',
+      },
+    ],
+  ] as const)('retryable structured output %s はcheckpoint後に1回だけ再試行する', async (_reason, firstResponse) => {
+    let requestCount = 0;
+    let checkpointCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return requestCount === 1 ? firstResponse : validCompilerResponse();
+      },
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+
+    await expect(compiler.compilePlan({
+      compilerBrief: '[TASK]\nReturn JSON.',
+      language: 'ja',
+      beforeRetry: async () => { checkpointCount += 1; },
+    })).resolves.toMatchObject({ compilerProvider: 'openai' });
+    expect(requestCount).toBe(2);
+    expect(checkpointCount).toBe(1);
+  });
+
+  it('retryable structured output が2回続いても追加再試行しない', async () => {
+    let requestCount = 0;
+    let checkpointCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return { body: { output_text: '{' }, requestId: `req-${requestCount}` };
+      },
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+
+    const rejection = compiler.compilePlan({
+      compilerBrief: '[TASK]\nReturn JSON.',
+      language: 'ja',
+      beforeRetry: async () => { checkpointCount += 1; },
+    });
+    await expect(rejection).rejects.toMatchObject({ reason: 'invalid_json' });
+    expect(requestCount).toBe(2);
+    expect(checkpointCount).toBe(1);
+  });
+
+  it('checkpointで停止された場合は2回目のprovider requestを送らない', async () => {
+    const cancellation = new Error('cancelled before retry');
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return { body: { output_text: '{' }, requestId: 'req-invalid-json' };
+      },
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+
+    await expect(compiler.compilePlan({
+      compilerBrief: '[TASK]\nReturn JSON.',
+      language: 'ja',
+      beforeRetry: async () => { throw cancellation; },
+    })).rejects.toBe(cancellation);
+    expect(requestCount).toBe(1);
+  });
+
+  it('timeoutなどstructured output分類外の失敗は再試行しない', async () => {
+    let requestCount = 0;
+    let checkpointCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        throw new ConfigurationError('OpenAI request timed out');
+      },
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+
+    await expect(compiler.compilePlan({
+      compilerBrief: '[TASK]\nReturn JSON.',
+      language: 'ja',
+      beforeRetry: async () => { checkpointCount += 1; },
+    })).rejects.toBeInstanceOf(ConfigurationError);
+    expect(requestCount).toBe(1);
+    expect(checkpointCount).toBe(0);
+  });
+
+  it('refusalなど非retryable structured outputは再試行しない', async () => {
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: { output: [{ content: [{ type: 'refusal' }] }] },
+          requestId: 'req-refusal',
+        };
+      },
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+
+    const rejection = compiler.compilePlan({
+      compilerBrief: '[TASK]\nReturn JSON.',
+      language: 'ja',
+      beforeRetry: async () => undefined,
+    });
+    await expect(rejection).rejects.toBeInstanceOf(StructuredOpenAIResponseError);
+    await expect(rejection).rejects.toMatchObject({ reason: 'refusal', retryable: false });
+    expect(requestCount).toBe(1);
+  });
 });
+
+function validCompilerResponse(): {
+  body: { output_text: string };
+  requestId: string;
+} {
+  return {
+    body: {
+      output_text: JSON.stringify({
+        pages: [{
+          page_id: '11111111-1111-4111-8111-111111111111',
+          page_number: 1,
+          panels: [{ order: 1 }],
+        }],
+      }),
+    },
+    requestId: 'req-success',
+  };
+}

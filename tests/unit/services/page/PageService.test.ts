@@ -2546,18 +2546,28 @@ describe('PageService', () => {
         return true;
       },
     });
+    const detailCompiler = new FakeEpisodePagePlanCompiler();
     const service = new PageService(
       pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
-      new FakePageAutofillCompiler(), new FakeEpisodePagePlanCompiler(), undefined,
+      new FakePageAutofillCompiler(), detailCompiler, undefined,
       new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
       { adaptivePackingEnabled: true, inlineRepairEnabled: true }, persistence,
     );
+    let retryCheckpointCount = 0;
 
     await expect(service.autofillEpisodeFromStory(
       'user-1', 'episode-1', 'ja', undefined, null,
-      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => undefined },
+      {
+        jobId: 'job-1',
+        checkpoint: async () => { retryCheckpointCount += 1; },
+        beginCommit: async () => undefined,
+      },
     )).resolves.toMatchObject({ compilerUsed: true });
     expect(completedJobId).toBe('job-1');
+    expect(detailCompiler.lastInput?.beforeRetry).toBeDefined();
+    const checkpointCountBeforeRetry = retryCheckpointCount;
+    await detailCompiler.lastInput?.beforeRetry?.();
+    expect(retryCheckpointCount).toBe(checkpointCountBeforeRetry + 1);
   });
 
   it('worker経由の通常話全体反映はjob完了できなければ成功を返さない', async () => {
