@@ -79,8 +79,10 @@ describePostgres('account deletion of fenced state references', () => {
     const model = new StorageModel(attempt.intent); const storage = model.storage();
     const dispatched = deferred(); const release = deferred();
     model.delayImage = async () => { dispatched.resolve(); await release.promise; };
-    const lateImage = storage.createImage({ intent: attempt.intent, imageData: png }).then(() => 'unexpected-success', () => 'fenced');
-    await dispatched.promise;
+    const imageOperation = storage.createImage({ intent: attempt.intent, imageData: png });
+    const lateImage = imageOperation.then(() => 'unexpected-success', () => 'fenced');
+    // Surface failures before dispatch instead of waiting forever for an SDK send.
+    await Promise.race([dispatched.promise, imageOperation.then(() => { throw new Error('Image operation completed before dispatch'); })]);
     const { deletion, legacy } = service(storage);
     expect(await deletion.requestDeletion(request(input))).toEqual({ status: 'completed', blockers: [] });
     expect(legacy).toContain('identity'); expect(model.versions.at(-1)?.body.length).toBe(0);
@@ -88,7 +90,9 @@ describePostgres('account deletion of fenced state references', () => {
     expect(scrubbed).toMatchObject({ state: 'effects_fenced', actor_user_id: null, owner_user_id: null, descriptor: null, image_receipt: null, deletion_processing_token: null });
     expect(scrubbed.marker_receipt.historyErased).toBe(true); expect(scrubbed.scrubbed_at).not.toBeNull();
     release.resolve(); expect(await lateImage).toBe('fenced'); expect(model.versions.at(-1)?.body.length).toBe(0);
-    await expect(pool.query('UPDATE state_reference_copy_attempts SET scrubbed_at=NULL WHERE attempt_token=$1', [attempt.intent.attemptToken])).rejects.toMatchObject({ code: '23514' });
+    const forbiddenUnscrubError = await pool.query('UPDATE state_reference_copy_attempts SET scrubbed_at=NULL WHERE attempt_token=$1', [attempt.intent.attemptToken])
+      .then(() => undefined, (error: unknown) => error);
+    expect(forbiddenUnscrubError).toMatchObject({ code: '23514' });
   });
 
   it('retains and deletes the original source after its job and work disappear', async () => {
@@ -118,7 +122,9 @@ describePostgres('account deletion of fenced state references', () => {
         }
         return database.query<R>(sql,values);
       } };
-      await expect(new PostgresAccountDeletionRepository(projected,database).getFlight(input.userId)).rejects.toMatchObject({ code: 'CONFLICT' });
+      const invalidSourceError = await new PostgresAccountDeletionRepository(projected,database).getFlight(input.userId)
+        .then(() => undefined, (error: unknown) => error);
+      expect(invalidSourceError).toMatchObject({ code: 'CONFLICT' });
     }
     expect((await row(attempt)).candidate_s3_key).toBe(input.candidateS3Key);
     expect((await row(attempt)).scrubbed_at).toBeNull();
@@ -199,7 +205,9 @@ describePostgres('account deletion of fenced state references', () => {
       },
     })) };
     const failingAccounts = new PostgresAccountDeletionRepository(database, failing);
-    await expect(failingAccounts.finalizePersonalData(input.userId, token)).rejects.toThrow('injected');
+    const finalizeError = await failingAccounts.finalizePersonalData(input.userId, token)
+      .then(() => undefined, (error: unknown) => error);
+    expect(() => { throw finalizeError; }).toThrow('injected');
     expect(await row(attempt)).toMatchObject({ state: 'effects_fenced', actor_user_id: input.userId, owner_user_id: input.userId, scrubbed_at: null });
     expect((await pool.query('SELECT result FROM generation_jobs WHERE id=$1', [input.jobId])).rows[0]?.result).not.toBeNull();
     expect(await accounts.finalizePersonalData(input.userId, token)).toEqual({ kind: 'completed' });

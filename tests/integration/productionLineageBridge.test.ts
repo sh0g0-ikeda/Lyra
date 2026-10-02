@@ -13,6 +13,9 @@ const describePostgres = process.env.APP_ENV === 'test' && process.env.DATABASE_
 const secret = 'synthetic-lineage-identity-hash-key-only-for-tests';
 const currentDir = join(process.cwd(), 'migrations');
 const productionDir = join(process.cwd(), 'tests/fixtures/production-lineage-2debe');
+const fixtureExportRelationsSql = `SELECT
+    to_regclass(format('%I.%I', current_schema(), 'export_jobs')) AS old,
+    to_regclass(format('%I.%I', current_schema(), 'episode_export_jobs')) AS candidate`;
 describePostgres('forward-only production lineage bridge', () => {
     let admin: Pool;
     const pools: Pool[] = [];
@@ -93,7 +96,7 @@ describePostgres('forward-only production lineage bridge', () => {
         const applied = await upgrade(db);
         expect(applied).toContain(PRODUCTION_BRIDGE_FILENAME);
         expect(applied.at(-1)).toBe('047_add_state_reference_copy_attempts.sql');
-        expect((await pool.query("SELECT to_regclass('state_reference_copy_attempts') AS journal")).rows[0]?.journal).toBe('state_reference_copy_attempts');
+        expect((await pool.query("SELECT to_regclass(format('%I.%I', current_schema(), 'state_reference_copy_attempts')) AS journal")).rows[0]?.journal).toBe('state_reference_copy_attempts');
         for (const row of history) {
             expect((await pool.query('SELECT applied_at FROM schema_migrations WHERE filename=$1', [row.filename])).rows[0]?.applied_at).toEqual(row.applied_at);
         }
@@ -116,7 +119,7 @@ describePostgres('forward-only production lineage bridge', () => {
         await expect(runPendingMigrations(db, { allowProductionLineageBridge: true })).rejects.toThrow();
         await pool.query(`UPDATE generation_jobs SET status='queued',completed_at=NULL WHERE id=$1`, [ids.jobId]);
         await expect(upgrade(db)).rejects.toThrow();
-        expect((await pool.query("SELECT to_regclass('export_jobs') AS old,to_regclass('episode_export_jobs') AS candidate")).rows[0]).toMatchObject({ old: 'export_jobs', candidate: null });
+        expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toMatchObject({ old: 'export_jobs', candidate: null });
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1', [PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
     }, 120000);
     it('不明hybrid schemaと不正な既存tokenを集計報告して保存しない', async () => {
@@ -130,14 +133,14 @@ describePostgres('forward-only production lineage bridge', () => {
         const report = await inspectMigrationLineage(db, { migrationsDir: currentDir, accountDeletionIdentityHashSecret: secret });
         expect(report.blockers.length).toBeGreaterThan(0);
         await expect(upgrade(db)).rejects.toThrow();
-        expect((await pool.query("SELECT to_regclass('export_jobs') AS old")).rows[0]?.old).toBe('export_jobs');
+        expect((await pool.query("SELECT to_regclass(format('%I.%I', current_schema(), 'export_jobs')) AS old")).rows[0]?.old).toBe('export_jobs');
     }, 120000);
     it('prepass途中失敗はrename・schema・migration receiptを全てrollbackする', async () => {
         const { pool, db } = await database();
         await seed(pool,false);
         const failing = adapter(pool, PRODUCTION_BRIDGE_FILENAME);
         await expect(upgrade(failing)).rejects.toThrow('Injected bridge checkpoint failure');
-        expect((await pool.query("SELECT to_regclass('export_jobs') AS old,to_regclass('episode_export_jobs') AS candidate")).rows[0]).toMatchObject({ old: 'export_jobs', candidate: null });
+        expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toMatchObject({ old: 'export_jobs', candidate: null });
         expect((await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema=CURRENT_SCHEMA() AND table_name='account_deletion_requests' AND column_name='identity_key'")).rows).toEqual([]);
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1', [PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
         await expect(upgrade(db)).resolves.toContain(PRODUCTION_BRIDGE_FILENAME);
@@ -203,7 +206,7 @@ describePostgres('forward-only production lineage bridge', () => {
         const { pool, db } = await database();
         const ids = await seed(pool,false);
         await expect(upgrade(adapter(pool, '036_add_episode_export_processing_lease.sql'))).rejects.toThrow('Injected bridge checkpoint failure');
-        expect((await pool.query("SELECT to_regclass('export_jobs') AS old,to_regclass('episode_export_jobs') AS candidate")).rows[0]).toMatchObject({ old: null, candidate: 'episode_export_jobs' });
+        expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toMatchObject({ old: null, candidate: 'episode_export_jobs' });
         const report = await inspectMigrationLineage(db, { accountDeletionIdentityHashSecret: secret });
         expect(report.lineage).toBe('production_bridged');
         expect(report.continuationRequiresQuiescence).toBe(true);
@@ -283,7 +286,7 @@ describePostgres('forward-only production lineage bridge', () => {
         expect(JSON.stringify(report)).not.toContain(secondId);
         await expect(upgrade(db)).rejects.toThrow('DUPLICATE_NORMALIZED_ACTIVE_EMAIL');
         expect((await pool.query('SELECT id,email FROM users WHERE id=ANY($1::uuid[]) ORDER BY email', [[firstId, secondId]])).rows).toEqual([{ id: firstId, email: firstEmail }, { id: secondId, email: secondEmail }]);
-        expect((await pool.query("SELECT to_regclass('export_jobs') AS old,to_regclass('episode_export_jobs') AS candidate")).rows[0]).toEqual({ old: 'export_jobs', candidate: null });
+        expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toEqual({ old: 'export_jobs', candidate: null });
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1', [PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
     }, 120000);
     it('email列欠落はデータ照会や変更の前にschema blockerにする', async () => {
@@ -328,7 +331,7 @@ describePostgres('forward-only production lineage bridge', () => {
         expect(JSON.stringify(report)).not.toContain(historicalKey);
         await expect(upgrade(db)).rejects.toThrow('LEGACY_SCHEDULED_ASSET_RECORDS');
         expect((await pool.query('SELECT to_jsonb(r) AS row FROM account_deletion_requests r WHERE user_id=$1', [ids.deletedUserId])).rows[0]?.row).toEqual(before);
-        expect((await pool.query("SELECT to_regclass('export_jobs') AS old,to_regclass('episode_export_jobs') AS candidate")).rows[0]).toEqual({ old: 'export_jobs', candidate: null });
+        expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toEqual({ old: 'export_jobs', candidate: null });
     }, 120000);
     it.each([false,true])('予定assetが空でも未scrubのlegacy completed証拠は変更せず停止する:既存key=%s', async (existingKey) => {
         const {pool, db}=await database(); const ids=await seed(pool);
@@ -345,7 +348,7 @@ describePostgres('forward-only production lineage bridge', () => {
         expect(JSON.stringify(report)).not.toContain(ids.identityId);
         await expect(upgrade(db)).rejects.toThrow('LEGACY_COMPLETED_DELETION_UNSCRUBBED');
         expect((await pool.query('SELECT to_jsonb(r) AS row FROM account_deletion_requests r WHERE user_id=$1',[ids.deletedUserId])).rows[0]?.row).toEqual(before);
-        expect((await pool.query("SELECT to_regclass('export_jobs') AS old,to_regclass('episode_export_jobs') AS candidate")).rows[0]).toEqual({old:'export_jobs',candidate:null});
+        expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toEqual({old:'export_jobs',candidate:null});
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1',[PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
     },120_000);
     it('legacy未送信pushが現在のterminal状態と一致しない場合は送信済みにせず停止する', async () => {
