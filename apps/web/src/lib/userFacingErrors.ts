@@ -1,4 +1,6 @@
-﻿export type UserFacingErrorLanguage = 'ja' | 'en';
+import type { GenerationJobRecord } from '../types/api';
+
+export type UserFacingErrorLanguage = 'ja' | 'en';
 
 interface UserFacingErrorInput {
   message?: string | null;
@@ -109,6 +111,14 @@ const messages = {
     en: 'The page skeleton could not be created from the story. Shorten or split the story, then try again.',
     ja: 'ストーリーからページ骨格を作成できませんでした。文章を短くするか話を分けてから、もう一度お試しください。',
   },
+  storyAutofillFailed: {
+    en: 'Story settings autofill could not be completed. Check the saved settings and job status, then try again.',
+    ja: 'ストーリーからの設定自動入力を完了できませんでした。保存済みの設定とジョブの状態を確認してから、もう一度お試しください。',
+  },
+  skeletonJobFailed: {
+    en: 'Page skeleton creation could not be completed. Check the saved content and job status, then try again.',
+    ja: 'ページ骨格の作成を完了できませんでした。保存済みの内容とジョブの状態を確認してから、もう一度お試しください。',
+  },
   storyTooLarge: {
     en: 'The story input is too large. Shorten the text or split it into smaller episodes, then try again.',
     ja: 'ストーリーの入力量が大きすぎます。文章を短くするか、話を分けてからもう一度お試しください。',
@@ -190,6 +200,20 @@ const messages = {
     ja: 'このジョブは再試行上限に達しました。入力内容を見直してから、新しく生成を開始してください。',
   },
 } satisfies Record<string, LocalizedMessage>;
+
+export function formatGenerationJobFailureMessage(
+  job: Pick<GenerationJobRecord, 'job_type' | 'error_message'>,
+  language: UserFacingErrorLanguage = 'en',
+): string {
+  if (job.job_type !== 'episode_story_autofill' && job.job_type !== 'episode_page_skeleton') {
+    return formatUserFacingErrorMessage({ message: job.error_message }, language);
+  }
+  const cause = findMessageBySpecificCause(normalizeErrorText(job.error_message ?? ''), '');
+  if (cause !== null && cause !== messages.generationFailed && cause !== messages.skeletonFailed) {
+    return localize(cause, language);
+  }
+  return localize(job.job_type === 'episode_story_autofill' ? messages.storyAutofillFailed : messages.skeletonJobFailed, language);
+}
 
 export function formatUserFacingError(error: unknown, language: UserFacingErrorLanguage = 'en'): string {
   if (isErrorWithApiFields(error)) {

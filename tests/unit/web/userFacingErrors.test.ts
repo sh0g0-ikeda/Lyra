@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatGenerationJobFailureMessage,
   formatUserFacingError,
   formatUserFacingErrorMessage,
 } from '../../../apps/web/src/lib/userFacingErrors.js';
@@ -138,3 +139,28 @@ function apiError(message: string, status: number, code: string | null): Error &
   error.code = code;
   return error;
 }
+
+describe('生成ジョブの失敗案内', () => {
+  it.each(['ja', 'en'] as const)('自動入力の停止では%sでも画像保存失敗と案内しない', (language) => {
+    const message = formatGenerationJobFailureMessage({ job_type: 'episode_story_autofill', error_message: 'Long-running story/page planning job stopped before completion; recovered stale queued or processing job' }, language);
+    expect(message).toContain(language === 'ja' ? '自動入力' : 'autofill');
+    expect(message).not.toContain(language === 'ja' ? '画像' : 'image');
+    expect(message).not.toContain('recovered stale');
+  });
+  it('自動入力の生成失敗をページ骨格の作り直しと案内しない', () => {
+    const message = formatGenerationJobFailureMessage({ job_type: 'episode_story_autofill', error_message: 'OpenAI page compiler returned invalid JSON' }, 'ja');
+    expect(message).toContain('自動入力');
+    expect(message).not.toContain('ページ骨格');
+  });
+  it('骨格作成の停止では画像保存失敗と案内しない', () => {
+    const message = formatGenerationJobFailureMessage({ job_type: 'episode_page_skeleton', error_message: 'Generation failed' }, 'ja');
+    expect(message).toContain('ページ骨格');
+    expect(message).not.toContain('画像');
+  });
+  it('画像生成では従来の画像保存失敗案内を維持する', () => {
+    expect(formatGenerationJobFailureMessage({ job_type: 'page_generate', error_message: 'Generation failed' }, 'ja')).toContain('画像を保存する前');
+  });
+  it('自動入力でも入力量上限の具体的な対処案内を維持する', () => {
+    expect(formatGenerationJobFailureMessage({ job_type: 'episode_story_autofill', error_message: 'Context is too large' }, 'ja')).toContain('文章を短く');
+  });
+});
