@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-const read = (file: string): string => readFileSync(`src/${file}`, 'utf8');
+// Source contracts must inspect the same logical text on LF and CRLF checkouts.
+const read = (file: string): string => readFileSync(`src/${file}`, 'utf8').replace(/\r\n?/gu, '\n');
 const render = (file: string): string => { const source = read(`screens/${file}.tsx`); return source.slice(source.indexOf('  return (\n    <Screen')); };
 describe('U20–23 明示された編集UI整理', () => {
   it('3画面を番号付きタイトルとし導入subtitleを置かずsectionを黄色にする', () => {
