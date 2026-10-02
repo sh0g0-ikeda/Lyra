@@ -5,6 +5,7 @@ export type MobileBuildEnvironment = 'development' | 'preview' | 'production';
 export interface MobileConfig {
   accountDeletionEnabled: boolean;
   apiBaseUrl: string;
+  webEditorUrl: string;
   cognitoDomain: string;
   cognitoClientId: string;
   cognitoRedirectUri: string;
@@ -39,12 +40,14 @@ export interface MobileConfigValidation {
 }
 
 const PRODUCTION_API_ORIGIN = 'https://app.lyra-editor.com';
+const PRODUCTION_WEB_EDITOR_URL = 'https://app.lyra-editor.com/';
 const PRODUCTION_REDIRECT_URI = 'lyra-mobile://auth/mobile/callback';
 const PRODUCTION_LOGOUT_REDIRECT_URI = 'lyra-mobile://auth/mobile/logout';
 
 const mobileConfigSchema = z.object({
   accountDeletionEnabled: z.boolean(),
   apiBaseUrl: z.string().min(1),
+  webEditorUrl: z.string().url(),
   cognitoDomain: z.string().url(),
   cognitoClientId: z.string().regex(/^[a-z0-9]{10,128}$/i),
   cognitoRedirectUri: z.string().min(1).max(500),
@@ -198,7 +201,7 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
   };
 };
 
-export const config: MobileConfig = {
+const baseConfig: Omit<MobileConfig, 'webEditorUrl'> = {
   accountDeletionEnabled: readPublicBooleanEnv(
     process.env.EXPO_PUBLIC_ACCOUNT_DELETION_ENABLED,
   ),
@@ -221,6 +224,13 @@ export const config: MobileConfig = {
   organizationFeaturesEnabled: readPublicBooleanEnv(process.env.EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED),
   sentryDsn: readPublicEnv(process.env.EXPO_PUBLIC_SENTRY_DSN),
   buildEnvironment: readBuildEnvironment(process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT)
+};
+
+export const config: MobileConfig = {
+  ...baseConfig,
+  webEditorUrl: process.env.EXPO_PUBLIC_APP_VARIANT === 'staging'
+    ? `${baseConfig.apiBaseUrl.replace(/\/+$/, '')}/`
+    : PRODUCTION_WEB_EDITOR_URL
 };
 
 export const configValidation = validateMobileConfig(config);

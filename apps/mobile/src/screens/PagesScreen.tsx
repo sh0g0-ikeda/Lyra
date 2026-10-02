@@ -156,8 +156,6 @@ interface PageDesignJob {
   resourceId: string;
 }
 
-const WEB_EDITOR_URL = 'https://app.lyra-editor.com/';
-
 type AssignmentDraft = Omit<PanelEntityAssignmentRecord, 'facing_direction'> & {
   facing_direction: NonNullable<PanelEntityAssignmentRecord['facing_direction']> | '';
 };
@@ -1815,7 +1813,7 @@ export function PagesScreen(): React.JSX.Element {
   });
 
   const openWebEditorMutation = useMutation({
-    mutationFn: () => Linking.openURL(WEB_EDITOR_URL)
+    mutationFn: () => Linking.openURL(config.webEditorUrl)
   });
 
   const pageErrorScope = JSON.stringify([

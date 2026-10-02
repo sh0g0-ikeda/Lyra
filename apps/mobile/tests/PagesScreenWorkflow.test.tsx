@@ -10,10 +10,10 @@ const panels: PanelRecord[] = [{ id: 'panel', page_id: 'page', order: 1, panel_r
 const frames: PanelFrameRecord[] = [{ id: 'frame', page_id: 'page', panel_id: 'panel', vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], border_style: 'solid', border_width: 1, border_color: '#000000', z_index: 1, reading_order: 1 }];
 const queryData = { pages: { pages: [{ pages: [page] }], pageParams: [null] }, entities: { pages: [{ entities: [] as EntityRecord[] }], pageParams: [null] }, panels: { panels }, frames: { frames }, scenes: { scenes: [] }, readiness: { ready: true, blockers: [], warnings: [], estimated_credit_cost: 8, page_revision: 'revision' }, templates: { templates: [] } };
 let moreEntities = false;
-const { action, dirtyRegistration, quoteOpen, fetchEntities } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn() })); const api = { updatePage: action, updatePanel: action, generatePage: action, autofillEpisodePagesFromStory: action };
+const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn(), openUrl: vi.fn().mockResolvedValue(undefined) })); const api = { updatePage: action, updatePanel: action, generatePage: action, autofillEpisodePagesFromStory: action };
 let root: ReactTestRenderer | undefined;
 vi.mock('@react-navigation/native', () => ({ useNavigation: () => ({ navigate: action }), useIsFocused: () => true }));
-vi.mock('react-native', () => ({ Keyboard: { dismiss: vi.fn() }, Linking: {}, Modal: 'modal', Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
+vi.mock('react-native', () => ({ Keyboard: { dismiss: vi.fn() }, Linking: { openURL: openUrl }, Modal: 'modal', Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
 vi.mock('expo-image', () => ({ Image: { prefetch: vi.fn().mockResolvedValue(true) } }));
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn(), setQueryData: vi.fn() }),
@@ -39,7 +39,7 @@ vi.mock('@/hooks/usePanelInsertion', () => ({ usePanelInsertion: () => ({ blocke
 vi.mock('@/hooks/useResetOnScopeChange', () => ({ useResetOnScopeChange: vi.fn() }));
 vi.mock('@/lib/confirm', () => ({ confirmAction: action, confirmDestructiveAction: action }));
 vi.mock('@/lib/api', () => ({ ApiError: class ApiError extends Error {} }));
-vi.mock('@/lib/config', () => ({ config: { apiBaseUrl: 'https://example.test', episodeExportEnabled: false } }));
+vi.mock('@/lib/config', () => ({ config: { apiBaseUrl: 'https://example.test', webEditorUrl: 'https://d2dw83tkmziksr.cloudfront.net/', episodeExportEnabled: false } }));
 vi.mock('@/lib/download', () => ({ appendOrganizationQuery: vi.fn(), downloadAuthenticatedFile: action }));
 vi.mock('@/components/WorkspaceContextPicker', () => ({ useWorkspaceContextSelection: () => ({ selectedWorkId: 'work', selectedEpisodeId: 'episode' }) }));
 vi.mock('@/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => children }));
@@ -73,9 +73,25 @@ vi.mock('@/components/StoryStateAutofillOptions', () => ({ StoryStateAutofillOpt
 vi.mock('@/components/StoryGenerationControls', () => ({ StoryGenerationControls: (props: Record<string, unknown>) => React.createElement('StoryGenerationControls', props) }));
 vi.mock('@/components/WorkspaceHierarchyNavigator', () => ({ WorkspaceHierarchyNavigator: (props: Record<string, unknown>) => React.createElement('WorkspaceHierarchyNavigator', props) }));
 
-beforeEach(() => { action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); fetchEntities.mockReset(); moreEntities=false; page.layout_config={}; queryData.entities.pages=[{entities:[]}]; panels[0].entities=[]; panels[0].dialogue=[]; });
+beforeEach(() => { action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); fetchEntities.mockReset(); openUrl.mockReset(); openUrl.mockResolvedValue(undefined); moreEntities=false; page.layout_config={}; queryData.entities.pages=[{entities:[]}]; panels[0].entities=[]; panels[0].dialogue=[]; });
 afterEach(async () => { await act(async () => root?.unmount()); });
 describe('実際のPagesScreenの工程構成', () => {
+  it('Web editor操作は設定済みのstaging originを開く', async () => {
+    await act(async () => { root = create(<PagesScreen />); });
+    await act(async () => {
+      root!.root.findByType('PanelOrderList').props.onSelect('panel');
+      await Promise.resolve();
+    });
+    const dialogue = root!.root.findByType('PanelEditorSections').props.sections.dialogue;
+    const notice = React.Children.toArray(dialogue.props.children).find(
+      (child) => React.isValidElement(child) && typeof (child.props as { onOpenWeb?: unknown }).onOpenWeb === 'function',
+    ) as React.ReactElement<{ onOpenWeb: () => void }>;
+
+    await act(async () => { notice.props.onOpenWeb(); });
+
+    expect(openUrl).toHaveBeenCalledWith('https://d2dw83tkmziksr.cloudfront.net/');
+  });
+
   it('ページ保存失敗の処理名と保持範囲を保ちrefreshで保存を再送信しない', async () => {
     action.mockRejectedValue(new Error('server detail'));
     await act(async () => { root = create(<PagesScreen />); });

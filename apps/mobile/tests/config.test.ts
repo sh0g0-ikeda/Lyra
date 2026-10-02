@@ -5,6 +5,7 @@ import { validateMobileConfig } from '@/lib/config';
 const productionConfig = {
   accountDeletionEnabled: false,
   apiBaseUrl: 'https://app.lyra-editor.com',
+  webEditorUrl: 'https://app.lyra-editor.com/',
   cognitoDomain: 'https://ap-northeast-1example.auth.ap-northeast-1.amazoncognito.com',
   cognitoClientId: '6b2h941o888u2l7ejhv5jog94',
   cognitoRedirectUri: 'lyra-mobile://auth/mobile/callback',
@@ -24,6 +25,26 @@ afterEach(() => {
 });
 
 describe('mobile configuration validation', () => {
+  it('staging variantでは検証済みAPI originをWeb editor URLにする', async () => {
+    vi.stubEnv('EXPO_PUBLIC_APP_VARIANT', 'staging');
+    vi.stubEnv('EXPO_PUBLIC_API_BASE_URL', 'https://staging.example.test');
+    vi.resetModules();
+
+    const { config } = await import('@/lib/config');
+
+    expect(config.webEditorUrl).toBe('https://staging.example.test/');
+  });
+
+  it('staging以外では既存のproduction Web editor URLを保つ', async () => {
+    vi.stubEnv('EXPO_PUBLIC_APP_VARIANT', 'preview');
+    vi.stubEnv('EXPO_PUBLIC_API_BASE_URL', 'https://preview.example.test');
+    vi.resetModules();
+
+    const { config } = await import('@/lib/config');
+
+    expect(config.webEditorUrl).toBe('https://app.lyra-editor.com/');
+  });
+
   it('store billing flagは未設定ならfalseとして読み込む', async () => {
     vi.stubEnv('EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED', '');
     vi.resetModules();
