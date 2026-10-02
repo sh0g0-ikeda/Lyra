@@ -446,3 +446,17 @@ client inventory and runtime configuration are not proof of actual remote
 IAM/S3/Cognito/provider behavior, queue drain, migration lock duration, old
 installed-client behavior or signed-device acceptance. Those remain separate
 release gates.
+
+
+### Isolated staging runtime
+
+An explicit APP_ENV=staging uses NODE_ENV=production and the same database SSL,
+authentication, CORS, storage, origin, timeout and generation infrastructure guards.
+Staging must declare isolation, the actual runtime secret source and a current
+production resource deny inventory; deployment binds LYRA_APP_SECRET_ID and
+STAGING_SECRET_SOURCE_ID to the same dedicated secret and IAM denies production
+resources. This metadata is not a replacement for IAM isolation. Stripe configuration
+is either wholly absent (existing fail-closed adapter) or complete test mode only.
+Only staging may omit the OpenAI key when all five generation gates are explicitly
+false in the input environment and generation quotes remain disabled. Provider
+operations then fail closed; production still requires a real provider key.

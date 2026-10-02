@@ -47,6 +47,32 @@ const safeProductionConfig = {
   STRIPE_PORTAL_RETURN_URL: 'https://lyra.test/billing',
 };
 
+const safeStagingConfig = {
+  ...safeProductionConfig,
+  APP_ENV: 'staging' as const,
+  APP_PUBLIC_URL: 'https://staging.lyra.test',
+  DATABASE_URL: 'postgres://lyra:secret@lyra-staging-db.abc123.ap-northeast-1.rds.amazonaws.com:5432/lyra',
+  COGNITO_USER_POOL_ID: 'ap-northeast-1_staging',
+  COGNITO_CLIENT_ID: 'staging-client-123',
+  SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-staging-generation',
+  S3_BUCKET_IMAGES: 'lyra-staging-images',
+  IMAGES_CDN_BASE_URL: 'https://staging-images.lyra.test',
+  STAGING_SECRET_SOURCE_ID: 'lyra/staging/app',
+  STAGING_RESOURCE_ISOLATION_ATTESTED: true,
+  STAGING_PRODUCTION_RESOURCE_DENYLIST:
+    'lyra-db.abc123.ap-northeast-1.rds.amazonaws.com,https://app.lyra.test,ap-northeast-1_pool,client-123,https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation,lyra-images,https://images.lyra.test,lyra/prod/app',
+  STRIPE_SECRET_KEY: undefined,
+  STRIPE_WEBHOOK_SECRET: undefined,
+  STRIPE_PRICE_STANDARD_MONTHLY: undefined,
+  STRIPE_PRICE_PREMIUM_MONTHLY: undefined,
+  STRIPE_PRICE_CREDITS_200: undefined,
+  STRIPE_PRICE_CREDITS_1000: undefined,
+  STRIPE_PRICE_CREDITS_3000: undefined,
+  STRIPE_CHECKOUT_SUCCESS_URL: undefined,
+  STRIPE_CHECKOUT_CANCEL_URL: undefined,
+  STRIPE_PORTAL_RETURN_URL: undefined,
+};
+
 describe('assertProductionRuntimeConfig', () => {
   it('production 以外では未設定の外部サービスを許可する', () => {
     expect(() => {
@@ -85,6 +111,188 @@ describe('assertProductionRuntimeConfig', () => {
     expect(() => {
       assertProductionRuntimeConfig(safeProductionConfig, 'production');
     }).not.toThrow();
+  });
+
+  it('staging は production 相当の安全設定とStripe無効構成を許可する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(safeStagingConfig, 'production');
+    }).not.toThrow();
+  });
+
+  it('staging は全生成flagが明示falseならOpenAI keyなしで起動できる', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeStagingConfig,
+          OPENAI_API_KEY: undefined,
+          GENERATION_ENABLED: false,
+          PAGE_GENERATION_ENABLED: false,
+          ENTITY_GENERATION_ENABLED: false,
+          ENTITY_IMPORT_ANALYSIS_ENABLED: false,
+          ENTITY_STATE_REFERENCE_GENERATION_ENABLED: false,
+          STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED: true,
+        },
+        'production',
+      );
+    }).not.toThrow();
+  });
+
+  it.each([
+    ['GENERATION_ENABLED=true', { GENERATION_ENABLED: true }],
+    ['PAGE_GENERATION_ENABLED=true', { PAGE_GENERATION_ENABLED: true }],
+    ['ENTITY_GENERATION_ENABLED=true', { ENTITY_GENERATION_ENABLED: true }],
+    ['ENTITY_IMPORT_ANALYSIS_ENABLED=true', { ENTITY_IMPORT_ANALYSIS_ENABLED: true }],
+    ['ENTITY_STATE_REFERENCE_GENERATION_ENABLED=true', { ENTITY_STATE_REFERENCE_GENERATION_ENABLED: true }],
+    ['GENERATION_ENABLED未設定', { GENERATION_ENABLED: undefined }],
+    ['PAGE_GENERATION_ENABLED未設定', { PAGE_GENERATION_ENABLED: undefined }],
+    ['ENTITY_GENERATION_ENABLED未設定', { ENTITY_GENERATION_ENABLED: undefined }],
+    ['ENTITY_IMPORT_ANALYSIS_ENABLED未設定', { ENTITY_IMPORT_ANALYSIS_ENABLED: undefined }],
+    ['ENTITY_STATE_REFERENCE_GENERATION_ENABLED未設定', { ENTITY_STATE_REFERENCE_GENERATION_ENABLED: undefined }],
+    ['明示false記録なし', { STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED: false }],
+  ])('staging keylessで%sを拒否する', (_caseName, override) => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeStagingConfig,
+          OPENAI_API_KEY: undefined,
+          GENERATION_ENABLED: false,
+          PAGE_GENERATION_ENABLED: false,
+          ENTITY_GENERATION_ENABLED: false,
+          ENTITY_IMPORT_ANALYSIS_ENABLED: false,
+          ENTITY_STATE_REFERENCE_GENERATION_ENABLED: false,
+          STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED: true,
+          ...override,
+        },
+        'production',
+      );
+    }).toThrow(/OPENAI_API_KEY may be omitted in staging only when all generation feature flags are explicitly false/);
+  });
+
+  it('production は全生成flagがfalseでもOpenAI keyを必須にする', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeProductionConfig,
+          OPENAI_API_KEY: undefined,
+          GENERATION_ENABLED: false,
+          PAGE_GENERATION_ENABLED: false,
+          ENTITY_GENERATION_ENABLED: false,
+          ENTITY_IMPORT_ANALYSIS_ENABLED: false,
+          ENTITY_STATE_REFERENCE_GENERATION_ENABLED: false,
+          STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED: true,
+        },
+        'production',
+      );
+    }).toThrow(/OPENAI_API_KEY is required/);
+  });
+
+  it('staging は NODE_ENV=production を必須にする', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(safeStagingConfig, 'development');
+    }).toThrow(/NODE_ENV must be production when APP_ENV is staging/);
+  });
+
+  it('staging は完全なStripe test設定だけを許可する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeStagingConfig,
+          STRIPE_SECRET_KEY: 'sk_test_secret123',
+          STRIPE_WEBHOOK_SECRET: 'whsec_staging123',
+          STRIPE_PRICE_STANDARD_MONTHLY: 'price_staging_standard',
+          STRIPE_PRICE_PREMIUM_MONTHLY: 'price_staging_premium',
+          STRIPE_PRICE_CREDITS_200: 'price_staging_credits_200',
+          STRIPE_PRICE_CREDITS_1000: 'price_staging_credits_1000',
+          STRIPE_PRICE_CREDITS_3000: 'price_staging_credits_3000',
+          STRIPE_CHECKOUT_SUCCESS_URL: 'https://staging.lyra.test/billing/success',
+          STRIPE_CHECKOUT_CANCEL_URL: 'https://staging.lyra.test/billing/cancel',
+          STRIPE_PORTAL_RETURN_URL: 'https://staging.lyra.test/billing',
+        },
+        'production',
+      );
+    }).not.toThrow();
+  });
+
+  it('staging はStripe live鍵と一部だけのStripe設定を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeStagingConfig,
+          STRIPE_SECRET_KEY: 'sk_live_secret123',
+        },
+        'production',
+      );
+    }).toThrow(/Stripe config is incomplete.*STRIPE_SECRET_KEY must use a test secret key in staging/);
+  });
+
+  it('staging は隔離metadataの欠落と本番resource一致を拒否する', () => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeStagingConfig,
+          STAGING_RESOURCE_ISOLATION_ATTESTED: false,
+          STAGING_PRODUCTION_RESOURCE_DENYLIST: undefined,
+        },
+        'production',
+      );
+    }).toThrow(/STAGING_RESOURCE_ISOLATION_ATTESTED must be true.*STAGING_PRODUCTION_RESOURCE_DENYLIST is required/);
+
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeStagingConfig,
+          COGNITO_CLIENT_ID: 'client-123',
+          STAGING_SECRET_SOURCE_ID: 'lyra/prod/app',
+        },
+        'production',
+      );
+    }).toThrow(/Staging runtime references production resources: COGNITO_CLIENT_ID, STAGING_SECRET_SOURCE_ID/);
+
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeStagingConfig,
+          STAGING_SECRET_SOURCE_ID: undefined,
+        },
+        'production',
+      );
+    }).toThrow(/STAGING_SECRET_SOURCE_ID is required/);
+
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeStagingConfig,
+          STRIPE_CHECKOUT_SUCCESS_URL: 'https://app.lyra.test/billing/success',
+          STAGING_PRODUCTION_RESOURCE_DENYLIST:
+            `${safeStagingConfig.STAGING_PRODUCTION_RESOURCE_DENYLIST},https://app.lyra.test/billing/success`,
+        },
+        'production',
+      );
+    }).toThrow(/Staging runtime references production resources: STRIPE_CHECKOUT_SUCCESS_URL/);
+
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          ...safeStagingConfig,
+          GOOGLE_LINK_CLIENT_ID: 'client-123',
+        },
+        'production',
+      );
+    }).toThrow(/Staging runtime references production resources: GOOGLE_LINK_CLIENT_ID/);
+  });
+
+  it.each([
+    ['DEV_AUTH_BYPASS', { DEV_AUTH_BYPASS: true }, /DEV_AUTH_BYPASS must be disabled/],
+    ['AUTO_RUN_MIGRATIONS', { AUTO_RUN_MIGRATIONS: true }, /AUTO_RUN_MIGRATIONS must be disabled/],
+    ['CORS', { CORS_ALLOWED_ORIGINS: '*' }, /CORS_ALLOWED_ORIGINS must not include/],
+    ['database SSL', { DATABASE_SSL_MODE: 'disable' as const }, /DATABASE_SSL_MODE must be require/],
+    ['auth provider', { AUTH_PROVIDER: 'supabase' as const }, /AUTH_PROVIDER must be cognito/],
+    ['local storage', { LOCAL_FILE_STORAGE_DIR: '.localdata/assets' }, /local asset storage must not be enabled/],
+    ['local fallback', { LOCAL_IMAGE_FALLBACK_ENABLED: true }, /LOCAL_IMAGE_FALLBACK_ENABLED must be disabled/],
+  ])('staging は production と同じ %s の危険設定を拒否する', (_name, override, expected) => {
+    expect(() => {
+      assertProductionRuntimeConfig({ ...safeStagingConfig, ...override }, 'production');
+    }).toThrow(expected);
   });
 
   it('episode export無効時は専用queue設定を要求しない', () => {

@@ -4,6 +4,20 @@ import { parseEnv } from '../../../src/lib/env.js';
 const originalNodeEnv = process.env.NODE_ENV;
 
 describe('parseEnv', () => {
+  it('staging runtime と隔離metadataを解釈する', () => {
+    const parsed = parseEnv({
+      APP_ENV: 'staging',
+      STAGING_SECRET_SOURCE_ID: 'lyra/staging/app',
+      STAGING_RESOURCE_ISOLATION_ATTESTED: 'true',
+      STAGING_PRODUCTION_RESOURCE_DENYLIST: 'prod-client,lyra/prod/app',
+    });
+
+    expect(parsed.APP_ENV).toBe('staging');
+    expect(parsed.STAGING_SECRET_SOURCE_ID).toBe('lyra/staging/app');
+    expect(parsed.STAGING_RESOURCE_ISOLATION_ATTESTED).toBe(true);
+    expect(parsed.STAGING_PRODUCTION_RESOURCE_DENYLIST).toBe('prod-client,lyra/prod/app');
+  });
+
   it('episode text profile remains legacy unless an exact supported profile is selected',()=>{
     expect(parseEnv({}).OPENAI_EPISODE_TEXT_PROFILE).toBe('legacy');
     expect(parseEnv({OPENAI_EPISODE_TEXT_PROFILE:'balanced_v1'}).OPENAI_EPISODE_TEXT_PROFILE).toBe('balanced_v1');
@@ -91,6 +105,28 @@ describe('parseEnv', () => {
     expect(parsed.ENTITY_STATE_REFERENCE_GENERATION_ENABLED).toBe(true);
     expect(parsed.ENTITY_IMPORT_ANALYSIS_ENABLED).toBe(false);
     expect(parsed.ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED).toBe(true);
+  });
+
+  it('staging は5つの生成flagがすべて明示falseの場合だけkeyless起動条件を記録する', () => {
+    const explicitlyDisabled = parseEnv({
+      APP_ENV: 'staging',
+      GENERATION_ENABLED: 'false',
+      PAGE_GENERATION_ENABLED: 'false',
+      ENTITY_GENERATION_ENABLED: 'false',
+      ENTITY_IMPORT_ANALYSIS_ENABLED: 'false',
+      ENTITY_STATE_REFERENCE_GENERATION_ENABLED: 'false',
+    });
+    const oneFlagMissing = parseEnv({
+      APP_ENV: 'staging',
+      GENERATION_ENABLED: 'false',
+      PAGE_GENERATION_ENABLED: 'false',
+      ENTITY_GENERATION_ENABLED: 'false',
+      ENTITY_IMPORT_ANALYSIS_ENABLED: 'false',
+    });
+
+    expect(explicitlyDisabled.STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED).toBe(true);
+    expect(oneFlagMissing.STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED).toBe(false);
+    expect(parseEnv({ APP_ENV: 'production' }).STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED).toBe(false);
   });
 
   it('database timeout は安全な既定値を持つ', () => {

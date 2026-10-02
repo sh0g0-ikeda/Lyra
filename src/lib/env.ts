@@ -6,7 +6,13 @@ import {
 } from '../domain/constants/generation.js';
 
 const envSchema = z.object({
-  APP_ENV: z.enum(['development', 'test', 'production']).optional(),
+  APP_ENV: z.enum(['development', 'test', 'staging', 'production']).optional(),
+  STAGING_RESOURCE_ISOLATION_ATTESTED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  STAGING_PRODUCTION_RESOURCE_DENYLIST: z.string().min(1).optional(),
+  STAGING_SECRET_SOURCE_ID: z.string().min(1).optional(),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   DATABASE_URL: z.string().min(1).default('postgres://postgres:postgres@localhost:5432/lyra'),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
@@ -262,10 +268,24 @@ const envSchema = z.object({
   DEV_AUTH_BYPASS_EMAIL: z.string().email().optional(),
 });
 
-export type Env = z.infer<typeof envSchema>;
+export type Env = z.infer<typeof envSchema> & {
+  readonly STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED: boolean;
+};
 
 export function parseEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  return envSchema.parse(source);
+  const parsed = envSchema.parse(source);
+  const stagingGenerationFlagsExplicitlyDisabled =
+    source.APP_ENV === 'staging' &&
+    source.GENERATION_ENABLED === 'false' &&
+    source.PAGE_GENERATION_ENABLED === 'false' &&
+    source.ENTITY_GENERATION_ENABLED === 'false' &&
+    source.ENTITY_IMPORT_ANALYSIS_ENABLED === 'false' &&
+    source.ENTITY_STATE_REFERENCE_GENERATION_ENABLED === 'false';
+
+  return {
+    ...parsed,
+    STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED: stagingGenerationFlagsExplicitlyDisabled,
+  };
 }
 
 export const env = parseEnv(process.env);
