@@ -64,17 +64,15 @@ describe('LayoutGuideImageRenderer', () => {
     expect(countDarkPixelsNear(png, 0.775, 0.25)).toBeGreaterThan(20);
   });
 
-  it('全テンプレートの有効な枠に番号付きガイドを描ける', () => {
+  it.each(listPanelFrameTemplateDefinitions())('テンプレート$idの有効な枠に番号付きガイドを描ける', (template) => {
     const renderer = new NumberedLayoutGuideImageRenderer();
 
-    for (const template of listPanelFrameTemplateDefinitions()) {
-      const result = renderer.render(template.frames);
-      expect(result, template.id).not.toBeNull();
-      const png = PNG.sync.read(result!.imageData);
-      for (const frame of template.frames) {
-        const center = polygonCenter(frame.vertices);
-        expect(countDarkPixelsNear(png, center.x, center.y), `${template.id}:P${frame.readingOrder}`).toBeGreaterThan(20);
-      }
+    const result = renderer.render(template.frames);
+    expect(result, template.id).not.toBeNull();
+    const png = PNG.sync.read(result!.imageData);
+    for (const frame of template.frames) {
+      const center = polygonCenter(frame.vertices);
+      expect(countDarkPixelsNear(png, center.x, center.y), `${template.id}:P${frame.readingOrder}`).toBeGreaterThan(20);
     }
   });
 
