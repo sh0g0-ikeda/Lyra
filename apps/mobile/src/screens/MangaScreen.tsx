@@ -30,10 +30,10 @@ interface WorkflowView {
 }
 
 // Design 05 §1 / step 08: compose existing editors without changing their save,
-// generation, export, account, or workspace contracts. Page drafts intentionally
-// do not block navigation, so visited page/story instances remain mounted and
-// inaccessible while hidden. Character editors have a blocking dirty guard and
-// are exclusive to the focused route to avoid duplicate global registrations.
+// generation, export, account, or workspace contracts. Visited page/story instances
+// remain mounted while hidden, but an unsaved page draft still blocks any navigation
+// that could hydrate a different target. Character editors are exclusive to the
+// focused route to avoid duplicate global registrations.
 export function MangaScreen(): React.JSX.Element {
   const { api, language, selection, sessionKey, updateSelection } = useAppState();
   const { resolveDirtyEditors } = useDirtyState();

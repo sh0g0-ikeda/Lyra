@@ -142,7 +142,7 @@ describe('漫画制作ナビゲーション', () => {
     expect(activeStep()).toBe('manga-step-characters');
   });
 
-  it('ページの非blockingドラフトは別工程や一覧から戻っても保持し非表示時は読み上げない', async () => {
+  it('ページeditorは非表示時に読み上げず、mocked draftの保持は実dirty guardを検証しない', async () => {
     pages = [{ id: 'page' }];
     await render(); await resume();
     await act(async () => { root?.root.findByType('pages').props.onChange('未保存のページ入力'); });

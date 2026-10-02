@@ -1563,7 +1563,9 @@ export function PagesScreen(): React.JSX.Element {
   useDirtyEditorRegistration({
     id: 'pages-editor',
     revision: pageEditorRevision,
-    blocksNavigation: false,
+    // Page drafts are local until the explicit Save action. Page, work, episode,
+    // tab, and back navigation must resolve them before another target hydrates.
+    blocksNavigation: true,
     dirty: pageDirty || panelDirty || framesDirty,
     discard: discardAllPageDrafts,
     save: saveAllPageDrafts

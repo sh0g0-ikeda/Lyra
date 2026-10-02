@@ -10,7 +10,7 @@ const panels: PanelRecord[] = [{ id: 'panel', page_id: 'page', order: 1, panel_r
 const frames: PanelFrameRecord[] = [{ id: 'frame', page_id: 'page', panel_id: 'panel', vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], border_style: 'solid', border_width: 1, border_color: '#000000', z_index: 1, reading_order: 1 }];
 const queryData = { pages: { pages: [{ pages: [page] }], pageParams: [null] }, entities: { pages: [{ entities: [] as EntityRecord[] }], pageParams: [null] }, panels: { panels }, frames: { frames }, scenes: { scenes: [] }, readiness: { ready: true, blockers: [], warnings: [], estimated_credit_cost: 8, page_revision: 'revision' }, templates: { templates: [] } };
 let moreEntities = false;
-const { action, quoteOpen, fetchEntities } = vi.hoisted(() => ({ action: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn() })); const api = { updatePage: action, updatePanel: action, generatePage: action, autofillEpisodePagesFromStory: action };
+const { action, dirtyRegistration, quoteOpen, fetchEntities } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn() })); const api = { updatePage: action, updatePanel: action, generatePage: action, autofillEpisodePagesFromStory: action };
 let root: ReactTestRenderer | undefined;
 vi.mock('@react-navigation/native', () => ({ useNavigation: () => ({ navigate: action }), useIsFocused: () => true }));
 vi.mock('react-native', () => ({ Keyboard: { dismiss: vi.fn() }, Linking: {}, Modal: 'modal', Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
@@ -29,7 +29,7 @@ vi.mock('@tanstack/react-query', () => ({
   }
 }));
 vi.mock('@/state/appState', () => ({ useAppState: () => ({ api, hasCapability: () => true, language: 'ja', logout: action, selection: { organizationId: null, workId: 'work', chapterId: 'chapter', episodeId: 'episode', pageId: 'page', entityId: null }, session: { capabilities: { generation_quotes: true } }, sessionKey: 'user', tokens: null, trackJob: action, updateSelection: action }) }));
-vi.mock('@/state/dirtyState', () => ({ useDirtyEditorRegistration: vi.fn(), useDirtyState: () => ({ resolveDirtyEditors: vi.fn().mockResolvedValue(true), hasDirtyEditors: false }) }));
+vi.mock('@/state/dirtyState', () => ({ useDirtyEditorRegistration: dirtyRegistration, useDirtyState: () => ({ resolveDirtyEditors: vi.fn().mockResolvedValue(true), hasDirtyEditors: false }) }));
 vi.mock('@/state/mangaWorkflow', () => ({ useMangaWorkflow: () => ({ activeStep: 'pages' }) }));
 vi.mock('@/hooks/usePageGenerationQuote', () => ({ usePageGenerationQuote: () => ({ state: { phase: 'closed', visible: false, target: null, quote: null }, controller: { open: quoteOpen, close: vi.fn(), accept: vi.fn(), reconcile: vi.fn(), canAccept: () => false } }) }));
 vi.mock('@/hooks/usePageCompletion', () => ({ usePageCompletion: () => ({ result: null, visible: false, complete: vi.fn(), open: vi.fn(), close: vi.fn() }) }));
@@ -73,7 +73,7 @@ vi.mock('@/components/StoryStateAutofillOptions', () => ({ StoryStateAutofillOpt
 vi.mock('@/components/StoryGenerationControls', () => ({ StoryGenerationControls: (props: Record<string, unknown>) => React.createElement('StoryGenerationControls', props) }));
 vi.mock('@/components/WorkspaceHierarchyNavigator', () => ({ WorkspaceHierarchyNavigator: (props: Record<string, unknown>) => React.createElement('WorkspaceHierarchyNavigator', props) }));
 
-beforeEach(() => { action.mockReset(); quoteOpen.mockReset(); fetchEntities.mockReset(); moreEntities=false; queryData.entities.pages=[{entities:[]}]; panels[0].entities=[]; panels[0].dialogue=[]; });
+beforeEach(() => { action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); fetchEntities.mockReset(); moreEntities=false; page.layout_config={}; queryData.entities.pages=[{entities:[]}]; panels[0].entities=[]; panels[0].dialogue=[]; });
 afterEach(async () => { await act(async () => root?.unmount()); });
 describe('実際のPagesScreenの工程構成', () => {
   it('ページ保存失敗の処理名と保持範囲を保ちrefreshで保存を再送信しない', async () => {
@@ -101,6 +101,43 @@ describe('実際のPagesScreenの工程構成', () => {
     expect(root!.root.findAllByProps({ testID: 'page-settings-preview' })).toHaveLength(2);
     expect(root!.root.findByType('LayoutTemplatePreview').props.frames).toHaveLength(1);
     expect(root!.root.findByType('LayoutTemplatePreview').props.frames[0].vertices).toEqual(frames[0].vertices);
+  });
+  it('未保存のページ入力はページ・work・episode切替を止めるdirty editorとして登録する', async () => {
+    await act(async () => { root = create(<PagesScreen />); });
+    const style = (): ReactTestRenderer['root'] => root!.root.findAllByType('field').find((node) => node.props.label === '参考にしたい作品・画風')!;
+    await act(async () => style().props.onChangeText('切替前に保存する入力'));
+    const registration = dirtyRegistration.mock.lastCall?.[0];
+    expect(registration).toMatchObject({
+      id: 'pages-editor',
+      dirty: true,
+      blocksNavigation: true
+    });
+    expect(typeof registration?.save).toBe('function');
+    expect(typeof registration?.discard).toBe('function');
+  });
+  it('遷移前にページdraftを保存すると保存済み値へ同期してdirtyを解消する', async () => {
+    action.mockImplementation(async (_pageId: string, payload: { style_reference: { title: string; notes: string | null } | null }) => {
+      page.layout_config = payload.style_reference === null ? {} : { style_reference: payload.style_reference };
+      return page;
+    });
+    await act(async () => { root = create(<PagesScreen />); });
+    const style = (): ReactTestRenderer['root'] => root!.root.findAllByType('field').find((node) => node.props.label === '参考にしたい作品・画風')!;
+    await act(async () => style().props.onChangeText('保存して切り替える画風'));
+    await act(async () => { await dirtyRegistration.mock.lastCall?.[0].save(); });
+    expect(action).toHaveBeenCalledWith('page', expect.objectContaining({
+      style_reference: { title: '保存して切り替える画風', notes: null }
+    }), null);
+    await act(async () => { root?.update(<PagesScreen />); });
+    expect(style().props.value).toBe('保存して切り替える画風');
+    expect(dirtyRegistration.mock.lastCall?.[0]).toMatchObject({ id: 'pages-editor', dirty: false });
+  });
+  it('遷移前にページdraftを破棄すると保存済み値へ戻しAPIを呼ばない', async () => {
+    await act(async () => { root = create(<PagesScreen />); });
+    const style = (): ReactTestRenderer['root'] => root!.root.findAllByType('field').find((node) => node.props.label === '参考にしたい作品・画風')!;
+    await act(async () => style().props.onChangeText('破棄する画風'));
+    await act(async () => { dirtyRegistration.mock.lastCall?.[0].discard(); });
+    expect(style().props.value).toBe('');
+    expect(action).not.toHaveBeenCalled();
   });
   it('工程別CTAを分離しpage number選択とcolor/monochrome入口を維持する', async () => {
     await act(async () => { root = create(<PagesScreen />); });
