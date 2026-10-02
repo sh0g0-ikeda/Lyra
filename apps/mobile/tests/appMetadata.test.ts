@@ -142,9 +142,16 @@ describe('production app metadata', () => {
       },
       android: { buildType: 'apk' },
     });
-    expect(easConfig.build?.staging?.env).not.toHaveProperty('EXPO_PUBLIC_API_BASE_URL');
-    expect(easConfig.build?.staging?.env).not.toHaveProperty('EXPO_PUBLIC_COGNITO_CLIENT_ID');
-    expect(easConfig.build?.staging?.env).not.toHaveProperty('EXPO_PUBLIC_COGNITO_REDIRECT_URI');
+    const stagingEnv = easConfig.build?.staging?.env;
+    expect(stagingEnv?.EXPO_PUBLIC_API_BASE_URL).toMatch(/^https:\/\/[^/]+\.cloudfront\.net$/);
+    expect(stagingEnv?.EXPO_PUBLIC_COGNITO_DOMAIN).toMatch(/^https:\/\/lyra-staging-[a-z0-9-]+\.auth\.ap-northeast-1\.amazoncognito\.com$/);
+    expect(stagingEnv?.EXPO_PUBLIC_COGNITO_CLIENT_ID).toMatch(/^[a-z0-9]+$/);
+    expect(stagingEnv?.EXPO_PUBLIC_COGNITO_CLIENT_ID).not.toBe(
+      easConfig.build?.production?.env?.EXPO_PUBLIC_COGNITO_CLIENT_ID,
+    );
+    expect(stagingEnv?.EXPO_PUBLIC_COGNITO_REDIRECT_URI).toBe('lyra-mobile-staging://auth/mobile/callback');
+    expect(stagingEnv?.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI).toBe('lyra-mobile-staging://auth/mobile/logout');
+    expect(stagingEnv?.EXPO_PUBLIC_MOBILE_SMOKE_TEST).toBe('0');
     expect(easConfig.submit).not.toHaveProperty('staging');
   });
 
