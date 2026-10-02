@@ -1,8 +1,10 @@
+import { buildEntityStateReferenceImageKey } from '../../domain/state/StateReferenceImageKey.js';
 import { randomUUID } from 'node:crypto';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type {
   EntityImageStoragePort,
   FinalizeEntityReferenceImageInput,
+  FinalizeEntityStateReferenceImageInput,
   StoredEntityImage,
   StoreGeneratedEntityCandidateInput,
   StoreImportedEntityImageInput,
@@ -46,6 +48,15 @@ export class LocalFileEntityImageStorage implements EntityImageStoragePort {
       s3Key,
       cdnUrl: buildLocalAssetUrl(this.config, s3Key),
     };
+  }
+
+  public async finalizeStateReferenceImage(
+    input: FinalizeEntityStateReferenceImageInput,
+  ): Promise<StoredEntityImage> {
+    const destinationKey = buildEntityStateReferenceImageKey(input);
+    // No detached work or retries: resolve only after this local copy completes.
+    await copyLocalAsset(this.config.rootDir, input.sourceS3Key, destinationKey);
+    return { s3Key: destinationKey, cdnUrl: buildLocalAssetUrl(this.config, destinationKey) };
   }
 
   public async finalizeReferenceImage(

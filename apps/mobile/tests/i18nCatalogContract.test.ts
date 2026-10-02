@@ -3,10 +3,14 @@ import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
+import { imageAccessMessages } from '@/lib/imageAccessMessages';
+import { entityStateMessages } from '@/lib/entityStateMessages';
+import { panelInsertionMessages } from '@/lib/panelInsertionMessages';
 import { componentTranslations } from '@/lib/i18nComponentMessages';
 import { generatedTranslations } from '@/lib/i18nGenerated';
 import { screenTranslations } from '@/lib/i18nScreenMessages';
 import { sharedTranslations } from '@/lib/i18nSharedMessages';
+import { operationErrorMessages } from '@/lib/operationErrorMessages';
 
 const sourceRoot = path.resolve(__dirname, '../src');
 
@@ -38,7 +42,11 @@ describe('Mobile i18n catalog contract', () => {
       generatedTranslations,
       componentTranslations,
       screenTranslations,
-      sharedTranslations
+      sharedTranslations,
+      operationErrorMessages,
+      entityStateMessages,
+      panelInsertionMessages,
+      imageAccessMessages
     ]) {
       expect(Object.keys(catalog.ja).sort()).toEqual(Object.keys(catalog.en).sort());
     }

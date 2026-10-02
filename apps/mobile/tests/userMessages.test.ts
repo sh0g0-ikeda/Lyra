@@ -4,6 +4,10 @@ import { ApiError } from '@/lib/api';
 import { userErrorMessage } from '@/lib/userMessages';
 
 describe('userErrorMessage', () => {
+  it.each(['ja', 'en'] as const)('does not infer draft preservation from a server failure in %s', (language) => {
+    const message = userErrorMessage(new ApiError('raw', 500, 'INTERNAL_ERROR'), language);
+    expect(message).not.toMatch(/保持|preserved|not saved|not charged|refunded/i);
+  });
   it('未知のBackendエラー本文を英語UIへ漏らさない', () => {
     const secret = 'provider_key=sk-sensitive internal-host=db.private';
     const message = userErrorMessage(new ApiError(secret, 418, 'UNKNOWN_BACKEND_ERROR'), 'en');

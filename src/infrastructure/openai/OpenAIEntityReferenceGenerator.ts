@@ -3,6 +3,7 @@ import {
 } from '../../domain/constants/entityReference.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import type { ImageProvenance } from '../../domain/generation/ImageAccessPolicy.js';
 import { OpenAIClient } from './OpenAIClient.js';
 
 export interface GenerateEntityReferenceCandidatesInput {
@@ -17,12 +18,14 @@ export interface GeneratedEntityReferenceCandidate {
   mimeType: string;
 }
 
-export interface EntityReferenceGeneratorPort {
-  generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<{
+export interface GeneratedEntityReferenceResult extends ImageProvenance {
     candidates: GeneratedEntityReferenceCandidate[];
     openaiRequestId: string | null;
     costUsd: number | null;
-  }>;
+}
+
+export interface EntityReferenceGeneratorPort {
+  generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<GeneratedEntityReferenceResult>;
 }
 
 interface OpenAIImageGenerationResponse {
@@ -37,11 +40,7 @@ export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorP
     private readonly model: string = ENTITY_REFERENCE_GENERATION.MODEL,
   ) {}
 
-  public async generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<{
-    candidates: GeneratedEntityReferenceCandidate[];
-    openaiRequestId: string | null;
-    costUsd: number | null;
-  }> {
+  public async generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<GeneratedEntityReferenceResult> {
     const candidates: GeneratedEntityReferenceCandidate[] = [];
     let firstRequestId: string | null = null;
     const prompt = `${input.prompt}\n\nReturn a single PNG character reference image.`;
@@ -91,6 +90,9 @@ export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorP
       candidates,
       openaiRequestId: firstRequestId,
       costUsd: null,
+      imageModel: this.model,
+      providerModelId: this.model,
+      provider: 'openai',
     };
   }
 }

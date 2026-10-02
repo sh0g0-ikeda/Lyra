@@ -22,6 +22,7 @@ export type NativeStoreBillingErrorCode =
 export interface NativeStoreBillingProductDefinition {
   id: string;
   kind: NativeStoreProductKind;
+  planCode?: 'standard' | 'premium';
   title: string;
   description?: string;
 }
@@ -49,6 +50,8 @@ export interface NativeStorePurchaseRequest {
       obfuscatedAccountId: string;
       skus: string[];
       subscriptionOffers?: { offerToken: string; sku: string }[];
+      purchaseToken?: string;
+      subscriptionProductReplacementParams?: { oldProductId: string; replacementMode: 'charge-prorated-price' | 'deferred' };
     };
   };
   type: 'in-app' | 'subs';
@@ -67,7 +70,11 @@ export interface NativeStoreSubscription {
   remove(): void;
 }
 
+export interface NativeStoreActiveSubscription { productId: string; isActive: boolean; purchaseTokenAndroid?: string | null; transactionDate: number; }
+
 export interface NativeStoreBillingSdk {
+  store?: NativeStoreName;
+  getActiveSubscriptions?(productIds?: string[]): Promise<readonly NativeStoreActiveSubscription[]>;
   endConnection(): Promise<void>;
   fetchProducts(input: { skus: string[]; type: 'in-app' | 'subs' }): Promise<readonly NativeStoreProduct[] | null>;
   finishTransaction(input: { isConsumable: boolean; purchase: NativeStorePurchase }): Promise<void>;
@@ -83,6 +90,8 @@ export interface NativeStoreAccountBinding {
   appleAppAccountToken: string;
   googleObfuscatedAccountId: string;
   subscriptionPurchaseAllowed: boolean;
+  currentPlan?: NativeStoreServerEntitlement['plan'];
+  scheduledPlan?: 'standard' | 'premium' | null;
 }
 
 export interface NativeStoreServerBalance {
@@ -92,6 +101,10 @@ export interface NativeStoreServerBalance {
 
 export interface NativeStoreServerEntitlement {
   plan: 'free' | 'standard' | 'premium';
+  currentPeriodEnd?: string | null;
+  store?: NativeStoreName | null;
+  scheduledPlan?: 'standard' | 'premium' | null;
+  scheduledPlanEffectiveAt?: string | null;
 }
 
 export interface NativeStoreServerState {
@@ -138,6 +151,7 @@ export interface NativeStoreBillingAdapter {
   getState(): NativeStoreBillingState;
   purchase(productId: string): Promise<void>;
   restore(): Promise<NativeStoreServerState[]>;
+  refreshProducts?(): Promise<void>;
   subscribe(listener: (state: NativeStoreBillingState) => void): () => void;
 }
 
@@ -238,15 +252,39 @@ class NativeStoreBillingAdapterImplementation implements NativeStoreBillingAdapt
       if (product.kind === 'subscription' && !binding.subscriptionPurchaseAllowed) {
         throw this.fail('ALREADY_OWNED', false);
       }
+      if (product.kind === 'subscription' && product.planCode !== undefined &&
+          (product.planCode === binding.currentPlan || product.planCode === binding.scheduledPlan)) {
+        throw this.fail('ALREADY_OWNED', false);
+      }
+      if (!this.state.connected) throw this.fail('NOT_CONNECTED', false);
+      const activeSubscriptions = product.kind === 'subscription' && this.dependencies.sdk.getActiveSubscriptions !== undefined
+        ? await this.dependencies.sdk.getActiveSubscriptions(this.dependencies.products.filter((entry) => entry.kind === 'subscription').map((entry) => entry.id)) : [];
+      const active = activeSubscriptions.filter((entry) => entry.isActive && this.dependencies.products.some((known) => known.kind === 'subscription' && known.id === entry.productId)).sort((left, right) => right.transactionDate - left.transactionDate)[0];
+      if (!this.state.connected) throw this.fail('NOT_CONNECTED', false);
+      if (product.kind === 'subscription' && active?.productId === product.id) throw this.fail('ALREADY_OWNED', false);
+      const replacement = subscriptionReplacement(product, active, this.dependencies.products);
+      if (product.kind === 'subscription' && this.dependencies.sdk.store === 'google' && binding.currentPlan !== undefined && binding.currentPlan !== 'free' && replacement === null) {
+        throw this.fail('PRODUCT_UNAVAILABLE', false);
+      }
       const nativeProduct = this.state.products.find((candidate) => candidate.id === product.id);
-      await this.dependencies.sdk.requestPurchase(
-        buildPurchaseRequest(product, binding, nativeProduct),
-      );
+      await this.dependencies.sdk.requestPurchase(buildPurchaseRequest(product, binding, nativeProduct, replacement));
+      // Deferred plan changes may return without a new purchase event. The
+      // server remains authoritative; this only releases the request spinner.
+      if (active !== undefined && active.productId !== product.id) this.updateState({ submittingProductId: null });
     } catch (error) {
       const normalized = error instanceof NativeStoreBillingError ? error : normalizeProviderError(error);
       this.updateState({ error: normalized, submittingProductId: null });
       throw normalized;
     }
+  }
+
+  public async refreshProducts(): Promise<void> {
+    if (this.state.loading || this.state.restoring || this.state.submittingProductId !== null) return;
+    if (!this.state.connected) return this.connect();
+    this.updateState({ loading: true, error: null });
+    try { this.updateState({ products: await this.loadProducts() }); }
+    catch { this.updateState({ error: new NativeStoreBillingError('CONNECTION_FAILED', true), products: this.state.products.map((product) => ({ ...product, available: false })) }); }
+    finally { this.updateState({ loading: false }); }
   }
 
   public async restore(): Promise<NativeStoreServerState[]> {
@@ -450,6 +488,7 @@ function buildPurchaseRequest(
   product: NativeStoreBillingProductDefinition,
   binding: NativeStoreAccountBinding,
   nativeProduct: NativeStoreProduct | NativeStoreCatalogProduct | undefined,
+  replacement: Pick<NativeStorePurchaseRequest['request']['google'], 'purchaseToken' | 'subscriptionProductReplacementParams'> | null,
 ): NativeStorePurchaseRequest {
   const subscriptionOffers = product.kind === 'subscription'
     ? nativeProduct?.subscriptionOffers
@@ -460,11 +499,19 @@ function buildPurchaseRequest(
       google: {
         obfuscatedAccountId: binding.googleObfuscatedAccountId,
         skus: [product.id],
-        ...(subscriptionOffers === undefined ? {} : { subscriptionOffers })
+        ...(subscriptionOffers === undefined ? {} : { subscriptionOffers }),
+        ...(replacement ?? {})
       }
     },
     type: product.kind === 'subscription' ? 'subs' : 'in-app'
   };
+}
+
+function subscriptionReplacement(product: NativeStoreBillingProductDefinition, active: NativeStoreActiveSubscription | undefined, definitions: readonly NativeStoreBillingProductDefinition[]): Pick<NativeStorePurchaseRequest['request']['google'], 'purchaseToken' | 'subscriptionProductReplacementParams'> | null {
+  if (product.kind !== 'subscription' || product.planCode === undefined || active === undefined || active.productId === product.id || !active.purchaseTokenAndroid?.trim()) return null;
+  const previous = definitions.find((entry) => entry.kind === 'subscription' && entry.id === active.productId);
+  if (previous?.planCode === undefined) return null;
+  return { purchaseToken: active.purchaseTokenAndroid, subscriptionProductReplacementParams: { oldProductId: active.productId, replacementMode: product.planCode === 'premium' && previous.planCode === 'standard' ? 'charge-prorated-price' : 'deferred' } };
 }
 
 function collectRestoreProofs(
@@ -543,8 +590,10 @@ function normalizeProviderError(error: unknown): NativeStoreBillingError {
   return new NativeStoreBillingError('PURCHASE_FAILED', true);
 }
 
-export function createExpoIapSdk(): NativeStoreBillingSdk {
+export function createExpoIapSdk(store?: NativeStoreName): NativeStoreBillingSdk {
   return {
+    store,
+    getActiveSubscriptions: (productIds) => ExpoIap.getActiveSubscriptions(productIds),
     endConnection: async () => {
       await ExpoIap.endConnection();
     },

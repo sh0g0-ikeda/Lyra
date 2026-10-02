@@ -1,3 +1,4 @@
+﻿import type { ImageProvenance } from '../generation/ImageAccessPolicy.js';
 import type { PanelEntityAssignment } from './panelEntityAssignment.js';
 import type { PageGenerationMode } from './pageGeneration.js';
 import type { StyleReferenceMetadata } from './styleReference.js';
@@ -19,7 +20,7 @@ import type { EntityStateReferenceDescriptor } from './entityStateReference.js';
 export type PageStatus = 'designing' | 'generating' | 'generated' | 'editing' | 'confirmed';
 export type PageDialogueMode = 'image_baked' | 'balloon_only' | 'mixed';
 
-export interface GeneratedPageImage {
+export interface GeneratedPageImage extends ImageProvenance {
   s3Key: string | null;
   cdnUrl: string | null;
   generationMode: PageGenerationMode | null;
@@ -111,6 +112,7 @@ export interface PageAutofillPanelContext {
 }
 
 export interface PageAutofillContext {
+  layoutConfig?: Record<string, unknown>;
   pageId: string;
   workId: string;
   episodeId: string;

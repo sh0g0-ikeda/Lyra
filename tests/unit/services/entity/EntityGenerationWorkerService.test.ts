@@ -347,6 +347,17 @@ class FakeOrganizationService {
 }
 
 describe('EntityGenerationWorkerService', () => {
+  it('quote対応workerがない場合はproviderを呼ばず失敗・返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job!.params.quote_id = 'quote-1';
+    const referenceGenerator = new FakeReferenceGenerator();
+    const creditService = new FakeCreditService();
+    const service = buildService({ executionRepository, referenceGenerator, creditService });
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(referenceGenerator.input).toBeNull();
+    expect(creditService.refunded?.jobId).toBe('job-1');
+  });
+
   it('state jobはserver解決したbase primaryだけを入力にして旧base経路と分岐する', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.job = buildStateJob();

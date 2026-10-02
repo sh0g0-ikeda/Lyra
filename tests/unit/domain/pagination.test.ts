@@ -163,3 +163,33 @@ describe('organization list cursor', () => {
     );
   });
 });
+
+// Production v1 used a distinct complete wire shape; never infer a missing tie-breaker.
+describe('production-v1 list cursor compatibility', () => {
+  const id = '77777777-7777-4777-8777-777777777777';
+  const date = '2026-10-01T12:00:00.123Z';
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  it('worksはproductionのsort順variantで往復しcreatedAtを作らない', () => {
+    const wire = encode({v:1,k:'works',sort:date,id});
+    const decoded = decodeWorkListCursor(wire);
+    expect(decoded).toEqual({format:'production-v1',updatedAt:new Date(date),id});
+    expect(encodeWorkListCursor(decoded)).toBe(wire);
+  });
+  it('entity/dateとpage/numberを現行の同じsort意味へ変換する', () => {
+    expect(decodeEntityListCursor(encode({v:1,k:'entities',sort:date,id}))).toEqual({createdAt:new Date(date),id});
+    expect(decodePageListCursor(encode({v:1,k:'pages',sort:2,id}))).toEqual({pageNumber:2,id});
+  });
+  it.each([
+    {v:2,k:'works',sort:date,id}, {v:1,k:'entities',sort:date,id},
+    {v:1,k:'works',sort:date,id,extra:true}, {v:1,k:'works',sort:'yesterday',id},
+    {v:1,k:'works',sort:date,id:'unknown'}, {v:1,k:'works',sort:date,id,u:date},
+  ])('不正または混合work cursor %jを拒否する',(wire)=>{
+    expect(()=>decodeWorkListCursor(encode(wire))).toThrow('cursor is invalid');
+  });
+  it('wrong number/date、上限、非canonical encodingを拒否する',()=>{
+    for (const sort of [0,-1,1.5,2147483648,'2']) expect(()=>decodePageListCursor(encode({v:1,k:'pages',sort,id}))).toThrow();
+    expect(()=>decodeEntityListCursor(encode({v:1,k:'entities',sort:2,id}))).toThrow();
+    expect(()=>decodeWorkListCursor(encode({v:1,k:'works',sort:date,id})+'=')).toThrow();
+    expect(()=>decodeWorkListCursor('a'.repeat(1025))).toThrow();
+  });
+});

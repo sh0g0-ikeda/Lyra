@@ -18,6 +18,16 @@ const DIALOGUE_LINES_PER_PANEL = 20;
 const MAX_CONTINUITY_BRIEF_CHARS = 150_000;
 
 describe('EpisodePlanContinuity', () => {
+  it('audits true dialogue counts, complete voice IDs and frame area before shortened visuals',()=>{
+    const context=buildContext();const plan=buildBeatPlan();const suggestion=buildVerboseSuggestion();
+    suggestion.pages=suggestion.pages.slice(0,1);suggestion.pages[0]!.panels=suggestion.pages[0]!.panels.slice(0,1);
+    suggestion.pages[0]!.panels[0]!.dialogue=Array.from({length:5},(_,i)=>({entityId:'voice-id',text:`exact-${i}`,type:'thought',position:'right'}));
+    expect(detectDeterministicContinuityIssues(suggestion)).toContainEqual(expect.objectContaining({code:'dialogue_density',severity:'error'}));
+    const brief=buildEpisodePlanAuditBrief({context,plan,suggestion,language:'ja'});
+    expect(brief).toContain('[TEXT DISTRIBUTION]');expect(brief).toContain('lines=5');
+    expect(brief).toContain('thought:voice-id@right "exact-4"');
+  });
+
   it('全話台帳 brief にページ容量とシーン内のキャラ状態を含める', () => {
     const context = buildContext();
     context.entities = [
@@ -99,6 +109,8 @@ describe('EpisodePlanContinuity', () => {
     const plan = buildBeatPlan();
     const suggestion = buildVerboseSuggestion();
 
+    expect(()=>buildEpisodePlanAuditBrief({context,plan,suggestion,language:'ja'})).toThrow('complete dialogue');
+    for(const page of suggestion.pages) { page.panels=page.panels.slice(0,8); for(const panel of page.panels) panel.dialogue=[{entityId:null,type:'narration',position:'right',text:`page-${page.pageNumber}-panel-${panel.order}`}]; }
     const brief = buildEpisodePlanAuditBrief({
       context,
       plan,
@@ -109,7 +121,7 @@ describe('EpisodePlanContinuity', () => {
     expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
     expect(briefContainsPage(brief, 1)).toBe(true);
     expect(briefContainsPage(brief, PAGE_COUNT)).toBe(true);
-    expect(brief).toContain(`Panel ${PANELS_PER_PAGE}`);
+    expect(brief).toContain(`Panel 8`);
   }, 20_000);
 
   it('監査 brief は UUID ではなくキャラ名で登場人物と話者を識別できる', () => {

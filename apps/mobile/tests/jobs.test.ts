@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { generationJobSchema } from '@/domain/apiSchemas';
+import { generationJobCompatibilitySchema } from '@/domain/generationJobCompatibility';
 import { LyraMobileApiClient } from '@/lib/api';
 import { jobQueryKey, jobsQueryKey } from '@/lib/queryKeys';
 
@@ -32,6 +33,7 @@ describe('mobile job API', () => {
     ).resolves.toEqual({ jobs: [], next_cursor: null });
 
     expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/jobs?');
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('job_contract=v2');
     expect(fetchMock.mock.calls[0]?.[0]).toContain('organization_id=22222222-2222-4222-8222-222222222222');
     expect(fetchMock.mock.calls[0]?.[0]).toContain('status=queued%2Cfailed');
     expect(fetchMock.mock.calls[0]?.[0]).toContain('type=page_generate');
@@ -43,6 +45,23 @@ describe('mobile job API', () => {
       jobQueryKey('user-a', 'job-1', 'organization-a'),
     );
     expect(jobsQueryKey('user-a', null)).not.toEqual(jobsQueryKey('user-a', 'organization-a'));
+  });
+
+  it('opts into the import-analysis contract for detail and cancellation', async () => {
+    const current = generationJobCompatibilitySchema.parse({
+      id: 'job-1', job_type: 'entity_import_analysis', status: 'queued', generation_mode: null,
+      credit_cost: 1, params: {}, result: null, error_message: null, retry_count: 0,
+      created_at: '2026-10-01T00:00:00.000Z', started_at: null, completed_at: null, expires_at: null,
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(current), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new LyraMobileApiClient(() => 'token');
+    await expect(client.getJob('job-1', 'organization-1')).resolves.toMatchObject({ job_type: 'entity_import_analysis' });
+    await expect(client.cancelJob('job-1', 'organization-1')).resolves.toMatchObject({ job_type: 'entity_import_analysis' });
+    for (const [url] of fetchMock.mock.calls) {
+      expect(String(url)).toContain('job_contract=v2');
+      expect(String(url)).toContain('organization_id=organization-1');
+    }
   });
 
   it('取消済みと安全な失敗情報を検証する', () => {

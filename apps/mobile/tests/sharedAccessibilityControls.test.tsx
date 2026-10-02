@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { FormField } from '@/components/FormField';
 import { RecordPicker } from '@/components/RecordPicker';
-import { Screen } from '@/components/Screen';
+import { EmbeddedScreenProvider, Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -78,6 +78,10 @@ vi.mock('@/lib/storage', () => ({
   loadSectionCollapsed: vi.fn().mockResolvedValue(null),
   saveSectionCollapsed: vi.fn().mockResolvedValue(undefined)
 }));
+
+const screenState = vi.hoisted(() => ({ providerAvailable: true, session: null as null | { user: { id: string } } }));
+vi.mock('@/state/appState', () => ({ useOptionalAppState: () => screenState.providerAvailable ? screenState : null }));
+vi.mock('@/components/CreditBalanceBadge', () => ({ CreditBalanceBadge: () => React.createElement('credit-balance-badge') }));
 
 const setLanguageMock = vi.fn();
 
@@ -203,7 +207,7 @@ describe('shared mobile accessibility controls', () => {
     expect(scrollView.props.automaticallyAdjustKeyboardInsets).toBe(true);
   });
 
-  it('shows an accessible compact language switch even when the screen header is hidden', () => {
+  it('shows the pre-login language switch even when the screen header is hidden', () => {
     let renderer: ReturnType<typeof create>;
     act(() => {
       renderer = create(<Screen showHeader={false} title="Sign in">Content</Screen>);
@@ -217,4 +221,32 @@ describe('shared mobile accessibility controls', () => {
     act(() => japanese.props.onPress());
     expect(setLanguageMock).toHaveBeenCalledWith('ja');
   });
+  it('ログイン後は言語をマイページへ集約し残高をscroll外に固定する', () => {
+    screenState.session = { user: { id: 'user-one' } };
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<Screen title="Story">Content</Screen>); });
+    expect(renderer!.root.findAllByProps({ accessibilityLabel: 'English' })).toHaveLength(0);
+    expect(renderer!.root.findByType('credit-balance-badge')).toBeDefined();
+    expect(renderer!.root.findByType('scroll-view').findAllByType('credit-balance-badge')).toHaveLength(0);
+    act(() => renderer!.unmount());
+    screenState.session = null;
+  });
+
+  it('providerがない設定エラー画面でも案内を表示できる', () => {
+    screenState.providerAvailable = false;
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<Screen title="Lyra Mobile">Configuration support code</Screen>); });
+    expect(JSON.stringify(renderer!.toJSON())).toContain('Configuration support code');
+    expect(renderer!.root.findAllByType('credit-balance-badge')).toHaveLength(0);
+    act(() => renderer!.unmount());
+    screenState.providerAvailable = true;
+  });
+
+  it('制作shellに埋め込んだScreenではtop safe areaを二重に適用しない', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<EmbeddedScreenProvider><Screen title="Story">Content</Screen></EmbeddedScreenProvider>); });
+    expect(renderer!.root.findByType('safe-area-view').props.edges).toEqual(['bottom']);
+    act(() => renderer!.unmount());
+  });
+
 });

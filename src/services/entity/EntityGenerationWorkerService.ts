@@ -1,4 +1,5 @@
 import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityReference.js';
+import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
@@ -57,6 +58,7 @@ export class EntityGenerationWorkerService {
     private readonly organizationService?: OrganizationServicePort,
     private readonly cancellationControl?: GenerationJobCancellationControlRepository,
     private readonly stateRepository?: EntityStateReferenceRepository,
+    private readonly quotedInputs?: QuotedGenerationInputsPort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
@@ -82,6 +84,10 @@ export class EntityGenerationWorkerService {
 
       let workIdForAudit: string | null = null;
       try {
+        if (hasGenerationQuote(job) && this.quotedInputs === undefined) {
+          throw new ConfigurationError('Quoted entity execution is not configured');
+        }
+        const quoted = hasGenerationQuote(job) ? await this.quotedInputs!.entity(job) : null;
         let entity: EntityReferenceContext;
         let compilerBrief: string;
         let compiled: CompiledEntityReferencePrompt;
@@ -92,16 +98,16 @@ export class EntityGenerationWorkerService {
           if (!isPersistedEntityStateGenerationParams(params)) {
             throw new ConfigurationError('Entity state generation job params are invalid');
           }
-          const state = await this.loadCurrentStateContext(job, params);
+          const state = quoted?.snapshot.state ?? await this.loadCurrentStateContext(job, params);
           entity = toEntityReferenceContext(state);
           workIdForAudit = state.workId;
           const draftPrompt = this.promptBuilder.buildStateGenerationPrompt(state);
           compilerBrief = this.promptBuilder.buildStateCompilerBrief(state);
           compiled = await compilePromptSafely(this.promptCompiler, entity, draftPrompt, compilerBrief);
-          inputImages = await buildStateGeneratorInputImages(state, this.storedImageLoader);
+          inputImages = quoted?.inputImages ?? await buildStateGeneratorInputImages(state, this.storedImageLoader);
           generationPrompt = buildStatePreviewPrompt(compiled.prompt);
         } else {
-          const baseEntity = await this.entityRepository.findReferenceContextByIdAndUserId(
+          const baseEntity = quoted?.snapshot.entity ?? await this.entityRepository.findReferenceContextByIdAndUserId(
             params.entity_id,
             job.userId,
             job.organizationId ?? null,
@@ -114,7 +120,7 @@ export class EntityGenerationWorkerService {
           const draftPrompt = this.promptBuilder.buildGenerationPrompt(entity);
           compilerBrief = this.promptBuilder.buildCompilerBrief(entity);
           compiled = await compilePromptSafely(this.promptCompiler, entity, draftPrompt, compilerBrief);
-          inputImages = await buildGeneratorInputImages(params, job.userId, this.storedImageLoader);
+          inputImages = quoted?.inputImages ?? await buildGeneratorInputImages(params, job.userId, this.storedImageLoader);
           generationPrompt = buildPreviewVariationPrompt(
             compiled.prompt,
             job.id,
@@ -165,7 +171,9 @@ export class EntityGenerationWorkerService {
         compilerModel: compiled.compilerModel,
         compilerPromptVersion: compiled.compilerPromptVersion,
         compilerError: compiled.compilerProvider === 'none' ? 'Entity prompt compiler fallback used' : null,
-        imageModel: this.imageModel,
+        imageModel: generated.imageModel ?? this.imageModel,
+        ...(generated.providerModelId === undefined ? {} : { providerModelId: generated.providerModelId }),
+        ...(generated.provider === undefined ? {} : { provider: generated.provider }),
         imageParams: {
           quality: ENTITY_REFERENCE_GENERATION.QUALITY,
           size: ENTITY_REFERENCE_GENERATION.SIZE,

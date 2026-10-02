@@ -9,6 +9,7 @@ class RecordingDatabase implements DatabaseClient, TransactionRunner {
     values: readonly unknown[];
   }> = [];
   public finalizeMode = false;
+  public personalStateReferenceCount = 0;
 
   public async transaction<T>(
     work: (client: DatabaseClient) => Promise<T>,
@@ -73,6 +74,8 @@ class RecordingDatabase implements DatabaseClient, TransactionRunner {
       && !this.finalizeMode
     ) {
       rows = [{ count: '1' }];
+    } else if (text.includes('FROM state_reference_copy_attempts') && text.includes('COUNT(*)')) {
+      rows = [{ count: String(this.personalStateReferenceCount) }];
     } else if (text.includes('WITH personal_works AS') && !this.finalizeMode) {
       rows = [{ s3_key: 'users/u1/pages/p1.webp' }];
     }
@@ -108,10 +111,52 @@ describe('PostgresAccountDeletionRepository', () => {
     expect(sql).toContain('INNER JOIN entities ON entities.id = entity_states.entity_id');
     expect(sql).toContain('jsonb_typeof(entity_states.reference_image) = \'object\'');
     expect(sql).toContain('personal_job_candidates');
+    expect(sql).toContain('personal_job_input_reference_images');
+    expect(sql).toContain("generation_jobs.result->'input_snapshot'->'references'");
+    expect(sql).toContain("generation_jobs.job_type = 'page_generate'");
+    expect(sql).toContain('personal_state_reference_copies');
+    expect(sql).toContain("generation_jobs.result->'state_reference_copies'");
     expect(sql).toContain('personal_uploads');
     expect(sql).toContain('personal_exports');
     expect(sql).toContain("status NOT IN ('canceled', 'incomplete_expired')");
     expect(sql).toContain("state IN ('pending', 'active')");
+  });
+
+  it('counts personal unfenced v2 evidence separately and excludes its namespace after every inventory union', async () => {
+    const database = new RecordingDatabase(); database.personalStateReferenceCount = 3;
+    const repository = new PostgresAccountDeletionRepository(database, database);
+    expect(await repository.getFlight('user-1')).toMatchObject({ personalStateReferenceCount: 3, activePersonalGenerationJobCount: 2 });
+    const count = database.calls.find((call) => call.sql.includes('FROM state_reference_copy_attempts'));
+    expect(count?.sql).toContain('(actor_user_id = $1 OR owner_user_id = $1)');
+    expect(count?.sql).toContain('organization_id IS NULL');
+    expect(count?.sql).toContain('history_erased_at IS NOT NULL');
+    expect(count?.sql).toContain('lyra_valid_state_copy_v2_storage_revision');
+    const inventory = database.calls.find((call) => call.sql.includes('WITH personal_works AS'))?.sql ?? '';
+    expect(inventory.indexOf("s3_key NOT LIKE 'state-reference-v2/%'")).toBeGreaterThan(inventory.indexOf(') AS keys'));
+  });
+
+  it('finalization blocks on any pending v2 evidence and cannot scrub a partial purge', async () => {
+    const database = new RecordingDatabase(); database.finalizeMode = true; database.personalStateReferenceCount = 1;
+    const repository = new PostgresAccountDeletionRepository(database, database);
+    expect(await repository.finalizePersonalData('user-1', '00000000-0000-4000-8000-000000000001')).toMatchObject({ kind: 'blocked' });
+    expect(database.calls.some((call) => call.sql.includes('UPDATE state_reference_copy_attempts'))).toBe(false);
+    expect(database.calls.some((call) => call.sql.includes('DELETE FROM works'))).toBe(false);
+  });
+
+  it('scrubs personal terminal journal data in the same finalization before clearing job data and deleting works', async () => {
+    const database = new RecordingDatabase(); database.finalizeMode = true;
+    const repository = new PostgresAccountDeletionRepository(database, database);
+    expect(await repository.finalizePersonalData('user-1', '00000000-0000-4000-8000-000000000001')).toEqual({ kind: 'completed' });
+    const scrub = database.calls.find((call) => call.sql.includes('UPDATE state_reference_copy_attempts'));
+    expect(scrub).toBeDefined();
+    for (const field of ['actor_user_id', 'owner_user_id', 'organization_id', 'entity_id', 'state_id', 'job_id', 'candidate_ref_id',
+      'candidate_s3_key', 'expected_state_revision', 'descriptor', 'digest', 'mime_type', 'size_bytes', 'source_revision', 'image_receipt', 'deletion_processing_token']) {
+      expect(scrub?.sql).toContain(`${field} = NULL`);
+    }
+    expect(scrub?.sql).toContain("state = 'effects_fenced'"); expect(scrub?.sql).toContain('organization_id IS NULL');
+    expect(scrub?.sql).not.toContain('marker_receipt = NULL');
+    expect(database.calls.indexOf(scrub!)).toBeLessThan(database.calls.findIndex((call) => call.sql.includes('UPDATE generation_jobs')));
+    expect(database.calls.indexOf(scrub!)).toBeLessThan(database.calls.findIndex((call) => call.sql.includes('DELETE FROM works')));
   });
 
   it('checkpoint更新はuser・processing token・exact valueでfenceする', async () => {

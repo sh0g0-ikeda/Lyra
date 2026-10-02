@@ -1,3 +1,4 @@
+import { startingStateSavePatch, type EpisodeStartingState } from '@/domain/episodeStartingStates';
 import type { UpdateEpisodePayload } from '@/domain/payloads';
 import type { EpisodeRecord } from '@/domain/types';
 
@@ -35,8 +36,10 @@ export const buildEpisodeMobileUpdatePayload = (input: {
   episode: EpisodeRecord;
   estimatedPages: number;
   title: string;
+  startingEntityStates?: EpisodeStartingState[];
 }): UpdateEpisodePayload => {
   const payload: UpdateEpisodePayload = {
+    ...startingStateSavePatch(input.startingEntityStates),
     expected_updated_at: input.episode.updated_at,
     estimated_pages: input.estimatedPages,
     title: nullableText(input.title)

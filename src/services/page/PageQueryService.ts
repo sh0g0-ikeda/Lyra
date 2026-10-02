@@ -9,6 +9,7 @@ import type {
 import type { StoryRepository } from '../../repositories/StoryRepository.js';
 
 export interface PageQueryServicePort {
+  getPage?(userId: string, pageId: string, organizationId?: string | null): Promise<PageSummary>;
   listEpisodePages(userId: string, episodeId: string, organizationId?: string | null): Promise<PageSummary[]>;
   listEpisodePagesPage(
     userId: string,
@@ -22,10 +23,18 @@ export class PageQueryService implements PageQueryServicePort {
   public constructor(
     private readonly pageRepository:
       Pick<PageRepository, 'findPagesByEpisodeIdAndUserId'>
-      & Partial<PageListPaginationRepository>,
+      & Partial<PageListPaginationRepository>
+      & Partial<Pick<PageRepository, 'findPageByIdAndUserId'>>,
     private readonly storyRepository:
       Pick<StoryRepository, 'findEpisodeByIdAndUserId'>,
   ) {}
+
+  public async getPage(userId: string, pageId: string, organizationId: string | null = null): Promise<PageSummary> {
+    if (this.pageRepository.findPageByIdAndUserId === undefined) throw new ConfigurationError('Page detail reader is not configured');
+    const page = await this.pageRepository.findPageByIdAndUserId(pageId, userId, organizationId);
+    if (page === null) throw new NotFoundError('Page not found');
+    return page;
+  }
 
   public async listEpisodePages(
     userId: string,

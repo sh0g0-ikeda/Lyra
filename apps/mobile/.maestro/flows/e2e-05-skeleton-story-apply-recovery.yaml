@@ -8,7 +8,13 @@ tags: [staging, story, recovery]
     file: ../helpers/open-story.yaml
 - assertVisible: ${E2E_FIXTURE_EPISODE_TITLE}
 - tapOn: ${E2E_FIXTURE_EPISODE_TITLE}
+- runFlow:
+    file: ../helpers/open-pages.yaml
+- tapOn:
+    id: page-step-design
 - tapOn: ${E2E_STORY_GENERATE_LABEL}
+- tapOn:
+    id: page-step-settings
 - extendedWaitUntil:
     visible: ${E2E_STORY_APPLY_LABEL}
     timeout: 90000

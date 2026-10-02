@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { isReservedFencedStateReferenceNamespace } from '../../domain/state/FencedStateReferenceKey.js';
 import { ValidationError } from '../../domain/errors/index.js';
 import type { AccountAssetDeletionPort } from '../../services/account/AccountDeletionService.js';
 import {
@@ -55,7 +56,8 @@ export function createS3AccountAssetDeletion(input: {
 
 function validateExactObjectKey(key: string): string {
   if (
-    key.length < 1
+    isReservedFencedStateReferenceNamespace(key)
+    || key.length < 1
     || key.length > 1024
     || key !== key.trim()
     || /[\u0000-\u001f\u007f]/u.test(key)

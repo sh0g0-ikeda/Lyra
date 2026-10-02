@@ -20,7 +20,7 @@ vi.mock('@/components/PrimaryButton', () => ({
 }));
 
 describe('PanelDialoguePlacementNotice', () => {
-  it('画像内セリフはMobile初回配布で固定され選択肢を表示しない', () => {
+  it('画像内セリフの定常説明を減らし選択肢や書込みを追加しない', () => {
     let renderer: ReturnType<typeof create>;
     act(() => {
       renderer = create(
@@ -33,7 +33,7 @@ describe('PanelDialoguePlacementNotice', () => {
     });
     const rendered = JSON.stringify(renderer!.toJSON());
 
-    expect(rendered).toContain('セリフは画像内に含めます');
+    expect(renderer!.toJSON()).toBeNull();
     expect(rendered).not.toContain('画像外');
     expect(renderer!.root.findAllByType('button')).toHaveLength(0);
   });

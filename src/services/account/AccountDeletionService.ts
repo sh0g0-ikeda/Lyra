@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { isReservedFencedStateReferenceNamespace } from '../../domain/state/FencedStateReferenceKey.js';
+import type { FencedStorageOperationBudget } from '../../infrastructure/aws/FencedStateReferenceStorage.js';
+import type { PersonalStateReferenceFencingPort } from '../entity/FencedStateReferenceConfirmationService.js';
 import { createAccountDeletionIdentityKey } from '../../domain/accountDeletion.js';
 import type {
   AccountDeletionFlight,
@@ -84,6 +87,7 @@ export interface AccountDeletionServicePort {
 }
 
 export interface AccountDeletionServiceOptions {
+  stateReferenceFencing?: PersonalStateReferenceFencingPort;
   maxExternalStepsPerAttempt?: number;
   attemptTimeBudgetMs?: number;
   now?: () => number;
@@ -93,6 +97,7 @@ export class AccountDeletionService implements AccountDeletionServicePort {
   private readonly maxExternalStepsPerAttempt: number;
   private readonly attemptTimeBudgetMs: number;
   private readonly now: () => number;
+  private readonly stateReferenceFencing?: PersonalStateReferenceFencingPort;
 
   public constructor(
     private readonly repository: AccountDeletionRepository,
@@ -109,6 +114,7 @@ export class AccountDeletionService implements AccountDeletionServicePort {
       options.attemptTimeBudgetMs
       ?? DEFAULT_ATTEMPT_TIME_BUDGET_MS;
     this.now = options.now ?? Date.now;
+    this.stateReferenceFencing = options.stateReferenceFencing;
     if (
       !Number.isSafeInteger(this.maxExternalStepsPerAttempt)
       || this.maxExternalStepsPerAttempt < 1
@@ -145,7 +151,7 @@ export class AccountDeletionService implements AccountDeletionServicePort {
               : 'https://play.google.com/store/account/subscriptions',
         }),
       ),
-      personalAssetCount: flight.personalAssetKeys.length,
+      personalAssetCount: personalAssetCount(flight),
       activePersonalJobCount:
         flight.activePersonalGenerationJobCount
         + flight.activePersonalExportJobCount,
@@ -241,7 +247,40 @@ export class AccountDeletionService implements AccountDeletionServicePort {
     ),
   ): Promise<AccountDeletionResult> {
     let latest = request;
-    const flight = await this.repository.getFlight(request.userId);
+    let flight = await this.repository.getFlight(request.userId);
+    // A recovered/legacy claim may predate durable state-copy fencing. Recheck
+    // before any irreversible external action, not only before anonymization.
+    // Historical deleted-key checkpoints do not prove a late write cannot occur.
+    if (flight.activePersonalGenerationJobCount > 0 || flight.activePersonalExportJobCount > 0
+      || flight.uniqueOwnerOrganizations.length > 0) {
+      await this.repository.recordFailure(request.userId, request.processingToken, 'EXTERNAL_REVALIDATION_BLOCKED');
+      return { status: 'pending_external_action', blockers: [], next_action: 'anonymize_personal_data' };
+    }
+
+    // The journal's proof is independent of scheduled/deleted key checkpoints.
+    // The adapter, not this service, charges every nested v2 SDK request.
+    if ((flight.personalStateReferenceCount ?? 0) > 0) {
+      const continuation = await this.releaseIfBudgetExhausted(latest, budget, 'delete_personal_assets');
+      if (continuation !== null) return continuation;
+      try {
+        if (this.stateReferenceFencing === undefined
+          || !await this.stateReferenceFencing.fencePersonalReferences(latest.userId, latest.processingToken, budget)) {
+          throw new Error('State reference fencing is incomplete');
+        }
+        flight = await this.repository.getFlight(request.userId);
+        if ((flight.personalStateReferenceCount ?? 0) > 0) throw new Error('State reference evidence is incomplete');
+      } catch {
+        if (budget.wasExhausted()) {
+          return this.releaseContinuation(latest, 'delete_personal_assets');
+        }
+        await this.repository.recordFailure(latest.userId, latest.processingToken, 'FENCE_PERSONAL_STATE_REFERENCES_FAILED');
+        return { status: 'pending_external_action', blockers: [], next_action: 'delete_personal_assets' };
+      }
+    }
+    if (flight.personalAssetKeys.some(isReservedFencedStateReferenceNamespace)) {
+      await this.repository.recordFailure(latest.userId, latest.processingToken, 'DELETE_PERSONAL_ASSET_FAILED');
+      return { status: 'pending_external_action', blockers: [], next_action: 'delete_personal_assets' };
+    }
 
     for (const subscriptionId of flight.activePersonalStripeSubscriptionIds) {
       if (latest.cancelledSubscriptionIds.includes(subscriptionId)) {
@@ -260,6 +299,7 @@ export class AccountDeletionService implements AccountDeletionServicePort {
         'CANCEL_PERSONAL_SUBSCRIPTION_FAILED',
         'cancel_personal_subscriptions',
         async () => {
+          budget.beforeRequest();
           await this.subscriptions.cancelPersonalSubscription(subscriptionId);
           await this.repository.markSubscriptionCancelled(
             latest.userId,
@@ -272,7 +312,6 @@ export class AccountDeletionService implements AccountDeletionServicePort {
       if (failed !== null) {
         return failed;
       }
-      budget.recordExternalStep();
     }
 
     for (const key of flight.personalAssetKeys) {
@@ -292,6 +331,8 @@ export class AccountDeletionService implements AccountDeletionServicePort {
         'DELETE_PERSONAL_ASSET_FAILED',
         'delete_personal_assets',
         async () => {
+          assertLegacyAssetKey(key);
+          budget.beforeRequest();
           await this.assets.deleteExactObject(key);
           await this.repository.markAssetDeleted(
             latest.userId,
@@ -304,90 +345,89 @@ export class AccountDeletionService implements AccountDeletionServicePort {
       if (failed !== null) {
         return failed;
       }
-      budget.recordExternalStep();
     }
 
-    if (!latest.dataAnonymized) {
-      const finalized = await this.repository.finalizePersonalData(
+    // Even a recovered anonymized checkpoint must revalidate and scrub v2.
+    const finalized = await this.repository.finalizePersonalData(
+      latest.userId,
+      latest.processingToken,
+    );
+    if (finalized.kind === 'blocked') {
+      await this.repository.recordFailure(
         latest.userId,
         latest.processingToken,
+        'FINAL_REVALIDATION_BLOCKED',
       );
-      if (finalized.kind === 'blocked') {
-        await this.repository.recordFailure(
-          latest.userId,
-          latest.processingToken,
-          'FINAL_REVALIDATION_BLOCKED',
-        );
-        return {
-          status: 'pending_external_action',
-          blockers: [],
-          next_action: 'anonymize_personal_data',
-        };
-      }
-      if (finalized.kind === 'uncancelled_subscriptions') {
-        for (const subscriptionId of finalized.subscriptionIds) {
-          const continuation = await this.releaseIfBudgetExhausted(
-            latest,
-            budget,
-            'cancel_personal_subscriptions',
-          );
-          if (continuation !== null) {
-            return continuation;
-          }
-          const failed = await this.runExternalStep(
-            latest,
-            'CANCEL_PERSONAL_SUBSCRIPTION_FAILED',
-            'cancel_personal_subscriptions',
-            async () => {
-              await this.subscriptions.cancelPersonalSubscription(subscriptionId);
-              await this.repository.markSubscriptionCancelled(
-                latest.userId,
-                latest.processingToken,
-                subscriptionId,
-              );
-              latest.cancelledSubscriptionIds.push(subscriptionId);
-            },
-          );
-          if (failed !== null) {
-            return failed;
-          }
-          budget.recordExternalStep();
-        }
-        return this.retryFinalization(latest, budget);
-      }
-      if (finalized.kind === 'new_assets') {
-        for (const key of finalized.assetKeys) {
-          const continuation = await this.releaseIfBudgetExhausted(
-            latest,
-            budget,
-            'delete_personal_assets',
-          );
-          if (continuation !== null) {
-            return continuation;
-          }
-          const failed = await this.runExternalStep(
-            latest,
-            'DELETE_PERSONAL_ASSET_FAILED',
-            'delete_personal_assets',
-            async () => {
-              await this.assets.deleteExactObject(key);
-              await this.repository.markAssetDeleted(
-                latest.userId,
-                latest.processingToken,
-                key,
-              );
-              latest.deletedAssetKeys.push(key);
-            },
-          );
-          if (failed !== null) {
-            return failed;
-          }
-          budget.recordExternalStep();
-        }
-        return this.retryFinalization(latest, budget);
-      }
-      latest = { ...latest, dataAnonymized: true };
+      return {
+        status: 'pending_external_action',
+        blockers: [],
+        next_action: 'anonymize_personal_data',
+      };
     }
+    if (finalized.kind === 'uncancelled_subscriptions') {
+      for (const subscriptionId of finalized.subscriptionIds) {
+        const continuation = await this.releaseIfBudgetExhausted(
+          latest,
+          budget,
+          'cancel_personal_subscriptions',
+        );
+        if (continuation !== null) {
+          return continuation;
+        }
+        const failed = await this.runExternalStep(
+          latest,
+          'CANCEL_PERSONAL_SUBSCRIPTION_FAILED',
+          'cancel_personal_subscriptions',
+          async () => {
+            budget.beforeRequest();
+            await this.subscriptions.cancelPersonalSubscription(subscriptionId);
+            await this.repository.markSubscriptionCancelled(
+              latest.userId,
+              latest.processingToken,
+              subscriptionId,
+            );
+            latest.cancelledSubscriptionIds.push(subscriptionId);
+          },
+        );
+        if (failed !== null) {
+          return failed;
+        }
+      }
+      return this.retryFinalization(latest, budget);
+    }
+    if (finalized.kind === 'new_assets') {
+      for (const key of finalized.assetKeys) {
+        const continuation = await this.releaseIfBudgetExhausted(
+          latest,
+          budget,
+          'delete_personal_assets',
+        );
+        if (continuation !== null) {
+          return continuation;
+        }
+        const failed = await this.runExternalStep(
+          latest,
+          'DELETE_PERSONAL_ASSET_FAILED',
+          'delete_personal_assets',
+          async () => {
+            assertLegacyAssetKey(key);
+            budget.beforeRequest();
+            await this.assets.deleteExactObject(key);
+            await this.repository.markAssetDeleted(
+              latest.userId,
+              latest.processingToken,
+              key,
+            );
+            latest.deletedAssetKeys.push(key);
+          },
+        );
+        if (failed !== null) {
+          return failed;
+        }
+      }
+      return this.retryFinalization(latest, budget);
+    }
+    latest = { ...latest, dataAnonymized: true };
 
     if (!latest.identityDisabled) {
       const continuation = await this.releaseIfBudgetExhausted(
@@ -403,6 +443,7 @@ export class AccountDeletionService implements AccountDeletionServicePort {
         'DISABLE_IDENTITY_FAILED',
         'disable_identity',
         async () => {
+          budget.beforeRequest();
           await this.identity.disableIdentity(latest.identityId);
           await this.repository.markIdentityDisabled(
             latest.userId,
@@ -414,7 +455,6 @@ export class AccountDeletionService implements AccountDeletionServicePort {
       if (failed !== null) {
         return failed;
       }
-      budget.recordExternalStep();
     }
 
     if (!latest.identityDeleted) {
@@ -431,6 +471,7 @@ export class AccountDeletionService implements AccountDeletionServicePort {
         'DELETE_IDENTITY_FAILED',
         'delete_identity',
         async () => {
+          budget.beforeRequest();
           await this.identity.deleteIdentity(latest.identityId);
           await this.repository.markIdentityDeleted(
             latest.userId,
@@ -442,7 +483,6 @@ export class AccountDeletionService implements AccountDeletionServicePort {
       if (failed !== null) {
         return failed;
       }
-      budget.recordExternalStep();
     }
 
     await this.repository.markCompleted(
@@ -488,6 +528,13 @@ export class AccountDeletionService implements AccountDeletionServicePort {
     if (budget.canStartExternalStep()) {
       return null;
     }
+    return this.releaseContinuation(request, nextAction);
+  }
+
+  private async releaseContinuation(
+    request: AccountDeletionRequestRecord,
+    nextAction: AccountDeletionNextAction,
+  ): Promise<Extract<AccountDeletionResult, { status: 'pending_external_action' }>> {
     await this.repository.releaseForContinuation(
       request.userId,
       request.processingToken,
@@ -510,7 +557,8 @@ export class AccountDeletionService implements AccountDeletionServicePort {
     try {
       await work();
       return null;
-    } catch {
+    } catch (error) {
+      if (error instanceof AccountDeletionBudgetExhaustedError) return this.releaseContinuation(request, nextAction);
       await this.repository.recordFailure(
         request.userId,
         request.processingToken,
@@ -525,9 +573,14 @@ export class AccountDeletionService implements AccountDeletionServicePort {
   }
 }
 
-class AccountDeletionAttemptBudget {
+class AccountDeletionBudgetExhaustedError extends Error {
+  public constructor() { super('Account deletion attempt budget exhausted'); }
+}
+
+class AccountDeletionAttemptBudget implements FencedStorageOperationBudget {
   private readonly startedAt: number;
-  private completedExternalSteps = 0;
+  private startedExternalSteps = 0;
+  private requestRejected = false;
 
   public constructor(
     private readonly maxExternalSteps: number,
@@ -539,13 +592,25 @@ class AccountDeletionAttemptBudget {
 
   public canStartExternalStep(): boolean {
     return (
-      this.completedExternalSteps < this.maxExternalSteps
-      && this.now() - this.startedAt < this.timeBudgetMs
+      this.startedExternalSteps < this.maxExternalSteps
+      && this.remainingTimeMs() > 0
     );
   }
 
-  public recordExternalStep(): void {
-    this.completedExternalSteps += 1;
+  public beforeRequest(): void {
+    if (!this.canStartExternalStep()) {
+      this.requestRejected = true;
+      throw new AccountDeletionBudgetExhaustedError();
+    }
+    this.startedExternalSteps += 1;
+  }
+
+  public remainingTimeMs(): number {
+    return Math.max(0, this.timeBudgetMs - (this.now() - this.startedAt));
+  }
+
+  public wasExhausted(): boolean {
+    return this.requestRejected || !this.canStartExternalStep();
   }
 }
 
@@ -593,13 +658,21 @@ function toBlockers(
     });
   }
   if (
-    flight.personalAssetKeys.length > 0
+    personalAssetCount(flight) > 0
     && !input.acknowledgePersonalAssets
   ) {
     blockers.push({
       code: 'PERSONAL_ASSETS',
-      asset_count: flight.personalAssetKeys.length,
+      asset_count: personalAssetCount(flight),
     });
   }
   return blockers;
+}
+
+function personalAssetCount(flight: AccountDeletionFlight): number {
+  return flight.personalAssetKeys.length + (flight.personalStateReferenceCount ?? 0);
+}
+
+function assertLegacyAssetKey(key: string): void {
+  if (isReservedFencedStateReferenceNamespace(key)) throw new Error('Reserved state reference asset requires fencing');
 }

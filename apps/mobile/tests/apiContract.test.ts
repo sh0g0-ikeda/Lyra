@@ -918,6 +918,7 @@ describe('LyraMobileApiClient API contract', () => {
 
     await expect(client.getExportJob('export-job-1', 'organization-1')).resolves.toEqual(exportJobResponse);
     expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/exports/export-job-1?organization_id=organization-1');
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('export_contract=v2');
 
     fetchMock.mockResolvedValueOnce(
       new Response(

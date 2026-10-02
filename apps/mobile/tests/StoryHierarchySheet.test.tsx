@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StoryHierarchySheet } from '@/components/StoryHierarchySheet';
+import { contrastRatio, renderedColors, renderedContrast, renderedStyle } from './helpers/renderedContrast';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -98,7 +99,7 @@ vi.mock('lucide-react-native', () => {
 });
 
 vi.mock('@/components/Notice', () => ({
-  Notice: ({ message }: { message: string }) => React.createElement('notice', null, message)
+  Notice: ({ message, ...props }: { message: string }) => React.createElement('notice', props, message)
 }));
 
 vi.mock('@/components/PrimaryButton', () => ({
@@ -332,6 +333,62 @@ describe('StoryHierarchySheet', () => {
     expect(onWorkRenamed).toHaveBeenCalledWith('work-1', '変更後の作品');
   });
 
+  it('タイトル保存失敗を開いているmodal内で一度だけ表示し入力と操作対象を保持する', async () => {
+    api.updateWork.mockRejectedValueOnce(new Error('private provider detail'));
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品名を変更' }).props.onPress());
+    await act(async () => renderer.root.findByType('input').props.onChange('入力を保持'));
+    await act(async () => {
+      renderer.root.findAllByType('button').find(button => button.children.join('') === '保存')?.props.onClick();
+      await flushQueries();
+    });
+    const titleModal = renderer.root.findAllByType('modal').find(modal => modal.findAllByType('input').length > 0)!;
+    const notices = titleModal.findAllByType('notice');
+    expect(notices).toHaveLength(1);
+    expect(renderer.root.findAllByType('notice')).toHaveLength(1);
+    expect(notices[0].children.join('')).toContain('作品名の保存');
+    expect(notices[0].children.join('')).toContain('作品A');
+    expect(notices[0].children.join('')).toContain('未確認');
+    expect(notices[0].children.join('')).not.toContain('private provider detail');
+    expect(titleModal.findByType('input').props.value).toBe('入力を保持');
+    expect(api.updateWork).toHaveBeenCalledOnce();
+  });
+  it('作成完了後の読み込み失敗では再作成せず表示の更新だけで回復する', async () => {
+    api.createWork.mockResolvedValueOnce(work('new-work', '作成済み作品'));
+    const renderer = await renderSheet();
+    const invalidation = vi.spyOn(QueryClient.prototype, 'invalidateQueries').mockRejectedValueOnce(new Error('refresh failed'));
+    try {
+      await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品を追加' }).props.onPress());
+      await act(async () => renderer.root.findByType('input').props.onChange('作成済み作品'));
+      await act(async () => {
+        renderer.root.findAllByType('button').find(button => button.children.join('') === '追加')?.props.onClick();
+        await flushQueries();
+      });
+      const notice = renderer.root.findByType('notice');
+      expect(notice.children.join('')).toContain('サーバーで操作の完了を確認');
+      expect(renderer.root.findAllByType('button').find(button => button.children.join('') === '追加')?.props.disabled).toBe(true);
+      expect(notice.props.actionLabel).toBe('状態を更新');
+      await act(async () => { notice.props.onAction(); await flushQueries(); });
+      expect(api.createWork).toHaveBeenCalledOnce();
+      expect(renderer.root.findAllByType('input')).toHaveLength(0);
+    } finally { invalidation.mockRestore(); }
+  });
+
+  it('タイトルdialogを開いた場合に有効placeholderと入力境界が読める', async () => {
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品名を変更' }).props.onPress());
+    const input = renderer.root.findByType('input');
+    await act(async () => input.props.onChange(''));
+    expect(renderedContrast(input, input.props.placeholderTextColor)).toBeGreaterThanOrEqual(4.5);
+    const pixels = renderedColors(input, renderedStyle(input.props.style).borderColor as string);
+    expect(contrastRatio(pixels.foreground, pixels.background)).toBeGreaterThanOrEqual(3);
+    const outside = renderedColors(input.parent!, '#FFFFFF').background;
+    expect(contrastRatio(pixels.foreground, outside)).toBeGreaterThanOrEqual(3);
+    act(() => renderer.unmount());
+  });
+
   it('作品・章・話のメニューに仕様どおりの操作を表示する', async () => {
     const renderer = await renderSheet();
 
@@ -347,6 +404,9 @@ describe('StoryHierarchySheet', () => {
     for (const label of ['章名を変更', '章を上へ移動', '章を下へ移動', '話を追加', '章を削除']) {
       expect(renderer.root.findByProps({ accessibilityLabel: label })).toBeDefined();
     }
+    const deleteChapter = renderer.root.findAllByType('button').find((node) => node.props.accessibilityLabel === '章を削除')!;
+    expect(deleteChapter.props.disabled).toBe(false);
+    expect(renderedContrast(deleteChapter.findByType('text'))).toBeGreaterThanOrEqual(4.5);
 
     await act(async () => {
       renderer.root.findByProps({ accessibilityLabel: '1. 第一話の操作' }).props.onPress();

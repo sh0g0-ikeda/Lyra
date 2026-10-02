@@ -6,6 +6,8 @@ tags: [staging, credit, recovery]
     file: ../helpers/launch-authenticated.yaml
 - runFlow:
     file: ../helpers/open-pages.yaml
+- tapOn:
+    id: page-step-create
 - tapOn: ${E2E_CREDIT_TRIGGER_LABEL}
 - extendedWaitUntil:
     visible: ${E2E_INSUFFICIENT_CREDIT_LABEL}

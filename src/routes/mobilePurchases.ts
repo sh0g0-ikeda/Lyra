@@ -168,6 +168,8 @@ function toPurchaseResponse(result: MobileStorePurchaseResult) {
     product_kind: result.productKind,
     plan_code: result.planCode,
     credit_package_code: result.creditPackageCode,
+    scheduled_plan_code: result.scheduledPlanCode ?? null,
+    scheduled_plan_effective_at: result.scheduledPlanEffectiveAt?.toISOString() ?? null,
     credits_changed: result.creditsChanged,
     is_duplicate: result.isDuplicate,
   };

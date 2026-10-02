@@ -1,4 +1,7 @@
+import type { PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import type { ImageProvenance } from '../../domain/generation/ImageAccessPolicy.js';
+import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import sharp from 'sharp';
 import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS, PAGE_GENERATION_MONOCHROME_MAX_INPUT_PIXELS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
@@ -68,13 +71,15 @@ export interface PageGenerationPlannerPort {
 }
 
 export interface RenderPageImageInput extends PageGenerationPlanInput {
+  layoutControl?: PageGenerationLayoutControl | null;
+  panelCount?: number;
   renderStyle?: PersistedPageGenerationJobParams['render_style'];
   quality: PersistedPageGenerationJobParams['quality'];
   internalPlan: string | null;
   inputImages: PageGenerationInputImage[];
 }
 
-export interface RenderPageImageResult {
+export interface RenderPageImageResult extends ImageProvenance {
   imageData: Buffer;
   mimeType: string;
   openaiRequestId: string | null;
@@ -110,6 +115,7 @@ export interface ProcessPageGenerationJobResult {
 }
 
 export interface BuildPageGenerationInputImagesInput {
+  layoutControl?: PageGenerationLayoutControl | null;
   userId: string;
   organizationId?: string | null;
   pageId: string;
@@ -133,6 +139,7 @@ export class PageGenerationWorkerService {
     private readonly generationEnabled = true,
     private readonly organizationService?: OrganizationServicePort,
     private readonly cancellationControl?: GenerationJobCancellationControlRepository,
+    private readonly quotedInputs?: QuotedGenerationInputsPort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessPageGenerationJobResult> {
@@ -156,6 +163,10 @@ export class PageGenerationWorkerService {
     }
 
     try {
+      if (hasGenerationQuote(job) && this.quotedInputs === undefined) {
+        throw new ConfigurationError('Quoted page execution is not configured');
+      }
+      const quoted = hasGenerationQuote(job) ? await this.quotedInputs!.page(job) : null;
       const startedAtMs = Date.now();
       const stageTimingsMs = createEmptyPageGenerationStageTimings();
       await this.inputImageBuilder.assertRenderableState({
@@ -164,7 +175,7 @@ export class PageGenerationWorkerService {
         pageId: params.page_id,
       });
       await this.touchJobProgress(job, 'Building page prompt.');
-      const builtPrompt = await measurePageGenerationStage(stageTimingsMs, 'prompt_build', () =>
+      const builtPrompt = quoted?.prompt ?? await measurePageGenerationStage(stageTimingsMs, 'prompt_build', () =>
         this.promptBuilder.buildPagePrompt({
           userId: job.userId,
           organizationId: job.organizationId ?? null,
@@ -181,11 +192,12 @@ export class PageGenerationWorkerService {
       );
       const compiledPrompt = compiledPromptResult.compiledPrompt;
       await this.touchJobProgress(job, 'Preparing reference images.');
-      const inputImages = await measurePageGenerationStage(stageTimingsMs, 'reference_images', () =>
+      const inputImages = quoted?.inputImages ?? await measurePageGenerationStage(stageTimingsMs, 'reference_images', () =>
         this.inputImageBuilder.buildInputImages({
           userId: job.userId,
           organizationId: job.organizationId ?? null,
           pageId: params.page_id,
+          layoutControl: builtPrompt.layoutControl,
         }),
       );
       await this.saveInputSnapshot(job, appendInputImageSnapshot(builtPrompt.inputSnapshot, inputImages));
@@ -226,6 +238,8 @@ export class PageGenerationWorkerService {
             renderStyle: params.render_style,
             internalPlan,
             inputImages,
+            layoutControl: builtPrompt.layoutControl,
+            panelCount: builtPrompt.layoutControl === undefined ? undefined : builtPrompt.inputSnapshot.panelCount,
           }),
         ),
       );
@@ -351,10 +365,13 @@ export class PageGenerationWorkerService {
     };
 
     try {
-      await this.executionRepository.savePageGenerationInputSnapshot(input);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      console.warn(`[page-generation-worker] failed to save input snapshot for job ${job.id}: ${reason}`);
+      if (!(await this.executionRepository.savePageGenerationInputSnapshot(input))) {
+        throw new ConfigurationError('Page generation input snapshot could not be persisted');
+      }
+    } catch {
+      // The snapshot is also the durable inventory for eventual image deletion.
+      // Do not call providers without it or disclose raw database failures.
+      throw new ConfigurationError('Page generation input snapshot could not be persisted');
     }
   }
 
@@ -571,6 +588,9 @@ function buildCompletionInput(
     openaiRequestId: renderResult.openaiRequestId,
     promptMetadata,
     stageTimingsMs,
+    ...(renderResult.imageModel === undefined ? {} : { imageModel: renderResult.imageModel }),
+    ...(renderResult.providerModelId === undefined ? {} : { providerModelId: renderResult.providerModelId }),
+    ...(renderResult.provider === undefined ? {} : { provider: renderResult.provider }),
   };
 }
 

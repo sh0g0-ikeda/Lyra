@@ -151,7 +151,7 @@ describe('createEpisodeExportRoutes', () => {
     } as unknown as OrganizationServicePort);
 
     const response = await app.request(
-      `/exports/${jobId}?organization_id=${organizationId}`,
+      `/exports/${jobId}?organization_id=${organizationId}&export_contract=v2`,
     );
 
     expect(response.status).toBe(200);
@@ -212,6 +212,9 @@ class FakeService implements EpisodeExportServicePort {
   public async getExport() {
     return {
       jobId,
+      episodeId,
+      format: 'pdf' as const,
+      filename: 'episode.pdf',
       status: 'completed' as const,
       progressStage: 'completed',
       progressPercent: 100,

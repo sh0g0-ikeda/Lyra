@@ -101,33 +101,12 @@ describe('assertProductionRuntimeConfig', () => {
     }).not.toThrow();
   });
 
-  it('episode export有効時だけ専用queueと長時間visibilityを要求する', () => {
-    expect(() => {
-      assertProductionRuntimeConfig(
-        {
-          ...safeProductionConfig,
-          EPISODE_EXPORT_ENABLED: true,
-          SQS_QUEUE_URL_EXPORT: undefined,
-          SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS: 600,
-        },
-        'production',
-      );
-    }).toThrow(
-      /SQS_QUEUE_URL_EXPORT is required.*SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS must be at least 1800/,
-    );
-
-    expect(() => {
-      assertProductionRuntimeConfig(
-        {
-          ...safeProductionConfig,
-          EPISODE_EXPORT_ENABLED: true,
-          SQS_QUEUE_URL_EXPORT:
-            'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-export',
-          SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS: 1800,
-        },
-        'production',
-      );
-    }).not.toThrow();
+  it('episode export shares the production generation queue only when dedicated configuration is absent', () => {
+    expect(() => assertProductionRuntimeConfig({ ...safeProductionConfig, EPISODE_EXPORT_ENABLED: true, SQS_QUEUE_URL_EXPORT: undefined, SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS: undefined }, 'production')).not.toThrow();
+    expect(() => assertProductionRuntimeConfig({ ...safeProductionConfig, EPISODE_EXPORT_ENABLED: true, SQS_QUEUE_URL_EXPORT: safeProductionConfig.SQS_QUEUE_URL_GENERATION, SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS: 600 }, 'production')).not.toThrow();
+    expect(() => assertProductionRuntimeConfig({ ...safeProductionConfig, EPISODE_EXPORT_ENABLED: true, SQS_QUEUE_URL_EXPORT: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-export', SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS: 600 }, 'production')).toThrow(/SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS must be at least 1800/);
+    expect(() => assertProductionRuntimeConfig({ ...safeProductionConfig, EPISODE_EXPORT_ENABLED: true, SQS_QUEUE_URL_EXPORT: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-export', SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS: 1800 }, 'production')).not.toThrow();
+    expect(() => assertProductionRuntimeConfig({ ...safeProductionConfig, EPISODE_EXPORT_ENABLED: true, SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: 600 }, 'production')).toThrow(/SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS/);
   });
 
   it('production では招待URLに使う公開URLの localhost 既定値を拒否する', () => {

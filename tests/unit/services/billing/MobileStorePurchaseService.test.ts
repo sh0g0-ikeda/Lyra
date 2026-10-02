@@ -23,6 +23,7 @@ import type {
 import {
   MobileStorePurchaseService,
   type AppleStorePurchaseVerifierPort,
+  type MobileStorePurchaseServiceDependencies,
   type GooglePlayPurchaseVerifierPort,
   type GoogleProviderCompletionInput,
 } from '../../../../src/services/billing/MobileStorePurchaseService.js';
@@ -33,6 +34,66 @@ const identifierSecret = '01234567890123456789012345678901';
 const observedAt = new Date('2026-07-31T00:00:00.000Z');
 
 describe('MobileStorePurchaseService', () => {
+  it('accepts production RTDN subscriptionId and never grants duplicate subscription credits', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]); const credits = new FakeCreditRepository();
+    const google = new FakeGoogleVerifier(googleSubscription());
+    const service = createService(repository, credits, new FakeAppleVerifier(applePurchase()), google);
+    await service.verifyGooglePurchase({ userId, purchaseToken: 'token' });
+    await service.handleGoogleRtdn({ messageId: 'production-rtdn', publishTime: observedAt, data: Buffer.from(JSON.stringify({ packageName: 'jp.lyra.app', subscriptionNotification: { notificationType: 2, purchaseToken: 'token', subscriptionId: 'jp.lyra.google.standard.monthly' } })).toString('base64') });
+    expect(credits.ledger).toHaveLength(1); expect(google.completions).toHaveLength(2);
+  });
+
+  it('acknowledges authenticated malformed RTDN only after recording an idempotent failure, without storing raw payload', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]); const credits = new FakeCreditRepository();
+    const service = createService(repository, credits, new FakeAppleVerifier(), new FakeGoogleVerifier());
+    await service.handleGoogleRtdn({ messageId: 'bad-rtdn', publishTime: observedAt, data: 'private.invalid.payload' });
+    await service.handleGoogleRtdn({ messageId: 'bad-rtdn', publishTime: observedAt, data: 'private.invalid.payload' });
+    expect(repository.events).toHaveLength(1); expect(repository.events[0]).toMatchObject({ providerEventType: 'google.invalid_notification', state: 'failed' });
+    expect(JSON.stringify(repository.events)).not.toContain('private'); expect(credits.ledger).toHaveLength(0);
+  });
+
+  it('same-token deferred change preserves current credits then switches plans exactly once at renewal', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]); const credits = new FakeCreditRepository();
+    const google = new FakeGoogleVerifier(
+      googleSubscription({ renewalProductId: 'jp.lyra.google.premium.monthly' }),
+      googleSubscription({ renewalProductId: 'jp.lyra.google.premium.monthly', observedAt: new Date('2026-07-31T01:00:00Z') }),
+      googleSubscription({ productId: 'jp.lyra.google.premium.monthly', transactionId: 'next-order', renewalProductId: null, observedAt: new Date('2026-08-31T00:00:00Z'), expiresAt: new Date('2026-09-30T00:00:00Z') }),
+    );
+    const service = createService(repository, credits, new FakeAppleVerifier(), google);
+    const first = await service.verifyGooglePurchase({ userId, purchaseToken: 'same-token' });
+    expect(first).toMatchObject({ planCode: 'standard', scheduledPlanCode: 'premium', scheduledPlanEffectiveAt: new Date('2026-08-31T00:00:00Z') });
+    const duplicate = await service.verifyGooglePurchase({ userId, purchaseToken: 'same-token' }); expect(duplicate.creditsChanged).toBe(0);
+    const renewal = await service.verifyGooglePurchase({ userId, purchaseToken: 'same-token' });
+    expect(renewal).toMatchObject({ planCode: 'premium', scheduledPlanCode: null, creditsChanged: 175 });
+    expect(repository.purchases).toHaveLength(1); expect(repository.purchases[0].productId).toBe('jp.lyra.google.premium.monthly');
+    expect(repository.users.get(userId)?.planCode).toBe('premium'); expect(credits.ledger).toHaveLength(2);
+  });
+
+  it('test purchase scopes and expiry never disable verified real purchases', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]); const credits = new FakeCreditRepository();
+    const google = new FakeGoogleVerifier(googlePurchase(), googlePurchase({ isTestPurchase: false, environment: 'production', externalPurchaseId: 'real-token', transactionId: 'real-order' }));
+    const service = createService(repository, credits, new FakeAppleVerifier(), google, { googleTestPurchaseAllowedUserIds: new Set([otherUserId]), googleTestPurchasesExpireAt: new Date('2026-07-30T00:00:00Z') });
+    await expect(service.verifyGooglePurchase({ userId, purchaseToken: 'test' })).rejects.toThrow();
+    expect((await service.verifyGooglePurchase({ userId, purchaseToken: 'real' })).creditsChanged).toBe(10);
+    expect(credits.ledger).toHaveLength(1);
+  });
+
+  it('restore skips ineligible test receipts but still restores valid real purchases', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]); const credits = new FakeCreditRepository();
+    const google = new FakeGoogleVerifier(googlePurchase(), googlePurchase({ isTestPurchase: false, environment: 'production', externalPurchaseId: 'real-restore', transactionId: 'real-restore-order' }));
+    const service = createService(repository, credits, new FakeAppleVerifier(), google, { allowGoogleTestPurchases: false });
+    const results = await service.restorePurchases({ userId, appleSignedTransactions: [], googlePurchaseTokens: ['test', 'real'] });
+    expect(results).toHaveLength(1); expect(results[0].creditsChanged).toBe(10); expect(google.completions).toHaveLength(1);
+  });
+
+  it('disallowed test RTDN is durably ignored without a credit grant or endless retry', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]); const credits = new FakeCreditRepository();
+    const google = new FakeGoogleVerifier(googleSubscription());
+    const service = createService(repository, credits, new FakeAppleVerifier(), google, { googleTestPurchaseAllowedUserIds: new Set([otherUserId]) });
+    await service.handleGoogleRtdn({ messageId: 'unapproved-test', publishTime: observedAt, data: Buffer.from(JSON.stringify({ packageName: 'jp.lyra.app', subscriptionNotification: { notificationType: 2, purchaseToken: 'test' } })).toString('base64') });
+    expect(repository.events[0]?.providerEventType).toBe('google.test_purchase_ignored');expect(credits.ledger).toHaveLength(0);expect(google.completions).toHaveLength(0);
+  });
+
   it('Apple credit packを個人残高へ一度だけ付与しraw IDを保存しない', async () => {
     const repository = new FakeStorePurchaseRepository([userId]);
     const credits = new FakeCreditRepository();
@@ -402,6 +463,7 @@ function createService(
   creditRepository: FakeCreditRepository,
   appleVerifier: AppleStorePurchaseVerifierPort,
   googleVerifier: FakeGoogleVerifier,
+  overrides: Partial<MobileStorePurchaseServiceDependencies> = {},
 ): MobileStorePurchaseService {
   return new MobileStorePurchaseService({
     storePurchaseRepository,
@@ -445,6 +507,7 @@ function createService(
     allowGoogleTestPurchases: true,
     googlePackageName: 'jp.lyra.app',
     clock: () => observedAt,
+    ...overrides,
   });
 }
 
@@ -630,6 +693,8 @@ class FakeStorePurchaseRepository implements StorePurchaseRepository {
     purchase.expiresAt = input.expiresAt;
     purchase.autoRenewEnabled = input.autoRenewEnabled;
     purchase.lastObservedAt = input.lastObservedAt;
+    if (input.productId !== undefined) { purchase.productId = input.productId; purchase.planCode = input.planCode ?? null; purchase.creditPackageCode = input.creditPackageCode ?? null; }
+    if (input.scheduledProductId !== undefined) { purchase.scheduledProductId = input.scheduledProductId; purchase.scheduledPlanCode = input.scheduledPlanCode ?? null; purchase.scheduledEffectiveAt = input.scheduledEffectiveAt ?? null; }
     return purchase;
   }
 
@@ -789,4 +854,197 @@ class NoopDatabaseClient implements DatabaseClient {
       rows: [],
     };
   }
+}
+
+
+describe('billing release compatibility regressions', () => {
+  it('過去Google注文のrefundと再送では現期間のcreditとplanを失わない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const google = new FakeGoogleVerifier(
+      googleSubscription(),
+      googleSubscription({
+        transactionId: 'google-renewal-order',
+        observedAt: new Date('2026-08-31T00:00:00Z'),
+        expiresAt: new Date('2026-09-30T00:00:00Z'),
+      }),
+    );
+    const service = createService(repository, credits, new FakeAppleVerifier(), google);
+    await service.verifyGooglePurchase({ userId, purchaseToken: 'raw-google-token' });
+    await service.verifyGooglePurchase({ userId, purchaseToken: 'raw-google-token' });
+    const before = { ...repository.purchases[0] };
+    const notification = googleVoidNotification('google-subscription-order');
+
+    await service.handleGoogleRtdn(notification);
+    await service.handleGoogleRtdn(notification);
+    await service.handleGoogleRtdn({ ...notification, messageId: 'another-refund-event' });
+
+    expect(repository.purchases[0]).toEqual(before);
+    expect(repository.users.get(userId)?.planCode).toBe('standard');
+    expect(credits.balance.monthlyCredits).toBe(50);
+    expect(credits.ledger).toHaveLength(2);
+    expect(repository.events.filter(event => event.operation === 'reverse')).toHaveLength(1);
+  });
+
+  it('現在Google注文のrefundでは残creditを一度だけ取り消す', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const service = createService(repository, credits, new FakeAppleVerifier(),
+      new FakeGoogleVerifier(googleSubscription()));
+    await service.verifyGooglePurchase({ userId, purchaseToken: 'raw-google-token' });
+    credits.balance.monthlyCredits = 23;
+    const notification = googleVoidNotification('google-subscription-order');
+
+    await service.handleGoogleRtdn(notification);
+    await service.handleGoogleRtdn(notification);
+
+    expect(credits.balance.monthlyCredits).toBe(0);
+    expect(credits.ledger.at(-1)).toMatchObject({ type: 'purchase_reversal', amount: -23 });
+    expect(credits.ledger).toHaveLength(2);
+    expect(repository.users.get(userId)?.planCode).toBe('free');
+  });
+
+  it('linked tokenだけで特定できるRTDNを適用し再送とrestoreで二重付与しない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const google = new FakeGoogleVerifier(googleSubscription(), googleReplacement());
+    const service = createService(repository, credits, new FakeAppleVerifier(), google);
+    await service.verifyGooglePurchase({ userId, purchaseToken: 'raw-google-token' });
+    const notification = googleReplacementNotification();
+
+    await service.handleGoogleRtdn(notification);
+    await service.handleGoogleRtdn(notification);
+    const restored = await service.restorePurchases({
+      userId, appleSignedTransactions: [], googlePurchaseTokens: ['replacement-token'],
+    });
+
+    expect(repository.purchases).toHaveLength(2);
+    expect(repository.purchases[0].state).toBe('expired');
+    expect(repository.purchases[1]).toMatchObject({ userId, state: 'active', planCode: 'premium' });
+    expect(repository.users.get(userId)?.planCode).toBe('premium');
+    expect(credits.balance.monthlyCredits).toBe(175);
+    expect(credits.ledger).toHaveLength(2);
+    expect(restored[0]).toMatchObject({ isDuplicate: true, creditsChanged: 0 });
+    expect(google.completions).toHaveLength(4);
+  });
+
+  it('linked tokenのownerと検証済みbindingが違うRTDNでは変更しない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId, otherUserId]);
+    const credits = new FakeCreditRepository();
+    const google = new FakeGoogleVerifier(googleSubscription(), googleReplacement({
+      accountBinding: createGooglePlayObfuscatedAccountId(identifierSecret, otherUserId),
+    }));
+    const service = createService(repository, credits, new FakeAppleVerifier(), google);
+    await service.verifyGooglePurchase({ userId, purchaseToken: 'raw-google-token' });
+
+    await expect(service.handleGoogleRtdn(googleReplacementNotification()))
+      .rejects.toThrow('Store purchase account binding does not match');
+
+    expect(repository.purchases).toHaveLength(1);
+    expect(repository.purchases[0].state).toBe('active');
+    expect(credits.ledger).toHaveLength(1);
+    expect(google.completions).toHaveLength(1);
+  });
+
+  it('他accountのlinked tokenは新tokenのclient verifyでも奪えない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId, otherUserId]);
+    const credits = new FakeCreditRepository();
+    const google = new FakeGoogleVerifier(googleSubscription(), googleReplacement({
+      accountBinding: createGooglePlayObfuscatedAccountId(identifierSecret, otherUserId),
+    }));
+    const service = createService(repository, credits, new FakeAppleVerifier(), google);
+    await service.verifyGooglePurchase({ userId, purchaseToken: 'raw-google-token' });
+
+    await expect(service.verifyGooglePurchase({ userId: otherUserId, purchaseToken: 'replacement-token' }))
+      .rejects.toThrow('Linked store purchase belongs to another account');
+
+    expect(repository.purchases).toHaveLength(1);
+    expect(repository.purchases[0].state).toBe('active');
+    expect(credits.ledger).toHaveLength(1);
+  });
+
+  it('削除済みaccountのlinked RTDNではcreditとplanを復活しない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const google = new FakeGoogleVerifier(googleSubscription(), googleReplacement());
+    const service = createService(repository, credits, new FakeAppleVerifier(), google);
+    await service.verifyGooglePurchase({ userId, purchaseToken: 'raw-google-token' });
+    repository.deletedUsers.add(userId);
+    repository.users.get(userId)!.planCode = 'free';
+    credits.balance = { userId, monthlyCredits: 0, purchasedCredits: 0, monthlyExpiresAt: null };
+
+    await service.handleGoogleRtdn(googleReplacementNotification());
+    await service.handleGoogleRtdn(googleReplacementNotification());
+
+    expect(repository.purchases).toHaveLength(2);
+    expect(repository.users.get(userId)?.planCode).toBe('free');
+    expect(credits.balance.monthlyCredits).toBe(0);
+    expect(credits.ledger).toHaveLength(1);
+  });
+
+  it('credit packをlinked subscriptionのownership根拠として受け付けない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const service = createService(repository, credits, new FakeAppleVerifier(),
+      new FakeGoogleVerifier(googlePurchase(), googleReplacement()));
+    await service.verifyGooglePurchase({ userId, purchaseToken: 'raw-google-token' });
+
+    await expect(service.handleGoogleRtdn(googleReplacementNotification()))
+      .rejects.toThrow('Store purchase could not be verified');
+
+    expect(repository.purchases).toHaveLength(1);
+    expect(credits.balance.purchasedCredits).toBe(10);
+    expect(credits.ledger).toHaveLength(1);
+  });
+
+  it('不明なlinked tokenのRTDNからaccountやcreditを作らない', async () => {
+    const repository = new FakeStorePurchaseRepository([userId]);
+    const credits = new FakeCreditRepository();
+    const service = createService(repository, credits, new FakeAppleVerifier(),
+      new FakeGoogleVerifier(googleReplacement()));
+
+    await service.handleGoogleRtdn(googleReplacementNotification());
+
+    expect(repository.purchases).toHaveLength(0);
+    expect(repository.events[0]).toMatchObject({ purchaseId: null, operation: 'observe' });
+    expect(credits.ledger).toHaveLength(0);
+  });
+});
+
+function googleReplacement(overrides: Partial<VerifiedStorePurchase> = {}): VerifiedStorePurchase {
+  return googleSubscription({
+    externalPurchaseId: 'replacement-token',
+    linkedExternalPurchaseId: 'raw-google-token',
+    productId: 'jp.lyra.google.premium.monthly',
+    transactionId: 'replacement-order',
+    observedAt: new Date('2026-08-01T00:00:00Z'),
+    ...overrides,
+  });
+}
+
+function googleReplacementNotification() {
+  return {
+    messageId: 'replacement-rtdn',
+    publishTime: new Date('2026-08-01T00:00:00Z'),
+    data: Buffer.from(JSON.stringify({
+      packageName: 'jp.lyra.app',
+      subscriptionNotification: {
+        notificationType: 4, purchaseToken: 'replacement-token',
+        subscriptionId: 'jp.lyra.google.premium.monthly',
+      },
+    })).toString('base64'),
+  };
+}
+
+function googleVoidNotification(orderId: string) {
+  return {
+    messageId: `google-refund-${orderId}`,
+    publishTime: new Date('2026-09-01T00:00:00Z'),
+    data: Buffer.from(JSON.stringify({
+      packageName: 'jp.lyra.app',
+      voidedPurchaseNotification: {
+        purchaseToken: 'raw-google-token', orderId, productType: 1, refundType: 1,
+      },
+    })).toString('base64'),
+  };
 }

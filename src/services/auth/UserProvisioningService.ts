@@ -45,19 +45,24 @@ export class UserProvisioningService implements UserProvisioningPort {
 
     const userByEmail = await this.userRepository.findByEmail(email);
     if (userByEmail !== null) {
-      if (claims.identityProvider === 'federated') {
-        throw new AccountLinkRequiredError();
+      // A concurrent first login can commit after the subject lookup but before
+      // this email lookup. Only an exact verified-subject match is the same user.
+      if (userByEmail.supabaseId === supabaseId) {
+        return {
+          user: await this.syncUserEmail(userByEmail, supabaseId, email),
+          isNewUser: false,
+        };
       }
-      return {
-        user: await this.linkExistingEmailUser(userByEmail, supabaseId, email),
-        isNewUser: false,
-      };
+
+      // Verified email is not proof that a different authentication subject owns
+      // the existing account. Genuine provider migrations use an approved offline
+      // mapping; ordinary login never reassigns assets, balances or identities.
+      throw new AccountLinkRequiredError();
     }
 
+    let insertedUser: AuthenticatedUser;
     try {
-      const user = await this.userRepository.insertSupabaseUser(supabaseId, email);
-      await this.creditService.grantSignupBonus(user.id);
-      return { user, isNewUser: true };
+      insertedUser = await this.userRepository.insertSupabaseUser(supabaseId, email);
     } catch (error) {
       if (!isUniqueViolation(error)) {
         throw error;
@@ -72,18 +77,15 @@ export class UserProvisioningService implements UserProvisioningPort {
       }
 
       const existingEmailUser = await this.userRepository.findByEmail(email);
-      if (existingEmailUser !== null) {
-        if (claims.identityProvider === 'federated') {
-          throw new AccountLinkRequiredError();
-        }
-        return {
-          user: await this.linkExistingEmailUser(existingEmailUser, supabaseId, email),
-          isNewUser: false,
-        };
-      }
+      if (existingEmailUser !== null) throw new AccountLinkRequiredError();
 
       throw error;
     }
+
+    // Only a user-insert conflict is a concurrent signup. Any credit failure,
+    // including a uniqueness failure, must abort the outer API transaction.
+    await this.creditService.grantSignupBonus(insertedUser.id);
+    return { user: insertedUser, isNewUser: true };
   }
 
   private async syncUserEmail(
@@ -94,31 +96,4 @@ export class UserProvisioningService implements UserProvisioningPort {
     return user.email === email ? user : await this.userRepository.updateEmail(supabaseId, email);
   }
 
-  private async linkExistingEmailUser(
-    user: AuthenticatedUser,
-    supabaseId: string,
-    email: string,
-  ): Promise<AuthenticatedUser> {
-    // Cognito/Supabase migrations can change the provider subject while the
-    // verified email remains the same. Keep the existing Lyra user id so works,
-    // credits, subscriptions, and generated assets stay attached to the account.
-    if (user.supabaseId === supabaseId) {
-      return this.syncUserEmail(user, supabaseId, email);
-    }
-
-    try {
-      return await this.userRepository.linkSupabaseIdByEmail(email, supabaseId);
-    } catch (error) {
-      if (!isUniqueViolation(error)) {
-        throw error;
-      }
-
-      const linkedByConcurrentRequest = await this.userRepository.findBySupabaseId(supabaseId);
-      if (linkedByConcurrentRequest !== null) {
-        return this.syncUserEmail(linkedByConcurrentRequest, supabaseId, email);
-      }
-
-      throw error;
-    }
-  }
 }

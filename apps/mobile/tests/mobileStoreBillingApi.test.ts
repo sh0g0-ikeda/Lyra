@@ -17,6 +17,13 @@ describe('mobile store billing API contract', () => {
     vi.unstubAllGlobals();
   });
 
+  it('keeps optional scheduled plan/store fields and still accepts old responses', async () => {
+    const scheduled = { scheduled_plan_code: 'standard', scheduled_plan_effective_at: '2026-11-01T00:00:00Z' };
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ...purchaseResponse, ...scheduled }))).mockResolvedValueOnce(new Response(JSON.stringify({ monthly_credits: 100, purchased_credits: 10, total_credits: 110, monthly_expires_at: null, plan_code: 'premium', current_period_end: '2026-11-01T00:00:00Z', cancel_at_period_end: false, subscription_plans: [], subscription_store: 'google', ...scheduled })));
+    vi.stubGlobal('fetch', fetch); const api = new LyraMobileApiClient(() => 'token');
+    await expect(api.verifyGoogleMobilePurchase({ purchase_token: 'proof' })).resolves.toMatchObject(scheduled);
+    await expect(api.getBalance()).resolves.toMatchObject({ plan_code: 'premium', subscription_store: 'google', ...scheduled });
+  });
   it('購入用アカウントbindingをruntime検証する', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({

@@ -1,6 +1,7 @@
+import type { ImageProvenance } from '../generation/ImageAccessPolicy.js';
 import type { EntityStatus, EntityType } from './entity.js';
 
-export interface EntityStateReferenceDescriptor {
+export interface EntityStateReferenceDescriptor extends ImageProvenance {
   refId: string;
   s3Key: string;
   storageOwnerUserId: string;

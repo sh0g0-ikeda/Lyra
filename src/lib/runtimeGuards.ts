@@ -297,27 +297,19 @@ export function assertProductionRuntimeConfig(
   }
 
   if (config.EPISODE_EXPORT_ENABLED === true) {
-    if (isMissingConfigValue(config.SQS_QUEUE_URL_EXPORT)) {
-      violations.push('SQS_QUEUE_URL_EXPORT is required when episode export is enabled');
+    const queueUrl = config.SQS_QUEUE_URL_EXPORT ?? config.SQS_QUEUE_URL_GENERATION;
+    const queueName = config.SQS_QUEUE_URL_EXPORT === undefined ? 'SQS_QUEUE_URL_GENERATION' : 'SQS_QUEUE_URL_EXPORT';
+    const sharedQueue = queueUrl === config.SQS_QUEUE_URL_GENERATION;
+    if (isMissingConfigValue(queueUrl)) {
+      violations.push('An export or generation SQS queue is required when episode export is enabled');
     } else {
-      const queueUrl = config.SQS_QUEUE_URL_EXPORT;
-      if (queueUrl !== undefined && !isSafeProductionHttpsUrl(queueUrl)) {
-        violations.push(
-          'SQS_QUEUE_URL_EXPORT must use https and a non-local host in production',
-        );
-      }
-      if (hasPlaceholderConfigValue(queueUrl)) {
-        violations.push('SQS_QUEUE_URL_EXPORT must not use a placeholder value');
-      }
+      if (queueUrl !== undefined && !isSafeProductionHttpsUrl(queueUrl)) violations.push(`${queueName} must use https and a non-local host in production`);
+      if (hasPlaceholderConfigValue(queueUrl)) violations.push(`${queueName} must not use a placeholder value`);
     }
-    if (
-      config.SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS === undefined
-      || config.SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS
-        < MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS
-    ) {
-      violations.push(
-        `SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS must be at least ${MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS}`,
-      );
+    const exportVisibility = sharedQueue ? config.SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS : config.SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS;
+    const visibilityName = sharedQueue ? 'SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS' : 'SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS';
+    if (exportVisibility === undefined || exportVisibility < MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS) {
+      violations.push(`${visibilityName} must be at least ${MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS}`);
     }
     if (isMissingConfigValue(config.AWS_REGION)) {
       violations.push('AWS_REGION is required when episode export is enabled');

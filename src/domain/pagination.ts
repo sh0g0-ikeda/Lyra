@@ -47,16 +47,16 @@ const organizationListCursorWireSchema = z
   .strict();
 
 export interface GenerationJobHistoryCursor {
+  format?: 'production-v1';
   activeRank: 0 | 1;
   createdAt: Date;
   id: string;
 }
 
-export interface WorkListCursor {
-  updatedAt: Date;
-  createdAt: Date;
-  id: string;
-}
+export type WorkListCursor = { updatedAt: Date; id: string } & (
+  | { format: 'production-v1' }
+  | { format?: 'candidate-v1'; createdAt: Date }
+);
 
 export interface EntityListCursor {
   createdAt: Date;
@@ -78,6 +78,9 @@ export function encodeGenerationJobHistoryCursor(
   cursor: GenerationJobHistoryCursor,
 ): string {
   const createdAt = cursor.createdAt.toISOString();
+  if (cursor.format === 'production-v1') {
+    return Buffer.from(JSON.stringify({ active_rank: cursor.activeRank, created_at: createdAt, id: cursor.id }), 'utf8').toString('base64url');
+  }
   const payload = generationJobHistoryCursorWireSchema.parse({
     v: 1,
     k: 'generation_job_history',
@@ -107,6 +110,8 @@ export function decodeGenerationJobHistoryCursor(
     }
 
     const parsedJson: unknown = JSON.parse(decoded);
+    const deployed = z.object({ active_rank: z.union([z.literal(0), z.literal(1)]), created_at: z.string().datetime({ offset: true }), id: z.string().uuid() }).strict().safeParse(parsedJson);
+    if (deployed.success) return { activeRank: deployed.data.active_rank, createdAt: new Date(deployed.data.created_at), id: deployed.data.id, format: 'production-v1' };
     const parsed = generationJobHistoryCursorWireSchema.parse(parsedJson);
     if (JSON.stringify(parsed) !== decoded) {
       throwInvalidCursor();
@@ -131,6 +136,9 @@ export function decodeGenerationJobHistoryCursor(
 }
 
 export function encodeWorkListCursor(cursor: WorkListCursor): string {
+  if (cursor.format === 'production-v1') {
+    return encodeProductionListCursor('works', cursor.updatedAt.toISOString(), cursor.id);
+  }
   const payload = workListCursorWireSchema.parse({
     v: 1,
     k: 'works',
@@ -158,6 +166,10 @@ export function decodeWorkListCursor(encoded: string): WorkListCursor {
     }
 
     const parsedJson: unknown = JSON.parse(decoded);
+    const legacy = parseProductionListCursor(decoded, parsedJson, 'works');
+    if (legacy !== null) {
+      return { format: 'production-v1', updatedAt: parseCanonicalCursorDate(legacy.sort as string), id: legacy.id };
+    }
     const parsed = workListCursorWireSchema.parse(parsedJson);
     if (JSON.stringify(parsed) !== decoded) {
       throwInvalidCursor();
@@ -200,6 +212,10 @@ export function decodeEntityListCursor(encoded: string): EntityListCursor {
     }
 
     const parsedJson: unknown = JSON.parse(decoded);
+    const legacy = parseProductionListCursor(decoded, parsedJson, 'entities');
+    if (legacy !== null) {
+      return { createdAt: parseCanonicalCursorDate(legacy.sort as string), id: legacy.id };
+    }
     const parsed = entityListCursorWireSchema.parse(parsedJson);
     if (JSON.stringify(parsed) !== decoded) {
       throwInvalidCursor();
@@ -241,6 +257,10 @@ export function decodePageListCursor(encoded: string): PageListCursor {
     }
 
     const parsedJson: unknown = JSON.parse(decoded);
+    const legacy = parseProductionListCursor(decoded, parsedJson, 'pages');
+    if (legacy !== null) {
+      return { pageNumber: legacy.sort as number, id: legacy.id };
+    }
     const parsed = pageListCursorWireSchema.parse(parsedJson);
     if (JSON.stringify(parsed) !== decoded) {
       throwInvalidCursor();
@@ -313,4 +333,34 @@ function parseCanonicalCursorDate(value: string): Date {
   }
 
   return date;
+}
+
+// Exact production-v1 shape, kept distinct from candidate-v1 despite sharing v=1.
+const productionListCursorSchema = z.object({
+  v: z.literal(1),
+  k: z.enum(['works', 'entities', 'pages']),
+  sort: z.union([z.string().min(1).max(128), z.number().int().positive().max(2_147_483_647)]),
+  id: z.string().uuid(),
+}).strict();
+
+function parseProductionListCursor(
+  decoded: string,
+  value: unknown,
+  kind: 'works' | 'entities' | 'pages',
+): z.infer<typeof productionListCursorSchema> | null {
+  const result = productionListCursorSchema.safeParse(value);
+  if (!result.success) return null;
+  const parsed = result.data;
+  if (parsed.k !== kind || JSON.stringify(parsed) !== decoded ||
+      (kind === 'pages' ? typeof parsed.sort !== 'number' : typeof parsed.sort !== 'string')) {
+    throwInvalidCursor();
+  }
+  if (typeof parsed.sort === 'string') parseCanonicalCursorDate(parsed.sort);
+  return parsed;
+}
+
+function encodeProductionListCursor(kind: 'works', sort: string, id: string): string {
+  const payload = productionListCursorSchema.parse({ v: 1, k: kind, sort, id });
+  parseCanonicalCursorDate(sort);
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 }

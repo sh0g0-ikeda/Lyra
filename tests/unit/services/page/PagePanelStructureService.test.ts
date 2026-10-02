@@ -38,6 +38,34 @@ class FakePagePanelStructureRepository implements PagePanelStructureRepository {
 }
 
 describe('PagePanelStructureService', () => {
+  it('選択コマの直後への追加では次のコマ数の既定テンプレートを選ぶ', async () => {
+    const repository = new FakePagePanelStructureRepository();
+    const service = new PagePanelStructureService(repository);
+
+    await service.apply('user-1', 'page-1', {
+      expectedPanelIds: ids.slice(0, 3),
+      operation: { type: 'insert_after', panelId: ids[1]! },
+    });
+
+    expect(repository.lastInput?.operation).toEqual({ type: 'insert_after', panelId: ids[1] });
+    expect(repository.lastInput?.replacementLayout?.templateId).toBe('standard_4');
+    expect(repository.lastInput?.replacementLayout?.frameDefinitions).toHaveLength(4);
+  });
+
+  it.each([[], ids.slice(0, 2), ids.slice(0, 8)].map((expectedPanelIds) => ({ expectedPanelIds })))(
+    '選択コマがないか8コマの場合に直後追加を保存前に拒否する: %j',
+    async ({ expectedPanelIds }) => {
+      const repository = new FakePagePanelStructureRepository();
+      const service = new PagePanelStructureService(repository);
+
+      await expect(service.apply('user-1', 'page-1', {
+        expectedPanelIds,
+        operation: { type: 'insert_after', panelId: expectedPanelIds.length === 8 ? ids[0]! : ids[2]! },
+      })).rejects.toBeInstanceOf(ValidationError);
+      expect(repository.lastInput).toBeNull();
+    },
+  );
+
   it('0コマのページへ追加する場合に1コマ既定テンプレートを選ぶ', async () => {
     const repository = new FakePagePanelStructureRepository();
     const service = new PagePanelStructureService(repository);

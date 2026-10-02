@@ -300,6 +300,9 @@ describe('PageSkeletonService', () => {
     );
     expect(client.lastRequest?.systemPrompt).toContain('do not require scenes to build the skeleton');
     expect(client.lastRequest?.systemPrompt).toContain('Return exactly 2 pages');
+    expect(client.lastRequest?.systemPrompt).toContain('battle_7: panels=7');
+    expect(client.lastRequest?.systemPrompt).toContain('dialogue_room=low');
+    expect(client.lastRequest?.systemPrompt).toContain('tall left payoff');
     expect(client.lastRequest?.userPrompt).toContain('Scene 1: Rooftop / night / tense');
     expect(client.lastRequest?.userPrompt).toContain('Chapter consistency note: Chapter 1 / Set the stakes');
     expect(client.lastRequest?.userPrompt).not.toContain('Chapter purpose:');

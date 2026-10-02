@@ -60,6 +60,13 @@ describe('S3AccountAssetDeletion', () => {
     );
   });
 
+  it.each(['state-reference-v2/malformed', 'state-reference-v2/token/image.png', 'state-reference-v2/'])('rejects the reserved namespace before SDK send: %s', async (key) => {
+    const client = new FakeS3Client();
+    const adapter = new S3AccountAssetDeletion(client, 'private-images');
+    await expect(adapter.deleteExactObject(key)).rejects.toThrow();
+    expect(client.commands).toEqual([]);
+  });
+
   it('S3が応答しない場合はbounded timeoutで中断する', async () => {
     const adapter = new S3AccountAssetDeletion(
       new HangingS3Client(),

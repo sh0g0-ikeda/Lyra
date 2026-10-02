@@ -91,6 +91,46 @@ class FakePagePanelStructureService implements PagePanelStructureServicePort {
 }
 
 describe('page panel structure route', () => {
+  it('選択コマ直後への追加要求を同じ構造コマンドへ変換する', async () => {
+    const service = new FakePagePanelStructureService();
+    const app = createTestApp(service);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/panel-structure`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expected_panel_ids: [panelId1, panelId2],
+        operation: { type: 'insert_after', panel_id: panelId1 },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(service.lastRequest).toEqual({
+      expectedPanelIds: [panelId1, panelId2],
+      operation: { type: 'insert_after', panelId: panelId1 },
+    });
+  });
+
+  it.each([
+    { type: 'insert_after' },
+    { type: 'insert_after', panel_id: 'not-a-uuid' },
+    { type: 'insert_after', panel_id: panelId1, situation_text: 'must stay blank' },
+  ])('不正な直後追加要求をService前に拒否する: %j', async (operation) => {
+    const service = new FakePagePanelStructureService();
+    const app = createTestApp(service);
+    const token = await createToken();
+
+    const response = await app.request(`/api/pages/${pageId}/panel-structure`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expected_panel_ids: [panelId1, panelId2], operation }),
+    });
+
+    expect(response.status).toBe(422);
+    expect(service.lastRequest).toBeNull();
+  });
+
   it('現在のIDと並び替え要求を追加契約へ変換して返す', async () => {
     const service = new FakePagePanelStructureService();
     const app = createTestApp(service);

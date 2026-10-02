@@ -1,4 +1,8 @@
 import { SQSClient } from '@aws-sdk/client-sqs';
+import { SqsGenerationQueue } from '../src/infrastructure/aws/SqsGenerationQueue.js';
+import { GenerationQuoteDispatcher } from '../src/services/generation/GenerationQuoteDispatcher.js';
+import { PostgresQuotedImportExecutionRepository } from '../src/repositories/QuotedImportExecutionRepository.js';
+import { PostgresGenerationQuoteRepository } from '../src/repositories/GenerationQuoteRepository.js';
 import { ConfigurationError } from '../src/domain/errors/index.js';
 import { env } from '../src/lib/env.js';
 import { closeDatabasePool, db } from '../src/lib/db.js';
@@ -86,6 +90,18 @@ class GenerationWorkerRecoveryRunner {
     this.inFlight = true;
     try {
       const creditService = new CreditService(new PostgresCreditRepository(db, db));
+      // Existing accepted quotes remain recoverable even after new admission is disabled.
+      const quoteSchema = await db.query<{ available: boolean }>("SELECT to_regclass('generation_quotes') IS NOT NULL AS available");
+      if (quoteSchema.rows[0]?.available === true && env.SQS_QUEUE_URL_GENERATION !== undefined) {
+        await new GenerationQuoteDispatcher(db, new SqsGenerationQueue(
+          new SQSClient(env.AWS_REGION === undefined ? {} : { region: env.AWS_REGION }),
+          env.SQS_QUEUE_URL_GENERATION,
+        )).dispatchPending();
+      }
+      if (quoteSchema.rows[0]?.available === true) {
+        await new PostgresQuotedImportExecutionRepository(db).recoverExpired();
+        await new PostgresGenerationQuoteRepository(db).pruneUnaccepted();
+      }
       const recoveredPageCount = await new PageGenerationRecoveryService(
         new PostgresPageGenerationRecoveryRepository(db),
         new PostgresPageGenerationExecutionRepository(db),

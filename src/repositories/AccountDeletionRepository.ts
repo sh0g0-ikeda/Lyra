@@ -3,6 +3,7 @@ import { MOBILE_PUSH_TOKEN_REGISTRY_LOCK_KEY } from '../domain/constants/mobileP
 import { ConflictError } from '../domain/errors/index.js';
 import type { StorePurchaseStore } from '../domain/storePurchase.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import { UNRESOLVED_STATE_REFERENCE_COPY_SQL } from './StateReferenceCopyHistory.js';
 
 export interface AccountDeletionOrganization {
   id: string;
@@ -20,6 +21,8 @@ export interface AccountDeletionFlight {
   activePersonalStripeSubscriptionIds: string[];
   activeStoreSubscriptions: AccountDeletionStoreSubscription[];
   personalAssetKeys: string[];
+  /** v2 erasure evidence is separate from legacy active-job admission blockers. */
+  personalStateReferenceCount?: number;
   activePersonalGenerationJobCount: number;
   activePersonalExportJobCount: number;
 }
@@ -365,13 +368,10 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
       }
       const request = await this.readRequest(client, userId, true);
       this.requireClaim(request, processingToken);
-      if (request.dataAnonymized) {
-        return { kind: 'completed' };
-      }
 
       await this.lockMemberOrganizations(client, userId);
       const flight = await this.readFlight(client, userId);
-      if (hasUnacknowledgeableBlocker(flight)) {
+      if (hasUnacknowledgeableBlocker(flight) || (flight.personalStateReferenceCount ?? 0) > 0) {
         return { kind: 'blocked', flight };
       }
 
@@ -392,7 +392,42 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
         return { kind: 'new_assets', assetKeys: newAssets };
       }
 
+      // The user lock prevents new personal journal admission. The evidence
+      // recheck and scrub share this transaction with job/work anonymization.
+      await client.query(
+        `
+        UPDATE state_reference_copy_attempts
+        SET actor_user_id = NULL,
+            owner_user_id = NULL,
+            organization_id = NULL,
+            entity_id = NULL,
+            state_id = NULL,
+            job_id = NULL,
+            candidate_ref_id = NULL,
+            candidate_s3_key = NULL,
+            expected_state_revision = NULL,
+            descriptor = NULL,
+            digest = NULL,
+            mime_type = NULL,
+            size_bytes = NULL,
+            source_revision = NULL,
+            image_receipt = NULL,
+            deletion_processing_token = NULL,
+            scrubbed_at = NOW(),
+            updated_at = NOW()
+        WHERE (actor_user_id = $1 OR owner_user_id = $1)
+          AND organization_id IS NULL
+          AND scrubbed_at IS NULL
+          AND state = 'effects_fenced'
+          AND (${PERSONAL_STATE_REFERENCE_ERASURE_PROVEN_SQL})
+        `,
+        [userId],
+      );
+
+      if (request.dataAnonymized) return { kind: 'completed' };
+
       const originalEmail = await this.readUserEmail(client, userId);
+      await client.query('DELETE FROM generation_quotes WHERE user_id = $1 AND organization_id IS NULL', [userId]);
       await client.query(
         `
         DELETE FROM entity_reference_upload_tokens
@@ -639,7 +674,7 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
         FROM generation_jobs
         WHERE user_id = $1
           AND organization_id IS NULL
-          AND status IN ('queued', 'processing')
+          AND (status IN ('queued', 'processing') OR (${UNRESOLVED_STATE_REFERENCE_COPY_SQL}))
         `,
         [userId],
       );
@@ -653,6 +688,26 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
         `,
         [userId],
       );
+    const stateReferences = await client.query<CountRow>(
+      `
+      SELECT COUNT(*)::text AS count
+      FROM state_reference_copy_attempts
+      WHERE (actor_user_id = $1 OR owner_user_id = $1)
+        AND organization_id IS NULL
+        AND NOT (${PERSONAL_STATE_REFERENCE_ERASURE_PROVEN_SQL})
+      `,
+      [userId],
+    );
+    // Do not discard the last source inventory if an imported/corrupt journal
+    // claims a foreign or unsafe key. Missing job/work rows alone are supported.
+    const invalidJournalSource = await client.query(`
+      SELECT 1 FROM state_reference_copy_attempts source_attempt
+      WHERE (source_attempt.actor_user_id = $1 OR source_attempt.owner_user_id = $1)
+        AND source_attempt.organization_id IS NULL AND source_attempt.scrubbed_at IS NULL
+        AND NOT (${personalFencedSourceIsOwnedSql('source_attempt')}) LIMIT 1`, [userId]);
+    if (invalidJournalSource.rows.length > 0) {
+      throw new ConflictError('Personal state reference source inventory requires verified recovery');
+    }
     const assetKeys = await client.query<AssetKeyRow>(
       PERSONAL_ASSET_KEYS_SQL,
       [userId],
@@ -672,6 +727,7 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
         autoRenewEnabled: row.auto_renew_enabled,
       })),
       personalAssetKeys: assetKeys.rows.map((row) => row.s3_key),
+      personalStateReferenceCount: parseCount(stateReferences.rows[0]),
       activePersonalGenerationJobCount: parseCount(generationJobs.rows[0]),
       activePersonalExportJobCount: parseCount(exportJobs.rows[0]),
     };
@@ -825,6 +881,42 @@ const QUALIFIED_REQUEST_FIELDS = `
   requests.identity_deleted_at
 `;
 
+// Do not trust state alone, a legacy deleted-key checkpoint, or JSON truthiness.
+// The DB constraints are strict; finalization still treats missing/bad receipts
+// as blocking, including a wrong token, key, protocol or incomplete version purge.
+const PERSONAL_STATE_REFERENCE_ERASURE_PROVEN_SQL = `
+  COALESCE(
+    protocol = 'state-reference-fenced-v2'
+    AND state = 'effects_fenced'
+    AND history_erased_at IS NOT NULL
+    AND s3_key ~ ('^state-reference-v2/' || attempt_token::text || '/[0-9a-f]{64}[.](png|jpeg|webp)$')
+    AND jsonb_typeof(marker_receipt) = 'object'
+    AND marker_receipt @> jsonb_build_object(
+      'kind', 'marker', 'protocol', protocol, 'attemptToken', attempt_token::text,
+      's3Key', s3_key, 'historyErased', true
+    )
+    AND lyra_valid_state_copy_v2_storage_revision(marker_receipt - ARRAY[
+      'kind', 'protocol', 'attemptToken', 's3Key', 'historyErased'
+    ]), FALSE
+  )
+`;
+
+function personalFencedSourceIsOwnedSql(alias: string): string {
+  return `COALESCE(${alias}.owner_user_id = $1 AND ${alias}.actor_user_id = $1
+    AND ${alias}.entity_id IS NOT NULL
+    AND (${alias}.candidate_s3_key LIKE 'session/' || $1::text || '/entities/' || ${alias}.entity_id::text || '/%'
+      OR ${alias}.candidate_s3_key LIKE 'tmp/' || $1::text || '/entities/imports/%')
+    AND ${alias}.candidate_s3_key ~ '[.](png|jpg|jpeg|webp)$'
+    AND ${alias}.candidate_s3_key NOT LIKE '%//%'
+    AND ${alias}.candidate_s3_key !~ '(^|/)[.]{1,2}(/|$)'
+    AND ${alias}.candidate_s3_key !~ '[[:cntrl:]]'
+    AND position(chr(92) in ${alias}.candidate_s3_key) = 0
+    AND NOT EXISTS (SELECT 1 FROM entities source_entity
+      INNER JOIN works source_work ON source_work.id = source_entity.work_id
+      WHERE source_entity.id = ${alias}.entity_id AND (source_entity.user_id <> $1
+        OR source_work.user_id <> $1 OR source_work.organization_id IS NOT NULL)), FALSE)`;
+}
+
 const PERSONAL_ASSET_KEYS_SQL = `
   WITH personal_works AS (
     SELECT id
@@ -880,11 +972,108 @@ const PERSONAL_ASSET_KEYS_SQL = `
       AND organization_id IS NULL
       AND params ? 'source_s3_key'
   ),
+  personal_job_input_reference_images AS (
+    -- Worker-written personal page snapshots retain replaced/deleted references.
+    -- Do not require a live entity: it may already have been deleted. Still
+    -- require the exact owner/entity storage namespace and reject any surviving
+    -- entity that belongs to another personal owner or an organization.
+    SELECT reference_image->>'s3Key' AS s3_key
+    FROM generation_jobs
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(generation_jobs.result->'input_snapshot'->'references') = 'array'
+          THEN generation_jobs.result->'input_snapshot'->'references'
+        ELSE '[]'::jsonb
+      END
+      || CASE WHEN jsonb_typeof(generation_jobs.result->'retained_input_references') = 'array'
+        THEN generation_jobs.result->'retained_input_references' ELSE '[]'::jsonb END
+    ) AS reference_image
+    WHERE generation_jobs.user_id = $1
+      AND generation_jobs.organization_id IS NULL
+      AND generation_jobs.job_type = 'page_generate'
+      AND jsonb_typeof(reference_image->'entityId') = 'string'
+      AND reference_image->>'entityId' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      AND jsonb_typeof(reference_image->'s3Key') = 'string'
+      AND reference_image->>'s3Key' ~ (
+        '^saved/' || $1::text || '/entities/' || (reference_image->>'entityId')
+        || '/([A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+[.](png|jpg|jpeg|webp)$'
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM entities AS referenced_entity
+        INNER JOIN works AS referenced_work ON referenced_work.id = referenced_entity.work_id
+        WHERE referenced_entity.id::text = reference_image->>'entityId'
+          AND (
+            referenced_work.organization_id IS NOT NULL
+            OR referenced_entity.user_id <> $1
+            OR referenced_work.user_id <> $1
+          )
+      )
+  ),
+  personal_state_reference_copies AS (
+    -- Confirmation records this intent before copying. A crash or rejected
+    -- commit can leave the exact saved object without a live state descriptor.
+    SELECT copied_image->>'s3_key' AS s3_key
+    FROM generation_jobs
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(generation_jobs.result->'state_reference_copies') = 'array'
+          THEN generation_jobs.result->'state_reference_copies'
+        ELSE '[]'::jsonb
+      END
+    ) AS copied_image
+    WHERE generation_jobs.user_id = $1
+      AND generation_jobs.organization_id IS NULL
+      AND generation_jobs.job_type = 'entity_generate'
+      AND generation_jobs.params->>'target' = 'entity_state'
+      AND copied_image->>'entity_id' = generation_jobs.params->>'entity_id'
+      AND copied_image->>'state_id' = generation_jobs.params->>'entity_state_id'
+      AND copied_image->>'entity_id' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      AND copied_image->>'state_id' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      AND jsonb_typeof(copied_image->'ref_id') = 'string'
+      AND copied_image->>'ref_id' ~ '^[A-Za-z0-9_-]+$'
+      AND jsonb_typeof(copied_image->'s3_key') = 'string'
+      AND copied_image->>'s3_key' ~ (
+        '^saved/' || $1::text || '/entities/' || (copied_image->>'entity_id')
+        || '/states/' || (copied_image->>'state_id') || '/' || (copied_image->>'ref_id')
+        || '[.](png|jpeg|webp)$'
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM entities AS referenced_entity
+        INNER JOIN works AS referenced_work ON referenced_work.id = referenced_entity.work_id
+        WHERE referenced_entity.id::text = copied_image->>'entity_id'
+          AND (
+            referenced_work.organization_id IS NOT NULL
+            OR referenced_entity.user_id <> $1
+            OR referenced_work.user_id <> $1
+          )
+      )
+  ),
+  personal_fenced_journal_sources AS (
+    -- The durable journal is the final inventory if the original job/work was deleted.
+    SELECT source_attempt.candidate_s3_key AS s3_key
+    FROM state_reference_copy_attempts source_attempt
+    WHERE source_attempt.owner_user_id = $1 AND source_attempt.organization_id IS NULL
+      AND source_attempt.scrubbed_at IS NULL
+      AND ${personalFencedSourceIsOwnedSql('source_attempt')}
+  ),
   personal_uploads AS (
     SELECT s3_key
     FROM entity_reference_upload_tokens
     WHERE user_id = $1
       AND organization_id IS NULL
+  ),
+  personal_import_copy_intents AS (
+    SELECT result->>'import_copy_intent' AS s3_key
+    FROM generation_jobs
+    WHERE user_id = $1 AND organization_id IS NULL AND job_type = 'entity_import_analysis'
+      AND result->>'import_copy_intent' = (
+        'tmp/' || $1::text || '/entities/imports/' || id::text || '.' ||
+        CASE WHEN result->>'import_copy_intent' LIKE '%.jpeg' THEN 'jpeg'
+          WHEN result->>'import_copy_intent' LIKE '%.webp' THEN 'webp'
+          ELSE 'png' END
+      )
   ),
   personal_exports AS (
     SELECT artifact_s3_key AS s3_key
@@ -906,12 +1095,21 @@ const PERSONAL_ASSET_KEYS_SQL = `
     UNION ALL
     SELECT s3_key FROM personal_job_sources
     UNION ALL
+    SELECT s3_key FROM personal_job_input_reference_images
+    UNION ALL
+    SELECT s3_key FROM personal_state_reference_copies
+    UNION ALL
+    SELECT s3_key FROM personal_fenced_journal_sources
+    UNION ALL
     SELECT s3_key FROM personal_uploads
+    UNION ALL
+    SELECT s3_key FROM personal_import_copy_intents
     UNION ALL
     SELECT s3_key FROM personal_exports
   ) AS keys
   WHERE s3_key IS NOT NULL
     AND s3_key <> ''
+    AND s3_key NOT LIKE 'state-reference-v2/%'
   ORDER BY s3_key ASC
 `;
 
@@ -965,7 +1163,7 @@ function hasClaimBlocker(
       && !input.acknowledgeStoreBilling
     )
     || (
-      flight.personalAssetKeys.length > 0
+      (flight.personalAssetKeys.length + (flight.personalStateReferenceCount ?? 0)) > 0
       && !input.acknowledgePersonalAssets
     )
   );

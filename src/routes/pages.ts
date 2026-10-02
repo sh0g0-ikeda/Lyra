@@ -1,13 +1,21 @@
+import { createHash } from 'node:crypto';
+import { PANEL_FRAME_TEMPLATE_IDS, getPanelFrameTemplate, buildPanelFrameTemplateInputs } from '../domain/constants/panelFrameTemplates.js';
+import type { PageThumbnailServicePort } from '../services/page/PageThumbnailService.js';
+import { imageMobileAccess, publicImageProvenance, requireAuthorizedWebImageClient } from '../domain/generation/ImageAccessPolicy.js';
+import { env } from '../lib/env.js';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import {
+  pageLayoutTemplatesCatalogSchema,
   pageAutofillResponseSchema,
+  pageGenerationReadinessSchema,
+  saveAndGeneratePageResponseSchema,
   pageJobAcceptedResponseSchema,
   pageLayoutTemplateResponseSchema,
   pageSchema,
   pagesResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
-import { ValidationError } from '../domain/errors/index.js';
+import { ConfigurationError, ValidationError } from '../domain/errors/index.js';
 import {
   decodePageListCursor,
   encodePageListCursor,
@@ -19,11 +27,13 @@ import type { PanelFrame } from '../domain/types/panelFrame.js';
 import {
   applyPageLayoutTemplateBodySchema,
   updatePageSettingsBodySchema,
+  saveAndGeneratePageBodySchema,
 } from '../lib/validators/page.schema.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { PageFinalizeServicePort } from '../services/page/PageFinalizeService.js';
 import type { PageQueryServicePort } from '../services/page/PageQueryService.js';
+import type { PageAtomicGenerationServicePort } from '../services/page/PageAtomicGenerationService.js';
 import type { PageGenerationServicePort } from '../services/page/PageGenerationService.js';
 import type { PageExportServicePort } from '../services/page/PageExportService.js';
 import type { PageLayoutServicePort } from '../services/page/PageLayoutService.js';
@@ -66,7 +76,9 @@ export interface PageRouteDependencies {
   pageFinalizeService: PageFinalizeServicePort;
   pageQueryService: PageQueryServicePort;
   pageGenerationService: PageGenerationServicePort;
+  pageAtomicGenerationService?: PageAtomicGenerationServicePort;
   pageExportService: PageExportServicePort;
+  pageThumbnailService?: PageThumbnailServicePort;
   pageService: PageServicePort;
   episodeStoryAutofillService: EpisodeStoryAutofillServicePort;
   pageLayoutService: PageLayoutServicePort;
@@ -78,6 +90,43 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
 
   app.use('*', dependencies.authMiddleware);
   app.use('*', dependencies.rateLimitMiddleware);
+
+  app.get('/page-layout-templates', (c) => {
+    const templates = PANEL_FRAME_TEMPLATE_IDS.map((id) => ({
+      id, label_key: `page.layoutTemplate.${id}`, panel_count: getPanelFrameTemplate(id).panelCount,
+      reading_direction: 'right_to_left_top_to_bottom', preview_aspect_ratio: 0.7,
+      supported_page_sizes: ['normalized_portrait'],
+      frames: buildPanelFrameTemplateInputs(id).map((frame) => ({
+        vertices: frame.vertices, border_style: frame.borderStyle, border_width: frame.borderWidth,
+        border_color: frame.borderColor, z_index: frame.zIndex, reading_order: frame.readingOrder,
+      })),
+    }));
+    return c.json(assertMobileResponseContract(pageLayoutTemplatesCatalogSchema, { templates }));
+  });
+
+  app.get('/pages/:id', async (c) => {
+    const user = c.get('user'); const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    if (dependencies.pageQueryService.getPage === undefined) throw new ConfigurationError('Page detail reader is not configured');
+    const page = await dependencies.pageQueryService.getPage(user.id, pageId, organizationId);
+    return c.json(assertMobileResponseContract(pageSchema, await toPageSummaryResponse(page)));
+  });
+
+  app.get('/pages/:id/thumbnail', async (c) => {
+    const user = c.get('user'); const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const service = dependencies.pageThumbnailService;
+    if (service === undefined) throw new ConfigurationError('Page thumbnails are not configured');
+    // Authorization and provenance checks happen before conditional cache validation.
+    const revision = await service.getGeneratedImageThumbnailRevision(user.id, pageId, organizationId);
+    const etagFor = (value: string): string => `"page-thumbnail-${createHash('sha256').update(value).digest('hex').slice(0, 24)}"`;
+    const headers = { 'Cache-Control': 'private, max-age=300', 'Content-Type': 'image/webp', ETag: etagFor(revision), Vary: 'Authorization' };
+    if (c.req.header('If-None-Match') === headers.ETag) return c.body(null, 304, headers);
+    const thumbnail = await service.getGeneratedImageThumbnail(user.id, pageId, organizationId);
+    return c.body(new Uint8Array(thumbnail.imageData), 200, { ...headers, ETag: etagFor(thumbnail.revision) });
+  });
 
   app.get('/episodes/:id/pages', async (c) => {
     const user = c.get('user');
@@ -265,6 +314,124 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     return c.json(assertMobileResponseContract(pageAutofillResponseSchema, payload));
   });
 
+  app.get('/pages/:id/generation-readiness', async (c) => {
+    if (!dependencies.pageAtomicGenerationService) throw new ConfigurationError('Atomic page generation is not configured');
+    c.header('Cache-Control', 'no-store');
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
+    const readiness = await dependencies.pageAtomicGenerationService.getGenerationReadiness(user.id, pageId, organizationId);
+
+    const payload = {
+      ready: readiness.ready,
+      blockers: readiness.blockers.map((blocker) => ({
+        code: blocker.code,
+        entity_id: blocker.entityId,
+        field: blocker.field,
+        action: blocker.action,
+        message_key: blocker.messageKey,
+      })),
+      warnings: readiness.warnings,
+      estimated_credit_cost: readiness.estimatedCreditCost,
+      page_revision: readiness.pageRevision,
+    };
+    return c.json(assertMobileResponseContract(pageGenerationReadinessSchema, payload));
+  });
+
+  app.post('/pages/:id/save-and-generate', async (c) => {
+    if (!dependencies.pageAtomicGenerationService) throw new ConfigurationError('Atomic page generation is not configured');
+    c.header('Cache-Control', 'no-store');
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    await requireOrganizationCapability(c, dependencies, organizationId, 'generate');
+    const requestId = readIdempotencyKey(c);
+    const body = saveAndGeneratePageBodySchema.safeParse(
+      await readJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SAVE_AND_GENERATE_JSON_BYTES,
+        description: 'Save and generate page',
+      }),
+    );
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+
+    const result = await dependencies.pageAtomicGenerationService.saveAndGenerate(
+      user.id,
+      pageId,
+      {
+        expectedUpdatedAt: body.data.expected_updated_at,
+        page: {
+          dialogueMode: body.data.page.dialogue_mode,
+          pageDialogueToggle: body.data.page.page_dialogue_toggle,
+          styleReference: body.data.page.style_reference,
+          storySourceSceneIds: body.data.page.story_source_scene_ids,
+          storyPagePurpose: body.data.page.story_page_purpose,
+          storyContinuityNote: body.data.page.story_continuity_note,
+        },
+        panels: body.data.panels.map((panel) => ({
+          id: panel.id,
+          order: panel.order,
+          panelRole: panel.panel_role,
+          panelSize: panel.panel_size,
+          situationText: panel.situation_text,
+          composition: {
+            source: panel.composition.source,
+            galleryItemId: panel.composition.gallery_item_id,
+            compositionPrompt: panel.composition.composition_prompt,
+            shotType: panel.composition.shot_type,
+            angle: panel.composition.angle,
+            customNote: panel.composition.custom_note,
+          },
+          dialogueInPanel: panel.dialogue_in_panel,
+          dialogue: panel.dialogue.map((dialogue) => ({
+            entityId: dialogue.entity_id,
+            text: dialogue.text,
+            type: dialogue.type,
+            position: dialogue.position,
+          })),
+          sfxText: panel.sfx_text,
+          backgroundNote: panel.background_note,
+          panelNotes: panel.panel_notes,
+          entities: panel.entities.map((assignment) => ({
+            entityId: assignment.entity_id,
+            role: assignment.role,
+            expression: assignment.expression,
+            customExpression: assignment.custom_expression,
+            action: assignment.action,
+            customAction: assignment.custom_action,
+            position: assignment.position,
+            facingDirection: assignment.facing_direction,
+            effectNote: assignment.effect_note,
+            stateId: assignment.state_id,
+          })),
+        })),
+        frames: body.data.frames.map((frame) => ({
+          panelId: frame.panel_id,
+          vertices: frame.vertices,
+          borderStyle: frame.border_style,
+          borderWidth: frame.border_width,
+          borderColor: frame.border_color,
+          zIndex: frame.z_index,
+          readingOrder: frame.reading_order,
+        })),
+        language: body.data.generation.language,
+        renderStyle: body.data.generation.render_style,
+        requestId,
+      },
+      organizationId,
+    );
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'page.save_and_generate_queued', 'page', pageId, {
+      job_id: result.jobId,
+      request_id: requestId,
+    });
+
+    const payload = { job_id: result.jobId, page_revision: result.pageRevision };
+    return c.json(assertMobileResponseContract(saveAndGeneratePageResponseSchema, payload), 202);
+  });
+
   app.post('/pages/:id/generate', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
@@ -302,6 +469,16 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     });
   });
 
+  app.get('/web/pages/:id/image', async (c) => {
+    requireAuthorizedWebImageClient(c.get('authenticatedClientId'), env.WEB_IMAGE_DELIVERY_COGNITO_CLIENT_IDS.split(',').map((id) => id.trim()).filter(Boolean));
+    const user = c.get('user');
+    const pageId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const image = await dependencies.pageExportService.exportGeneratedImage(user.id, pageId, organizationId, 'authorized_web');
+    return c.body(new Uint8Array(image.imageData), 200, { 'Content-Type': image.mimeType, 'Cache-Control': 'private, no-store' });
+  });
+
   app.post('/pages/:id/confirm', async (c) => {
     const user = c.get('user');
     const pageId = parseUuidParam(c, 'id');
@@ -328,10 +505,8 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
 }
 
 async function toPageSummaryResponse(page: PageSummary): Promise<Record<string, unknown>> {
-  const signedGeneratedImageUrl = await signImageCdnUrl(
-    page.generatedImage?.cdnUrl,
-    page.generatedImage?.s3Key,
-  );
+  const signedGeneratedImageUrl = page.generatedImage !== null && imageMobileAccess(page.generatedImage) !== 'available'
+    ? null : await signImageCdnUrl(page.generatedImage?.cdnUrl, page.generatedImage?.s3Key);
 
   return {
     id: page.id,
@@ -348,6 +523,7 @@ async function toPageSummaryResponse(page: PageSummary): Promise<Record<string, 
       page.generatedImage === null
         ? null
         : {
+            ...publicImageProvenance(page.generatedImage),
             generation_mode: page.generatedImage.generationMode,
             generated_at: page.generatedImage.generatedAt,
             ...(signedGeneratedImageUrl === null ? {} : { cdn_url: signedGeneratedImageUrl }),
@@ -414,4 +590,10 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   }
 
   return result.data;
+}
+
+function readIdempotencyKey(c: Context<AppEnv>): string {
+  const value=c.req.header('Idempotency-Key');
+  if(value===undefined || !/^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/u.test(value)) throw new ValidationError('Idempotency-Key must be 8 to 128 URL-safe characters');
+  return value;
 }

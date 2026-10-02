@@ -122,8 +122,8 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.queries.some((query) => query.includes('INSERT INTO generation_jobs'))).toBe(true);
     expect(client.valuesList[0]).toEqual([81527, 'generation_jobs:global']);
     expect(client.valuesList[1]).toEqual([81527, 'generation_jobs:user:user-1']);
-    expect(client.valuesList[2]).toEqual([null, 'user-1', ['page_generate', 'entity_generate']]);
-    expect(client.valuesList[3]).toEqual([['page_generate', 'entity_generate']]);
+    expect(client.valuesList[2]).toEqual([null, 'user-1', ['page_generate', 'entity_generate', 'entity_import_analysis']]);
+    expect(client.valuesList[3]).toEqual([['page_generate', 'entity_generate', 'entity_import_analysis']]);
   });
 
   it('capacityLimits 指定時は organization 単位で advisory lock と上限確認を行う', async () => {
@@ -150,7 +150,7 @@ describe('PostgresGenerationJobRepository', () => {
     expect(client.valuesList[2]).toEqual([
       '66666666-6666-4666-8666-666666666666',
       'user-1',
-      ['page_generate', 'entity_generate'],
+      ['page_generate', 'entity_generate', 'entity_import_analysis'],
     ]);
   });
 
@@ -304,7 +304,7 @@ describe('PostgresGenerationJobRepository', () => {
 
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
     expect(client.queries[0]).toContain('job_type = ANY($3::text[])');
-    expect(client.values).toEqual([null, 'user-1', ['page_generate', 'entity_generate']]);
+    expect(client.values).toEqual([null, 'user-1', ['page_generate', 'entity_generate', 'entity_import_analysis']]);
     expect(count).toBe(2);
   });
 
@@ -316,7 +316,7 @@ describe('PostgresGenerationJobRepository', () => {
 
     expect(client.queries[0]).toContain("status IN ('queued', 'processing')");
     expect(client.queries[0]).toContain('job_type = ANY($1::text[])');
-    expect(client.values).toEqual([['page_generate', 'entity_generate']]);
+    expect(client.values).toEqual([['page_generate', 'entity_generate', 'entity_import_analysis']]);
     expect(count).toBe(2);
   });
 
@@ -453,6 +453,18 @@ describe('PostgresGenerationJobRepository', () => {
     ).rejects.toThrow(/maxDeletes must be a positive safe integer/);
 
     expect(client.queries).toEqual([]);
+  });
+
+  it('画像参照とcopy intentを持つjobは候補検索とDELETEの両方で保持する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresGenerationJobRepository(client);
+    await repository.pruneExpiredTerminalJobs({ maxDeletes: 10, dryRun: false });
+
+    for (const query of client.queries) {
+      expect(query).toContain("result->'input_snapshot'->'references'");
+      expect(query).toContain("result->'state_reference_copies'");
+      expect(query).toContain("IN ('null'::jsonb, '[]'::jsonb)");
+    }
   });
 
   it('Postgres unique violation を識別する', () => {

@@ -1,3 +1,5 @@
+import { describeSavedFrameCapacity } from './EpisodePlanContinuity.js';
+import { normalizeAutofillDialogueReadingOrder } from '../../domain/policies/autofillDialogueReadingOrder.js';
 ﻿import {
   ConfigurationError,
   ConflictError,
@@ -1443,6 +1445,11 @@ export class PageService implements PageServicePort {
 
     const normalizedSuggestion = normalizeEpisodePlanToContext(context, compiled.suggestion, language);
     validateEpisodePlanAgainstContext(context, normalizedSuggestion);
+    // Legacy requests cannot opt into replacing manual state choices. Preflight the
+    // entire plan before writes, including when no atomic persistence port exists.
+    const legacyAssignmentsByPanelId = stateAssignmentsByPanelId === undefined
+      ? preserveLegacyEpisodeStateAssignments(context, normalizedSuggestion)
+      : undefined;
 
     const pagesById = new Map(context.pages.map((page) => [page.pageId, page] as const));
     const entityLookup = new Map(context.entities.map((entity) => [entity.id, entity] as const));
@@ -1547,7 +1554,7 @@ export class PageService implements PageServicePort {
           throw new ConfigurationError('Episode state application is missing a panel');
         }
         const assignmentsToSave = stateAssignmentsByPanelId === undefined
-          ? merge.assignments
+          ? legacyAssignmentsByPanelId?.get(panel.id) ?? merge.assignments
           : stateAssignments !== undefined && (
               merge.assignments !== null
               || JSON.stringify(stateAssignments) !== JSON.stringify(panel.entities)
@@ -1801,7 +1808,7 @@ function toRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function buildNextPageLayoutConfig(
+export function buildNextPageLayoutConfig(
   page: PageSummary,
   input: UpdatePageSettingsInput,
 ): Record<string, unknown> | undefined {
@@ -2524,6 +2531,48 @@ function mergePageSettings(
   return Object.keys(update).length === 0 ? null : update;
 }
 
+/** Keeps manual state choices without freezing legacy autofill's creative fields. */
+function preserveLegacyEpisodeStateAssignments(
+  context: EpisodePagePlanContext,
+  suggestion: EpisodePagePlanSuggestion,
+): ReadonlyMap<string, PanelEntityAssignment[]> {
+  const assignmentsByPanelId = new Map<string, PanelEntityAssignment[]>();
+  const pagesById = new Map(context.pages.map((page) => [page.pageId, page] as const));
+  for (const pageSuggestion of suggestion.pages) {
+    const panelsByOrder = new Map(
+      pagesById.get(pageSuggestion.pageId)!.panels.map((panel) => [panel.order, panel] as const),
+    );
+    for (const panelSuggestion of pageSuggestion.panels) {
+      const panel = panelsByOrder.get(panelSuggestion.order)!;
+      const proposed = panelSuggestion.entities;
+      // The existing merge deliberately leaves assignments alone for an empty or
+      // absent suggestion, so preserve that behavior instead of inventing a cast.
+      if (proposed === undefined || proposed.length === 0) {
+        continue;
+      }
+      const proposedEntityIds = new Set(proposed.map((assignment) => assignment.entityId));
+      const manualStates = new Map<string, string>();
+      for (const assignment of panel.entities) {
+        if (assignment.stateId === null) {
+          continue;
+        }
+        if (!proposedEntityIds.has(assignment.entityId)) {
+          throw new EpisodeStatePlanError(
+            'STATE_ASSIGNMENT_CONFLICT',
+            `Legacy story autofill would remove a manually selected state at panel ${panel.id}`,
+          );
+        }
+        manualStates.set(assignment.entityId, assignment.stateId);
+      }
+      assignmentsByPanelId.set(panel.id, proposed.map((assignment) => ({
+        ...assignment,
+        stateId: manualStates.get(assignment.entityId) ?? assignment.stateId,
+      })));
+    }
+  }
+  return assignmentsByPanelId;
+}
+
 function mergePanelSuggestion(
   panel: PageAutofillPanelContext,
   suggestion: PageAutofillPanelSuggestion,
@@ -2589,7 +2638,7 @@ function mergePanelSuggestion(
     suggestion.dialogue.length > 0 &&
     (overwriteExisting || panel.dialogue.length === 0 || dialogueLooksLowQuality(panel.dialogue))
   ) {
-    update.dialogue = suggestion.dialogue;
+    update.dialogue = normalizeAutofillDialogueReadingOrder(suggestion.dialogue);
     filledFieldCount += 1;
   }
 
@@ -2843,8 +2892,6 @@ function enrichPanelSuggestionForGeneration(
     normalizeDialogueLines(suggestion.dialogue),
     entityAssignments,
     context.entityLookup,
-    context.storyLeadEntityId ?? null,
-    context.pageLeadEntityId ?? null,
   );
 
   return {
@@ -3070,52 +3117,20 @@ function normalizeDialogueLines(
   return normalized;
 }
 
+// Visibility and voice identity are independent. Never guess an unknown voice.
 function repairDialogueLinesForPanel(
   lines: PageAutofillPanelSuggestion['dialogue'],
   assignments: PanelEntityAssignment[],
   entityLookup: Map<string, PageAutofillContext['entities'][number]>,
-  storyLeadEntityId: string | null,
-  pageLeadEntityId: string | null,
 ): PageAutofillPanelSuggestion['dialogue'] {
-  if (!Array.isArray(lines) || lines.length === 0) {
-    return lines;
-  }
-
-  const assignmentIds = new Set(assignments.map((assignment) => assignment.entityId));
-  const primaryEntityId =
-    assignments.find((assignment) => assignment.role === 'primary')?.entityId ??
-    assignments[0]?.entityId ??
-    null;
-
+  if (!Array.isArray(lines) || lines.length === 0) return lines;
   return lines.flatMap((line) => {
+    if (line.entityId !== null && !entityLookup.has(line.entityId)) {
+      throw new ValidationError('Generated dialogue referenced an entity outside the work');
+    }
     if (line.type === 'narration') {
-      return splitCharacterQuotedNarration(line, assignments, entityLookup) ?? {
-        ...line,
-        entityId: null,
-      };
+      return splitCharacterQuotedNarration(line, assignments, entityLookup) ?? { ...line, entityId: null };
     }
-
-    // Speaker dialogue must reference a visible panel assignment before it reaches panel validation.
-    if (requiresDialogueSpeaker(line.type) && !assignmentIds.has(line.entityId ?? '')) {
-      const repairedEntityId = selectVisibleDialogueSpeaker(
-        assignmentIds,
-        storyLeadEntityId,
-        pageLeadEntityId,
-        primaryEntityId,
-      );
-      if (repairedEntityId === null) {
-        return {
-          ...line,
-          type: 'narration',
-          entityId: null,
-        };
-      }
-      return {
-        ...line,
-        entityId: repairedEntityId,
-      };
-    }
-
     return line;
   });
 }
@@ -3216,24 +3231,6 @@ function normalizeNarrationRemainder(value: string): string | null {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function selectVisibleDialogueSpeaker(
-  assignmentIds: Set<string>,
-  storyLeadEntityId: string | null,
-  pageLeadEntityId: string | null,
-  primaryEntityId: string | null,
-): string | null {
-  for (const candidate of [storyLeadEntityId, pageLeadEntityId, primaryEntityId]) {
-    if (candidate !== null && assignmentIds.has(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function requiresDialogueSpeaker(type: PanelDialogueLine['type']): boolean {
-  return type === 'speech' || type === 'thought' || type === 'shout' || type === 'whisper';
 }
 
 function normalizeDialogueText(value: string): string {
@@ -3544,6 +3541,8 @@ function buildAutofillCompilerBrief(
     `Ending hook: ${compactBriefText(context.endingHook)}`,
     `Current dialogue mode: ${context.dialogueMode}`,
     `Current page dialogue toggle: ${context.pageDialogueToggle ? 'on' : 'off'}`,
+    '[FRAME CAPACITY]',
+    describeSavedFrameCapacity(context.layoutConfig, context.frameCount),
     '',
     '[SCENES]',
     sceneLines.length > 0 ? sceneLines : '(none)',
@@ -3670,6 +3669,7 @@ function buildEpisodePlanCompilerBrief(
       return [
         `Page ${page.pageNumber} (${page.pageId})`,
         `frame_count=${page.frameCount}`,
+        `frame_capacity=${describeSavedFrameCapacity(page.layoutConfig, page.frameCount)}`,
         `dialogue_mode=${page.dialogueMode}`,
         `page_dialogue_toggle=${page.pageDialogueToggle ? 'on' : 'off'}`,
         panelLines,

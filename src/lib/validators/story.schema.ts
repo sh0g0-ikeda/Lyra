@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 
+// Shipped clients send timestamp CAS; older clients may omit it.
+const expectedUpdatedAtSchema = z.string().datetime({ offset: true });
 const text200 = z.string().trim().min(1).max(200);
 const nullableText200 = z.string().trim().min(1).max(200).nullable();
 const nullableText2000 = z.string().trim().min(1).max(2000).nullable();
@@ -48,6 +50,7 @@ export const createWorkBodySchema = z
 
 export const updateWorkBodySchema = z
   .object({
+    expected_updated_at: expectedUpdatedAtSchema.optional(),
     title: text200.optional(),
     genre: nullableText200.optional(),
     world_setting: nullableText2000.optional(),
@@ -59,7 +62,7 @@ export const updateWorkBodySchema = z
     status: statusSchema.optional(),
   })
   .strict()
-  .refine((body) => Object.keys(body).length > 0, {
+  .refine((body) => Object.keys(body).some((key) => key !== 'expected_updated_at'), {
     message: 'At least one field is required',
   });
 
@@ -78,6 +81,7 @@ export const createChapterBodySchema = z
 
 export const updateChapterBodySchema = z
   .object({
+    expected_updated_at: expectedUpdatedAtSchema.optional(),
     order: z.number().int().min(1).max(1000).optional(),
     title: nullableText200.optional(),
     purpose: nullableText2000.optional(),
@@ -89,7 +93,7 @@ export const updateChapterBodySchema = z
     status: statusSchema.optional(),
   })
   .strict()
-  .refine((body) => Object.keys(body).length > 0, {
+  .refine((body) => Object.keys(body).some((key) => key !== 'expected_updated_at'), {
     message: 'At least one field is required',
   });
 
@@ -111,6 +115,7 @@ export const createEpisodeBodySchema = z
 
 export const updateEpisodeBodySchema = z
   .object({
+    expected_updated_at: expectedUpdatedAtSchema.optional(),
     order: z.number().int().min(1).max(1000).optional(),
     title: nullableText200.optional(),
     purpose: nullableText2000.optional(),
@@ -126,7 +131,7 @@ export const updateEpisodeBodySchema = z
     status: statusSchema.optional(),
   })
   .strict()
-  .refine((body) => Object.keys(body).length > 0, {
+  .refine((body) => Object.keys(body).some((key) => key !== 'expected_updated_at'), {
     message: 'At least one field is required',
   });
 

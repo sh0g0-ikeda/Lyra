@@ -1,3 +1,8 @@
+import { createAccountDeletionRecoveryRuntime, startAccountDeletionRecovery } from './infrastructure/account/AccountDeletionRuntime.js';
+import { createEpisodeExportMaintenanceRuntime } from './lib/episodeExportMaintenanceRuntime.js';
+import { startEpisodeExportMaintenance } from './lib/episodeExportMaintenance.js';
+import { createPushNotificationDeliveryRuntime } from './infrastructure/push/PushNotificationRuntime.js';
+import { startPushNotificationMaintenance } from './lib/pushNotificationMaintenance.js';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
@@ -16,9 +21,11 @@ import { env } from './lib/env.js';
 import { runPendingMigrations } from './lib/migrations.js';
 import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
 import { sanitizePersistedErrorMessage } from './lib/errorSanitizer.js';
+import { createFencedStateReferenceRuntime } from './infrastructure/state/FencedStateReferenceRuntime.js';
 
 async function main(): Promise<void> {
   assertProductionRuntimeConfig(env);
+  const fencedStateReferenceRuntime = createFencedStateReferenceRuntime(env, db);
 
   if (env.AUTO_RUN_MIGRATIONS) {
     const appliedMigrations = await runPendingMigrations(db);
@@ -75,9 +82,13 @@ async function main(): Promise<void> {
     );
   }
 
+  startPushNotificationMaintenance(createPushNotificationDeliveryRuntime(env, db));
+  startAccountDeletionRecovery(createAccountDeletionRecoveryRuntime(env, db, fencedStateReferenceRuntime));
+  startEpisodeExportMaintenance(createEpisodeExportMaintenanceRuntime(env, db));
+
   serve(
     {
-      fetch: createApp().fetch,
+      fetch: createApp({ fencedStateReferenceRuntime }).fetch,
       port: env.PORT,
     },
     (info) => {

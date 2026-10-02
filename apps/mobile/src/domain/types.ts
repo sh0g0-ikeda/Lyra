@@ -5,7 +5,7 @@ export type PageStatus = 'designing' | 'generating' | 'generated' | 'editing' | 
 export type PageDialogueMode = 'image_baked' | 'balloon_only' | 'mixed';
 export type EntityType = 'character' | 'nonhuman' | 'object';
 export type GenerationJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'canceled';
-export type GenerationJobType = 'page_generate' | 'entity_generate' | 'episode_story_autofill' | 'episode_page_skeleton';
+export type GenerationJobType = 'page_generate' | 'entity_generate' | 'episode_story_autofill' | 'episode_page_skeleton' | 'entity_import_analysis';
 
 export interface WorkRecord {
   id: string;
@@ -55,6 +55,7 @@ export interface EpisodeRecord {
   ending_hook: string | null;
   estimated_pages: number;
   entities_involved: string[];
+  starting_entity_states?: { entity_id: string; state_id: string | null }[];
   page_skeleton_generated: boolean;
   version: number;
   status: StoryStatus;
@@ -77,6 +78,10 @@ export interface EntityRecord {
 }
 
 export interface EntityReferenceImageRecord {
+  image_model?: string | null;
+  provider_model_id?: string | null;
+  provider?: string | null;
+  mobile_access?: 'available' | 'web_only' | 'unavailable';
   ref_id: string;
   cdn_url?: string | null;
   source: 'upload' | 'generated';
@@ -106,6 +111,17 @@ export interface SceneRecord {
 }
 
 export interface EntityStateRecord {
+  name?: string | null;
+  description?: string | null;
+  updated_at?: string;
+  reference_status?: 'legacy' | 'draft' | 'confirmed' | 'stale';
+  reference_image?: {
+    ref_id: string;
+    image_model: string;
+    base_ref_id: string;
+    created_at: string;
+    input_fingerprint: string;
+  } | null;
   id: string;
   entity_id: string;
   scene_id: string | null;
@@ -119,6 +135,10 @@ export interface EntityStateRecord {
 }
 
 export interface GeneratedImageRecord {
+  image_model?: string | null;
+  provider_model_id?: string | null;
+  provider?: string | null;
+  mobile_access?: 'available' | 'web_only' | 'unavailable';
   cdn_url?: string | null;
   generation_mode: 'standard' | 'thinking' | null;
   generated_at: string | null;
@@ -152,6 +172,7 @@ export type PageGenerationBlockerCode =
   | 'PANEL_ORDER_INVALID'
   | 'DIALOGUE_SPEAKER_REQUIRED'
   | 'DIALOGUE_SPEAKER_NOT_IN_PANEL'
+  | 'DIALOGUE_SPEAKER_INVALID'
   | 'ASSIGNED_ENTITY_INVALID'
   | 'PAGE_GENERATING'
   | 'PAGE_REOPEN_REQUIRED'
@@ -303,7 +324,7 @@ export interface GenerationJobRecord {
   status: GenerationJobStatus;
   generation_mode: 'standard' | 'thinking' | null;
   credit_cost: number;
-  credit_settlement: GenerationJobCreditSettlementRecord;
+  credit_settlement: GenerationJobCreditSettlementRecord | null;
   params: Record<string, unknown>;
   result: Record<string, unknown> | null;
   error_message: string | null;
@@ -407,6 +428,9 @@ export interface CompositionRecord {
 }
 
 export interface BillingBalanceRecord {
+  subscription_store?: 'apple' | 'google' | null;
+  scheduled_plan_code?: 'standard' | 'premium' | null;
+  scheduled_plan_effective_at?: string | null;
   monthly_credits: number;
   purchased_credits: number;
   total_credits: number;
@@ -448,6 +472,8 @@ export interface EntityReferenceGenerationAvailabilityRecord {
 }
 
 export interface MobileStorePurchaseResultRecord {
+  scheduled_plan_code?: 'standard' | 'premium' | null;
+  scheduled_plan_effective_at?: string | null;
   store: 'apple' | 'google';
   state: 'pending' | 'active' | 'cancelled' | 'expired' | 'refunded' | 'revoked' | 'failed';
   product_kind: 'subscription' | 'credit_pack';
@@ -489,6 +515,13 @@ export interface CurrentUserOrganizationRecord {
 }
 
 export interface CurrentSessionRecord {
+  capabilities?: {
+    generation_quotes?: boolean;
+    push_notifications?: boolean;
+    entity_state_reference_generation: boolean;
+    episode_state_autofill_v1: boolean;
+    entity_state_preview_credit_cost?: number;
+  };
   user: CurrentUserRecord;
   personal_credits: CurrentUserCreditRecord | null;
   organizations: CurrentUserOrganizationRecord[];

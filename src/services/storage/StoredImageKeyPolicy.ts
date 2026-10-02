@@ -1,4 +1,5 @@
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { ensureOwnedFencedStateReferenceKey, isReservedFencedStateReferenceNamespace } from '../../domain/state/FencedStateReferenceKey.js';
 
 const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|webp)$/iu;
 
@@ -9,6 +10,11 @@ export function ensureOwnedEntityReferenceImageKey(
   fieldName = 'entity reference image key',
 ): void {
   ensureSafeImageKey(s3Key, fieldName);
+
+  if (isReservedFencedStateReferenceNamespace(s3Key)) {
+    ensureOwnedFencedStateReferenceKey(s3Key, userId, entityId);
+    return;
+  }
 
   const savedPrefix = `saved/${userId}/entities/${entityId}/`;
   if (!s3Key.startsWith(savedPrefix)) {

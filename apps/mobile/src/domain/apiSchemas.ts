@@ -3,6 +3,12 @@ import { z } from 'zod';
 
 const idSchema = z.string().min(1);
 const nullableStringSchema = z.string().nullable();
+const imageProvenanceFields = {
+  image_model: z.string().min(1).max(200).nullable().optional(),
+  provider_model_id: z.string().min(1).max(200).nullable().optional(),
+  provider: z.string().min(1).max(200).nullable().optional(),
+  mobile_access: z.enum(['available', 'web_only', 'unavailable']).optional(),
+};
 const timestampSchema = z.string().min(1);
 const unknownRecordSchema = z.record(z.string(), z.unknown());
 const storyStatusSchema = z.enum(['draft', 'reviewing', 'ready']);
@@ -81,6 +87,27 @@ export const episodeExportStatusResponseSchema = z
   })
   .strict();
 
+// Deployed Mobile clients consume this default representation. The nested DTO above
+// is available only with export_contract=v2; both stay strict at the HTTP boundary.
+export const episodeExportLegacyStatusResponseSchema = z.object({
+  id: idSchema.max(128),
+  episode_id: idSchema.max(128),
+  format: z.enum(['pdf', 'zip']),
+  filename: z.string().min(1).max(160),
+  status: episodeExportStatusSchema,
+  progress_stage: z.string().min(1).max(100),
+  progress_percent: z.number().int().min(0).max(100),
+  error_code: z.string().min(1).max(128).nullable(),
+  message_key: z.string().min(1).max(128).nullable(),
+  expires_at: z.string().datetime({ offset: true }).max(64),
+  completed_at: z.string().datetime({ offset: true }).max(64).nullable(),
+  cancel_supported: z.literal(false),
+  cancel_reason_code: z.literal('EXPORT_CANCEL_UNSUPPORTED'),
+  download_url: z.string().url().max(2048).optional(),
+}).strict().refine((value) => value.status === 'completed' || value.download_url === undefined, {
+  message: 'download_url is only available after export completion', path: ['download_url'],
+});
+
 const creditBalanceSchema = z.object({
   monthly_credits: z.number().int().nonnegative(),
   purchased_credits: z.number().int().nonnegative(),
@@ -107,6 +134,9 @@ export const billingBalanceSchema = z.object({
   monthly_expires_at: nullableStringSchema,
   plan_code: z.enum(['free', 'standard', 'premium', 'enterprise_a', 'enterprise_b', 'enterprise_c']),
   current_period_end: nullableStringSchema,
+  subscription_store: z.enum(['apple', 'google']).nullable().optional(),
+  scheduled_plan_code: z.enum(['standard', 'premium']).nullable().optional(),
+  scheduled_plan_effective_at: timestampSchema.nullable().optional(),
   cancel_at_period_end: z.boolean(),
   subscription_plans: z.array(subscriptionPlanSchema),
 });
@@ -169,6 +199,8 @@ export const mobileStorePurchaseResultSchema = z
     product_kind: mobileStoreProductKindSchema,
     plan_code: z.enum(['standard', 'premium']).nullable(),
     credit_package_code: creditPackageCodeSchema.nullable(),
+    scheduled_plan_code: z.enum(['standard', 'premium']).nullable().optional(),
+    scheduled_plan_effective_at: timestampSchema.nullable().optional(),
     credits_changed: z.number().int(),
     is_duplicate: z.boolean(),
   })
@@ -194,6 +226,16 @@ export const mobileStoreRestoreResultSchema = z
   .strict();
 
 export const currentSessionSchema = z.object({
+  // Older deployments omit this object. Never infer feature availability from
+  // an app build or the presence of a state identifier.
+  capabilities: z.object({
+    generation_quotes: z.boolean().optional(),
+    push_notifications: z.boolean().optional(),
+    web_image_delivery: z.boolean().optional(),
+    entity_state_reference_generation: z.boolean().default(false),
+    episode_state_autofill_v1: z.boolean().default(false),
+    entity_state_preview_credit_cost: z.number().int().nonnegative().optional(),
+  }).optional(),
   user: z.object({
     id: idSchema,
     email: z.string().email(),
@@ -507,6 +549,7 @@ export const organizationUsageResponseSchema = z
   .object({
     usage_events: z.array(organizationUsageEventSchema),
     summary: organizationUsageSummarySchema,
+    next_cursor: z.string().min(1).max(1024).nullable().optional(),
   })
   .strict();
 
@@ -526,6 +569,7 @@ export const organizationAuditLogSchema = z
 export const organizationAuditLogsResponseSchema = z
   .object({
     audit_logs: z.array(organizationAuditLogSchema),
+    next_cursor: z.string().min(1).max(1024).nullable().optional(),
   })
   .strict();
 
@@ -560,6 +604,7 @@ export const organizationResponseSchema = z
 export const organizationMembersResponseSchema = z
   .object({
     members: z.array(organizationMemberSchema),
+    next_cursor: z.string().min(1).max(1024).nullable().optional(),
   })
   .strict();
 
@@ -596,6 +641,7 @@ export const organizationInvitationSchema = z
 export const organizationInvitationsResponseSchema = z
   .object({
     invitations: z.array(organizationInvitationSchema),
+    next_cursor: z.string().min(1).max(1024).nullable().optional(),
   })
   .strict();
 
@@ -787,6 +833,8 @@ export const entitiesResponseSchema = z.object({
   next_cursor: z.string().min(1).max(512).nullable().optional(),
 });
 
+export const entityReferenceGenerationAvailabilityResponseSchema = z.object({ enabled: z.boolean() }).strict();
+
 export const entityReferenceSetSchema = z
   .object({
     entity_id: idSchema,
@@ -796,6 +844,7 @@ export const entityReferenceSetSchema = z
     reference_images: z.array(
       z
         .object({
+          ...imageProvenanceFields,
           ref_id: idSchema,
           cdn_url: z.string().min(1).optional(),
           source: z.enum(['upload', 'generated']),
@@ -867,6 +916,7 @@ export const entityStateReferenceResponseSchema = z
     state_revision: timestampSchema,
     reference_image: z
       .object({
+        ...imageProvenanceFields,
         ref_id: z.string().min(1).max(256),
         image_model: z.string().min(1).max(200),
         base_ref_id: z.string().min(1).max(256),
@@ -901,6 +951,12 @@ export const scenesResponseSchema = z.object({
 });
 
 export const entityStateSchema = z.object({
+  reference_status: z.enum(['legacy', 'draft', 'confirmed', 'stale']).optional(),
+  reference_image: z.object({
+    ...imageProvenanceFields,
+    ref_id: idSchema, image_model: z.string().min(1).max(100), base_ref_id: idSchema,
+    created_at: timestampSchema, input_fingerprint: z.string().min(1).max(128),
+  }).strict().nullable().optional(),
   id: idSchema,
   entity_id: idSchema,
   scene_id: nullableStringSchema,
@@ -923,11 +979,25 @@ export const entityStatesResponseSchema = z.object({
 const pageGenerationModeSchema = z.enum(['standard', 'thinking']);
 const generatedPageImageSchema = z
   .object({
+    ...imageProvenanceFields,
     cdn_url: z.string().min(1).nullable().optional(),
     generation_mode: pageGenerationModeSchema.nullable(),
     generated_at: timestampSchema.nullable(),
   })
   .strict();
+
+export const pageLayoutTemplatesCatalogSchema = z.object({
+  templates: z.array(z.object({
+    id: idSchema, label_key: z.string().min(1), panel_count: z.number().int().min(1).max(20),
+    reading_direction: z.literal('right_to_left_top_to_bottom'), preview_aspect_ratio: z.number().positive(),
+    supported_page_sizes: z.tuple([z.literal('normalized_portrait')]),
+    frames: z.array(z.object({
+      vertices: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).length(4),
+      border_style: z.enum(['solid', 'dashed', 'none']), border_width: z.number().min(0).max(20),
+      border_color: z.string().regex(/^#[0-9a-fA-F]{6}$/), z_index: z.number().int(), reading_order: z.number().int().positive(),
+    })),
+  })),
+});
 
 export const pageSchema = z.object({
   id: idSchema,
@@ -997,6 +1067,7 @@ const pageGenerationJobResultSchema = z
     request_kind: z.enum(['initial', 'regenerate']).optional(),
     generated_image: z
       .object({
+        ...imageProvenanceFields,
         generation_mode: pageGenerationModeSchema.nullable().optional(),
         generated_at: timestampSchema.nullable().optional(),
       })
@@ -1007,6 +1078,7 @@ const pageGenerationJobResultSchema = z
 
 const entityGenerationJobResultSchema = z
   .object({
+    ...imageProvenanceFields,
     provider_result: z.boolean(),
     candidates: z
       .array(
@@ -1025,7 +1097,7 @@ const episodeStateSourceFieldSchema = z.enum([
   'story_full_draft', 'introduction', 'middle', 'climax', 'ending_hook',
   'scene_location', 'scene_time', 'scene_atmosphere',
 ]);
-const episodeStateTransitionResultSchema = z.object({
+export const episodeStateTransitionResultSchema = z.object({
   entity_id: idSchema,
   state_id: idSchema.nullable(),
   starts_at_panel_id: idSchema,
@@ -1044,7 +1116,7 @@ const episodeStateBlockerCandidateSchema = z.object({
   source_quote: z.string().trim().min(1).max(300),
   reason: z.enum(['missing_reference', 'ambiguous_mapping']),
 }).strict();
-const episodeStateBlockerSchema = z.object({
+export const episodeStateBlockerSchema = z.object({
   code: z.enum([
     'STATE_PLAN_INVALID', 'STATE_ASSIGNMENT_CONFLICT', 'STATE_REFERENCE_REQUIRED',
     'STATE_MAPPING_AMBIGUOUS', 'LIMIT_EXCEEDED',
@@ -1082,7 +1154,12 @@ const episodePageSkeletonJobResultSchema = z
 
 const generationJobCommonFields = {
   id: idSchema,
-  status: z.enum(['queued', 'processing', 'completed', 'failed', 'cancelled']),
+  status: z.enum(['queued', 'processing', 'completed', 'failed', 'cancelled', 'canceled']),
+  credit_settlement: z.object({ charged_credits: z.number().int().nonnegative(), refunded_credits: z.number().int().nonnegative(), net_credits: z.number().int().nonnegative(), status: z.enum(['not_charged', 'charged', 'refunded', 'partially_refunded', 'refund_pending']) }).strict().optional(),
+  error_code: nullableStringSchema.optional(), message_key: nullableStringSchema.optional(), retryable: z.boolean().optional(), support_id: nullableStringSchema.optional(),
+  progress_stage: z.enum(['queued', 'compiling', 'preparing_references', 'generating', 'saving', 'completed']).nullable().optional(),
+  progress_percent: z.number().min(0).max(100).nullable().optional(), progress_updated_at: timestampSchema.nullable().optional(), updated_at: timestampSchema.optional(),
+  actions: z.object({ cancel: z.object({ available: z.boolean(), reason_key: nullableStringSchema }).strict(), hide: z.object({ available: z.boolean(), reason_key: nullableStringSchema }).strict() }).strict().optional(),
   generation_mode: pageGenerationModeSchema.nullable(),
   credit_cost: z.number().int().nonnegative(),
   error_message: nullableStringSchema,
@@ -1120,6 +1197,9 @@ const entityGenerationJobResponseSchema = z
     params: z
       .object({
         entity_id: idSchema.optional(),
+        target: z.literal('entity_state').optional(),
+        entity_state_id: idSchema.optional(),
+        state_revision: timestampSchema.optional(),
         entity_type: z.enum(['character', 'nonhuman', 'object']).optional(),
       })
       .strict(),
@@ -1170,6 +1250,15 @@ export const generationJobResponseSchema = z.discriminatedUnion('job_type', [
   entityGenerationJobResponseSchema,
   episodeStoryAutofillJobResponseSchema,
   episodePageSkeletonJobResponseSchema,
+  z.object({
+    ...generationJobCommonFields,
+    job_type: z.literal('entity_import_analysis'),
+    params: z.object({
+      entity_id: idSchema.nullable().optional(),
+      entity_type: z.enum(['character', 'nonhuman', 'object']).optional(),
+    }).strict(),
+    result: entityImportResponseSchema.nullable(),
+  }).strict(),
 ]);
 
 export const generationJobHistoryResponseSchema = z
@@ -1328,6 +1417,24 @@ export const pageLayoutTemplateResponseSchema = z.object({
   frames: z.array(panelFrameSchema),
 });
 
+const uniquePagePanelIdsSchema = z.array(z.string().uuid()).max(8).superRefine((panelIds, context) => {
+  if (new Set(panelIds).size !== panelIds.length) {
+    context.addIssue({ code: 'custom', message: 'Panel ids must not contain duplicates' });
+  }
+});
+
+export const pagePanelStructureRequestSchema = z
+  .object({
+    expected_panel_ids: uniquePagePanelIdsSchema,
+    operation: z.discriminatedUnion('type', [
+      z.object({ type: z.literal('append') }).strict(),
+      z.object({ type: z.literal('insert_after'), panel_id: z.string().uuid() }).strict(),
+      z.object({ type: z.literal('delete'), panel_id: z.string().uuid() }).strict(),
+      z.object({ type: z.literal('reorder'), panel_ids: uniquePagePanelIdsSchema.min(1) }).strict(),
+    ]),
+  })
+  .strict();
+
 export const pagePanelStructureResponseSchema = z
   .object({
     panel_ids: z.array(idSchema).max(8),
@@ -1341,6 +1448,153 @@ export const pagePanelStructureResponseSchema = z
 
 export const compositionsResponseSchema = z.object({
   compositions: z.array(compositionSchema),
+});
+
+const generationQuoteOperationSchema = z.enum([
+  'page_generate', 'page_regenerate', 'entity_preview', 'entity_state_preview', 'entity_import_analysis',
+]);
+
+export const generationQuoteRequestSchema = z.object({
+  operation: generationQuoteOperationSchema,
+  target_id: z.string().uuid().optional(),
+  entity_id: z.string().uuid().optional(),
+  upload_token: z.string().min(1).max(256).optional(),
+  entity_type: z.enum(['character', 'nonhuman', 'object']).optional(),
+  source_ref_id: z.string().min(1).max(200).optional(),
+  source_candidate_token: z.string().min(1).max(4096).optional(),
+  image_model: z.string().min(1).max(80).optional(),
+  quality: z.literal('medium').optional(),
+  render_style: z.enum(['color', 'monochrome']).optional(),
+  expected_revision: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
+}).strict().superRefine((request, context) => {
+  if (request.operation === 'entity_import_analysis') {
+    if (request.upload_token === undefined || request.entity_type === undefined || request.target_id !== undefined) {
+      context.addIssue({ code: 'custom', message: 'Import quotes require an upload token and entity type, without a target id' });
+    }
+  } else if (request.target_id === undefined || request.upload_token !== undefined || request.entity_type !== undefined) {
+    context.addIssue({ code: 'custom', message: 'Generation quotes require a target id, without import fields' });
+  }
+  if (request.operation !== 'entity_preview' && (request.source_ref_id !== undefined || request.source_candidate_token !== undefined)) {
+    context.addIssue({ code: 'custom', message: 'Source reference selection only applies to entity preview' });
+  }
+  if (request.source_ref_id !== undefined && request.source_candidate_token !== undefined) {
+    context.addIssue({ code: 'custom', message: 'Choose only one source reference' });
+  }
+});
+
+export const generationQuoteAcceptanceSchema = z.object({
+  quote_token: z.string().min(1).max(128),
+  request_key: z.string().uuid(),
+}).strict();
+
+export const generationQuoteResponseSchema = z.object({
+  quote_id: z.string().uuid(),
+  quote_token: z.string().min(1).max(128),
+  operation: generationQuoteOperationSchema,
+  target_id: z.string().uuid(),
+  billing_scope: z.object({ kind: z.enum(['personal', 'organization']), organization_id: z.string().uuid().nullable() }).strict(),
+  image_model: z.literal('gpt-image-2').nullable(),
+  quality: z.literal('medium').nullable(),
+  render_style: z.enum(['color', 'monochrome']).nullable(),
+  reference_count: z.number().int().min(0).max(12),
+  amount_credits: z.number().int().positive(),
+  pricing_version: z.string().min(1).max(100),
+  input_revision: z.string().regex(/^[0-9a-f]{64}$/u),
+  expires_at: z.string().datetime(),
+  blockers: z.array(z.string().max(200)).max(20),
+}).strict();
+
+export const generationQuoteReceiptSchema = z.object({
+  quote_id: z.string().uuid(),
+  job_id: z.string().uuid().nullable(),
+  status: z.enum(['queued', 'processing', 'completed', 'failed', 'cancelled']).nullable(),
+  amount_credits: z.number().int().positive(),
+  charged_credits: z.number().int().nonnegative(),
+  refunded_credits: z.number().int().nonnegative(),
+  accepted_at: z.string().datetime().nullable(),
+  expires_at: z.string().datetime(),
+}).strict();
+
+
+// Google link receipts carry no provider token, email, subject, or secret.
+export const googleAuthCapabilitiesSchema = z.object({
+  google_sign_in: z.boolean(), google_linking: z.boolean(), google_ios: z.literal(false),
+}).strict();
+export const googleLinkStateSchema = z.enum(['pending', 'processing', 'linked', 'cancelled', 'expired', 'failed', 'recovery_required']);
+export const googleLinkStartBodySchema = z.object({ platform: z.enum(['mobile', 'web']), request_key: z.string().uuid() }).strict();
+export const googleLinkStatusSchema = z.object({
+  challenge_id: z.string().uuid(), status: googleLinkStateSchema, expires_at: z.iso.datetime({ offset: true }),
+  message_code: z.string().max(120).optional(), requires_reauthentication: z.boolean(),
+}).strict();
+export const googleLinkStartSchema = googleLinkStatusSchema.extend({ authorization_url: z.string().url().nullable() }).strict();
+
+
+export const deployedAccountDeletionPreviewSchema = z.object({
+  personal_data: z.object({ account: z.literal('anonymized'), personal_works: z.literal('deleted'), organization_memberships: z.literal('removed') }).strict(),
+  unique_owner_organizations: z.array(z.object({ id: idSchema, name: z.string() }).strict()).max(25),
+  active_personal_subscription_count: z.number().int().nonnegative(),
+  active_stripe_subscription_count: z.number().int().nonnegative(),
+  active_mobile_store_subscription_count: z.number().int().nonnegative(),
+  confirmed_personal_asset_count: z.number().int().nonnegative(),
+}).strict();
+export const deployedAccountDeletionResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('blocked'), blockers: z.array(z.discriminatedUnion('code', [
+    z.object({ code: z.literal('UNIQUE_ORGANIZATION_OWNER'), organizations: z.array(z.object({ id: idSchema, name: z.string() })) }),
+    z.object({ code: z.literal('ACTIVE_PERSONAL_SUBSCRIPTION'), subscription_count: z.number().int().nonnegative() }),
+    z.object({ code: z.literal('CONFIRMED_PERSONAL_ASSETS'), asset_count: z.number().int().nonnegative() }),
+  ])) }).strict(),
+  z.object({ status: z.literal('in_progress'), blockers: z.array(z.never()).max(0) }).strict(),
+  z.object({ status: z.literal('completed'), blockers: z.array(z.never()).max(0) }).strict(),
+  z.object({ status: z.literal('pending_external_action'), blockers: z.array(z.never()).max(0),
+    next_action: z.enum(['cancel_subscription', 'disable_identity', 'delete_identity', 'schedule_asset_lifecycle', 'anonymize_personal_data']) }).strict(),
+]);
+
+export const pushTokenRegistrationSchema = z.object({
+  status: z.literal('registered'), installation_id: z.string().uuid(), platform: z.enum(['ios', 'android']),
+}).strict();
+
+export const pageGenerationReadinessSchema = z.object({
+  ready: z.boolean(),
+  blockers: z.array(
+    z.object({
+      code: z.enum([
+        'GENERATION_DISABLED',
+        'FRAME_REQUIRED',
+        'PANEL_REQUIRED',
+        'FRAME_PANEL_MISMATCH',
+        'PANEL_ORDER_INVALID',
+        'DIALOGUE_SPEAKER_REQUIRED',
+        'DIALOGUE_SPEAKER_INVALID',
+        'DIALOGUE_SPEAKER_NOT_IN_PANEL',
+        'ASSIGNED_ENTITY_INVALID',
+        'PAGE_GENERATING',
+        'PAGE_REOPEN_REQUIRED',
+        'CHARACTER_REFERENCE_REQUIRED',
+        'REFERENCE_IMAGE_LIMIT_EXCEEDED',
+        'ACTIVE_GENERATION_JOB',
+        'INSUFFICIENT_CREDITS'
+      ]),
+      entity_id: nullableStringSchema,
+      field: z.enum(['generation', 'frames', 'panels', 'entities', 'dialogue', 'status']),
+      action: z.enum([
+        'open_layout',
+        'open_panels',
+        'open_characters',
+        'reopen_page',
+        'wait_for_generation',
+        'none'
+      ]),
+      message_key: z.string().min(1)
+    })
+  ),
+  warnings: z.array(z.string()),
+  estimated_credit_cost: z.number().int().nonnegative(),
+  page_revision: timestampSchema
+});
+
+export const saveAndGeneratePageResponseSchema = z.object({
+  job_id: idSchema,
+  page_revision: timestampSchema
 });
 
 export {
@@ -1366,8 +1620,5 @@ export {
   organizationUpdateResponseSchema,
   organizationWorkspaceDetailSchema,
   organizationWorkspacesResponseSchema,
-  pageGenerationReadinessSchema,
   pageLayoutTemplatesResponseSchema,
-  pushTokenRegistrationSchema,
-  saveAndGeneratePageResponseSchema,
 } from './mobileCompatibilitySchemas';

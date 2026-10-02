@@ -138,6 +138,9 @@ describe('PostgresPageGenerationExecutionRepository', () => {
       cdnUrl: 'https://cdn.lyra.test/page-1.png',
       generatedAt: '2026-04-24T00:00:00.000Z',
       costUsd: 0.08,
+      imageModel: 'gpt-image-2',
+      providerModelId: 'gpt-image-2',
+      provider: 'openai',
       openaiRequestId: 'openai-1',
       promptMetadata: {
         draftPrompt: 'draft prompt',
@@ -169,6 +172,7 @@ describe('PostgresPageGenerationExecutionRepository', () => {
       'thinking',
       '2026-04-24T00:00:00.000Z',
       null,
+      JSON.stringify({ image_model: 'gpt-image-2', provider_model_id: 'gpt-image-2', provider: 'openai' }),
     ]);
     expect(client.values[2]).toEqual([
       'job-1',
@@ -179,6 +183,9 @@ describe('PostgresPageGenerationExecutionRepository', () => {
         generation_mode: 'thinking',
         request_kind: 'regenerate',
         cost_usd: 0.08,
+        image_model: 'gpt-image-2',
+        provider_model_id: 'gpt-image-2',
+        provider: 'openai',
         draft_prompt_sha256: '8f458698fd5f818ff1e01da76a3ac97549adee06a29cf84d41ac3cbde283c26d',
         draft_prompt_bytes: 12,
         compiled_brief_sha256: 'd376876e55ec00bc214966cb93341e2b0e004577fd00dd2537cace8dc2c328df',

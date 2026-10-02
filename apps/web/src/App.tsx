@@ -1,3 +1,5 @@
+import { GoogleSignInButton, GoogleIdentityLinkPanel } from './components/GoogleAuthControls';
+import { canReadWebImage, imageDeliveryNotice } from './domain/imageDelivery';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import {
   BookOpen,
@@ -1660,6 +1662,7 @@ export default function App() {
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
   const [supabaseSession, setSupabaseSession] = useState<Session | null>(null);
   const [pendingAuth, setPendingAuth] = useState(true);
+  const cognitoRedirect = useRef<ReturnType<typeof completeCognitoRedirectIfPresent> | null>(null);
   const [showSplash, setShowSplash] = useState(true);
   const [splashExiting, setSplashExiting] = useState(false);
   const publicApi = useMemo(() => new LyraApiClient(() => null), []);
@@ -1690,12 +1693,12 @@ export default function App() {
 
     const initializeAuth = async (): Promise<void> => {
       if (cognitoAuthConfig !== null) {
-        const result = await completeCognitoRedirectIfPresent(
+        const result = await (cognitoRedirect.current ??= completeCognitoRedirectIfPresent(
           cognitoAuthConfig,
           window.sessionStorage,
           window.location,
           window.history,
-        );
+        ));
         if (!active) {
           return;
         }
@@ -1905,6 +1908,7 @@ export default function App() {
     <StudioShell
       key={authSessionKey}
       authSessionKey={authSessionKey}
+      googleLinkConfig={cognitoSession !== null ? cognitoAuthConfig : null}
       email={email}
       token={accessToken}
       supabaseClient={supabaseClient}
@@ -2030,6 +2034,7 @@ function AuthScreen(props: {
               <KeyRound size={16} />
               {translateUiString(language, 'Sign in or create an account')}
             </button>
+            <GoogleSignInButton config={props.cognitoAuthConfig} language={language} />
           </div>
         ) : null}
         {props.supabaseClient !== null ? (
@@ -2239,6 +2244,7 @@ function InvitePreviewDetails(props: {
 }
 function StudioShell(props: {
   authSessionKey: string;
+  googleLinkConfig: CognitoAuthConfig | null;
   email: string;
   token: string;
   supabaseClient: SupabaseClient | null;
@@ -2313,7 +2319,7 @@ function StudioShell(props: {
     scopedStorageKey(selectedPageStorageKey, props.authSessionKey),
     '',
   );
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>('story');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() => new URLSearchParams(window.location.search).get('account') === 'google-link' ? 'account' : 'story');
   const [mobileWorksCollapsed, setMobileWorksCollapsed] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -2454,6 +2460,12 @@ function StudioShell(props: {
   ]);
 
   const trackedJobList = useMemo(() => parseTrackedJobIds(trackedJobIds), [trackedJobIds]);
+
+  const imageDeliverySessionQuery = useQuery({
+    queryKey: sessionQueryKey(['image-delivery-capabilities']),
+    queryFn: () => api.getCurrentSession(),
+  });
+  const webImageDeliveryEnabled = imageDeliverySessionQuery.data?.capabilities?.web_image_delivery === true;
 
   const organizationWorkspacesQuery = useQuery({
     queryKey: sessionQueryKey(['organizations']),
@@ -3641,13 +3653,16 @@ function StudioShell(props: {
       throw new Error('No generated pages are available for export');
     }
 
+    if (targetPages.some((page) => !canReadWebImage(page.generated_image, webImageDeliveryEnabled))) {
+      throw new Error(imageDeliveryNotice(uiLanguage));
+    }
     const baseName = sanitizeFilename(exportFilename.trim().length > 0 ? exportFilename : 'lyra-pages');
 
     if (exportFormat === 'pdf') {
       const { jsPDF } = await import('jspdf');
       const assets: Array<{ page: PageRecord; dataUrl: string }> = [];
       for (const page of targetPages) {
-        const response = await api.exportPageImage(page.id, activeOrganizationId);
+        const response = await api.exportPageImage(page.id, activeOrganizationId, page.generated_image, webImageDeliveryEnabled);
         assets.push({
           page,
           dataUrl: await blobToDataUrl(response.blob),
@@ -3668,7 +3683,7 @@ function StudioShell(props: {
 
     const multiple = targetPages.length > 1;
     for (const page of targetPages) {
-      const response = await api.exportPageImage(page.id, activeOrganizationId);
+      const response = await api.exportPageImage(page.id, activeOrganizationId, page.generated_image, webImageDeliveryEnabled);
       const extension = inferImageExtension(response.contentType);
       const filename = multiple ? `${baseName}-page-${String(page.page_number).padStart(2, '0')}.${extension}` : `${baseName}.${extension}`;
       triggerBlobDownload(response.blob, filename);
@@ -4688,6 +4703,10 @@ function StudioShell(props: {
             <option value="en">{translateUiString(uiLanguage, 'English')}</option>
           </select>
         </label>
+        {imageDeliverySessionQuery.data?.user?.id ? <GoogleIdentityLinkPanel
+          config={props.googleLinkConfig} userId={imageDeliverySessionQuery.data.user.id}
+          api={api} language={uiLanguage} onLogout={props.onLogout}
+        /> : null}
         <button className="ghost-button mobile-account-logout" onClick={() => void props.onLogout()} type="button">
           <LogOut size={16} />
           {translateUiString(uiLanguage, 'Log out')}
@@ -6132,13 +6151,15 @@ function StudioShell(props: {
                             <strong>{page.page_number}</strong>
                             <StatusBadge value={page.status} />
                           </div>
-                          {page.generated_image !== null ? (
+                          {page.generated_image !== null && !canReadWebImage(page.generated_image, webImageDeliveryEnabled) ? (
+                            <div className="page-placeholder">{imageDeliveryNotice(uiLanguage)}</div>
+                          ) : page.generated_image !== null ? (
                             <AuthenticatedImage
-                              loadImage={() => api.exportPageImage(page.id, activeOrganizationId)}
+                              loadImage={() => api.exportPageImage(page.id, activeOrganizationId, page.generated_image, webImageDeliveryEnabled)}
                               loading="lazy"
                               onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${page.page_number}`)}
                               placeholderClassName="page-placeholder"
-                              queryKey={scopedQueryKey(['page-image', page.id, page.generated_image.generated_at])}
+                              queryKey={scopedQueryKey(['page-image', page.id, page.generated_image.generated_at, page.generated_image.image_model, webImageDeliveryEnabled])}
                             />
                           ) : (
                             <div className="page-placeholder">
@@ -6732,15 +6753,17 @@ function StudioShell(props: {
                           language={uiLanguage}
                           onAction={navigateToReadinessTarget}
                         />
-                        {selectedPage.generated_image !== null ? (
+                        {selectedPage.generated_image !== null && !canReadWebImage(selectedPage.generated_image, webImageDeliveryEnabled) ? (
+                          <p className="muted">{imageDeliveryNotice(uiLanguage)}</p>
+                        ) : selectedPage.generated_image !== null ? (
                           <div className="generated-image-wrap">
                             <AuthenticatedImage
                               className="generated-image"
-                              loadImage={() => api.exportPageImage(selectedPage.id, activeOrganizationId)}
+                              loadImage={() => api.exportPageImage(selectedPage.id, activeOrganizationId, selectedPage.generated_image, webImageDeliveryEnabled)}
                               loading="eager"
                               onDoubleClick={(url) => openImageLightbox(url, `${translateUiString(uiLanguage, 'Page')} ${selectedPage.page_number}`)}
                               placeholderClassName="page-placeholder generated-image"
-                              queryKey={scopedQueryKey(['page-image', selectedPage.id, selectedPage.generated_image.generated_at])}
+                              queryKey={scopedQueryKey(['page-image', selectedPage.id, selectedPage.generated_image.generated_at, selectedPage.generated_image.image_model, webImageDeliveryEnabled])}
                             />
                           </div>
                         ) : null}

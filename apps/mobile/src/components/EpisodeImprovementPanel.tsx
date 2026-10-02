@@ -55,6 +55,7 @@ export function EpisodeImprovementPanel({
         label={t(language, "generated.components.EpisodeImprovementPanel.improve.episode.35262d02")}
         loading={improveLoading}
         onPress={onImprove}
+        variant="secondary"
       />
       {improvement === null ? null : (
         <View style={styles.result}>

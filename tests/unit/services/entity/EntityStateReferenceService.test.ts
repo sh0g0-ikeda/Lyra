@@ -93,6 +93,34 @@ describe('EntityStateReferenceService', () => {
     }));
   });
 
+  it('CDNがなくてもstate jobに属する候補だけを認証済み読取できる', async () => {
+    const fixture = createFixture({ generationEnabled: false, completedJob: true });
+    const key = `session/${userId}/entities/${entityId}/${jobId}-1.png`;
+    const result = await fixture.service.exportCandidateImage(userId, entityId, stateId,
+      { jobId, candidateS3Key:key, expectedStateRevision:stateRevision }, organizationId);
+    expect(result.mimeType).toBe('image/png');
+    expect(fixture.loader.loadByS3Key).toHaveBeenCalledWith(key);
+    expect(fixture.credit.consumeCredits).not.toHaveBeenCalled();
+  });
+
+  it('別候補・古いrevision・別actorでは画像を読まない', async () => {
+    for (const change of [
+      { candidateS3Key:`session/${userId}/entities/${entityId}/${jobId}-2.png` },
+      { expectedStateRevision:'2026-09-30T00:00:01.000Z' },
+    ]) {
+      const fixture = createFixture({generationEnabled:false,completedJob:true});
+      await expect(fixture.service.exportCandidateImage(userId,entityId,stateId,{
+        jobId,candidateS3Key:`session/${userId}/entities/${entityId}/${jobId}-1.png`,expectedStateRevision:stateRevision,...change,
+      },organizationId)).rejects.toMatchObject({code:'CONFLICT'});
+      expect(fixture.loader.loadByS3Key).not.toHaveBeenCalled();
+    }
+    const fixture = createFixture({generationEnabled:false,completedJob:true});
+    await expect(fixture.service.exportCandidateImage(ownerUserId,entityId,stateId,{
+      jobId,candidateS3Key:`session/${userId}/entities/${entityId}/${jobId}-1.png`,expectedStateRevision:stateRevision,
+    },organizationId)).rejects.toMatchObject({code:'CONFLICT'});
+    expect(fixture.loader.loadByS3Key).not.toHaveBeenCalled();
+  });
+
   it('confirmはjob候補をstate saved keyへ昇格しstorage ownerを生成actorにする', async () => {
     const fixture = createFixture({ generationEnabled: false, completedJob: true });
 
@@ -114,6 +142,31 @@ describe('EntityStateReferenceService', () => {
       refId: `${jobId}-1`,
     });
     expect(result.referenceImage.storageOwnerUserId).toBe(userId);
+  });
+
+  it('状態専用storageがない場合は通常copyへfallbackせずintent前に拒否する', async () => {
+    const fixture = createFixture({ generationEnabled: false, completedJob: true });
+    Reflect.deleteProperty(fixture.storage, 'finalizeStateReferenceImage');
+    const admission = vi.spyOn(fixture.stateRepository, 'confirmReference');
+    await expect(fixture.service.confirmReference(userId, entityId, stateId, {
+      jobId, candidateS3Key: `session/${userId}/entities/${entityId}/${jobId}-1.png`,
+      expectedStateRevision: stateRevision,
+    }, organizationId)).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+    expect(fixture.storage.finalizeReferenceImage).not.toHaveBeenCalled();
+    expect(admission).not.toHaveBeenCalled();
+  });
+
+  it('repositoryのadmission拒否ではsaved画像をcopyしない', async () => {
+    const fixture = createFixture({ generationEnabled: false, completedJob: true });
+    vi.spyOn(fixture.stateRepository, 'confirmReference').mockRejectedValue(new Error('Account deletion has started'));
+
+    await expect(fixture.service.confirmReference(userId, entityId, stateId, {
+      jobId,
+      candidateS3Key: `session/${userId}/entities/${entityId}/${jobId}-1.png`,
+      expectedStateRevision: stateRevision,
+    }, organizationId)).rejects.toThrow('Account deletion has started');
+
+    expect(fixture.storage.finalizeStateReferenceImage).not.toHaveBeenCalled();
   });
 
   it('別jobの候補keyはstorage copy前に拒否する', async () => {
@@ -181,6 +234,7 @@ function createFixture(options: {
     loadByS3Key: vi.fn(async () => ({ imageData: Buffer.from('image'), mimeType: 'image/png' as const })),
   };
   return {
+    loader,
     stateRepository,
     jobs,
     credit,
@@ -211,7 +265,8 @@ class FakeStateRepository implements EntityStateReferenceRepository {
     return this.context;
   }
 
-  public async confirmReference(input: ConfirmEntityStateReferenceInput): Promise<ConfirmedEntityStateReference> {
+  public async confirmReference(input: ConfirmEntityStateReferenceInput, copyImage: () => Promise<void>): Promise<ConfirmedEntityStateReference> {
+    await copyImage();
     this.confirmed = input;
     return {
       entityId: input.entityId,

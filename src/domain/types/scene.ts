@@ -26,6 +26,7 @@ export interface EntityState {
   name: string | null;
   description: string | null;
   referenceImage: Record<string, unknown> | null;
+  baseReferenceId?: string | null;
   costumeNote: string | null;
   costumeRefId: string | null;
   conditionNote: string | null;

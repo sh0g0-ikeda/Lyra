@@ -19,6 +19,7 @@ export class SqsEpisodeExportQueue implements EpisodeExportQueuePort {
   public constructor(
     private readonly client: EpisodeExportQueueClient,
     private readonly queueUrl: string,
+    private readonly envelope: 'v1' | 'deployed' = 'v1',
   ) {
     assertHttpsUrl(queueUrl);
   }
@@ -31,10 +32,7 @@ export class SqsEpisodeExportQueue implements EpisodeExportQueuePort {
       const response = await this.client.send(
         new SendMessageCommand({
           QueueUrl: this.queueUrl,
-          MessageBody: JSON.stringify({
-            version: 1,
-            export_job_id: jobId,
-          }),
+          MessageBody: JSON.stringify(this.envelope === 'deployed' ? { job_id: jobId, job_type: 'episode_export' } : { version: 1, export_job_id: jobId }),
         }),
       );
       const messageId = response.MessageId;

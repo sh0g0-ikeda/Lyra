@@ -4,7 +4,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { Linking } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { pushNotificationsEnabled } from '@/constants/mobileFeatureVisibility';
+import { canRegisterPushNotifications } from '@/domain/pushCapability';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ImageMemoryPressureCoordinator } from '@/components/ImageMemoryPressureCoordinator';
 import { LoadingState } from '@/components/LoadingState';
@@ -204,7 +204,7 @@ function AuthenticatedApp(): React.JSX.Element {
 
   return (
     <NavigationContainer ref={navigationRef}>
-      {pushNotificationsEnabled ? <PushNotificationCoordinator /> : null}
+      {canRegisterPushNotifications(sessionQuery.data) ? <PushNotificationCoordinator /> : null}
       <MainTabs />
     </NavigationContainer>
   );

@@ -28,10 +28,7 @@ const compatibilityExport =
   organizationUpdateResponseSchema,
   organizationWorkspaceDetailSchema,
   organizationWorkspacesResponseSchema,
-  pageGenerationReadinessSchema,
   pageLayoutTemplatesResponseSchema,
-  pushTokenRegistrationSchema,
-  saveAndGeneratePageResponseSchema,
 } from './mobileCompatibilitySchemas';
 `;
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -69,7 +66,9 @@ async function checkGeneratedContract(expected) {
     throw error;
   }
 
-  if (generated !== expected) {
+  // Git can convert a correct generated file to CRLF on Windows checkouts.
+  // Compare logical content while still rejecting any contract changes.
+  if (normalizeNewlines(generated) !== expected) {
     process.stderr.write(`generated file is stale: ${relativePath(generatedPath)}\n`);
     process.exitCode = 1;
   }

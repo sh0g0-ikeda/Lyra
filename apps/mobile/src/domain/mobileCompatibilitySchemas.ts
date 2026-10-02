@@ -179,49 +179,6 @@ export const pageSchema = z.object({
   updated_at: timestamp
 });
 
-export const pageGenerationReadinessSchema = z.object({
-  ready: z.boolean(),
-  blockers: z.array(
-    z.object({
-      code: z.enum([
-        'GENERATION_DISABLED',
-        'FRAME_REQUIRED',
-        'PANEL_REQUIRED',
-        'FRAME_PANEL_MISMATCH',
-        'PANEL_ORDER_INVALID',
-        'DIALOGUE_SPEAKER_REQUIRED',
-        'DIALOGUE_SPEAKER_NOT_IN_PANEL',
-        'ASSIGNED_ENTITY_INVALID',
-        'PAGE_GENERATING',
-        'PAGE_REOPEN_REQUIRED',
-        'CHARACTER_REFERENCE_REQUIRED',
-        'REFERENCE_IMAGE_LIMIT_EXCEEDED',
-        'ACTIVE_GENERATION_JOB',
-        'INSUFFICIENT_CREDITS'
-      ]),
-      entity_id: nullableString,
-      field: z.enum(['generation', 'frames', 'panels', 'entities', 'dialogue', 'status']),
-      action: z.enum([
-        'open_layout',
-        'open_panels',
-        'open_characters',
-        'reopen_page',
-        'wait_for_generation',
-        'none'
-      ]),
-      message_key: z.string().min(1)
-    })
-  ),
-  warnings: z.array(z.string()),
-  estimated_credit_cost: z.number().int().nonnegative(),
-  page_revision: timestamp
-});
-
-export const saveAndGeneratePageResponseSchema = z.object({
-  job_id: id,
-  page_revision: timestamp
-});
-
 const pageLayoutTemplateFrameSchema = z.object({
   vertices: z
     .array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }))
@@ -368,7 +325,7 @@ export const generationJobProgressStageSchema = z.enum([
 
 export const generationJobSchema = z.object({
   id,
-  job_type: z.enum(['page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton']),
+  job_type: z.enum(['page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton', 'entity_import_analysis']),
   status: z.enum(['queued', 'processing', 'completed', 'failed', 'canceled']),
   generation_mode: z.enum(['standard', 'thinking']).nullable(),
   credit_cost: z.number().int().nonnegative(),
@@ -383,7 +340,7 @@ export const generationJobSchema = z.object({
       'partially_refunded',
       'refund_pending'
     ])
-  }),
+  }).nullish().transform((value) => value ?? null),
   params: unknownRecord,
   result: unknownRecord.nullable(),
   error_message: nullableString,
@@ -685,6 +642,9 @@ export const organizationAuditLogsResponseSchema = z.object({
 });
 
 export const billingBalanceSchema = z.object({
+  subscription_store: z.enum(['apple', 'google']).nullable().optional(),
+  scheduled_plan_code: z.enum(['standard', 'premium']).nullable().optional(),
+  scheduled_plan_effective_at: timestamp.nullable().optional(),
   monthly_credits: z.number().int().nonnegative(),
   purchased_credits: z.number().int().nonnegative(),
   total_credits: z.number().int().nonnegative(),
@@ -745,6 +705,8 @@ export const entityReferenceGenerationAvailabilitySchema = z.object({
 }).strict();
 
 export const mobileStorePurchaseResultSchema = z.object({
+  scheduled_plan_code: z.enum(['standard', 'premium']).nullable().optional(),
+  scheduled_plan_effective_at: timestamp.nullable().optional(),
   store: z.enum(['apple', 'google']),
   state: z.enum(['pending', 'active', 'cancelled', 'expired', 'refunded', 'revoked', 'failed']),
   product_kind: z.enum(['subscription', 'credit_pack']),

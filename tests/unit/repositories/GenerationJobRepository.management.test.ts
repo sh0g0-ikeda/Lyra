@@ -10,6 +10,16 @@ const viewerId = '11111111-1111-4111-8111-111111111111';
 const organizationId = '22222222-2222-4222-8222-222222222222';
 
 describe('PostgresGenerationJobRepository history management', () => {
+  it('filters before pagination and projects only matching job/scope ledger evidence', async () => {
+    const client = new HistoryClient(); const repository = new PostgresGenerationJobRepository(client);
+    await repository.listHistory({ userId: viewerId, organizationId, limit: 2, cursor: null, statuses: ['failed', 'cancelled'], jobTypes: ['entity_import_analysis'] });
+    expect(client.queries[0]).toContain('generation_jobs.status = ANY($7::text[])');
+    expect(client.queries[0]).toContain('generation_jobs.job_type = ANY($8::text[])');
+    expect(client.queries[0]).toContain('credit_ledger.job_id = visible_jobs.id');
+    expect(client.queries[0]).toContain('credit_ledger.organization_id = visible_jobs.organization_id');
+    expect(client.queries[0]).toContain('credit_ledger.user_id = visible_jobs.user_id');
+    expect(client.valuesList[0]?.slice(-2)).toEqual([['failed', 'cancelled'], ['entity_import_analysis']]);
+  });
   it('personal履歴をowner scope・hide preference・keyset順・limit+1で取得する', async () => {
     const client = new HistoryClient();
     const repository = new PostgresGenerationJobRepository(client);
@@ -35,7 +45,7 @@ describe('PostgresGenerationJobRepository history management', () => {
       null,
       null,
       null,
-      3,
+      3, [], [],
     ]);
     expect(page.jobs).toHaveLength(2);
     expect(page.nextCursor).toEqual({
@@ -72,7 +82,7 @@ describe('PostgresGenerationJobRepository history management', () => {
       1,
       cursor.createdAt,
       cursor.id,
-      26,
+      26, [], [],
     ]);
   });
 

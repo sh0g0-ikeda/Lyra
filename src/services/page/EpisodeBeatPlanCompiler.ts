@@ -9,6 +9,7 @@ export interface EpisodeBeatPlanPage {
   exitState: string;
   newInformation: string[];
   dialogueIntent: string | null;
+  textPlan?: { requiredTextBeats: string[]; visualOnlyBeats: string[]; densityReason: string };
   handoff: string | null;
 }
 

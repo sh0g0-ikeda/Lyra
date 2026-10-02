@@ -48,6 +48,8 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public failureInput: FailPageGenerationInput | null = null;
   public progressInputs: TouchPageGenerationProgressInput[] = [];
   public snapshotInputs: SavePageGenerationInputSnapshotInput[] = [];
+  public snapshotFailure: 'reject' | 'throw' | null = null;
+  public snapshotFailureWrite = 1;
   public shouldFailCompletion = false;
   public failureResult = true;
 
@@ -66,6 +68,10 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
 
   public async savePageGenerationInputSnapshot(input: SavePageGenerationInputSnapshotInput): Promise<boolean> {
     this.snapshotInputs.push(input);
+    if (this.snapshotInputs.length === this.snapshotFailureWrite) {
+      if (this.snapshotFailure === 'throw') throw new Error('postgres://user:private-password@db.invalid/lyra');
+      if (this.snapshotFailure === 'reject') return false;
+    }
     return true;
   }
 
@@ -259,6 +265,71 @@ class FakeOrganizationService {
 }
 
 describe('PageGenerationWorkerService', () => {
+  it('quote対応workerがない場合はproviderを呼ばず失敗・返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob!.params.quote_id = 'quote-1';
+    const renderer = new FakeRenderer();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(repository, new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, new FakeStorage(), credits);
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(renderer.calls).toHaveLength(0);
+    expect(credits.refunds).toHaveLength(1);
+  });
+
+  it('quoteの固定promptと参照を使い現在の可変入力を再読込しない', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob!.params.quote_id = 'quote-1';
+    const prompt = new FakePromptBuilder();
+    const images = new FakeInputImageBuilder();
+    const renderer = new FakeRenderer();
+    const fixed = { ...prompt.builtPrompt, draftPrompt: 'approved quote prompt' };
+    const service = new PageGenerationWorkerService(repository, prompt, new FakePromptCompiler(), images,
+      new FakePlanner(), renderer, new FakeStorage(), new FakeCreditService(), true, undefined, undefined, {
+        page: async () => ({ prompt: fixed, inputImages: [] }),
+        entity: async () => { throw new Error('Wrong operation'); },
+      });
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(prompt.calls).toHaveLength(0);
+    expect(images.calls).toBe(0);
+    expect(repository.completionInput?.promptMetadata.draftPrompt).toBe('approved quote prompt');
+    expect(renderer.calls[0]?.inputImages).toEqual([]);
+  });
+
+  it.each(['reject', 'throw'] as const)('入力snapshot保存が%sの場合はproviderを呼ばずfailedにして一度返金する', async (failure) => {
+    const repository = new FakeExecutionRepository();
+    repository.snapshotFailure = failure;
+    const compiler = new FakePromptCompiler();
+    const planner = new FakePlanner();
+    const renderer = new FakeRenderer();
+    const storage = new FakeStorage();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(repository, new FakePromptBuilder(), compiler,
+      new FakeInputImageBuilder(), planner, renderer, storage, credits);
+
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(compiler.calls).toBe(0);
+    expect(planner.calls).toBe(0);
+    expect(renderer.calls).toEqual([]);
+    expect(storage.calls).toEqual([]);
+    expect(repository.completionInput).toBeNull();
+    expect(repository.failureInput?.errorMessage).toBe('Page generation input snapshot could not be persisted');
+    expect(credits.refunds).toHaveLength(1);
+  });
+
+  it('実画像snapshotの二回目の保存に失敗した場合も画像providerを呼ばず返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.snapshotFailure = 'reject';
+    repository.snapshotFailureWrite = 2;
+    const renderer = new FakeRenderer();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(repository, new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, new FakeStorage(), credits);
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(renderer.calls).toEqual([]);
+    expect(repository.completionInput).toBeNull();
+    expect(credits.refunds).toHaveLength(1);
+  });
   it('状態参照がpromptとrendererで一致する場合に実画像の参照情報をsnapshotへ固定する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const promptBuilder = new FakePromptBuilder();

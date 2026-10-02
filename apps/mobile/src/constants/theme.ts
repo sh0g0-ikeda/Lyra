@@ -12,9 +12,12 @@ export const colors = {
   controlSurfaceFocus: '#2D343D',
   ink: '#E0E0E0',
   inkStrong: '#F4F4F4',
-  muted: '#8A8A8A',
+  // Active captions and placeholders remain readable on dark input surfaces.
+  // Reserve mutedSoft/disabled for inactive controls, not input instructions.
+  muted: '#9C9C9C',
   mutedSoft: '#6F6F6F',
-  border: 'rgba(229, 199, 107, 0.12)',
+  placeholder: '#A1A8B0',
+  border: 'rgba(229, 199, 107, 0.34)',
   borderStrong: 'rgba(229, 199, 107, 0.34)',
   controlBorder: 'rgba(229, 199, 107, 0.48)',
   primary: '#E5C76B',
@@ -25,7 +28,7 @@ export const colors = {
   accent: '#A68B3C',
   warning: '#FFC107',
   warningSurface: 'rgba(255, 193, 7, 0.10)',
-  danger: '#F44336',
+  danger: '#FF665C',
   dangerSurface: 'rgba(244, 67, 54, 0.12)',
   success: '#4CAF50',
   successSurface: 'rgba(76, 175, 80, 0.12)',

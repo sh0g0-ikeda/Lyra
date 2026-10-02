@@ -156,6 +156,7 @@ const styles = StyleSheet.create({
   },
   title: {
     ...textStyles.sectionTitle,
+    color: colors.primary,
     flex: 1
   },
   toggle: {

@@ -28,7 +28,8 @@ describePostgres('panel entity assignment conditional update', () => {
       new PoolTransactionDatabase(pool),
       { migrationLockPollMs: 1, migrationLockMaxAttempts: 10 },
     ));
-    expect(applied.at(-1)).toBe('041_add_episode_starting_entity_states.sql');
+    expect(applied).toContain('046_bridge_production_schema_lineage.sql');
+    expect(applied.at(-1)).toBe('047_add_state_reference_copy_attempts.sql');
   }, 120_000);
 
   afterAll(async () => {
@@ -412,7 +413,7 @@ describePostgres('panel entity assignment conditional update', () => {
     },
   );
 
-  it('保存済み会話speakerをassignmentから外す場合は変更しない', async () => {
+  it('同じworkの保存済み話者を画面外にしても会話IDは保持する', async () => {
     const ids = createFixtureIds();
     const service = createService(pool);
 
@@ -426,11 +427,24 @@ describePostgres('panel entity assignment conditional update', () => {
         [],
         null,
         expected,
-      )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(expected);
+      )).resolves.toEqual([]);
+      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual([]);
+      const dialogue = await pool.query<{dialogue: Array<{entity_id:string}>}>('SELECT dialogue FROM panels WHERE id=$1',[ids.panelId]);
+      expect(dialogue.rows[0]?.dialogue[0]?.entity_id).toBe(ids.entityId);
     } finally {
       await removeFixture(pool, ids);
     }
+  });
+
+  it('a stored off-panel speaker from a different work remains rejected', async () => {
+    const ids=createFixtureIds();const service=createService(pool);
+    try {
+      await insertFixture(pool,ids);
+      await pool.query('UPDATE panels SET dialogue=$2::jsonb WHERE id=$1',[ids.panelId,JSON.stringify([{entity_id:ids.otherEntityId,text:'foreign',type:'speech',position:'right'}])]);
+      const expected=[assignment(ids.entityId,ids.stateId)];
+      await expect(service.replacePanelEntityAssignments(ids.userId,ids.panelId,[],null,expected)).rejects.toMatchObject({code:'VALIDATION_ERROR'});
+      await expect(readAssignments(pool,ids.panelId)).resolves.toEqual(expected);
+    } finally { await removeFixture(pool,ids); }
   });
 
   it('別workのEntityと別Entityのstateをtransaction内で拒否する', async () => {

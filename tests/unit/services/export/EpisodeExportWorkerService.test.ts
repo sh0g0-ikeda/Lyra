@@ -179,6 +179,7 @@ class FakeRepository {
   public job: EpisodeExportJob | null = buildJob();
   public claimResult: EpisodeExportJob | null | undefined;
   public heartbeatResult = true;
+  public snapshotCurrent = true;
   public updateProgressResult = true;
   public releaseResult = true;
   public failResult = true;
@@ -208,6 +209,7 @@ class FakeRepository {
 
   public asPort(): EpisodeExportJobRepository {
     return {
+      isSourceSnapshotCurrent: async () => this.snapshotCurrent,
       createOrGet: async () => {
         throw new Error('not used');
       },
@@ -397,3 +399,11 @@ function buildJob(overrides: Partial<EpisodeExportJob> = {}): EpisodeExportJob {
     ...overrides,
   };
 }
+
+
+it('書出しsnapshot後に画像keyまたは配信区分が変わればbytesを読まない', async () => {
+  const repository=new FakeRepository();repository.snapshotCurrent=false;
+  const loader=new FakeLoader();
+  await expect(buildService(repository,loader,new FakeBuilder(),new FakeStorage()).processJob(jobId)).resolves.toMatchObject({jobStatus:'failed'});
+  expect(loader.keys).toEqual([]);
+});

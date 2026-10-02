@@ -1,3 +1,4 @@
+import { useIsFocused } from '@react-navigation/native';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -6,6 +7,9 @@ import { PrimaryButton } from '@/components/PrimaryButton';
 import { JobCreditSettlement } from '@/components/JobCreditSettlement';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import type { CompatibleGenerationJobRecord } from '@/domain/generationJobCompatibility';
+import { jobStatusPollingInterval, refundStatusRefreshWindowMs } from '@/domain/jobStatusPolling';
+import { assetQuoteMessages } from '@/lib/assetQuoteMessages';
+import { commonGuidanceMessages } from '@/lib/commonGuidanceMessages';
 import type { GenerationJobRecord } from '@/domain/types';
 import type { LyraMobileApiClient } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
@@ -59,44 +63,75 @@ export function JobStatusCard({
     status: CompatibleGenerationJobRecord['status'];
   } | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [foreground, setForeground] = useState(AppState.currentState === 'active');
+  const focused = useIsFocused();
+  const visible = foreground && focused;
+  const copy = commonGuidanceMessages(language);
+  const effectiveJobId = jobId ?? suppliedJob?.id ?? null;
+  const scopeKey = `${sessionKey}:${organizationId ?? 'personal'}:${effectiveJobId ?? 'none'}`;
+  const [refundWatch, setRefundWatch] = useState<{ scopeKey: string; deadline: number } | null>(null);
+  const refundDeadline = refundWatch?.scopeKey === scopeKey ? refundWatch.deadline : null;
+  const refundWindowExpired = refundDeadline !== null && nowMs >= refundDeadline;
+  const monitorSuppliedRefund = suppliedJob?.credit_settlement?.status === 'refund_pending';
+  const queryOwned = suppliedJob === undefined || monitorSuppliedRefund;
   const jobQuery = useQuery({
-    enabled: suppliedJob === undefined && jobId !== null,
-    queryKey: jobQueryKey(sessionKey, jobId, organizationId),
-    queryFn: () => api.getJob(jobId ?? '', organizationId),
+    enabled: queryOwned && effectiveJobId !== null && visible && !refundWindowExpired,
+    queryKey: jobQueryKey(sessionKey, effectiveJobId, organizationId),
+    queryFn: () => api.getJob(effectiveJobId ?? '', organizationId),
     refetchInterval: (query) => {
-      if (suppliedJob !== undefined || jobId === null) {
-        return false;
-      }
-      if (query.state.status === 'error') {
-        return 5000;
-      }
-      const status = query.state.data?.status;
-      return status === 'completed' || status === 'failed' || status === 'canceled'
-        ? false
-        : 2500;
+      if (!queryOwned || effectiveJobId === null || isApiNotFoundError(query.state.error)) return false;
+      const snapshot = monitorSuppliedRefund && query.state.status === 'error'
+        ? suppliedJob
+        : query.state.data ?? suppliedJob;
+      return jobStatusPollingInterval({
+        visible,
+        status: snapshot?.status,
+        settlement: snapshot?.credit_settlement?.status,
+        error: query.state.status === 'error',
+        now: Date.now(),
+        refundDeadline
+      });
     },
   });
 
-  const job = suppliedJob ?? jobQuery.data;
+  // A supplied pending settlement may outlive the parent's generation polling.
+  // Prefer this scoped fresh read until settlement resolves; never infer success.
+  const job = monitorSuppliedRefund
+    ? jobQuery.isFetchedAfterMount ? jobQuery.data ?? suppliedJob : suppliedJob
+    : suppliedJob ?? jobQuery.data;
   const canonicalJob =
     job !== undefined && isCanonicalGenerationJob(job) ? job : null;
   const refetchJob = jobQuery.refetch;
   const status = job?.status ?? 'loading';
   const isActive = status === 'queued' || status === 'processing';
-  const queryFailed = suppliedJob === undefined && jobQuery.isError;
+  const refundPending = job?.credit_settlement?.status === 'refund_pending';
+  const queryFailed = queryOwned && jobQuery.isError;
   const jobMissing = queryFailed && isApiNotFoundError(jobQuery.error);
 
   useEffect(() => {
-    if (suppliedJob !== undefined || jobId === null) {
-      return;
-    }
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
+      setForeground(nextState === 'active');
+      setNowMs(Date.now());
+      if (nextState === 'active' && focused && queryOwned && effectiveJobId !== null && (refundDeadline === null || Date.now() < refundDeadline)) {
         void refetchJob();
       }
     });
     return () => subscription.remove();
-  }, [jobId, refetchJob, suppliedJob]);
+  }, [effectiveJobId, focused, queryOwned, refetchJob, refundDeadline]);
+
+  // Derive a new bounded window only when the current job enters pending.
+  // nowMs is a state snapshot, so rendering itself has no clock side effects.
+  if (refundPending && refundDeadline === null) {
+    setRefundWatch({ scopeKey, deadline: nowMs + refundStatusRefreshWindowMs });
+  } else if (!refundPending && refundWatch !== null) {
+    setRefundWatch(null);
+  }
+
+  useEffect(() => {
+    if (!refundPending || refundDeadline === null) return;
+    const timer = setTimeout(() => setNowMs(Date.now()), Math.max(0, refundDeadline - Date.now()));
+    return () => clearTimeout(timer);
+  }, [refundDeadline, refundPending]);
 
   useEffect(() => {
     if (!isActive) {
@@ -161,7 +196,13 @@ export function JobStatusCard({
     return null;
   }
   if (jobMissing) {
-    return null;
+    if (onMissing !== undefined) return null;
+    return (
+      <View style={styles.card}>
+        <Text style={styles.text}>{copy.jobUnavailable}</Text>
+        <PrimaryButton label={copy.jobRefresh} onPress={() => void refetchJob()} variant="secondary" />
+      </View>
+    );
   }
 
   const displayJobId = job?.id ?? jobId ?? '';
@@ -183,12 +224,7 @@ export function JobStatusCard({
     confirmAction({
       language,
       title: t(language, 'component.jobStatusCard.cancel.title'),
-      message: t(
-        language,
-        canonicalJob.status === 'processing'
-          ? 'component.jobStatusCard.cancel.processingMessage'
-          : 'component.jobStatusCard.cancel.queuedMessage'
-      ),
+      message: canonicalJob.status === 'processing' ? copy.cancelProcessing : copy.cancelQueued,
       confirmLabel: t(language, 'component.jobStatusCard.cancel.confirmLabel'),
       destructive: true,
       onConfirm: () => void onCancel(canonicalJob),
@@ -227,12 +263,14 @@ export function JobStatusCard({
       {queryFailed ? (
         <View style={styles.failedLoad}>
           <Text style={styles.error}>{userErrorMessage(jobQuery.error, language)}</Text>
+          <Text style={styles.text}>{copy.readUnknown}</Text>
           <Pressable accessibilityRole="button" onPress={() => void jobQuery.refetch()} style={styles.retryButton}>
             <Text style={styles.retryText}>{t(language, "generated.components.JobStatusCard.retry.8d32b958")}</Text>
           </Pressable>
         </View>
       ) : isActive || status === 'loading' ? (
         <>
+          {status === 'loading' ? <Text style={styles.text}>{copy.statusChecking}</Text> : null}
           <View style={styles.runningRow}>
             <ActivityIndicator color={colors.primary} size="small" />
             <View style={styles.runningTextGroup}>
@@ -258,10 +296,18 @@ export function JobStatusCard({
         <View style={[styles.stateBar, status === 'failed' ? styles.stateBarWarn : status === 'canceled' ? styles.stateBarWarn : styles.stateBarGood]} />
       )}
 
+      {refundPending ? (
+        <View style={styles.failedLoad}>
+          {refundWindowExpired ? <Text style={styles.text}>{copy.refundPaused}</Text> : null}
+          {jobQuery.dataUpdatedAt > 0 ? <Text style={styles.elapsed}>{copy.lastChecked}: {new Date(jobQuery.dataUpdatedAt).toLocaleTimeString(language)}</Text> : null}
+          <PrimaryButton label={copy.refundRefresh} loading={jobQuery.isFetching} onPress={() => void refetchJob()} variant="secondary" />
+        </View>
+      ) : null}
+
       {job === undefined || queryFailed ? null : (
         <>
           <Text style={styles.text}>{jobStatusMessage(job, language)}</Text>
-          {job.credit_settlement === null ? null : (
+          {job.credit_settlement === null ? <Text style={styles.text}>{copy.settlementUnknown}</Text> : (
             <JobCreditSettlement
               language={language}
               settlement={job.credit_settlement}
@@ -313,6 +359,7 @@ export function JobStatusCard({
 }
 
 function formatJobType(jobType: string | undefined, language: 'ja' | 'en'): string {
+  if (jobType === 'entity_import_analysis') return assetQuoteMessages(language).entity_import_analysis;
   const labels: Record<string, ComponentTranslationKey> = {
     page_generate: 'component.jobStatusCard.type.pageGenerate',
     entity_generate: 'component.jobStatusCard.type.entityGenerate',

@@ -1,14 +1,7 @@
-import { z } from 'zod';
+import { parseEpisodeExportQueueMessage } from '../src/domain/episodeExportQueueMessage.js';
 import type {
   ProcessEpisodeExportJobResult,
 } from '../src/services/export/EpisodeExportWorkerService.js';
-
-const episodeExportQueueMessageSchema = z
-  .object({
-    version: z.literal(1),
-    export_job_id: z.string().uuid(),
-  })
-  .strict();
 
 export interface EpisodeExportWorkerPort {
   processJob(jobId: string): Promise<ProcessEpisodeExportJobResult>;
@@ -79,7 +72,7 @@ export async function handleEpisodeExportQueue(
       results.push({
         messageId: record.messageId ?? null,
         jobId: message.export_job_id,
-        status: result.status === 'skipped' ? 'skipped' : 'completed',
+        status: result.status === 'skipped' ? 'skipped' : result.jobStatus ?? 'completed',
         reason: result.reason,
       });
     } catch (error) {
@@ -104,17 +97,9 @@ export async function handleEpisodeExportQueue(
   };
 }
 
-function parseMessage(
-  body: string,
-): z.infer<typeof episodeExportQueueMessageSchema> | null {
-  try {
-    const parsed = episodeExportQueueMessageSchema.safeParse(
-      JSON.parse(body) as unknown,
-    );
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
+function parseMessage(body: string): { export_job_id: string } | null {
+  try { const id = parseEpisodeExportQueueMessage(JSON.parse(body) as unknown); return id === null ? null : { export_job_id: id }; }
+  catch { return null; }
 }
 
 function addBatchItemFailure(

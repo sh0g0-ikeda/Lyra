@@ -35,6 +35,18 @@ export class RateLimitError extends AppError {
   }
 }
 
+export class PageStaleError extends AppError {
+  public constructor() {
+    super('PAGE_STALE', 'The page was changed by another edit. Reload before generating.', 409);
+  }
+}
+
+export class ResourceStaleError extends AppError {
+  public constructor() {
+    super('RESOURCE_STALE', 'The resource was changed by another edit. Reload and review the latest state.', 409);
+  }
+}
+
 export class NotFoundError extends AppError {
   public constructor(message = 'Not found') {
     super('NOT_FOUND', message, 404);

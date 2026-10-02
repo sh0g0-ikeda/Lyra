@@ -1,4 +1,6 @@
-﻿import type { QueryResultRow } from 'pg';
+import { readableStateReferenceSql } from './FencedStateReferenceReadGuard.js';
+﻿import { readImageProvenance, toImageProvenanceRecord } from '../domain/generation/ImageAccessPolicy.js';
+import type { QueryResultRow } from 'pg';
 import type {
   EpisodePagePlanContext,
   EpisodePagePlanSceneEntityStateContext,
@@ -111,6 +113,7 @@ interface PromptContextRow extends QueryResultRow {
 }
 
 interface AutofillContextRow extends QueryResultRow {
+  layout_config: unknown;
   page_id: string;
   work_id: string;
   episode_id: string;
@@ -624,6 +627,7 @@ export class PostgresPageRepository
              episodes.id AS episode_id,
              chapters.id AS chapter_id,
              pages.page_number,
+             pages.layout_config,
              (
                SELECT COUNT(*)::int
                FROM pages AS episode_pages
@@ -763,6 +767,7 @@ export class PostgresPageRepository
       pageNumber: row.page_number,
       totalPagesInEpisode: row.total_pages_in_episode,
       frameCount: row.frame_count,
+      layoutConfig: toJsonObject(row.layout_config),
       status: row.status,
       dialogueMode: toPageDialogueMode(row.dialogue_mode),
       pageDialogueToggle: row.page_dialogue_toggle,
@@ -826,7 +831,7 @@ export class PostgresPageRepository
                    WHERE base_image.value->>'ref_id' = reference_sets.primary_ref_id
                      AND NULLIF(base_image.value->>'s3_key', '') IS NOT NULL
                  ),
-                 'reference_image', entity_states.reference_image
+                 'reference_image', ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })}
                ) ORDER BY entity_states.created_at ASC, entity_states.id ASC), '[]'::jsonb)
                FROM entity_states
                INNER JOIN entities ON entities.id = entity_states.entity_id
@@ -1139,7 +1144,7 @@ export class PostgresPageRepository
             'cdn_url', $6::text,
             'generation_mode', $7::text,
             'generated_at', $8::text
-          ),
+          ) || $10::jsonb,
           updated_at = NOW()
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -1172,6 +1177,7 @@ export class PostgresPageRepository
         input.generatedImage.generationMode,
         input.generatedImage.generatedAt,
         organizationId,
+        JSON.stringify(toImageProvenanceRecord(input.generatedImage)),
       ],
     );
 
@@ -1203,6 +1209,7 @@ function toGeneratedPageImage(value: unknown): GeneratedPageImage | null {
     cdnUrl,
     generationMode,
     generatedAt,
+    ...readImageProvenance(value),
   };
 }
 

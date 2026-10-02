@@ -9,7 +9,6 @@ import type {
   PersistedWorkspaceSelection,
   UiLanguage
 } from '@/domain/types';
-import { pushNotificationsEnabled } from '@/constants/mobileFeatureVisibility';
 import {
   hasWorkspaceCapability,
   type OrganizationCapability
@@ -384,11 +383,9 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
     if (!options?.skipDirtyCheck && !(await resolveDirtyEditors(languageState))) {
       return;
     }
-    await (
-      pushNotificationsEnabled
-        ? unregisterPushNotifications(api)
-        : unregisterNativePushNotifications()
-    );
+    // Remove an older app's registration even if the current runtime no longer
+    // advertises push. The helper always invalidates the native token offline.
+    await unregisterPushNotifications(api);
     await clearLocalAuthentication({ skipNativePushUnregister: true });
     await signOutFromCognito();
   }, [api, clearLocalAuthentication, languageState, resolveDirtyEditors]);
@@ -439,3 +436,7 @@ export const useAppState = (): AppStateContextValue => {
   }
   return value;
 };
+
+// Startup/configuration chrome can render before AppStateProvider exists.
+// Required consumers keep useAppState's explicit missing-provider failure.
+export const useOptionalAppState = (): AppStateContextValue | null => useContext(AppStateContext);

@@ -1,7 +1,7 @@
 import { CopyObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
-import { S3EntityImageStorage } from '../../../../src/infrastructure/aws/S3EntityImageStorage.js';
+import { S3EntityImageStorage, createStateReferenceCopyClient } from '../../../../src/infrastructure/aws/S3EntityImageStorage.js';
 
 class FakeS3Client {
   public commands: Array<PutObjectCommand | CopyObjectCommand> = [];
@@ -13,17 +13,45 @@ class FakeS3Client {
       throw this.error;
     }
 
-    return {};
+    return { CopyObjectResult: { ETag: '"state-etag"' }, $metadata: { attempts: 1, httpStatusCode: 200 } };
   }
 }
 
 describe('S3EntityImageStorage', () => {
+  it('状態copy専用clientはSDK再試行を明示的に1回へ制限する', async () => {
+    const client = createStateReferenceCopyClient('ap-northeast-1');
+    expect(await client.config.maxAttempts()).toBe(1);
+    client.destroy();
+  });
+
+  it('専用clientがなければ通常copyへfallbackせず送信前に拒否する', async () => {
+    const client = new FakeS3Client();
+    const storage = new S3EntityImageStorage(client, { bucketName: 'images' });
+    await expect(storage.finalizeStateReferenceImage(stateInput())).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+    expect(client.commands).toHaveLength(0);
+  });
+
+  it.each([
+    {},
+    { CopyObjectResult: { ETag: 'etag' } },
+    { CopyObjectResult: { ETag: 'etag' }, $metadata: { attempts: 2, httpStatusCode: 200 } },
+    { CopyObjectResult: {}, $metadata: { attempts: 1, httpStatusCode: 200 } },
+    { CopyObjectResult: { ETag: 'etag' }, $metadata: { attempts: 1, httpStatusCode: 500 } },
+  ])('完全な単回成功応答でない場合はcopy成功として返さない: %j', async (response) => {
+    const regular = new FakeS3Client();
+    const stateClient = { send: vi.fn(async () => response) };
+    const storage = new S3EntityImageStorage(regular, { bucketName: 'images' }, stateClient);
+    await expect(storage.finalizeStateReferenceImage(stateInput())).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+    expect(stateClient.send).toHaveBeenCalledOnce();
+    expect(regular.commands).toHaveLength(0);
+  });
+
   it('状態画像の確定先をbase一覧と分離する', async () => {
     const client = new FakeS3Client();
     const storage = new S3EntityImageStorage(client, {
       bucketName: 'images',
       cdnBaseUrl: 'https://cdn.lyra.test',
-    });
+    }, client);
 
     const result = await storage.finalizeStateReferenceImage({
       userId: 'actor-user',
@@ -35,6 +63,58 @@ describe('S3EntityImageStorage', () => {
 
     expect(result.s3Key).toBe('saved/actor-user/entities/entity-1/states/state-1/job-1-1.png');
   });
+  it.each([
+    { refId: '../other' },
+    { stateId: 'state/other' },
+    { entityId: '../other' },
+    { userId: 'other/owner' },
+    { sourceS3Key: 'session/other-user/entities/entity-1/source.png' },
+    { sourceS3Key: 'session/actor-user/entities/entity-1/../source.png' },
+  ])('不正な状態copyキーをS3送信前に拒否する: %j', async (invalid) => {
+    const client = new FakeS3Client();
+    const storage = new S3EntityImageStorage(client, { bucketName: 'images' }, client);
+    await expect(storage.finalizeStateReferenceImage({
+      userId: 'actor-user', entityId: 'entity-1', stateId: 'state-1', refId: 'ref-1',
+      sourceS3Key: 'session/actor-user/entities/entity-1/source.png', ...invalid,
+    })).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+    expect(client.commands).toHaveLength(0);
+  });
+
+  it('状態copyは15秒でSDKをabortするがremote完了とは扱わない', async () => {
+    vi.useFakeTimers();
+    let abortSeen = false;
+    let settleCopy!: () => void;
+    const client = {
+      send: async (_command: PutObjectCommand | CopyObjectCommand, options?: { abortSignal: AbortSignal }) => {
+        return new Promise<void>((_resolve, reject) => {
+          settleCopy = () => reject(new Error('copy aborted'));
+          options?.abortSignal.addEventListener('abort', () => { abortSeen = true; });
+        });
+      },
+    };
+    const storage = new S3EntityImageStorage(client, { bucketName: 'images' }, client);
+    let finished = false;
+    const copying = storage.finalizeStateReferenceImage({
+      userId: 'actor-user', entityId: 'entity-1', stateId: 'state-1', refId: 'ref-1',
+      sourceS3Key: 'session/actor-user/entities/entity-1/candidate.png',
+    });
+    const outcome = copying.then(
+      (value) => { finished = true; return { status: 'fulfilled' as const, value }; },
+      (error: unknown) => { finished = true; return { status: 'rejected' as const, error }; },
+    );
+    try {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+      expect(abortSeen).toBe(true);
+      expect(finished).toBe(false);
+      settleCopy();
+      expect(await outcome).toMatchObject({ status: 'rejected', error: { code: 'CONFIGURATION_ERROR' } });
+      expect(finished).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('import image を tmp 配下へ保存する', async () => {
     const client = new FakeS3Client();
     const storage = new S3EntityImageStorage(client, {
@@ -149,3 +229,8 @@ describe('S3EntityImageStorage', () => {
     );
   });
 });
+
+function stateInput() {
+  return { userId: 'actor-user', entityId: 'entity-1', stateId: 'state-1', refId: 'ref-1',
+    sourceS3Key: 'session/actor-user/entities/entity-1/candidate.png' };
+}

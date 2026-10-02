@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { CreateEntityInput, Entity, UpdateEntityInput } from '../../../../src/domain/types/entity.js';
 import type {
   EntityPrimaryReferenceImage,
@@ -290,7 +290,72 @@ function buildTestPanel(entityId: string): PageGenerationContext['panels'][numbe
 }
 
 describe('PageGenerationInputImageBuilder', () => {
-  it('同じ人物の既定と確定済み状態を別の参照画像として読み込む', async () => {
+  it('uses the resolved numbered map as the final image even when current layout changes', async () => {
+    const {resolvePageGenerationLayoutControl} = await import('../../../../src/services/page/PageGenerationLayoutControl.js');
+    const control=resolvePageGenerationLayoutControl({type:'template',template_id:'splash_1'},1)!;
+    const renderer={render:vi.fn().mockReturnValue({imageData:Buffer.from('guide'),mimeType:'image/png'})};
+    const builder=new PageGenerationInputImageBuilder(new FakePageRepository(),new FakeEntityRepository(),new FakeStoredImageLoader(),renderer);
+    const result=await builder.buildInputImages({userId:'user-1',pageId:'page-1',layoutControl:control});
+    expect(renderer.render).toHaveBeenCalledWith(control.frames,{numberFrames:true});
+    expect(result.at(-1)?.role).toBe('layout_reference');
+    expect(result.filter(image=>image.role==='entity_reference')).toHaveLength(2);
+    renderer.render.mockClear();
+    await builder.buildInputImages({userId:'user-1',pageId:'page-1',layoutControl:null});
+    expect(renderer.render).not.toHaveBeenCalled();
+  });
+
+  it.each([4, 13])('旧状態が%i件でも同じbase画像を一度だけ添付する', async (assignmentCount) => {
+    const states = Array.from({ length: assignmentCount }, (_, index) => index === 0 ? null : `legacy-${index}`);
+    const pageRepository = new FakePageRepository();
+    pageRepository.generationContext = {
+      ...pageRepository.generationContext!,
+      panels: states.map((stateId) => ({
+        ...buildTestPanel('entity-1'),
+        entities: [{ ...buildTestPanel('entity-1').entities[0]!, stateId }],
+      })),
+    };
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = states.map((stateId) => ({
+      entityId: 'entity-1', stateId, stateName: stateId, stateDescription: null,
+      stateExists: true, ownerUserId: 'user-1', refId: 'base-ref',
+      s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: null, imageModel: null,
+    }));
+    const loader = new FakeStoredImageLoader();
+    const images = await new PageGenerationInputImageBuilder(
+      pageRepository, entityRepository, loader, new FakeLayoutGuideImageRenderer(),
+    ).buildInputImages({ userId: 'user-1', pageId: 'page-1' });
+
+    expect(loader.calls).toEqual(['saved/user-1/entities/entity-1/base-ref.png']);
+    expect(images).toEqual([expect.objectContaining({
+      label: 'Aoi', reference: expect.objectContaining({ stateId: null, refId: 'base-ref', subjectLabel: 'Aoi' }),
+    })]);
+  });
+
+  it('同じbase画像の別名でも所有者が不正な場合は重複排除で隠さず読み込み前に拒否する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.generationContext = {
+      ...pageRepository.generationContext!,
+      panels: [null, 'legacy-state'].map((stateId) => ({
+        ...buildTestPanel('entity-1'),
+        entities: [{ ...buildTestPanel('entity-1').entities[0]!, stateId }],
+      })),
+    };
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = [null, 'legacy-state'].map((stateId) => ({
+      entityId: 'entity-1', stateId, stateName: null, stateDescription: null,
+      stateExists: true, ownerUserId: stateId === null ? 'user-1' : 'user-2',
+      refId: 'base-ref', s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: null, imageModel: null,
+    }));
+    const loader = new FakeStoredImageLoader();
+    await expect(new PageGenerationInputImageBuilder(
+      pageRepository, entityRepository, loader, new FakeLayoutGuideImageRenderer(),
+    ).buildInputImages({ userId: 'user-1', pageId: 'page-1' })).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR', message: 'entity reference image key is outside the owner scope',
+    });
+    expect(loader.calls).toEqual([]);
+  });
+
+  it.each([false, true])('同じ人物の既定と確定済み状態を別の参照画像として読み込み旧状態=%sを統合する', async (includeLegacy) => {
     const entityRepository = new FakeEntityRepository();
     entityRepository.resolvedReferences = [
       { entityId: 'entity-1', stateId: null, stateName: null, stateDescription: null, stateExists: true, ownerUserId: 'user-1', refId: 'base-ref', s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: 'https://img.lyra.app/base.png', imageModel: null },
@@ -304,6 +369,15 @@ describe('PageGenerationInputImageBuilder', () => {
         { ...pageRepository.generationContext!.panels[1]!, entities: [{ ...pageRepository.generationContext!.panels[1]!.entities[0]!, entityId: 'entity-1', stateId: 'state-1' }] },
       ],
     };
+    if (includeLegacy) {
+      entityRepository.resolvedReferences.push({
+        ...entityRepository.resolvedReferences[0]!, stateId: 'legacy-state', stateName: 'legacy note',
+      });
+      pageRepository.generationContext.panels.unshift({
+        ...buildTestPanel('entity-1'),
+        entities: [{ ...buildTestPanel('entity-1').entities[0]!, stateId: 'legacy-state' }],
+      });
+    }
     const loader = new FakeStoredImageLoader();
     const images = await new PageGenerationInputImageBuilder(
       pageRepository, entityRepository, loader, new FakeLayoutGuideImageRenderer(),
@@ -426,6 +500,7 @@ describe('PageGenerationInputImageBuilder', () => {
     const pageRepository = new FakePageRepository();
     pageRepository.generationContext = {
       ...pageRepository.generationContext!,
+      panels: [pageRepository.generationContext!.panels[0]!],
       layoutConfig: {
         type: 'custom',
         frame_definitions: [

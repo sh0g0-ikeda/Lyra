@@ -1,0 +1,11 @@
+- tapOn:
+    id: tab-manga
+- runFlow:
+    when:
+      visible:
+        id: manga-tutorial-skip
+    commands:
+      - tapOn:
+          id: manga-tutorial-skip
+- assertVisible:
+    id: tab-manga

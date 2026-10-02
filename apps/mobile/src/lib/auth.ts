@@ -102,13 +102,17 @@ const refreshAuthTokensOnce = async (tokens: AuthTokens): Promise<AuthTokens> =>
 
 export const refreshAuthTokens = createSingleFlight(refreshAuthTokensOnce);
 
-export const signInWithCognito = async (): Promise<AuthTokens> => {
+interface CognitoSignInOptions { identityProvider?: 'Google'; }
+
+const authorizeWithCognito = async (options: CognitoSignInOptions & { reauthenticate?: boolean } = {}): Promise<AuthTokens> => {
   const request = new AuthSession.AuthRequest({
     clientId: config.cognitoClientId,
     redirectUri: config.cognitoRedirectUri,
     responseType: AuthSession.ResponseType.Code,
     scopes: config.cognitoScopes,
-    usePKCE: true
+    usePKCE: true,
+    ...(options.reauthenticate ? { prompt: AuthSession.Prompt.Login, extraParams: { max_age: '0' } }
+      : options.identityProvider === 'Google' ? { extraParams: { identity_provider: 'Google' } } : {})
   });
 
   const discovery: AuthSession.DiscoveryDocument = {
@@ -126,10 +130,17 @@ export const signInWithCognito = async (): Promise<AuthTokens> => {
     throw new AuthError('Cognito authorization code is missing.');
   }
 
-  const tokens = await exchangeCodeForTokens(code, request.codeVerifier);
+  return exchangeCodeForTokens(code, request.codeVerifier);
+};
+
+export const signInWithCognito = async (options: CognitoSignInOptions = {}): Promise<AuthTokens> => {
+  const tokens = await authorizeWithCognito(options);
   await saveAuthTokens(tokens);
   return tokens;
 };
+
+// Linking proves recent native ownership without replacing the active session.
+export const reauthenticateWithCognito = (): Promise<AuthTokens> => authorizeWithCognito({ reauthenticate: true });
 
 export const signOutFromCognito = async (): Promise<void> => {
   await clearAuthTokens();

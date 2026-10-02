@@ -1,15 +1,18 @@
+import { requireWebImageDeliveryAccess } from './webImageDelivery.js';
+import { imageMobileAccess, publicImageProvenance, readImageProvenance, readGenerationImageProvenance, type ImageDeliveryAudience } from '../domain/generation/ImageAccessPolicy.js';
+import { toJobPresentation } from '../services/job/JobPresentation.js';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import {
   generationJobHistoryResponseSchema,
   generationJobResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
-import { ValidationError } from '../domain/errors/index.js';
+import { NotFoundError, ValidationError } from '../domain/errors/index.js';
 import {
   decodeGenerationJobHistoryCursor,
   encodeGenerationJobHistoryCursor,
 } from '../domain/pagination.js';
-import type { GenerationJob } from '../domain/types/job.js';
+import type { GenerationJob, GenerationJobStatus, GenerationJobType } from '../domain/types/job.js';
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import { env } from '../lib/env.js';
 import {
@@ -28,6 +31,11 @@ import { assertMobileResponseContract } from './mobileResponseContract.js';
 const uuidParamSchema = z.string().uuid();
 const DEFAULT_JOB_HISTORY_LIMIT = 25;
 const MAX_JOB_HISTORY_LIMIT = 100;
+const LEGACY_JOB_TYPES = ['page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton'] as const;
+const V2_JOB_TYPES = [...LEGACY_JOB_TYPES, 'entity_import_analysis'] as const;
+// Negotiate before querying so pagination contains only types the client can parse.
+// The version changes representation only; ownership and image delivery remain independent.
+type JobContractVersion = 'v1' | 'v2';
 const episodeStateSourceFieldSchema = z.enum([
   'story_full_draft', 'introduction', 'middle', 'climax', 'ending_hook',
   'scene_location', 'scene_time', 'scene_atmosphere',
@@ -83,6 +91,9 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     const user = c.get('user');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const version = parseJobContractVersion(c);
+    const allowedJobTypes = version === 'v2' ? V2_JOB_TYPES : LEGACY_JOB_TYPES;
+    const requestedJobTypes = parseJobFilter(c.req.query('type'), allowedJobTypes, 'type') as GenerationJobType[];
     const limit = parseJobHistoryLimit(c.req.query('limit'));
     const encodedCursor = c.req.query('cursor');
     const cursor = encodedCursor === undefined
@@ -92,10 +103,13 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
       organizationId,
       limit,
       cursor,
+      ...(c.req.query('status') === undefined ? {} : { statuses: parseJobFilter(c.req.query('status'), ['queued', 'processing', 'completed', 'failed', 'canceled', 'cancelled'], 'status').map((status) => status === 'canceled' ? 'cancelled' : status) as GenerationJobStatus[] }),
+      jobTypes: requestedJobTypes.length > 0 ? requestedJobTypes : allowedJobTypes,
     });
 
+    const canEdit = await canEditJobs(c, dependencies, organizationId);
     const payload = {
-      jobs: await Promise.all(page.jobs.map(toJobResponse)),
+      jobs: await Promise.all(page.jobs.map((job) => toJobResponse(job, 'mobile', canEdit))),
       next_cursor:
         page.nextCursor === null
           ? null
@@ -111,9 +125,11 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     const jobId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const version = parseJobContractVersion(c);
     const job = await dependencies.jobService.getJob(user.id, jobId, organizationId);
+    requireSupportedJobType(job, version);
 
-    const payload = await toJobResponse(job);
+    const payload = await toJobResponse(job, 'mobile', await canEditJobs(c, dependencies, organizationId));
     return c.json(assertMobileResponseContract(generationJobResponseSchema, payload));
   });
 
@@ -131,13 +147,58 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
     const jobId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const version = parseJobContractVersion(c);
+    if (version === 'v1') {
+      requireSupportedJobType(await dependencies.jobService.getJob(user.id, jobId, organizationId), version);
+    }
     const job = await dependencies.jobService.cancelJob(user.id, jobId, organizationId);
 
     const payload = await toJobResponse(job);
     return c.json(assertMobileResponseContract(generationJobResponseSchema, payload));
   });
 
+
+  app.get('/web/jobs/:id', async (c) => {
+    requireWebImageDeliveryAccess(c);
+    const user = c.get('user');
+    const jobId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const version = parseJobContractVersion(c);
+    const job = await dependencies.jobService.getJob(user.id, jobId, organizationId);
+    requireSupportedJobType(job, version);
+
+    const payload = await toJobResponse(job, 'authorized_web', await canEditJobs(c, dependencies, organizationId));
+    return c.json(assertMobileResponseContract(generationJobResponseSchema, payload));
+  });
+
   return app;
+}
+
+function parseJobContractVersion(c: Context<AppEnv>): JobContractVersion {
+  const raw = c.req.query('job_contract');
+  if (raw === undefined || raw === 'v1') return 'v1';
+  if (raw === 'v2') return 'v2';
+  throw new ValidationError('job_contract must be v1 or v2');
+}
+
+function requireSupportedJobType(job: GenerationJob, version: JobContractVersion): void {
+  if (version === 'v1' && job.jobType === 'entity_import_analysis') throw new NotFoundError('Job not found');
+}
+
+async function canEditJobs(c: Context<AppEnv>, dependencies: JobRouteDependencies, organizationId: string | null): Promise<boolean> {
+  if (organizationId === null) return true;
+  if (!env.GENERATION_JOB_CANCELLATION_ENABLED && !env.EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED) return false;
+  try { await dependencies.organizationService?.requireMembership(organizationId, c.get('user').id, 'edit_work'); return dependencies.organizationService !== undefined; }
+  catch { return false; }
+}
+
+function parseJobFilter(raw: string | undefined, allowed: readonly string[], name: string): string[] {
+  if (raw === undefined || raw.trim() === '') return [];
+  if (raw.length > 256) throw new ValidationError(`${name} filter is too long`);
+  const values = raw.split(',').map((value) => value.trim());
+  if (values.some((value) => value === '' || !allowed.includes(value))) throw new ValidationError(`${name} contains an unsupported value`);
+  return [...new Set(values)];
 }
 
 function parseJobHistoryLimit(rawLimit: string | undefined): number {
@@ -170,7 +231,7 @@ function parseUuidParam(c: Context<AppEnv>, name: string): string {
   return result.data;
 }
 
-async function toJobResponse(job: GenerationJob): Promise<Record<string, unknown>> {
+async function toJobResponse(job: GenerationJob, audience: ImageDeliveryAudience = 'mobile', canEdit = true): Promise<Record<string, unknown>> {
   return {
     id: job.id,
     job_type: job.jobType,
@@ -178,8 +239,8 @@ async function toJobResponse(job: GenerationJob): Promise<Record<string, unknown
     generation_mode: job.generationMode,
     credit_cost: job.creditCost,
     params: toJobParamsResponse(job),
-    result: await toJobResultResponse(job),
-    error_message: job.errorMessage,
+    result: await toJobResultResponse(job, audience),
+    ...toJobPresentation(job, canEdit && (job.jobType === 'episode_story_autofill' ? env.EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED : env.GENERATION_JOB_CANCELLATION_ENABLED)),
     retry_count: job.retryCount,
     created_at: job.createdAt.toISOString(),
     started_at: job.startedAt?.toISOString() ?? null,
@@ -192,8 +253,14 @@ async function toJobResponse(job: GenerationJob): Promise<Record<string, unknown
 }
 
 function toJobParamsResponse(job: GenerationJob): Record<string, unknown> {
-  if (job.jobType === 'entity_generate') {
+  if (job.jobType === 'entity_import_analysis') {
     return pickKnownFields(job.params, ['entity_id', 'entity_type']);
+  }
+  if (job.jobType === 'entity_generate') {
+    const legacy = pickKnownFields(job.params, ['entity_id', 'entity_type']);
+    return job.params.target === 'entity_state'
+      ? { ...legacy, target: 'entity_state', ...pickKnownFields(job.params, ['entity_state_id', 'state_revision']) }
+      : legacy;
   }
 
   if (job.jobType === 'episode_story_autofill') {
@@ -223,13 +290,28 @@ function toJobParamsResponse(job: GenerationJob): Record<string, unknown> {
   ]);
 }
 
-async function toJobResultResponse(job: GenerationJob): Promise<Record<string, unknown> | null> {
+async function toJobResultResponse(job: GenerationJob, audience: ImageDeliveryAudience = 'mobile'): Promise<Record<string, unknown> | null> {
   if (job.result === null) {
     return null;
   }
+  if (job.jobType === 'entity_import_analysis') {
+    const analysis = job.result.import_analysis;
+    if (typeof analysis !== 'object' || analysis === null || Array.isArray(analysis)) return null;
+    const fields = analysis as Record<string, unknown>;
+    if (typeof fields.tmp_image_s3_key !== 'string' || typeof fields.prompt_supplement !== 'string') return null;
+    return {
+      suggested_fields: fields.suggested_fields,
+      prompt_supplement: fields.prompt_supplement,
+      tmp_image_token: createReferenceCandidateToken({
+        userId: job.userId,
+        entityId: typeof fields.entity_id === 'string' ? fields.entity_id : '',
+        s3Key: fields.tmp_image_s3_key,
+      }, { secret: getReferenceCandidateTokenSecret() }),
+    };
+  }
 
   if (job.jobType === 'entity_generate') {
-    return await toEntityGenerationResultResponse(job);
+    return await toEntityGenerationResultResponse(job, audience);
   }
 
   if (job.jobType === 'episode_story_autofill') {
@@ -253,9 +335,7 @@ function toEpisodeStoryAutofillResultResponse(result: Record<string, unknown>): 
     'compiler_provider',
     'compiler_model',
     'compiler_prompt_version',
-    'compiler_error',
     'progress_stage',
-    'progress_message',
     'progress_current_chunk',
     'progress_total_chunks',
     'progress_started_at',
@@ -277,19 +357,22 @@ function toEpisodeStoryAutofillResultResponse(result: Record<string, unknown>): 
 }
 
 function toEpisodePageSkeletonResultResponse(result: Record<string, unknown>): Record<string, unknown> {
-  return pickKnownFields(result, [
+  const response = pickKnownFields(result, [
     'pages_created',
     'panels_created',
     'replaced_existing',
     'story_plan_applied',
     'story_plan_result',
     'progress_stage',
-    'progress_message',
     'progress_current_chunk',
     'progress_total_chunks',
     'progress_started_at',
     'progress_updated_at',
   ]);
+  if (isRecord(response.story_plan_result)) {
+    response.story_plan_result = pickKnownFields(response.story_plan_result, ['updated_page_count', 'updated_panel_count', 'updated_assignment_count', 'filled_field_count', 'compiler_used', 'compiler_provider', 'compiler_model', 'compiler_prompt_version']);
+  }
+  return response;
 }
 
 function toPageGenerationResultResponse(result: Record<string, unknown>): Record<string, unknown> {
@@ -306,15 +389,19 @@ function toPageGenerationResultResponse(result: Record<string, unknown>): Record
   return response;
 }
 
-async function toEntityGenerationResultResponse(job: GenerationJob): Promise<Record<string, unknown>> {
+async function toEntityGenerationResultResponse(job: GenerationJob, audience: ImageDeliveryAudience = 'mobile'): Promise<Record<string, unknown>> {
   const result = job.result ?? {};
   const response: Record<string, unknown> = {};
+  const provenance = readGenerationImageProvenance(job.params, job.result);
+  Object.assign(response, publicImageProvenance(provenance));
   response.provider_result = isProviderResult(job);
+  const access = imageMobileAccess(provenance);
+  if (access === 'unavailable' || (access === 'web_only' && audience !== 'authorized_web')) return response;
 
   const entityId = typeof job.params.entity_id === 'string' ? job.params.entity_id : null;
   const candidates = entityId === null
     ? []
-    : await toEntityCandidateResponse(result.candidates, job, entityId);
+    : await toEntityCandidateResponse(result.candidates, job, entityId, audience);
   if (candidates.length > 0) {
     response.candidates = candidates;
   }
@@ -350,7 +437,7 @@ function toGeneratedImageResponse(value: unknown): Record<string, unknown> | nul
     return null;
   }
 
-  const response = pickKnownFields(value, ['generation_mode', 'generated_at']);
+  const response = { ...pickKnownFields(value, ['generation_mode', 'generated_at']), ...publicImageProvenance(readImageProvenance(value)) };
   return Object.keys(response).length === 0 ? null : response;
 }
 
@@ -362,6 +449,7 @@ async function toEntityCandidateResponse(
   value: unknown,
   job: GenerationJob,
   entityId: string,
+  audience: ImageDeliveryAudience = 'mobile',
 ): Promise<Array<Record<string, unknown>>> {
   if (!Array.isArray(value)) {
     return [];
@@ -372,6 +460,8 @@ async function toEntityCandidateResponse(
       return null;
     }
 
+    const access = imageMobileAccess(readImageProvenance(candidate));
+    if (access === 'unavailable' || (access === 'web_only' && audience !== 'authorized_web')) return null;
     const signedCdnUrl = typeof candidate.cdn_url === 'string'
       ? await signImageCdnUrl(candidate.cdn_url, candidate.s3_key)
       : null;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
 
 const nullableText200 = z.string().trim().min(1).max(200).nullable();
 const nullableText500 = z.string().trim().min(1).max(500).nullable();
@@ -62,7 +63,7 @@ export const autofillPanelSuggestionSchema = z
     situation_text: nullableText2000.optional(),
     composition: autofillCompositionSchema.optional(),
     dialogue_in_panel: z.boolean().optional(),
-    dialogue: z.array(autofillDialogueLineSchema).max(20).optional(),
+    dialogue: z.array(autofillDialogueLineSchema).max(EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL).optional(),
     sfx_text: nullableText200.optional(),
     background_note: nullableText2000.optional(),
     panel_notes: nullableText2000.optional(),

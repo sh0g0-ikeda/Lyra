@@ -248,7 +248,8 @@ describe('scene routes', () => {
       description: '左頬に傷がある',
       updated_at: now.toISOString(),
     });
-    expect(payload).not.toHaveProperty('reference_image');
+    expect(payload).toMatchObject({reference_status:'draft',reference_image:null});
+    expect(JSON.stringify(payload)).not.toContain('s3_key');
   });
 
   it('状態名だけのEntity state作成はVALIDATION_ERRORになる', async () => {

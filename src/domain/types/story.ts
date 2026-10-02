@@ -82,6 +82,7 @@ export interface CreateWorkInput {
 }
 
 export interface UpdateWorkInput {
+  expectedUpdatedAt?: string;
   title?: string;
   genre?: string | null;
   worldSetting?: string | null;
@@ -105,6 +106,7 @@ export interface CreateChapterInput {
 }
 
 export interface UpdateChapterInput {
+  expectedUpdatedAt?: string;
   order?: number;
   title?: string | null;
   purpose?: string | null;
@@ -131,6 +133,7 @@ export interface CreateEpisodeInput {
 }
 
 export interface UpdateEpisodeInput {
+  expectedUpdatedAt?: string;
   order?: number;
   title?: string | null;
   purpose?: string | null;

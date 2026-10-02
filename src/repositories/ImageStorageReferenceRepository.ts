@@ -66,6 +66,32 @@ export class PostgresImageStorageReferenceRepository implements ImageStorageRefe
           AND params ? 'source_s3_key'
           AND created_at >= NOW() - ($1::int * INTERVAL '1 hour')
       ),
+      retained_state_reference_copies AS (
+        -- Intents survive copy/commit failures and replacements. Do not age them
+        -- out while their job remains: account deletion owns exact-key cleanup.
+        SELECT copy_intent->>'s3_key' AS s3_key
+        FROM generation_jobs
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(result->'state_reference_copies') = 'array'
+            THEN result->'state_reference_copies' ELSE '[]'::jsonb END
+        ) AS copy_intent
+        WHERE job_type = 'entity_generate'
+          AND params->>'target' = 'entity_state'
+      ),
+      retained_fenced_state_reference_keys AS (
+        -- All states, including scrubbed terminal rows: the same key retains its
+        -- ordinary marker forever unless a separately reviewed protocol replaces it.
+        SELECT s3_key FROM state_reference_copy_attempts
+        UNION ALL
+        SELECT candidate_s3_key AS s3_key FROM state_reference_copy_attempts WHERE scrubbed_at IS NULL
+      ),
+      quoted_import_images AS (
+        SELECT params->>'source_s3_key' AS s3_key FROM generation_jobs
+        WHERE job_type = 'entity_import_analysis'
+        UNION ALL
+        SELECT result->>'import_copy_intent' AS s3_key FROM generation_jobs
+        WHERE job_type = 'entity_import_analysis'
+      ),
       retained_input_snapshot_reference_images AS (
         SELECT reference_image->>'s3Key' AS s3_key
         FROM generation_jobs
@@ -75,6 +101,8 @@ export class PostgresImageStorageReferenceRepository implements ImageStorageRefe
               THEN generation_jobs.result->'input_snapshot'->'references'
             ELSE '[]'::jsonb
           END
+          || CASE WHEN jsonb_typeof(generation_jobs.result->'retained_input_references') = 'array'
+            THEN generation_jobs.result->'retained_input_references' ELSE '[]'::jsonb END
         ) AS reference_image
       )
       SELECT DISTINCT s3_key
@@ -90,6 +118,12 @@ export class PostgresImageStorageReferenceRepository implements ImageStorageRefe
         SELECT s3_key FROM recent_entity_source_images
         UNION ALL
         SELECT s3_key FROM retained_input_snapshot_reference_images
+        UNION ALL
+        SELECT s3_key FROM retained_state_reference_copies
+        UNION ALL
+        SELECT s3_key FROM quoted_import_images
+        UNION ALL
+        SELECT s3_key FROM retained_fenced_state_reference_keys
       ) AS protected_keys
       WHERE s3_key IS NOT NULL
         AND s3_key <> ''

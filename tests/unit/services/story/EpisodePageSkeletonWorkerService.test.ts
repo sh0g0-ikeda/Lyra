@@ -164,7 +164,9 @@ class FakePageService implements PageServicePort {
     throw new Error('not implemented');
   }
 
+  public autofillCalls = 0;
   public async autofillEpisodeFromStory(): Promise<EpisodePagePlanApplyResult> {
+    this.autofillCalls += 1;
     return this.autofillResult;
   }
 }
@@ -191,7 +193,7 @@ describe('EpisodePageSkeletonWorkerService', () => {
     expect(repository.failed).toBeNull();
   });
 
-  it('rolls back a newly created skeleton when story plan application cannot use the compiler', async () => {
+  it('旧jobがapply_story_plan=trueでも新規skeletonからautofillを自動実行しない', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     repository.job = {
       ...repository.job!,
@@ -218,19 +220,15 @@ describe('EpisodePageSkeletonWorkerService', () => {
 
     const result = await worker.processJob('55555555-5555-4555-8555-555555555555');
 
-    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
-    expect(repository.completed).toBeNull();
-    expect(repository.failed).not.toBeNull();
-    expect(pageSkeletonService.rollbackCalls).toEqual([
-      {
-        userId: 'user-1',
-        episodeId: '33333333-3333-4333-8333-333333333333',
-        expectedPageCount: 2,
-      },
-    ]);
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(repository.completed).toMatchObject({ storyPlanApplied: false, storyPlanResult: null });
+    expect(pageService.autofillCalls).toBe(0);
+    expect(repository.failed).toBeNull();
+    expect(pageService.autofillCalls).toBe(0);
+    expect(pageSkeletonService.rollbackCalls).toEqual([]);
   });
 
-  it('does not rollback overwritten pages when story plan application fails', async () => {
+  it('旧jobがapply_story_plan=trueでも置換skeletonからautofillを自動実行しない', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     repository.job = {
       ...repository.job!,
@@ -257,7 +255,8 @@ describe('EpisodePageSkeletonWorkerService', () => {
 
     const result = await worker.processJob('55555555-5555-4555-8555-555555555555');
 
-    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(pageService.autofillCalls).toBe(0);
     expect(pageSkeletonService.rollbackCalls).toEqual([]);
   });
 

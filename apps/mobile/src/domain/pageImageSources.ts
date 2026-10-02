@@ -1,3 +1,4 @@
+import { canDisplayMobileImage } from '@/domain/imageAccess';
 import {
   buildPageImageCacheKey,
   resolvePageImageDelivery,
@@ -32,6 +33,7 @@ export function buildFullPageImageSource(
 export function buildFullPageImageSources(
   input: PageImageSourceInput,
 ): RemoteImageSource[] {
+  if (!canDisplayMobileImage(input.page.generated_image)) return [];
   const revision =
     input.page.generated_image?.generated_at ?? input.page.updated_at;
   const fullCacheKey = buildPageImageCacheKey({
@@ -83,6 +85,7 @@ export function buildPageThumbnailImageSource(
 export function buildPageThumbnailImageSources(
   input: PageImageSourceInput,
 ): RemoteImageSource[] {
+  if (!canDisplayMobileImage(input.page.generated_image)) return [];
   const revision =
     input.page.generated_image?.generated_at ?? input.page.updated_at;
   const thumbnailCacheKey = buildPageImageCacheKey({

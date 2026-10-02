@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Keyboard, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { useNavigation } from '@react-navigation/native';
+import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image as ExpoImage } from 'expo-image';
 
@@ -14,6 +14,17 @@ import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { JobStatusCard } from '@/components/JobStatusCard';
 import { LayoutTemplatePreview, type FramePreviewDefinition } from '@/components/LayoutTemplatePreview';
 import { Notice } from '@/components/Notice';
+import { PageCreationStepActions, PageCreationStepNavigation, PageWorkflowSection } from '@/components/PageCreationWorkflow';
+import { PageSettingsPreview } from '@/components/PageSettingsPreview';
+import { inferPageCreationStep, nextPageInSequence, type PageCreationStep } from '@/domain/pageCreationWorkflow';
+import { pageWorkflowMessage } from '@/lib/pageWorkflowMessages';
+import { collectOperationFailures, operationFailure } from '@/lib/operationErrorContext';
+import { PageGenerationQuoteDialog } from '@/components/PageGenerationQuoteDialog';
+import { PageGenerationResultModal } from '@/components/PageGenerationResultModal';
+import { usePageGenerationQuote } from '@/hooks/usePageGenerationQuote';
+import { usePageCompletion } from '@/hooks/usePageCompletion';
+import { useConfirmationPresentation } from '@/lib/confirmationPresentation';
+import { useMangaWorkflow } from '@/state/mangaWorkflow';
 import { PageCompletionActions } from '@/components/PageCompletionActions';
 import { PageGenerationActions } from '@/components/PageGenerationActions';
 import { PageImageViewer } from '@/components/PageImageViewer';
@@ -22,6 +33,7 @@ import { PageThumbnailPicker } from '@/components/PageThumbnailPicker';
 import { PageProvenanceFields } from '@/components/PageProvenanceFields';
 import { PanelDialoguePlacementNotice } from '@/components/PanelDialoguePlacementNotice';
 import { PanelDialogueEditor } from '@/components/PanelDialogueEditor';
+import { EntityStatePicker } from '@/components/EntityStatePicker';
 import { PanelEditorSections } from '@/components/PanelEditorSections';
 import { PanelOrderList } from '@/components/PanelOrderList';
 import { PrimaryButton } from '@/components/PrimaryButton';
@@ -29,6 +41,10 @@ import { RecordPicker } from '@/components/RecordPicker';
 import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 import { SegmentedControl } from '@/components/SegmentedControl';
+import { EpisodeStateAutofillResult } from '@/components/EpisodeStateAutofillResult';
+import { StoryStateAutofillOptions } from '@/components/StoryStateAutofillOptions';
+import { confirmStoryStateAutofill } from '@/lib/confirmStoryStateAutofill';
+import type { EpisodeStateAutofillChoice, EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
 import { StoryGenerationControls } from '@/components/StoryGenerationControls';
 import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
 import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
@@ -45,8 +61,7 @@ import {
   shotTypeOptions
 } from '@/constants/options';
 import {
-  pageLayoutEditingUiEnabled,
-  panelCharacterStateOverrideUiEnabled
+  pageLayoutEditingUiEnabled
 } from '@/constants/mobileFeatureVisibility';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import {
@@ -57,9 +72,9 @@ import {
   imageSourceListIdentity,
   type RemoteImageSource
 } from '@/domain/imageSourceCandidates';
-import { buildAtomicSaveAndGeneratePayload } from '@/domain/pageAtomicGeneration';
 import { isPanelDialogueSpeakerValid } from '@/domain/panelDialoguePolicy';
-import { buildPageEntityStateOptions } from '@/domain/pageEntityStateOptions';
+import { canDisplayMobileImage, imageAccessNotice } from '@/domain/imageAccess';
+import { canUseMobilePageImage, mobilePageExportCandidates } from '@/domain/mobilePageImageAccess';
 import { buildEpisodeExportPayload } from '@/domain/pageExport';
 import { createSafeLayoutTemplatePayload, selectExcessPanels } from '@/domain/pageSafety';
 import { selectPageForEpisode } from '@/domain/pageSelection';
@@ -81,6 +96,8 @@ import type {
 } from '@/domain/types';
 import { shouldOverwritePageSkeleton } from '@/domain/storyWorkflow';
 import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
+import { usePanelInsertion } from '@/hooks/usePanelInsertion';
+import { panelInsertionMessage } from '@/lib/panelInsertionMessages';
 import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
 import { appendAiProviderDisclosure } from '@/lib/aiProviderDisclosure';
@@ -92,6 +109,7 @@ import {
   pageGenerationBlockerRecoveryTarget
 } from '@/lib/errorRecovery';
 import { t } from '@/lib/i18n';
+import { editorMessage } from '@/lib/editorUiMessages';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
 import { ApiError } from '@/lib/api';
 import {
@@ -103,7 +121,6 @@ import {
   activeResourceJobQueryKey,
   entitiesInfiniteQueryKey,
   entitiesQueryKey,
-  entityStatesQueryKey,
   framesQueryKey,
   pageDetailQueryKey,
   pageGenerationReadinessQueryKey,
@@ -120,21 +137,13 @@ import {
 } from '@/lib/queryErrorPolicy';
 import {
   hasUnsavedNewPanelDraft,
-  isLegacyPageGenerationCapabilityUnavailable,
-  runPageGenerationWithLegacyFallback
+  isLegacyPageGenerationCapabilityUnavailable
 } from '@/lib/pageGenerationCompatibility';
-import { userErrorMessage } from '@/lib/userMessages';
 import type { MobileTabParamList } from '@/navigation/tabs';
 import { useAppState } from '@/state/appState';
 import { useDirtyEditorRegistration, useDirtyState } from '@/state/dirtyState';
 
 type ImageRequestHeaders = Record<string, string>;
-
-interface PageGenerationAttempt {
-  pageId: string;
-  payloadFingerprint: string;
-  idempotencyKey: string;
-}
 
 interface EpisodeExportAttempt {
   payloadFingerprint: string;
@@ -225,10 +234,6 @@ const readStyleReference = (layoutConfig: Record<string, unknown>): { title: str
   };
 };
 
-const generationErrorMessage = (error: unknown, language: 'ja' | 'en'): string | null => {
-  return error === null || error === undefined ? null : userErrorMessage(error, language);
-};
-
 const formatPageStatus = (status: PageRecord['status'], language: 'ja' | 'en'): string => {
   const labels: Record<PageRecord['status'], ScreenTranslationKey> = {
     designing: 'screen.pages.status.designing',
@@ -282,6 +287,7 @@ const generationBlockerMessages: Record<
   PANEL_ORDER_INVALID: 'screen.pages.blocker.panelOrderInvalid',
   DIALOGUE_SPEAKER_REQUIRED: 'screen.pages.blocker.dialogueSpeakerRequired',
   DIALOGUE_SPEAKER_NOT_IN_PANEL: 'screen.pages.blocker.dialogueSpeakerNotInPanel',
+  DIALOGUE_SPEAKER_INVALID: 'screen.pages.blocker.dialogueSpeakerInvalid',
   ASSIGNED_ENTITY_INVALID: 'screen.pages.blocker.assignedEntityInvalid',
   PAGE_GENERATING: 'screen.pages.blocker.pageGenerating',
   PAGE_REOPEN_REQUIRED: 'screen.pages.blocker.pageReopenRequired',
@@ -325,26 +331,6 @@ const labelOptions = <T extends string>(
     value: option.value,
     label: language === 'ja' ? option.labelJa : option.labelEn
   }));
-
-interface PanelDisclosureProps {
-  title: string;
-  defaultCollapsed?: boolean;
-  children: React.ReactNode;
-}
-
-function PanelDisclosure({ title, defaultCollapsed = false, children }: PanelDisclosureProps): React.JSX.Element {
-  const [collapsed, setCollapsed] = useState(defaultCollapsed);
-
-  return (
-    <View style={styles.panelDisclosure}>
-      <Pressable accessibilityRole="button" onPress={() => setCollapsed((current) => !current)} style={styles.panelDisclosureHeader}>
-        <Text style={styles.groupTitle}>{title}</Text>
-        <Text style={styles.panelDisclosureChevron}>{collapsed ? 'v' : '^'}</Text>
-      </Pressable>
-      {collapsed ? null : <View style={styles.panelDisclosureBody}>{children}</View>}
-    </View>
-  );
-}
 
 const toAssignmentDraft = (assignment: PanelEntityAssignmentRecord): AssignmentDraft => ({
   ...assignment,
@@ -416,74 +402,7 @@ const toFramePreviewDefinition = (draft: FrameDraft): FramePreviewDefinition => 
   }))
 });
 
-function EntityStatePicker(props: {
-  disabled?: boolean;
-  entityId: string;
-  language: 'ja' | 'en';
-  onSelect: (stateId: string | null) => void;
-  selectedStateId: string | null;
-}): React.JSX.Element {
-  const { api, selection, sessionKey } = useAppState();
-  const organizationId = selection.organizationId;
-  const statesQuery = useQuery({
-    queryKey: entityStatesQueryKey(sessionKey, props.entityId, organizationId),
-    queryFn: () => api.getEntityStates(props.entityId, organizationId)
-  });
-  const options = buildPageEntityStateOptions({
-    entityId: props.entityId,
-    language: props.language,
-    states: statesQuery.data?.entity_states ?? []
-  });
-  const selectedStateMissing =
-    props.selectedStateId !== null &&
-    !options.some((option) => option.id === props.selectedStateId);
-  const displayOptions = selectedStateMissing
-    ? [
-        ...options,
-        {
-          id: props.selectedStateId ?? '',
-          label: t(props.language, "generated.screens.PagesScreen.current.state.refresh.required.91442687")
-        }
-      ]
-    : options;
-  const selectedOption =
-    displayOptions.find((option) => option.id === (props.selectedStateId ?? '')) ??
-    displayOptions[0];
-
-  return (
-    <View style={styles.editorStack}>
-      <Text style={styles.label}>{t(props.language, "generated.screens.PagesScreen.continuity.state.1cb4d861")}</Text>
-      {statesQuery.error === null ? null : (
-        <Notice
-          message={t(props.language, "generated.screens.PagesScreen.state.options.could.not.be.loaded.refres.09d4b30d")}
-          tone="warning"
-        />
-      )}
-      {props.disabled ? (
-        <Text style={styles.readOnlyValue}>
-          {selectedOption?.label ??
-            t(props.language, "generated.screens.PagesScreen.no.state.override.716bb1b8")}
-        </Text>
-      ) : (
-        <RecordPicker
-          emptyLabel={
-            statesQuery.isPending
-              ? t(props.language, "generated.screens.PagesScreen.loading.states.a49a997c")
-              : t(props.language, "generated.screens.PagesScreen.no.state.override.716bb1b8")
-          }
-          items={displayOptions}
-          labelForItem={(option) => option.label}
-          language={props.language}
-          onSelect={(stateId) => props.onSelect(stateId.length === 0 ? null : stateId)}
-          searchable={false}
-          selectedId={props.selectedStateId ?? ''}
-        />
-      )}
-    </View>
-  );
-}
-
-function AssignmentEditor(props: {
+export function AssignmentEditor(props: {
   assignments: AssignmentDraft[];
   entities: EntityRecord[];
   language: 'ja' | 'en';
@@ -491,10 +410,13 @@ function AssignmentEditor(props: {
   disabled?: boolean;
 }): React.JSX.Element {
   const [removedAssignment, setRemovedAssignment] = useState<{ assignment: AssignmentDraft; index: number } | null>(null);
+  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const selectedAssignment = props.assignments.find(assignment => assignment.entity_id === selectedEntityId) ?? props.assignments[0] ?? null;
   const assignedIds = new Set(props.assignments.map((assignment) => assignment.entity_id));
   const availableEntities = props.entities.filter((entity) => !assignedIds.has(entity.id));
 
   const updateAssignment = (entityId: string, patch: Partial<AssignmentDraft>): void => {
+    if (props.disabled) return;
     props.onChange(
       props.assignments.map((assignment) =>
         assignment.entity_id === entityId ? { ...assignment, ...patch } : assignment
@@ -503,6 +425,8 @@ function AssignmentEditor(props: {
   };
 
   const addEntity = (entityId: string): void => {
+    if (props.disabled || assignedIds.has(entityId)) return;
+    setSelectedEntityId(entityId);
     setRemovedAssignment(null);
     props.onChange([
       ...props.assignments,
@@ -515,6 +439,7 @@ function AssignmentEditor(props: {
   };
 
   const removeAssignment = (entityId: string): void => {
+    if (props.disabled) return;
     const index = props.assignments.findIndex((assignment) => assignment.entity_id === entityId);
     const assignment = props.assignments[index];
     if (index < 0 || assignment === undefined) {
@@ -525,7 +450,7 @@ function AssignmentEditor(props: {
   };
 
   const undoRemove = (): void => {
-    if (removedAssignment === null) {
+    if (props.disabled || removedAssignment === null) {
       return;
     }
     const insertIndex = Math.min(removedAssignment.index, props.assignments.length);
@@ -534,6 +459,7 @@ function AssignmentEditor(props: {
       removedAssignment.assignment,
       ...props.assignments.slice(insertIndex)
     ]);
+    setSelectedEntityId(removedAssignment.assignment.entity_id);
     setRemovedAssignment(null);
   };
 
@@ -557,7 +483,15 @@ function AssignmentEditor(props: {
           <PrimaryButton disabled={props.disabled} label={t(props.language, "generated.screens.PagesScreen.undo.0b96087f")} onPress={undoRemove} variant="ghost" />
         </View>
       )}
-      {props.assignments.map((assignment) => {
+      <View accessibilityRole="tablist" style={styles.chipRow}>
+        {props.assignments.map(assignment => <Pressable key={assignment.entity_id}
+          accessibilityRole="tab" accessibilityState={{ selected: selectedAssignment?.entity_id === assignment.entity_id }}
+          onPress={() => setSelectedEntityId(assignment.entity_id)} testID={`assignment-select-${assignment.entity_id}`}
+          style={[styles.chip, selectedAssignment?.entity_id === assignment.entity_id ? { borderColor: colors.primary } : null]}>
+          <Text style={styles.chipLabel}>{props.entities.find(entity => entity.id === assignment.entity_id)?.name ?? assignment.entity_id}</Text>
+        </Pressable>)}
+      </View>
+      {(selectedAssignment === null ? [] : [selectedAssignment]).map((assignment) => {
         const entity = props.entities.find((item) => item.id === assignment.entity_id);
         return (
           <View key={assignment.entity_id} style={styles.subCard}>
@@ -615,17 +549,13 @@ function AssignmentEditor(props: {
               <FormField editable={!props.disabled} label={t(props.language, "generated.screens.PagesScreen.custom.pose.c687f0ab")} maxLength={100} onChangeText={(value) => updateAssignment(assignment.entity_id, { custom_action: value })} value={assignment.custom_action ?? ''} />
             ) : null}
             <FormField editable={!props.disabled} label={t(props.language, "generated.screens.PagesScreen.effect.e2da3225")} maxLength={200} onChangeText={(value) => updateAssignment(assignment.entity_id, { effect_note: value })} value={assignment.effect_note ?? ''} />
-            {panelCharacterStateOverrideUiEnabled ? (
-              <PanelDisclosure defaultCollapsed title={t(props.language, "generated.screens.PagesScreen.advanced.050db87b")}>
                 <EntityStatePicker
                   disabled={props.disabled}
                   entityId={assignment.entity_id}
-                  language={props.language}
+                  entityName={entity?.name ?? assignment.entity_id}
                   onSelect={(stateId) => updateAssignment(assignment.entity_id, { state_id: stateId })}
                   selectedStateId={assignment.state_id}
                 />
-              </PanelDisclosure>
-            ) : null}
           </View>
         );
       })}
@@ -733,13 +663,25 @@ function TemplatePickerModal({
 
 export function PagesScreen(): React.JSX.Element {
   const navigation = useNavigation<BottomTabNavigationProp<MobileTabParamList>>();
+  const focused = useIsFocused();
+  const mangaWorkflow = useMangaWorkflow();
+  const confirmationPresented = useConfirmationPresentation();
   const queryClient = useQueryClient();
-  const { api, hasCapability, language, logout, selection, sessionKey, tokens, trackJob, updateSelection } = useAppState();
-  const { resolveDirtyEditors } = useDirtyState();
+  const { api, hasCapability, language, logout, selection, session, sessionKey, tokens, trackJob, updateSelection } = useAppState();
+  const { hasDirtyEditors, resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEdit = hasCapability('edit_work');
   const canGenerate = hasCapability('generate');
   const canExport = hasCapability('export');
+  const stateAutofillScope = JSON.stringify([sessionKey, organizationId, selection.workId, selection.episodeId]);
+  const stateAutofillAvailable = session?.capabilities?.episode_state_autofill_v1 === true;
+  const [stateAutofillDraft, setStateAutofillDraft] = useState<{ scope: string; value: EpisodeStateAutofillChoice } | null>(null);
+  const stateAutofillChoice = stateAutofillDraft?.scope === stateAutofillScope ? stateAutofillDraft.value : { enabled: false, overwrite: false };
+  const currentAutofillScope = useRef({ scope: stateAutofillScope, available: stateAutofillAvailable, canGenerate });
+  useEffect(() => {
+    currentAutofillScope.current = { scope: stateAutofillScope, available: stateAutofillAvailable, canGenerate };
+  }, [canGenerate, stateAutofillAvailable, stateAutofillScope]);
+
   const [styleReferenceTitle, setStyleReferenceTitle] = useState('');
   const [styleReferenceNotes, setStyleReferenceNotes] = useState('');
   const [sourceSceneIds, setSourceSceneIds] = useState<string[]>([]);
@@ -781,6 +723,8 @@ export function PagesScreen(): React.JSX.Element {
     useState<PageDesignJob | null>(null);
   const [pageDesignJobEnqueued, setPageDesignJobEnqueued] = useState(false);
   const [pageStale, setPageStale] = useState(false);
+  const [resultRenderStyle, setResultRenderStyle] = useState<'color' | 'monochrome'>('color');
+  const [previewImagePageId, setPreviewImagePageId] = useState<string | null>(null);
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const [previewImageHeaders, setPreviewImageHeaders] = useState<ImageRequestHeaders | undefined>(undefined);
   const [failedPageImageSourceIdentity, setFailedPageImageSourceIdentity] =
@@ -789,11 +733,17 @@ export function PagesScreen(): React.JSX.Element {
   const [lastSyncedPanelId, setLastSyncedPanelId] = useState<string | null>(null);
   const [lastSyncedFramePageId, setLastSyncedFramePageId] =
     useState<string | null>(null);
-  const generationAttemptRef = useRef<PageGenerationAttempt | null>(null);
   const exportAttemptRef = useRef<EpisodeExportAttempt | null>(null);
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
   const activeEpisodeId = workspaceContext.selectedEpisodeId;
+  const pageWorkflowScope = JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, selection.pageId]);
+  const latestPageWorkflowScope = useRef(pageWorkflowScope);
+  const pageQuoteIntent = useRef(0);
+  const [nextPageLookup, setNextPageLookup] = useState<{ scope: string; error: boolean; loading: boolean } | null>(null);
+  useLayoutEffect(() => { latestPageWorkflowScope.current = pageWorkflowScope; pageQuoteIntent.current += 1; }, [pageWorkflowScope]);
+  const resultTriggerRef = useRef<View | null>(null);
+  const screenScrollRef = useRef<ScrollView | null>(null);
 
   const pagesQuery = useInfiniteQuery({
     enabled: activeEpisodeId !== null,
@@ -917,7 +867,6 @@ export function PagesScreen(): React.JSX.Element {
   }, [pageLayoutTemplatesQuery.data?.templates, templateId]);
 
   useEffect(() => {
-    generationAttemptRef.current = null;
     setPageStale(false);
   }, [selectedPage?.id]);
 
@@ -936,7 +885,7 @@ export function PagesScreen(): React.JSX.Element {
   }, [activeEpisodeId, organizationId, sessionKey]);
 
   const generatedPages = useMemo(
-    () => pages.filter((page) => page.generated_image !== null),
+    () => pages.filter(canUseMobilePageImage),
     [pages]
   );
   const imageAuthorizationHeader = useMemo<string | null>(
@@ -1036,12 +985,12 @@ export function PagesScreen(): React.JSX.Element {
   );
 
   const entities = useMemo(
-    () => flattenUniqueRecords(entitiesQuery.data?.pages.map((page) => page.entities) ?? []),
-    [entitiesQuery.data?.pages],
+    () => flattenUniqueRecords(entitiesQuery.data?.pages.map((page) => page.entities) ?? []).filter(entity => entity.work_id === activeWorkId),
+    [activeWorkId, entitiesQuery.data?.pages],
   );
   const scenes = scenesQuery.data?.scenes ?? [];
   const assignedEntityIds = assignments.map((assignment) => assignment.entity_id);
-  const panelEntities = entities.filter((entity) => assignedEntityIds.includes(entity.id));
+  const workEntityIds = entities.map((entity) => entity.id);
 
   const pageValuesDiffer =
     selectedPage === null
@@ -1110,7 +1059,7 @@ export function PagesScreen(): React.JSX.Element {
     dialogues.some(
       (dialogue) =>
         dialogue.text.trim().length > 0 &&
-        !isPanelDialogueSpeakerValid(dialogue.type, dialogue.entity_id, assignedEntityIds)
+        !isPanelDialogueSpeakerValid(dialogue.type, dialogue.entity_id, workEntityIds)
     ) ||
     assignments.length > 20 ||
     assignments.some((assignment) =>
@@ -1606,6 +1555,11 @@ export function PagesScreen(): React.JSX.Element {
     }
   });
 
+  const latestPageDraft = useRef({ revision: pageEditorRevision, dirty: pageDirty || panelDirty || framesDirty });
+  const quotedPageDraftRevision = useRef<string | null>(null);
+  const [quoteDraftStale, setQuoteDraftStale] = useState(false);
+  useLayoutEffect(() => { latestPageDraft.current = { revision: pageEditorRevision, dirty: pageDirty || panelDirty || framesDirty }; }, [pageEditorRevision, pageDirty, panelDirty, framesDirty]);
+
   useDirtyEditorRegistration({
     id: 'pages-editor',
     revision: pageEditorRevision,
@@ -1674,28 +1628,31 @@ export function PagesScreen(): React.JSX.Element {
       setLocalPageDesignJob(null);
       setPageDesignJobEnqueued(false);
     },
-    mutationFn: async () => {
+    mutationFn: async (request: { scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined }) => {
+      const canSubmit = (): boolean => currentAutofillScope.current.scope === request.scope && currentAutofillScope.current.canGenerate &&
+        (request.options === undefined || currentAutofillScope.current.available);
+      if (!canSubmit()) throw new Error(t(language, 'shared.error.workspacePermission'));
       await saveAllPageDrafts();
+      if (!canSubmit()) throw new Error(t(language, 'shared.error.workspacePermission'));
       return api.autofillEpisodePagesFromStory(
-        activeEpisodeId ?? '',
+        request.episodeId,
         language,
-        organizationId
+        organizationId,
+        request.options
       );
     },
-    onSuccess: async (result) => {
-      setLocalPageDesignJob({
-        id: result.job_id,
-        kind: 'autofill',
-        resourceId: activeEpisodeId ?? ''
-      });
-      setPageDesignJobEnqueued(true);
+    onSuccess: async (result, request) => {
+      if (currentAutofillScope.current.scope === request.scope) {
+        setLocalPageDesignJob({ id: result.job_id, kind: 'autofill', resourceId: request.episodeId });
+        setPageDesignJobEnqueued(true);
+      }
       await Promise.allSettled([
         trackJob(result.job_id),
         invalidatePageDesignResources()
       ]);
     },
-    onError: () => {
-      setPageDesignJobEnqueued(false);
+    onError: (_error, request) => {
+      if (currentAutofillScope.current.scope === request.scope) setPageDesignJobEnqueued(false);
     }
   });
 
@@ -1713,105 +1670,51 @@ export function PagesScreen(): React.JSX.Element {
     }
   });
 
-  const generatePageMutation = useMutation({
-    mutationFn: async () => {
-      if (selectedPage === null) {
-        throw new Error(t(language, "generated.screens.PagesScreen.select.a.page.first.390bc86e"));
-      }
-      const payload = buildAtomicSaveAndGeneratePayload({
-        page: selectedPage,
-        pagePatch: {
-          style_reference: styleReferencePayload(),
-          story_source_scene_ids: sourceSceneIds,
-          story_page_purpose: nullable(pagePurpose),
-          story_continuity_note: nullable(continuityNote)
-        },
-        panels: panelsQuery.data?.panels ?? [],
-        selectedPanelOverride:
-          selectedPanel === null
-            ? null
-            : {
-                panelId: selectedPanel.id,
-                fields: {
-                  ...panelPayload(),
-                  entities: assignments.map(toAssignmentRecord)
-                }
-              },
-        frames: frameDrafts.map(toFrameRecord),
-        language
-      });
-      const payloadFingerprint = JSON.stringify(payload);
-      const currentAttempt = generationAttemptRef.current;
-      const attempt =
-        currentAttempt !== null &&
-        currentAttempt.pageId === selectedPage.id &&
-        currentAttempt.payloadFingerprint === payloadFingerprint
-          ? currentAttempt
-          : {
-              pageId: selectedPage.id,
-              payloadFingerprint,
-              idempotencyKey: `mobile-page-${selectedPage.id}-${Date.now().toString(36)}`
-            };
-      generationAttemptRef.current = attempt;
-      return runPageGenerationWithLegacyFallback({
-        saveAndGenerate: () =>
-          api.saveAndGeneratePage(
-            selectedPage.id,
-            payload,
-            attempt.idempotencyKey,
-            organizationId
-          ),
-        saveDrafts: saveAllPageDrafts,
-        generateLegacy: () => api.generatePage(selectedPage.id, organizationId)
-      });
+  const [pageStepSelection, setPageStepSelection] = useState<{ scope: string; step: PageCreationStep } | null>(null);
+  const pageStep = pageStepSelection?.scope === pageWorkflowScope ? pageStepSelection.step : inferPageCreationStep({
+    hasPage: selectedPage !== null,
+    hasFrames: frameDrafts.length > 0,
+    hasSettings: (panelsQuery.data?.panels ?? []).some((panel) => Boolean(panel.situation_text?.trim()) || panel.entities.length > 0 || panel.dialogue.length > 0),
+    hasImage: selectedPage?.generated_image != null
+  });
+  const changePageStep = (step: PageCreationStep): void => {
+    Keyboard.dismiss();
+    setPageStepSelection({ scope: pageWorkflowScope, step });
+    screenScrollRef.current?.scrollTo({ y: 0, animated: true });
+  };
+  const pageCreationFocused = focused && (mangaWorkflow === null || mangaWorkflow.activeStep === 'pages') && pageStep === 'create';
+  const generationQuotesAvailable = session?.capabilities?.generation_quotes === true;
+  const generationQuote = usePageGenerationQuote({
+    api, contextKey: pageWorkflowScope, organizationId, enabled: canGenerate && generationQuotesAvailable && pageCreationFocused,
+    prepare: async (target) => {
+      setQuoteDraftStale(false);
+      if (target.pageId === selectedPage?.id) {
+        if (unsavedNewPanelDraft || panelPayloadInvalid || frameDraftsInvalid) throw new Error('Current page input must be reviewed before generation');
+        await saveAllPageDrafts();
+      } else if (!(await resolveDirtyEditors(language, { includeNonBlocking: true }))) return null;
+      const saved = await api.getPage(target.pageId, organizationId);
+      if (saved.episode_id !== activeEpisodeId) throw new Error('Page is not in the selected episode');
+      if (latestPageDraft.current.dirty) throw new Error('Input changed while preparing the quote');
+      quotedPageDraftRevision.current = latestPageDraft.current.revision;
+      return { ...target, pageNumber: saved.page_number, operation: saved.generated_image === null ? 'page_generate' : 'page_regenerate' };
     },
-    onSuccess: async (result) => {
-      generationAttemptRef.current = null;
+    onAccepted: async (receipt, target, originKey) => {
+      if (receipt.job_id === null) return;
       setPageStale(false);
-      setLocalJob({
-        id: result.job_id,
-        resourceId: selectedPage?.id ?? '',
-      });
-      await trackJob(result.job_id);
-      await invalidatePages();
-      await invalidatePanels();
-      await invalidateFrames();
-    },
-    onError: (error) => {
-      if (error instanceof ApiError && error.code === 'PAGE_STALE') {
-        setPageStale(true);
+      setLocalJob({ id: receipt.job_id, resourceId: target.pageId });
+      if (originKey === pageWorkflowScope && pageCreationFocused) {
+        const changed = await updateSelection({ pageId: target.pageId });
+        if (changed) setPageStepSelection({ scope: JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, target.pageId]), step: 'create' });
       }
+      await Promise.allSettled([trackJob(receipt.job_id), invalidatePages(), invalidatePanels(), invalidateFrames()]);
     }
   });
-
-  const generateMonochromePageMutation = useMutation({
-    mutationFn: async () => {
-      if (selectedPage === null) {
-        throw new Error(t(language, "generated.screens.PagesScreen.select.a.page.first.390bc86e"));
-      }
-      await saveAllPageDrafts();
-      return api.generatePage(selectedPage.id, organizationId, 'monochrome');
-    },
-    onSuccess: async (result) => {
-      generationAttemptRef.current = null;
-      setPageStale(false);
-      setLocalJob({
-        id: result.job_id,
-        resourceId: selectedPage?.id ?? '',
-      });
-      await trackJob(result.job_id);
-      await invalidatePages();
-      await invalidatePanels();
-      await invalidateFrames();
-    },
-    onError: (error) => {
-      if (error instanceof ApiError && error.code === 'PAGE_STALE') {
-        setPageStale(true);
-      }
-    }
-  });
-
-  const pageGenerationPending = generatePageMutation.isPending || generateMonochromePageMutation.isPending;
+  const quoteBusy = generationQuote.state.phase === 'quoting' || generationQuote.state.phase === 'accepting';
+  const closeGenerationQuote = useCallback((): void => generationQuote.controller.close(), [generationQuote.controller]);
+  // Keep existing UI loading/error/reset consumers without an alternate paid path.
+  const generatePageMutation = { isPending: quoteBusy && generationQuote.state.target?.renderStyle === 'color', error: null, reset: closeGenerationQuote };
+  const generateMonochromePageMutation = { isPending: quoteBusy && generationQuote.state.target?.renderStyle === 'monochrome', error: null, reset: closeGenerationQuote };
+  const pageGenerationPending = quoteBusy;
 
   const confirmPageMutation = useMutation({
     mutationFn: async () => {
@@ -1829,13 +1732,15 @@ export function PagesScreen(): React.JSX.Element {
   });
 
   const downloadPageMutation = useMutation({
-    mutationFn: () =>
-      downloadAuthenticatedFile({
+    mutationFn: () => {
+      if (!canUseMobilePageImage(selectedPage)) throw new Error(imageAccessNotice(language));
+      return downloadAuthenticatedFile({
         path: appendOrganizationQuery(`/api/pages/${encodeURIComponent(selectedPage?.id ?? '')}/export-image`, organizationId),
         filename: exportFilename,
         tokens,
         mimeType: 'image/png'
-      }),
+      });
+    },
     onError: (error) => {
       setPageImageDownloadSuccess(false);
       setPageImageDownloadError(fileTransferErrorMessage(error, language));
@@ -1858,11 +1763,7 @@ export function PagesScreen(): React.JSX.Element {
         filename: exportFilename,
         format: exportFormat,
         mode,
-        pages: pages.map((page) => ({
-          id: page.id,
-          pageNumber: page.page_number,
-          hasGeneratedImage: page.generated_image !== null
-        })),
+        pages: mobilePageExportCandidates(pages),
         selectedPageIds: exportSelectedPageIds
       });
       const payloadFingerprint = JSON.stringify({
@@ -1983,13 +1884,14 @@ export function PagesScreen(): React.JSX.Element {
 
   const previewPage = (pageId: string): void => {
     const page = pages.find((candidate) => candidate.id === pageId);
-    if (page === undefined) {
+    if (page === undefined || !canUseMobilePageImage(page)) {
       return;
     }
     const source = pageThumbnailImageSourcesFor(page)[0];
     if (source === undefined) {
       return;
     }
+    setPreviewImagePageId(page.id);
     setPreviewImageHeaders(source.headers);
     setPreviewImageUri(source.uri);
   };
@@ -2011,7 +1913,6 @@ export function PagesScreen(): React.JSX.Element {
   };
 
   const reloadAfterPageStale = async (): Promise<void> => {
-    generationAttemptRef.current = null;
     setLastSyncedPageId(null);
     setLastSyncedPanelId(null);
     setLastSyncedFramePageId(null);
@@ -2088,6 +1989,33 @@ export function PagesScreen(): React.JSX.Element {
     pageStoryAutofillMutation.isPending ||
     cancelPageDesignJobMutation.isPending;
 
+  const panelInsertion = usePanelInsertion({
+    api, sessionKey, organizationId, workId: activeWorkId, episodeId: activeEpisodeId,
+    pageId: selectedPage?.id ?? null, selectedPanelId: panelId,
+    panels: panelsQuery.data?.panels, canEdit,
+    dirty: pageDirty || panelDirty || framesDirty,
+    busy: pageDesignOperationActive || activeServerJobId !== null ||
+      generatePageMutation.isPending || generateMonochromePageMutation.isPending ||
+      updatePageMutation.isPending || createPanelMutation.isPending ||
+      updatePanelMutation.isPending || deletePanelMutation.isPending ||
+      reorderPanelMutation.isPending || changePanelRoleMutation.isPending ||
+      replaceFramesMutation.isPending || applyTemplateMutation.isPending ||
+      applyFrameTemplateMutation.isPending || autofillPageFromScenesMutation.isPending ||
+      confirmPageMutation.isPending || reopenPageMutation.isPending,
+    status: selectedPage?.status,
+    onSelect: setPanelId
+  });
+  const confirmInsertPanelAfter = (): void => {
+    if (panelInsertion.blocker !== null) return;
+    confirmAction({
+      language,
+      title: panelInsertionMessage(language, 'action'),
+      message: panelInsertionMessage(language, 'confirmation'),
+      confirmLabel: panelInsertionMessage(language, 'action'),
+      onConfirm: () => { void panelInsertion.insertAfter(); }
+    });
+  };
+
   const confirmPageSkeletonGeneration = (): void => {
     if (
       !canGenerate ||
@@ -2125,28 +2053,21 @@ export function PagesScreen(): React.JSX.Element {
   };
 
   const confirmPageStoryAutofill = (): void => {
-    if (
-      !canGenerate ||
-      activeEpisodeId === null ||
-      pageDesignOperationActive
-    ) {
-      return;
-    }
+    if (!canGenerate || activeEpisodeId === null || pageDesignOperationActive) return;
+    const episodeId = activeEpisodeId;
+    const scope = stateAutofillScope;
+    const available = stateAutofillAvailable;
+    const choice = { ...stateAutofillChoice };
+    const isCurrent = (): boolean => currentAutofillScope.current.scope === scope && currentAutofillScope.current.canGenerate &&
+      (!choice.enabled || !available || currentAutofillScope.current.available);
     void resolveDirtyEditors(language).then((canContinue) => {
-      if (!canContinue) {
-        return;
-      }
-      confirmAction({
+      if (!canContinue || !isCurrent()) return;
+      confirmStoryStateAutofill({
         language,
-        title: t(language, 'component.storyGenerationControls.autofillAction'),
-        message: appendAiProviderDisclosure(
-          t(language, 'screen.pages.design.autofillConfirmation'),
-          language,
-          'text'
-        ),
-        confirmLabel: t(language, 'component.storyGenerationControls.autofillAction'),
-        destructive: true,
-        onConfirm: () => pageStoryAutofillMutation.mutate()
+        available,
+        choice,
+        isCurrent,
+        onConfirm: (options) => pageStoryAutofillMutation.mutate({ scope, episodeId, options })
       });
     });
   };
@@ -2198,37 +2119,16 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const confirmGeneratePage = (): void => {
-    confirmAction({
-      language,
-      title: t(language, "generated.screens.PagesScreen.generate.page.image.a3a86143"),
-      message: appendAiProviderDisclosure(
-        `${t(language, 'screen.pages.generatePageConfirmation', {
-          creditCost: readiness?.estimated_credit_cost ?? '3+'
-        })}\n\n${t(language, 'component.jobStatusCard.imageDurationEstimate')}`,
-        language,
-        'text'
-      ),
-      confirmLabel: t(language, 'generate'),
-      onConfirm: () => generatePageMutation.mutate()
-    });
+  const requestPageQuote = (renderStyle: 'color' | 'monochrome'): void => {
+    pageQuoteIntent.current += 1;
+    if (selectedPage === null) return;
+    changePageStep('create');
+    completion.close();
+    setResultRenderStyle(renderStyle);
+    void generationQuote.controller.open({ pageId: selectedPage.id, pageNumber: selectedPage.page_number, renderStyle });
   };
-
-  const confirmGenerateMonochromePage = (): void => {
-    confirmAction({
-      language,
-      title: t(language, "generated.screens.PagesScreen.generate.page.image.a3a86143"),
-      message: appendAiProviderDisclosure(
-        `${t(language, 'screen.pages.generatePageConfirmation', {
-          creditCost: readiness?.estimated_credit_cost ?? '3+'
-        })}\n\n${t(language, 'component.jobStatusCard.imageDurationEstimate')}`,
-        language,
-        'text'
-      ),
-      confirmLabel: t(language, 'generateMonochrome'),
-      onConfirm: () => generateMonochromePageMutation.mutate()
-    });
-  };
+  const confirmGeneratePage = (): void => requestPageQuote('color');
+  const confirmGenerateMonochromePage = (): void => requestPageQuote('monochrome');
 
   const confirmConfirmPage = (): void => {
     confirmAction({
@@ -2250,26 +2150,27 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const mutationErrors = [
-    updatePageMutation.error,
-    autofillPageFromScenesMutation.error,
-    applyTemplateMutation.error,
-    applyFrameTemplateMutation.error,
-    replaceFramesMutation.error,
-    createPanelMutation.error,
-    updatePanelMutation.error,
-    deletePanelMutation.error,
-    reorderPanelMutation.error,
-    changePanelRoleMutation.error,
-    pageSkeletonMutation.error,
-    pageStoryAutofillMutation.error,
-    cancelPageDesignJobMutation.error,
-    generatePageMutation.error,
-    confirmPageMutation.error,
-    reopenPageMutation.error,
-    exportPagesMutation.error,
-    openWebEditorMutation.error
-  ].filter((error): error is Error => error instanceof Error);
+  const mutationErrors = collectOperationFailures([
+    operationFailure('savePage', updatePageMutation.error, pageDirty ? 'page' : undefined),
+    operationFailure('autofillScenes', autofillPageFromScenesMutation.error, pageDirty ? 'page' : undefined),
+    operationFailure('applyLayout', applyTemplateMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('applyFrameLayout', applyFrameTemplateMutation.error, framesDirty ? 'frames' : undefined),
+    operationFailure('saveFrames', replaceFramesMutation.error, framesDirty ? 'frames' : undefined),
+    operationFailure('createPanel', createPanelMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('savePanel', updatePanelMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('deletePanel', deletePanelMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('reorderPanels', reorderPanelMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('changePanelRole', changePanelRoleMutation.error, panelDirty ? 'panel' : undefined),
+    operationFailure('createPageSkeleton', pageSkeletonMutation.error),
+    operationFailure('autofillStory', pageStoryAutofillMutation.error),
+    operationFailure('cancelPageDesign', cancelPageDesignJobMutation.error),
+    operationFailure('generatePage', generatePageMutation.error),
+    operationFailure('generateMonochromePage', generateMonochromePageMutation.error),
+    operationFailure('confirmPage', confirmPageMutation.error),
+    operationFailure('reopenPage', reopenPageMutation.error),
+    operationFailure('exportPages', exportPagesMutation.error),
+    operationFailure('openWebEditor', openWebEditorMutation.error)
+  ]);
   const pagesError = currentQueryError({
     data: pagesQuery.data,
     enabled: activeEpisodeId !== null,
@@ -2312,61 +2213,59 @@ export function PagesScreen(): React.JSX.Element {
     enabled: pageHierarchyReady && activeWorkId !== null,
     error: entitiesQuery.error
   });
-  const queryFailures = [
+  const queryFailures = collectOperationFailures([
     {
-      error: pagesError,
+      ...operationFailure('loadPages', pagesError),
       retry: () => {
         void pagesQuery.refetch();
       }
     },
     {
-      error: selectedPageError,
+      ...operationFailure('loadPage', selectedPageError),
       retry: () => {
         void selectedPageQuery.refetch();
       }
     },
     {
-      error: panelsError,
+      ...operationFailure('loadPanels', panelsError),
       retry: () => {
         void panelsQuery.refetch();
       }
     },
     {
-      error: framesError,
+      ...operationFailure('loadFrames', framesError),
       retry: () => {
         void framesQuery.refetch();
       }
     },
     {
-      error: pageLayoutTemplatesError,
+      ...operationFailure('loadLayouts', pageLayoutTemplatesError),
       retry: () => {
         void pageLayoutTemplatesQuery.refetch();
       }
     },
     {
-      error: pageGenerationReadinessError,
+      ...operationFailure('loadReadiness', pageGenerationReadinessError),
       retry: () => {
         void pageGenerationReadinessQuery.refetch();
       }
     },
     {
-      error: scenesError,
+      ...operationFailure('loadScenes', scenesError),
       retry: () => {
         void scenesQuery.refetch();
       }
     },
     {
-      error: entitiesError,
+      ...operationFailure('loadCharacters', entitiesError),
       retry: () => {
         void entitiesQuery.refetch();
       }
     },
-  ].filter(
-    (failure): failure is { error: Error; retry: () => void } =>
-      failure.error instanceof Error
-  );
+  ]);
 
   const toggleExportPage = (pageId: string): void => {
+    if (!pages.some((page) => page.id === pageId && canUseMobilePageImage(page))) return;
     setExportSelectedPageIds((current) =>
       current.includes(pageId) ? current.filter((id) => id !== pageId) : [...current, pageId]
     );
@@ -2401,9 +2300,58 @@ export function PagesScreen(): React.JSX.Element {
     () => frameDrafts.map(toFramePreviewDefinition),
     [frameDrafts]
   );
+  const previewPanels = (panelsQuery.data?.panels ?? []).map((panel) => panel.id === panelId ? {
+    ...panel, situation_text: nullable(situationText), background_note: nullable(backgroundNote),
+    entities: assignments.map(toAssignmentRecord), dialogue: dialogues
+  } : panel);
+  useEffect(() => mangaWorkflow?.registerPageBackHandler?.(() => {
+    if (pageStep === 'design') return false;
+    setPageStepSelection({ scope: pageWorkflowScope, step: pageStep === 'create' ? 'settings' : 'design' });
+    return true;
+  }), [mangaWorkflow, pageStep, pageWorkflowScope]);
+  const selectedImageAllowed = canDisplayMobileImage(selectedPage?.generated_image);
+  const previewImagePage = pages.find((page) => page.id === previewImagePageId) ?? (selectedPage?.id === previewImagePageId ? selectedPage : null);
+  const completion = usePageCompletion({
+    targetKey: pageWorkflowScope,
+    focused: pageCreationFocused,
+    dirty: hasDirtyEditors,
+    presentationBusy: !selectedImageAllowed || confirmationPresented || quoteBusy || generationQuote.state.visible || templateModalVisible || previewImageUri !== null
+  });
+  const nextLoadedPage = nextPageInSequence(pages, selectedPage?.id ?? null);
+  const handlePageGenerationCompleted = async (jobId: string, pageId: string): Promise<void> => {
+    await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
+    try {
+      const job = await api.getJob(jobId, organizationId);
+      if (job.status !== 'completed' || job.job_type !== 'page_generate' || job.params.page_id !== pageId) return;
+      const saved = await api.getPage(pageId, organizationId);
+      if (saved.episode_id !== activeEpisodeId || !canUseMobilePageImage(saved)) return;
+      queryClient.setQueryData<{ pages: { pages: PageRecord[] }[] }>(pagesInfiniteQueryKey(sessionKey, activeEpisodeId, organizationId), (current) => current === undefined ? current : ({ ...current, pages: current.pages.map((page) => ({ ...page, pages: page.pages.map((entry) => entry.id === saved.id ? saved : entry) })) }));
+      setResultRenderStyle(job.params.render_style === 'monochrome' || (generationQuote.state.quote?.target_id === pageId && generationQuote.state.quote.render_style === 'monochrome') ? 'monochrome' : 'color');
+      completion.complete({ jobId, pageId, pageNumber: saved.page_number, imageSources: fullPageImageSourcesFor(saved), targetKey: JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, pageId]) });
+    } catch { /* Fail closed; the existing image/refresh controls remain available. */ }
+  };
+  const openCurrentResult = (): void => {
+    if (selectedPage === null || !canUseMobilePageImage(selectedPage) || activeServerJobId !== null) return;
+    completion.open({ jobId: completion.result?.jobId ?? `saved:${selectedPage.id}:${selectedPage.generated_image?.generated_at ?? selectedPage.updated_at}`, pageId: selectedPage.id, pageNumber: selectedPage.page_number, imageSources: selectedPageImageSources, targetKey: pageWorkflowScope });
+  };
+  const requestNextPageQuote = async (): Promise<void> => {
+    if (selectedPage === null || activeEpisodeId === null) return;
+    const origin = pageWorkflowScope;
+    const intent = ++pageQuoteIntent.current;
+    completion.close();
+    setNextPageLookup({ scope: origin, error: false, loading: true });
+    try {
+      const allPages = await api.getPages(activeEpisodeId, organizationId);
+      if (latestPageWorkflowScope.current !== origin || pageQuoteIntent.current !== intent) return;
+      const next = nextPageInSequence(allPages.pages, selectedPage.id);
+      if (next === null) { changePageStep('design'); return; }
+      await generationQuote.controller.open({ pageId: next.id, pageNumber: next.page_number, renderStyle: resultRenderStyle });
+    } catch { if (latestPageWorkflowScope.current === origin) setNextPageLookup({ scope: origin, error: true, loading: false }); }
+    finally { setNextPageLookup((current) => current?.scope === origin ? { ...current, loading: false } : current); }
+  };
+
   const panelRoleSegments = labelOptions(panelRoleOptions, language);
   const panelSizeSegments = labelOptions(panelSizeOptions, language);
-  const errorMessage = generationErrorMessage(generatePageMutation.error, language);
   const readiness = pageGenerationReadinessQuery.data ?? null;
   const pageRequiresReopen = selectedPage?.status === 'confirmed';
   const serverGenerationBlocked =
@@ -2419,17 +2367,10 @@ export function PagesScreen(): React.JSX.Element {
     void invalidatePageLayoutTemplates();
     void invalidatePageReadiness();
   };
-  const primaryPageFailure =
-    queryFailures[0] ??
-    (mutationErrors[0] === undefined
-      ? null
-      : {
-          error: mutationErrors[0],
-          retry: () => {
-            void invalidatePages();
-          }
-        });
-  const primaryPageError = primaryPageFailure?.error ?? null;
+  const pageFailures = collectOperationFailures([
+    ...queryFailures,
+    ...mutationErrors.map((failure) => ({ ...failure, retry: refreshPages }))
+  ]);
   const navigateAfterDirtyCheck = (
     target: 'Account' | 'Characters'
   ): void => {
@@ -2442,6 +2383,7 @@ export function PagesScreen(): React.JSX.Element {
 
   return (
     <Screen
+      scrollViewRef={screenScrollRef}
       onRefresh={refreshPages}
       refreshing={
         pagesQuery.isFetching ||
@@ -2452,8 +2394,7 @@ export function PagesScreen(): React.JSX.Element {
         scenesQuery.isFetching ||
         entitiesQuery.isFetching
       }
-      subtitle={t(language, "generated.screens.PagesScreen.review.each.page.scene.source.layout.and.ddfabd30")}
-      title={t(language, 'pages')}
+      title={editorMessage(language, 'pagesTitle')}
     >
       <WorkspaceHierarchyNavigator context={workspaceContext} />
       {!canEdit ? (
@@ -2463,27 +2404,27 @@ export function PagesScreen(): React.JSX.Element {
         />
       ) : null}
       {activeEpisodeId === null ? <Notice message={t(language, 'selectEpisodeFirst')} tone="warning" /> : null}
-      <Section
-        collapsible
-        persistKey="pages:design"
-        subtitle={t(language, 'screen.pages.design.subtitle')}
-        title={t(language, 'screen.pages.design.title')}
-        tone="highlight"
-      >
-        <StoryGenerationControls
+      <PageCreationStepNavigation language={language} step={pageStep} hasPage={selectedPage !== null} onChange={changePageStep} />
+      <PageWorkflowSection active={pageStep === 'design'}>
+      <Section persistKey="pages:design" title={pageWorkflowMessage(language, 'design')} tone="highlight">
+        <Text style={styles.metric}>{pageWorkflowMessage(language, 'designCount', { pages: existingEpisodePageCount, panels: existingEpisodePanelCount })}</Text>
+        {selectedPage === null ? <Notice message={pageWorkflowMessage(language, 'noDesign')} tone="info" /> : <LayoutTemplatePreview frames={currentFramePreviewFrames} title={pageWorkflowMessage(language, 'currentDesign')} />}
+        <StoryGenerationControls visibleAction="skeleton"
           canGenerate={canGenerate}
           estimatedPagesInvalid={false}
           hasActiveJob={pageDesignOperationActive}
           jobEnqueued={pageDesignJobEnqueued}
           language={language}
-          onApplyStory={confirmPageStoryAutofill}
-          onGenerateSkeleton={confirmPageSkeletonGeneration}
+          onApplyStory={() => { changePageStep('settings'); confirmPageStoryAutofill(); }}
+          onGenerateSkeleton={() => { changePageStep('design'); confirmPageSkeletonGeneration(); }}
           overwrite={overwritePageSkeleton}
           pagesLoading={pagesQuery.isLoading}
           selectedEpisode={activeEpisodeId !== null}
           skeletonLoading={pageSkeletonMutation.isPending}
           storyApplyLoading={pageStoryAutofillMutation.isPending}
         />
+      </Section>
+      </PageWorkflowSection>
         <JobStatusCard
           api={api}
           cancelLoading={cancelPageDesignJobMutation.isPending}
@@ -2520,10 +2461,11 @@ export function PagesScreen(): React.JSX.Element {
           }}
           sessionKey={sessionKey}
         />
-      </Section>
-      {primaryPageError === null ? null : (
+      {pageFailures.map((failure, index) => (
         <PageErrorRecoveryNotice
-          error={primaryPageError}
+          key={`${failure.context.operation}-${index}`}
+          context={failure.context}
+          error={failure.error}
           language={language}
           onAccount={() => navigateAfterDirtyCheck('Account')}
           onCharacters={() => navigateAfterDirtyCheck('Characters')}
@@ -2539,12 +2481,12 @@ export function PagesScreen(): React.JSX.Element {
             void reloadAfterPageStale();
           }}
           onRetry={() => {
-            primaryPageFailure?.retry();
+            failure.retry();
           }}
         />
-      )}
+      ))}
 
-      <Section collapsible persistKey="pages:list" title={t(language, 'pageList')}>
+      <Section collapsible persistKey="pages:list" title={editorMessage(language, 'pageList')} subtitle={editorMessage(language, 'pageListHelp')}>
         <PageThumbnailPicker
           emptyLabel={t(language, 'emptyPages')}
           hasNextPage={pagesQuery.hasNextPage}
@@ -2561,8 +2503,39 @@ export function PagesScreen(): React.JSX.Element {
           selectedId={selection.pageId}
           statusLabelFor={(status) => formatPageStatus(status, language)}
         />
+        <Text style={styles.label}>{pageWorkflowMessage(language, 'jump')}</Text>
+        <RecordPicker items={pages} selectedId={selection.pageId} language={language} emptyLabel={t(language, 'emptyPages')}
+          labelForItem={(page) => pageWorkflowMessage(language, 'page', { number: page.page_number })}
+          onSelect={switchPage} hasNextPage={pagesQuery.hasNextPage} isFetchingNextPage={pagesQuery.isFetchingNextPage}
+          onEndReached={() => { void pagesQuery.fetchNextPage(); }} />
       </Section>
 
+      <PageWorkflowSection active={pageStep === 'settings'}>
+      <Section collapsible persistKey="pages:settings-autofill" title={pageWorkflowMessage(language, 'settings')} tone="highlight">
+        <StoryStateAutofillOptions
+          available={stateAutofillAvailable}
+          disabled={!canGenerate || activeEpisodeId === null || pageDesignOperationActive}
+          language={language}
+          value={stateAutofillChoice}
+          onChange={(value) => setStateAutofillDraft({ scope: stateAutofillScope, value })}
+        />
+        <StoryGenerationControls visibleAction="autofill"
+          canGenerate={canGenerate}
+          estimatedPagesInvalid={false}
+          hasActiveJob={pageDesignOperationActive}
+          jobEnqueued={pageDesignJobEnqueued}
+          language={language}
+          onApplyStory={() => { changePageStep('settings'); confirmPageStoryAutofill(); }}
+          onGenerateSkeleton={() => { changePageStep('design'); confirmPageSkeletonGeneration(); }}
+          overwrite={overwritePageSkeleton}
+          pagesLoading={pagesQuery.isLoading}
+          selectedEpisode={activeEpisodeId !== null}
+          skeletonLoading={pageSkeletonMutation.isPending}
+          storyApplyLoading={pageStoryAutofillMutation.isPending}
+        />
+        {stateAutofillAvailable ? <EpisodeStateAutofillResult jobId={displayedPageDesignJobId} episodeId={activeEpisodeId} entities={entities} canEdit={canEdit} /> : null}
+      </Section>
+      <PageSettingsPreview language={language} panels={previewPanels} entities={entities} pageNumber={selectedPage?.page_number ?? null} />
       {selectedPage?.status === 'confirmed' ? (
         <Section
           persistKey="pages:confirmed-summary"
@@ -2584,13 +2557,13 @@ export function PagesScreen(): React.JSX.Element {
         </Section>
       ) : (
         <>
-      <Section collapsible defaultCollapsed persistKey="pages:style" title={t(language, 'styleReference')}>
+      <Section collapsible defaultCollapsed persistKey="pages:style" title={editorMessage(language, 'artStyle')}>
         <FormField editable={canEdit} label={t(language, 'styleReferenceTitle')} maxLength={200} onChangeText={setStyleReferenceTitle} value={styleReferenceTitle} />
         <FormField editable={canEdit} label={t(language, 'styleReferenceNotes')} maxLength={2000} multiline onChangeText={setStyleReferenceNotes} value={styleReferenceNotes} />
-        <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} />
+        <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} variant="secondary" />
       </Section>
 
-      <Section collapsible defaultCollapsed persistKey="pages:story-sources" title={t(language, "generated.screens.PagesScreen.story.sources.82e34b3e")}>
+      <Section collapsible defaultCollapsed persistKey="pages:story-sources" title={editorMessage(language, 'storyFlow')}>
         <PageProvenanceFields
           continuityNote={continuityNote}
           editable={canEdit}
@@ -2601,14 +2574,14 @@ export function PagesScreen(): React.JSX.Element {
           scenes={scenes}
           sourceSceneIds={sourceSceneIds}
         />
-        <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} />
+        <PrimaryButton disabled={!canEdit || selectedPage === null} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : undefined} label={t(language, 'save')} loading={updatePageMutation.isPending} onPress={() => updatePageMutation.mutate()} variant="secondary" />
       </Section>
 
       <Section
         collapsible
         defaultCollapsed
         persistKey="pages:scene-autofill"
-        title={t(language, 'component.pageSceneAutofill.apply')}
+        title={editorMessage(language, 'applyScene')}
       >
         <PageSceneAutofillAction
           canEdit={canEdit}
@@ -2801,12 +2774,12 @@ export function PagesScreen(): React.JSX.Element {
       <Section
         collapsible
         persistKey="pages:panels"
-        subtitle={t(language, "generated.screens.PagesScreen.refine.situation.characters.composition.e7ce8a4f")}
-        title={t(language, 'panels')}
+        subtitle={editorMessage(language, 'panelHelp')}
+        title={editorMessage(language, 'panelSettings')}
       >
         <PanelOrderList
           disabled={
-            !canEdit ||
+            !canEdit || panelInsertion.operationActive ||
             reorderPanelMutation.isPending ||
             changePanelRoleMutation.isPending ||
             deletePanelMutation.isPending
@@ -2819,13 +2792,40 @@ export function PagesScreen(): React.JSX.Element {
           onMove={(targetPanelId, direction) =>
             reorderPanelMutation.mutate({ direction, targetPanelId })
           }
-          onSelect={switchPanel}
+          onSelect={(nextPanelId) => { if (!panelInsertion.operationActive) switchPanel(nextPanelId); }}
           panels={panelsQuery.data?.panels ?? []}
           selectedPanelId={panelId}
         />
 
+        <PrimaryButton
+          disabled={panelInsertion.blocker !== null}
+          disabledReason={panelInsertion.blocker === null ? undefined : panelInsertionMessage(language, panelInsertion.blocker)}
+          label={panelInsertionMessage(language, 'action')}
+          loading={panelInsertion.operationActive}
+          onPress={confirmInsertPanelAfter}
+          variant="secondary"
+        />
+        {panelInsertion.notice === null ? null : (
+          <Notice
+            message={panelInsertionMessage(language, panelInsertion.notice)}
+            tone={panelInsertion.operationActive ? 'info' : 'warning'}
+            actionLabel={panelInsertion.operationActive ? undefined : panelInsertionMessage(language, 'reload')}
+            onAction={panelInsertion.operationActive ? undefined : () => { void panelInsertion.reload(); }}
+          />
+        )}
+
         <PanelEditorSections
+          disabled={
+            selectedPanel === null || panelInsertion.operationActive ||
+            selectedPage?.status === 'generating' ||
+            pageDesignOperationActive || activeServerJobId !== null ||
+            generatePageMutation.isPending || generateMonochromePageMutation.isPending ||
+            createPanelMutation.isPending || deletePanelMutation.isPending ||
+            reorderPanelMutation.isPending
+          }
+          key={`${organizationId ?? 'personal'}:${selection.pageId ?? 'new-page'}:${panelId ?? 'new-panel'}`}
           language={language}
+          panelId={panelId}
           sections={{
             situationAndBackground: (
               <>
@@ -2897,6 +2897,7 @@ export function PagesScreen(): React.JSX.Element {
             ),
             characters: (
               <AssignmentEditor
+                key={`${selection.pageId ?? 'no-page'}:${panelId ?? 'new-panel'}`}
                 assignments={assignments}
                 disabled={!canEdit}
                 entities={entities}
@@ -2912,9 +2913,14 @@ export function PagesScreen(): React.JSX.Element {
                   onOpenWeb={() => openWebEditorMutation.mutate()}
                 />
                 <PanelDialogueEditor
+                key={`${selection.pageId ?? 'no-page'}:${panelId ?? 'new-panel'}`}
                   dialogues={dialogues}
                   disabled={!canEdit}
-                  entities={panelEntities}
+                  entities={entities}
+                  visibleEntityIds={assignedEntityIds}
+                  hasMoreEntities={entitiesQuery.hasNextPage}
+                  loadingEntities={entitiesQuery.isFetchingNextPage}
+                  onLoadMoreEntities={() => { void entitiesQuery.fetchNextPage(); }}
                   language={language}
                   onChange={setDialogues}
                 />
@@ -2948,12 +2954,14 @@ export function PagesScreen(): React.JSX.Element {
           />
         ) : null}
         <View style={styles.buttonRow}>
-          <PrimaryButton disabled={!canEdit || selectedPage === null || panelPayloadInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : panelPayloadInvalid ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a") : undefined} label={t(language, 'create')} loading={createPanelMutation.isPending} onPress={() => createPanelMutation.mutate()} />
-          <PrimaryButton disabled={!canEdit || selectedPanel === null || panelPayloadInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPanel === null ? t(language, "generated.screens.PagesScreen.select.a.panel.first.4b816ba0") : panelPayloadInvalid ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a") : undefined} label={t(language, 'save')} loading={updatePanelMutation.isPending} onPress={() => updatePanelMutation.mutate()} variant="secondary" />
+          <PrimaryButton testID="panel-save" disabled={!canEdit || panelInsertion.operationActive || selectedPanel === null || panelPayloadInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPanel === null ? t(language, "generated.screens.PagesScreen.select.a.panel.first.4b816ba0") : panelPayloadInvalid ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a") : undefined} label={t(language, 'save')} loading={updatePanelMutation.isPending} onPress={() => updatePanelMutation.mutate()} variant="secondary" />
         </View>
       </Section>
         </>
       )}
+      </PageWorkflowSection>
+      <PageWorkflowSection active={pageStep === 'create'}>
+      <PageSettingsPreview language={language} panels={previewPanels} entities={entities} pageNumber={selectedPage?.page_number ?? null} />
       <PageCompletionActions
         exportSection={config.episodeExportEnabled ? (
       <Section
@@ -3038,7 +3046,7 @@ export function PagesScreen(): React.JSX.Element {
           <PrimaryButton
             disabled={!canExport || generatedPages.length === 0}
             disabledReason={!canExport ? t(language, "generated.screens.PagesScreen.export.permission.is.required.8c8fb948") : generatedPages.length === 0 ? t(language, "generated.screens.PagesScreen.no.generated.pages.361afdeb") : undefined}
-            label={t(language, "generated.screens.PagesScreen.export.all.db6ff2da")}
+            label={pageWorkflowMessage(language, 'exportAvailable')}
             loading={exportPagesMutation.isPending}
             onPress={() => exportPagesMutation.mutate('all')}
             variant="ghost"
@@ -3065,7 +3073,6 @@ export function PagesScreen(): React.JSX.Element {
 
         generationSection={(
       <Section
-        subtitle={t(language, "generated.screens.PagesScreen.the.current.page.including.unsaved.input.17ec50bf")}
         title={t(language, 'generate')}
         tone="highlight"
       >
@@ -3083,6 +3090,7 @@ export function PagesScreen(): React.JSX.Element {
           confirmed={pageRequiresReopen}
           confirmLoading={confirmPageMutation.isPending}
           generateDisabled={
+            !generationQuotesAvailable ||
             !canGenerate ||
             selectedPage === null ||
             pageRequiresReopen ||
@@ -3095,6 +3103,7 @@ export function PagesScreen(): React.JSX.Element {
             pageGenerationPending
           }
           generateDisabledReason={
+            !generationQuotesAvailable ? pageWorkflowMessage(language, 'quoteUnavailable') :
             !canGenerate
               ? t(language, "generated.screens.PagesScreen.generation.permission.is.required.1bc5b7af")
               : selectedPage === null
@@ -3124,8 +3133,14 @@ export function PagesScreen(): React.JSX.Element {
           onReopen={confirmReopenPage}
           reopenLoading={reopenPageMutation.isPending}
         />
+        {!generationQuotesAvailable ? <Notice message={pageWorkflowMessage(language, 'quoteUnavailable')} tone="info" /> : null}
+        <Text style={styles.caption}>{pageWorkflowMessage(language, 'quoteSaving')}</Text>
+        <Text style={styles.caption}>{t(language, 'component.jobStatusCard.imageDurationEstimate')}</Text>
+        {nextPageLookup?.scope === pageWorkflowScope && nextPageLookup.loading ? <Notice message={pageWorkflowMessage(language, 'morePages')} tone="info" /> : null}
+        {nextPageLookup?.scope === pageWorkflowScope && nextPageLookup.error ? <Notice message={pageWorkflowMessage(language, 'quoteError')} tone="warning" /> : null}
+        {!canUseMobilePageImage(selectedPage) ? null : <PrimaryButton buttonRef={resultTriggerRef} disabled={activeServerJobId !== null} label={pageWorkflowMessage(language, 'viewResult')} onPress={openCurrentResult} variant="secondary" testID="page-open-result" />}
         <View style={styles.pageImageFrame}>
-          {selectedPage === null || selectedPage.generated_image === null || pageImageFailed ? (
+          {!selectedImageAllowed ? <Notice message={imageAccessNotice(language)} tone="warning" /> : selectedPage === null || selectedPage.generated_image === null || pageImageFailed ? (
             <Text style={styles.emptySmall}>
               {pageImageFailed
                 ? t(language, "generated.screens.PagesScreen.could.not.load.the.image.pull.down.to.re.b3172b34")
@@ -3141,6 +3156,8 @@ export function PagesScreen(): React.JSX.Element {
                 )
               }
               onExpand={(source) => {
+                if (!canUseMobilePageImage(selectedPage)) return;
+                setPreviewImagePageId(selectedPage.id);
                 setPreviewImageHeaders(source.headers);
                 setPreviewImageUri(source.uri);
               }}
@@ -3148,7 +3165,6 @@ export function PagesScreen(): React.JSX.Element {
             />
           )}
         </View>
-        {errorMessage === null ? null : <Notice message={errorMessage} tone="danger" />}
         {pageStale ? (
           <View style={styles.usage}>
             <Notice
@@ -3217,8 +3233,8 @@ export function PagesScreen(): React.JSX.Element {
         ) : null}
         <View style={styles.buttonRow}>
           <PrimaryButton
-            disabled={!canExport || selectedPage === null || selectedPage.generated_image === null}
-            disabledReason={!canExport ? t(language, "generated.screens.PagesScreen.export.permission.is.required.8c8fb948") : selectedPage === null || selectedPage.generated_image === null ? t(language, "generated.screens.PagesScreen.no.generated.image.590508b9") : undefined}
+            disabled={!canExport || !canUseMobilePageImage(selectedPage)}
+            disabledReason={!selectedImageAllowed ? imageAccessNotice(language) : !canExport ? t(language, "generated.screens.PagesScreen.export.permission.is.required.8c8fb948") : selectedPage === null || selectedPage.generated_image === null ? t(language, "generated.screens.PagesScreen.no.generated.image.590508b9") : undefined}
             label={t(language, "generated.screens.PagesScreen.save.image.dd680bcb")}
             loading={downloadPageMutation.isPending}
             onPress={() => downloadPageMutation.mutate()}
@@ -3235,10 +3251,8 @@ export function PagesScreen(): React.JSX.Element {
           language={language}
           organizationId={organizationId}
           onCompleted={async () => {
-            setLocalJob((current) =>
-              current?.id === displayedJobId ? null : current
-            );
-            await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
+            if (displayedJobId !== null && selectedPage !== null) await handlePageGenerationCompleted(displayedJobId, selectedPage.id);
+            setLocalJob((current) => current?.id === displayedJobId ? null : current);
           }}
           onFailed={async () => {
             setLocalJob((current) =>
@@ -3263,15 +3277,38 @@ export function PagesScreen(): React.JSX.Element {
       </Section>
         )}
       />
+      </PageWorkflowSection>
+      <PageCreationStepActions language={language} step={pageStep} hasPage={selectedPage !== null} onChange={changePageStep} />
+      <PageGenerationQuoteDialog
+        state={{ ...generationQuote.state, phase: quoteDraftStale ? 'stale' : generationQuote.state.phase, visible: generationQuote.state.visible && pageCreationFocused }} language={language}
+        canAccept={!quoteDraftStale && generationQuote.controller.canAccept()} onAccept={() => {
+          if (quotedPageDraftRevision.current !== latestPageDraft.current.revision || latestPageDraft.current.dirty) { setQuoteDraftStale(true); return; }
+          void generationQuote.controller.accept();
+        }}
+        onClose={closeGenerationQuote} onReconcile={() => { void generationQuote.controller.reconcile(); }}
+        onRequote={() => { if (generationQuote.state.target !== null) void generationQuote.controller.open(generationQuote.state.target); }}
+      />
+      <PageGenerationResultModal
+        visible={completion.visible && selectedImageAllowed} language={language} pageNumber={completion.result?.pageNumber ?? selectedPage?.page_number ?? 1} sources={completion.result?.imageSources ?? selectedPageImageSources}
+        canRegenerate={canGenerate && generationQuotesAvailable && !pageRequiresReopen && !pageGenerationPending && !serverGenerationBlocked}
+        hasNextPage={nextLoadedPage !== null || pagesQuery.hasNextPage} canGenerate={canGenerate && generationQuotesAvailable && !pageGenerationPending}
+        renderStyle={resultRenderStyle} onRenderStyleChange={setResultRenderStyle}
+        onClose={completion.close} onRegenerate={() => requestPageQuote(resultRenderStyle)}
+        onNextPage={() => { void requestNextPageQuote().catch(() => undefined); }}
+        onReviewPages={() => { completion.close(); changePageStep('design'); screenScrollRef.current?.scrollTo({ y: 0, animated: true }); }}
+        onExpand={(source) => { if (selectedPage === null || !canUseMobilePageImage(selectedPage)) return; completion.close(); setPreviewImagePageId(selectedPage.id); setPreviewImageHeaders(source.headers); setPreviewImageUri(source.uri); }}
+        restoreFocusRef={resultTriggerRef}
+      />
       <ImagePreviewModal
-        contentId={selectedPage?.id}
+        contentId={previewImagePageId}
         headers={previewImageHeaders}
         language={language}
         onClose={() => {
+          setPreviewImagePageId(null);
           setPreviewImageHeaders(undefined);
           setPreviewImageUri(null);
         }}
-        uri={previewImageUri}
+        uri={canUseMobilePageImage(previewImagePage) ? previewImageUri : null}
       />
     </Screen>
   );
