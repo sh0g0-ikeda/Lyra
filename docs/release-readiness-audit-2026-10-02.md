@@ -161,3 +161,11 @@ and a full PC state editor are not added by inference. Branded authentication
 domain/mail are separately retained infrastructure proposals, not newly imposed
 Google release prerequisites. Real layouts, devices, provider images and external
 configuration remain unverified.
+
+## Codex final local amendment (2026-10-02)
+
+Current verified code: `e5f4eb20aaf7954cb83f3433f3234c1b0f349e12`. The earlier source-candidate results above are historical. Current local gates: full backend Vitest 2810/2810 with PG16, PG18 integration 274/274, native Bun non-DB 2536 pass/326 skips, focused Bun PG18 15/15, backend build, Mobile 1014 tests/type/lint/Expo Doctor20, Web type/lint/build/16 unique browser cases with visual duplicates, and real local HTTP+PG18 11 checks. Native Bun full PG18 status: 358files/2810 tests全合格、終了0.
+
+Both PG versions pass migrations001–047,71 data invariants,lineage and read-only source/compiled backend-only preflight. New-Mobile preflight correctly rejects quotes OFF and absent paid-runtime configuration. No test result certifies signed devices, live Google/provider/store/S3, representative production data, current production configuration or the target ARM64 container. Existing AWS profile readback failed (exit255; cause unclassified). Existing dirty work and source checkout remain preserved; production/store/main/public GitHub remain untouched.
+
+See the updated [integration manifest](uiux-backend-expansion-2026-09-30/統合検証manifest-2026-10-02.json) and [implementation record](uiux-backend-expansion-2026-09-30/実装記録.md) for current commands, failures and remaining acceptance gates. Production readiness remains false.
