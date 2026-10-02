@@ -1,0 +1,25 @@
+version: 0.2
+phases:
+  pre_build:
+    commands:
+      - set -euo pipefail
+      - node ops/staging/build.env.guard.mjs
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${ECR_REPOSITORY_URI%/*}"
+  build:
+    commands:
+      - set -euo pipefail
+      - >-
+        docker build --platform linux/arm64
+        --build-arg VITE_API_BASE_URL="$STAGING_API_URL"
+        --build-arg VITE_COGNITO_DOMAIN="$STAGING_COGNITO_DOMAIN"
+        --build-arg VITE_COGNITO_CLIENT_ID="$STAGING_WEB_CLIENT_ID"
+        --build-arg VITE_COGNITO_REDIRECT_URI="${STAGING_API_URL}/auth/callback"
+        --build-arg VITE_COGNITO_LOGOUT_URI="$STAGING_API_URL"
+        --build-arg VITE_COGNITO_SCOPES='openid email'
+        --build-arg VITE_COGNITO_API_TOKEN_USE=id
+        --build-arg VITE_ORGANIZATION_FEATURES_ENABLED=true
+        -t "$ECR_REPOSITORY_URI:$IMAGE_TAG" .
+  post_build:
+    commands:
+      - set -euo pipefail
+      - docker push "$ECR_REPOSITORY_URI:$IMAGE_TAG"
