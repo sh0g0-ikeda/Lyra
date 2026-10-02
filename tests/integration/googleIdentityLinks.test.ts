@@ -5,6 +5,7 @@ import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresGoogleIdentityLinkRepository } from '../../src/repositories/GoogleIdentityLinkRepository.js';
 import type { GoogleLinkChallenge } from '../../src/domain/types/googleIdentityLink.js';
+import { GOOGLE_LINK_TTL_MS } from '../../src/domain/auth/GoogleLinkProtocol.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
 const dbDescribe = process.env.APP_ENV === 'test' && process.env.DATABASE_URL ? describe : describe.skip;
 dbDescribe('Google identity link durable challenges', () => {
@@ -16,7 +17,7 @@ dbDescribe('Google identity link durable challenges', () => {
         await admin.query(`DROP SCHEMA ${schema} CASCADE`);
         await admin.end();
     } });
-    async function fixture(): Promise<GoogleLinkChallenge> { const userId = randomUUID(); await pool.query('INSERT INTO users(id,supabase_id,email) VALUES($1,$2,$3)', [userId, userId, `${userId}@example.invalid`]); return { id: randomUUID(), userId, requestKey: randomUUID(), nativeSubject: userId, nativeUsername: userId, sessionHash: 'a'.repeat(64), stateHash: randomUUID().replaceAll('-', '').repeat(2), emailHash: 'b'.repeat(64), exchangeMaterial: 'encrypted'.repeat(10), platform: 'mobile', status: 'pending', providerSubjectHash: null, messageCode: null, createdAt: new Date(), expiresAt: new Date(Date.now() + 600000), consumedAt: null }; }
+    async function fixture(): Promise<GoogleLinkChallenge> { const userId = randomUUID(); await pool.query('INSERT INTO users(id,supabase_id,email) VALUES($1,$2,$3)', [userId, userId, `${userId}@example.invalid`]); const createdAt = new Date(); return { id: randomUUID(), userId, requestKey: randomUUID(), nativeSubject: userId, nativeUsername: userId, sessionHash: 'a'.repeat(64), stateHash: randomUUID().replaceAll('-', '').repeat(2), emailHash: 'b'.repeat(64), exchangeMaterial: 'encrypted'.repeat(10), platform: 'mobile', status: 'pending', providerSubjectHash: null, messageCode: null, createdAt, expiresAt: new Date(createdAt.getTime() + GOOGLE_LINK_TTL_MS), consumedAt: null }; }
     it('concurrent same-key starts create one immutable receipt', async () => { const f = await fixture(); const rows = await Promise.all([repo.create(f), repo.create({ ...f, id: randomUUID(), stateHash: 'c'.repeat(64) })]); expect(rows[0].id).toBe(rows[1].id); expect((await pool.query('SELECT count(*)::int n FROM oauth_link_challenges WHERE user_id=$1', [f.userId])).rows[0].n).toBe(1); });
     it('callback state can only be claimed once under concurrency', async () => { const f = await repo.create(await fixture()); const claims = await Promise.all([repo.claimState(f.stateHash), repo.claimState(f.stateHash)]); expect(claims.filter(Boolean)).toHaveLength(1); });
     it('provider reservation is durable before any mutation and scoped uniquely across users', async () => { const a = await repo.create(await fixture()), b = await repo.create(await fixture()); await repo.claimState(a.stateHash); await repo.claimState(b.stateHash); await repo.reserveIdentity(a.id, 'd'.repeat(64)); await expect(repo.reserveIdentity(b.id, 'd'.repeat(64))).rejects.toThrow(); const stored = await repo.findForUser(a.id, a.userId); expect(stored).toMatchObject({ providerSubjectHash: 'd'.repeat(64), exchangeMaterial: null, status: 'processing' }); });
@@ -40,7 +41,7 @@ dbDescribe('Google identity link durable challenges', () => {
         expect(remoteCalls).toBe(1);
         expect((await repo.findForUser(f.id, f.userId))?.status).toBe('linked');
     });
-    it('pending expiry cleanup is bounded and owner lookup never returns another account', async () => { const f = await fixture(); f.createdAt = new Date(Date.now() - 700000); f.expiresAt = new Date(Date.now() - 100000); await repo.create(f); expect(await repo.findForUser(f.id, randomUUID())).toBeNull(); expect(await repo.claimState(f.stateHash)).toBeNull(); expect(await repo.expirePending(1)).toBe(1); expect(await repo.findForUser(f.id, f.userId)).toMatchObject({ status: 'expired', exchangeMaterial: null }); await expect(repo.expirePending(10000)).rejects.toThrow(); });
+    it('pending expiry cleanup is bounded and owner lookup never returns another account', async () => { const f = await fixture(); f.createdAt = new Date(Date.now() - 700000); f.expiresAt = new Date(f.createdAt.getTime() + GOOGLE_LINK_TTL_MS); await repo.create(f); expect(await repo.findForUser(f.id, randomUUID())).toBeNull(); expect(await repo.claimState(f.stateHash)).toBeNull(); expect(await repo.expirePending(1)).toBe(1); expect(await repo.findForUser(f.id, f.userId)).toMatchObject({ status: 'expired', exchangeMaterial: null }); await expect(repo.expirePending(10000)).rejects.toThrow(); });
     it('a lost reservation acknowledgement cannot downgrade durable intent to terminal failure', async () => {
         const f = await repo.create(await fixture());
         await repo.claimState(f.stateHash); await repo.reserveIdentity(f.id, '3'.repeat(64));
