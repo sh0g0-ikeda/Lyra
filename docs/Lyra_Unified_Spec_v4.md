@@ -314,6 +314,7 @@ Every release must pass:
 
 - Vitest and Bun test entrypoints
 - PostgreSQL migration and deployment-invariant checks
+- read-only release compatibility check for the intended backend-only or new-mobile profile
 - backend TypeScript build
 - frontend lint and production build
 - Playwright auth and authenticated-console smoke tests
@@ -418,3 +419,30 @@ contrast is tested locally; native layout and accessibility acceptance remain op
 - `docs/mobile-new-character-defaults-design-2026-10-01.md`
 - `docs/mobile-operation-error-context-design-2026-10-01.md`
 - `docs/mobile-state-operation-outcomes-design-2026-10-01.md`
+
+### Local release compatibility preflight (2026-10-02)
+
+Run `bun run release:check --profile backend-only` for staged backend work,
+or `bun run release:check --profile new-mobile` before distributing the new
+Mobile client. The compiled artifact uses `release:check:prod`. The checker
+requires exact migration 001–047 history and evaluates existing data invariants
+and v2 journal presence in one bounded repeatable-read, read-only transaction.
+Malformed or missing database results fail closed. It never applies a migration
+or changes feature flags. Historical 026 and 039/041 preflights remain specific
+to their older schema boundaries and must not be run against schema 047.
+
+Backend-only permits quotes OFF; new-mobile requires quotes and the existing
+paid page/entity/import operations, direct uploads, durable queue, GPT Image 2
+and image storage, with local image fallback disabled. Optional state preview
+may remain OFF. Any v2 journal requires complete recovery configuration even
+with copy admission OFF. Enabling Web image delivery requires an explicit
+inventory of every old/new Mobile Cognito client via repeated
+`--mobile-client-id` arguments and rejects overlap with the Web allowlist.
+Old/new Mobile may intentionally share one client; an empty Web allowlist needs
+no Mobile inventory because dedicated Web image delivery remains disabled.
+
+A passing check proves local declared compatibility only. Storage attestation,
+client inventory and runtime configuration are not proof of actual remote
+IAM/S3/Cognito/provider behavior, queue drain, migration lock duration, old
+installed-client behavior or signed-device acceptance. Those remain separate
+release gates.
