@@ -32,6 +32,7 @@ const uiLanguageStorageKey = 'lyra:web:ui-language';
 const legacyTrackedJobsStorageKey = 'lyra:web:tracked-jobs:email:session';
 const personalTrackedJobsStorageKey = `${legacyTrackedJobsStorageKey}:workspace:personal`;
 const cancellableStoryJobId = '77777777-7777-4777-8777-777777777777';
+const skeletonProgressJobId = '99999999-9999-4999-8999-999999999999';
 
 const work = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -225,7 +226,7 @@ const currentSession: CurrentSessionRecord = {
 
 async function mockApi(
   route: Route,
-  options: { legacyBilling?: boolean; legacyJobCancellationFields?: boolean } = {},
+  options: { legacyBilling?: boolean; legacyJobCancellationFields?: boolean; skeletonJobStatus?: 'queued' | 'processing' } = {},
 ): Promise<void> {
   const url = new URL(route.request().url());
   const { pathname } = url;
@@ -378,6 +379,27 @@ async function mockApi(
       expires_at: null,
       cancel_requested_at: '2026-04-26T00:00:02.000Z',
       cancelled_at: '2026-04-26T00:00:02.000Z',
+      commit_started_at: null,
+    });
+  }
+
+  if (pathname === `/api/jobs/${skeletonProgressJobId}`) {
+    return json({
+      id: skeletonProgressJobId,
+      job_type: 'episode_page_skeleton',
+      status: options.skeletonJobStatus ?? 'queued',
+      generation_mode: null,
+      credit_cost: 0,
+      params: { episode_id: episode.id, language: 'ja' },
+      result: {},
+      error_message: null,
+      retry_count: 0,
+      created_at: '2026-04-26T00:00:00.000Z',
+      started_at: null,
+      completed_at: null,
+      expires_at: null,
+      cancel_requested_at: null,
+      cancelled_at: null,
       commit_started_at: null,
     });
   }
@@ -1427,3 +1449,30 @@ for (const width of [1440, 390]) {
     expect(generationRequests).toBe(1);
   });
 }
+
+test('jaではページ骨格生成の待機中と処理中を自動入力と混同せず表示する', async ({ page }) => {
+  await seedAuthenticatedSession(page);
+  await seedTrackedJobs(page, [skeletonProgressJobId]);
+  await page.route('**/api/**', (route) => mockApi(route, { skeletonJobStatus: 'queued' }));
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '1 Arrival', exact: true }).click();
+  await page.getByRole('button', { name: 'ページ', exact: true }).click();
+
+  await expect(page.getByText('ページ骨格生成', { exact: true })).toBeVisible();
+  await expect(page.getByText('ページ骨格生成を待機しています。この処理は20分程度かかる場合があります。', { exact: true })).toBeVisible();
+  await expect(page.getByText('ストーリーからページとコマの設定を自動入力しています。この処理は20分程度かかる場合があります。', { exact: true })).toHaveCount(0);
+});
+
+test('jaではページ骨格生成の処理中fallbackを表示する', async ({ page }) => {
+  await seedAuthenticatedSession(page);
+  await seedTrackedJobs(page, [skeletonProgressJobId]);
+  await page.route('**/api/**', (route) => mockApi(route, { skeletonJobStatus: 'processing' }));
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '1 Arrival', exact: true }).click();
+  await page.getByRole('button', { name: 'ページ', exact: true }).click();
+
+  await expect(page.getByText('ページ骨格を生成しています。この処理は20分程度かかる場合があります。', { exact: true })).toBeVisible();
+  await expect(page.getByText('ストーリーからページとコマの設定を自動入力しています。この処理は20分程度かかる場合があります。', { exact: true })).toHaveCount(0);
+});

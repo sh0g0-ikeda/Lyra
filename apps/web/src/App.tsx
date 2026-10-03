@@ -1296,6 +1296,15 @@ function getEpisodeStoryAutofillProgressMessage(job: GenerationJobRecord): strin
   return progressMessage ?? 'Applying story plan to pages and panels. This process can take around 20 minutes.';
 }
 
+function getEpisodePageSkeletonProgressMessage(job: GenerationJobRecord, language: UiLanguage): string {
+  const progressMessage = readStringResultField(job, 'progress_message');
+  return progressMessage ?? pickUiText(
+    language,
+    'Generating page skeleton. This process can take around 20 minutes.',
+    'ページ骨格を生成しています。この処理は20分程度かかる場合があります。',
+  );
+}
+
 function getJobProgressText(job: GenerationJobRecord, language: UiLanguage): string | null {
   const progressMessage = readStringResultField(job, 'progress_message');
   if (progressMessage === null) {
@@ -2848,11 +2857,19 @@ function StudioShell(props: {
   const skeletonGenerationMessage =
     selectedEpisodePageSkeletonJob !== null
       ? selectedEpisodePageSkeletonJob.status === 'queued'
-        ? 'Queued. This process can take around 20 minutes.'
-        : getEpisodeStoryAutofillProgressMessage(selectedEpisodePageSkeletonJob)
+        ? pickUiText(
+          uiLanguage,
+          'Queued. This process can take around 20 minutes.',
+          'ページ骨格生成を待機しています。この処理は20分程度かかる場合があります。',
+        )
+        : getEpisodePageSkeletonProgressMessage(selectedEpisodePageSkeletonJob, uiLanguage)
       : busyAction === 'Generate page skeleton'
-        ? 'Generating page skeleton. This process can take around 20 minutes.'
-      : null;
+        ? pickUiText(
+          uiLanguage,
+          'Generating page skeleton. This process can take around 20 minutes.',
+          'ページ骨格を生成しています。この処理は20分程度かかる場合があります。',
+        )
+        : null;
   const storyPlanProcessingMessage =
     selectedEpisodeStoryAutofillJob !== null
       ? selectedEpisodeStoryAutofillJob.status === 'queued'
