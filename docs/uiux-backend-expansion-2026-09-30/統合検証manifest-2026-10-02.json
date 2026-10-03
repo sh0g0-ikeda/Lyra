@@ -1,15 +1,38 @@
 {
-  "schema_version": 3,
-  "observed_at_utc": "2026-10-03T08:11:46.184Z",
+  "schema_version": 4,
+  "observed_at_utc": "2026-10-03T19:15:37Z",
   "production_ready": false,
   "local_required_gates_completed": true,
   "integration_branch": "codex/lyra-dots-integration-20261002",
-  "verified_code_commit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-  "source_commit": "23878f92a8666efd949f3560cfeea8e4a9cfb6f7",
-  "source_clean": true,
+  "verified_code_commit": "ba0ec724158adeb869bc50916df148cc9a3b725c",
+  "source_commit": "ba0ec724158adeb869bc50916df148cc9a3b725c",
+  "final_code_identity_receipt": "receipts/final-source-identity.json",
+  "backend_validation_checkout_observation": {
+    "observed_at_utc": "2026-10-03T18:55:44.000Z",
+    "head": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
+    "product_paths_clean_at_backend_verification": true,
+    "uncommitted_reporting_paths": [
+      "docs/uiux-backend-expansion-2026-09-30/実装記録.md",
+      "docs/uiux-backend-expansion-2026-09-30/統合検証manifest-2026-10-02.json"
+    ],
+    "subsequent_web_localization_fix": "completed_as_ba0ec724158adeb869bc50916df148cc9a3b725c"
+  },
+  "final_checkout_observation": {
+    "observed_at_utc": "2026-10-03T19:13:19.336Z",
+    "head": "ba0ec724158adeb869bc50916df148cc9a3b725c",
+    "backend_mobile_packages_locks_tests_migrations_unchanged": true,
+    "new_code_paths": ["apps/web/src/App.tsx", "apps/web/e2e/app.spec.ts"],
+    "reporting_only_dirty_paths": [
+      "docs/uiux-backend-expansion-2026-09-30/実装記録.md",
+      "docs/uiux-backend-expansion-2026-09-30/統合検証manifest-2026-10-02.json"
+    ]
+  },
+  "imported_source_commit": "23878f92a8666efd949f3560cfeea8e4a9cfb6f7",
+  "imported_source_clean": true,
+  "imported_source_checked_at_utc": "2026-10-03T19:14:10.566Z",
   "baseline_commit": "2bb4e2dabd24c3116c5dae86a177754b367e245d",
   "original_checkout": {
-    "checkedAt": "2026-10-03T08:11:19.098Z",
+    "checkedAt": "2026-10-03T19:14:10.566Z",
     "baselineHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
     "currentHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
     "baselinePaths": 28,
@@ -19,292 +42,145 @@
   },
   "checks": [
     {
-      "name": "backend vitest",
+      "name": "backend final gates",
       "status": "passed",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "tests": 2899,
-      "files": 359,
-      "receipt": "receipts/final-local-backend-gate-receipt.json"
+      "sourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
+      "receipt": "receipts/source-coverage-945fec2-backend-gate-receipt.json",
+      "results": [
+        {
+          "name": "vitest",
+          "exitCode": 0,
+          "sourceFixed": true,
+          "summary": [
+            " Test Files  363 passed (363)",
+            "      Tests  2963 passed (2963)"
+          ],
+          "log": "source-coverage-final-945fec2-vitest.log"
+        },
+        {
+          "name": "bun",
+          "exitCode": 0,
+          "sourceFixed": true,
+          "summary": [
+            " 2963 pass",
+            " 0 fail",
+            "Ran 2963 tests across 363 files. [142.94s]"
+          ],
+          "log": "source-coverage-final-945fec2-bun.log"
+        },
+        {
+          "name": "build",
+          "exitCode": 0,
+          "sourceFixed": true,
+          "summary": [],
+          "log": "source-coverage-final-945fec2-build.log"
+        }
+      ]
     },
     {
-      "name": "backend bun",
+      "name": "PostgreSQL18 invariants",
       "status": "passed",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "tests": 2899,
-      "files": 359,
-      "receipt": "receipts/final-local-backend-gate-receipt.json"
-    },
-    {
-      "name": "backend build",
-      "status": "passed",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "receipt": "receipts/final-local-backend-gate-receipt.json"
-    },
-    {
-      "name": "mobile-typecheck",
-      "status": "passed",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "receipt": "receipts/final-frontend-gate-receipt.json"
-    },
-    {
-      "name": "mobile-lint",
-      "status": "passed",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "receipt": "receipts/final-frontend-gate-receipt.json"
-    },
-    {
-      "name": "web-typecheck",
-      "status": "passed",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "receipt": "receipts/final-frontend-gate-receipt.json"
-    },
-    {
-      "name": "web-lint",
-      "status": "passed",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "receipt": "receipts/final-frontend-gate-receipt.json"
-    },
-    {
-      "name": "web-build",
-      "status": "passed",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "receipt": "receipts/final-frontend-gate-receipt.json"
-    },
-    {
-      "name": "Web Playwright",
-      "status": "passed_identical_ui_tree",
-      "tests": 19,
-      "sourceScope": {
-        "scope": "apps/web",
-        "apkTree": "57bb14fc02fe7c6b2fc219e3c86955b2fc6e7949",
-        "applicationTree": "57bb14fc02fe7c6b2fc219e3c86955b2fc6e7949",
-        "identical": true
-      },
-      "receipt": "receipts/web-color-hy4-green-results.json"
-    },
-    {
-      "name": "Mobile Vitest",
-      "status": "passed_identical_ui_tree",
-      "tests": 1025,
-      "files": 186,
-      "sourceScope": {
-        "scope": "apps/mobile",
-        "apkTree": "25f9f8499741d21c1745c3aafefed466278b2c9d",
-        "applicationTree": "25f9f8499741d21c1745c3aafefed466278b2c9d",
-        "identical": true
-      },
-      "receipt": "logs/mobile-color-final-tests.log"
-    },
-    {
-      "name": "stage lifecycle/DB contract",
-      "status": "passed",
-      "tests": 114,
-      "files": 15,
-      "skipped": 0,
-      "sourceHashes": {
-        "stage-lifecycle-guard-core.mjs": "d062560dbd02092de81e0eed00ce640d5c0aa7e27c57a3c5fa53ce20e090bcb8",
-        "stage-lifecycle-guard.mjs": "6ff08f6bb287d5cc8fdc190dfd92e154dc8494e8be0be2a30a458ed8b0e6316e",
-        "stage-lifecycle-guard.test.mjs": "72bfd25dbe14f4c176c61ef8503331c745ad2d6dc50c477b837c40205c840f60",
-        "stage-database-drain-proof.mjs": "2fe5661bf1f3bf163997b5e470f8176aa1b689e5d12f1a7c603dac1501815247",
-        "stage-database-drain-proof.test.mjs": "e2bb10d924f1e3938bce1f07f8d5ecd4ca2507030a0d5c661a85406b7745ecc9",
-        "stage-database-drain-proof-port.mjs": "41e0b21c687e57e94cc695fa05c7798daa260b96dc9c633c943e3d8155bee87c",
-        "stage-database-drain-proof-port.test.mjs": "4f1260c341bd07e93b1c3908c5aea70c2c65c4299238507b6c8ab8f7213394b9",
-        "stage-database-drain-invoke-port.mjs": "e6aca040ed19f258f06eaafd413d24935e9041f4d30de541db2747989775e3f6",
-        "stage-database-drain-invoke-port.test.mjs": "0f887f9955a492be298f4bca5d731707fdc5cf1eadbd6d6296c8c20c10852cbd",
-        "stage-database-drain-executor.mjs": "30f5990afa1322999d085b98e98fc409346418034c2ead3df5e619bbe25616f4",
-        "stage-database-drain-executor.test.mjs": "98ce61c46ab004e7e8e4bbcb233c5a36c7a41e13ab3692134fcc9cffa17a4110",
-        "stage-database-drain-db-contract.mjs": "35f96a388df4cc27e42d3f3dba8580bb714474dbec921b5687348c9d7903f7f2",
-        "stage-database-drain-db-contract.test.mjs": "4941a9d147c949f207ace3cb8c49762e6118d5859228fd08acb7d5e438a5f5ab",
-        "stage-lifecycle-effects.mjs": "a3a7e71c5d2d1682636bae12f111c57acdd7759ddf211f61ab0099421ed2ef9b",
-        "stage-lifecycle-effects.test.mjs": "d9375e87ae2ed96c2753dfe2a6765702ab7864d035a353266f8bca17e6d63057"
-      },
-      "receipt": "receipts/final-lifecycle-v4b-pg-receipt.json"
-    },
-    {
-      "name": "local DB deployment invariants",
-      "status": "passed",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "checks": 71,
+      "sourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
+      "checked": 71,
       "violations": 0,
-      "receipt": "receipts/final-local-db-invariants-receipt.json"
+      "receipt": "receipts/source-coverage-945fec2-invariants-receipt.json"
+    },
+    {
+      "name": "unchanged tested Web/Mobile source",
+      "status": "historical_ui_identity_before_web_progress_fix",
+      "sourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
+      "uiSource": "0f21d49bd789a44f7218186464f2086651a71762",
+      "mobileTests": 1030,
+      "webSmokeTests": 23,
+      "receipt": "receipts/source-coverage-945fec2-ui-identity.json",
+      "physicalAndroidTested": false
+    },
+    {
+      "name": "final Web progress labels and browser regression gates",
+      "status": "passed",
+      "sourceCommit": "ba0ec724158adeb869bc50916df148cc9a3b725c",
+      "receipt": "receipts/web-skeleton-localization-receipt.json",
+      "receiptSha256": "adcba71459ab7a82551d18941b67f9b561adc822fe1e6c2c08d4705afcc94485",
+      "testedFileHashesBoundToFinalCommit": true,
+      "purposeSpecificOldCodeRedTests": 2,
+      "webSmokeTests": 25,
+      "type": "passed",
+      "lint": "passed",
+      "build": "passed_with_existing_chunk_size_warning",
+      "apiDbCreditChanges": 0,
+      "currentMobileSourceAnd1030TestsStillIdentical": true,
+      "physicalAndroidTested": false
+    },
+    {
+      "name": "isolated deployment runtime build",
+      "status": "passed_backend_candidate_artifact_not_final_web_runtime_not_uploaded",
+      "sourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
+      "receipt": "receipts/clean-runtime-build-945fec2.json",
+      "compiler": {
+        "node": "v24.13.1",
+        "backendExitCode": 0,
+        "webTypeExitCode": 0,
+        "webExitCode": 0
+      },
+      "dist": {
+        "fileCount": 404,
+        "treeDigest": "eea82cb24af952418c756c231179bd6319196e766dd733b68c46822e25f66792"
+      },
+      "public": {
+        "fileCount": 28,
+        "treeDigest": "3db6457914778ed5587abaeab794578b70cd9351c6db9a0c9ffd518007791368"
+      },
+      "uploads": 0
+    },
+    {
+      "name": "Ops and future QA regression gates",
+      "status": "passed",
+      "sourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
+      "tests": 61,
+      "failed": 0,
+      "skipped": 0,
+      "receipt": "receipts/source-coverage-945fec2-node-gates-receipt.json",
+      "logSha256": "3c1d7d9a9cc408a7f63056f383ce3e777f720174d0dcc52d4868072600becaf3",
+      "reportingFailurePreserved": {
+        "log": "source-coverage-945fec2-node-gates.log",
+        "reason": "Default spec reporter was parsed as TAP; Node tests exit0 but receipt generation failed",
+        "sha256": "999a9a90e13cbfa035f51963c96496493c5abc8f7334490679ea84c208e2f40b"
+      }
     }
   ],
   "application_acceptance": {
-    "stagingSourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-    "latestSourceDeployed": true,
-    "http": {
-      "/healthz": 200,
-      "/readyz": 200,
-      "/": 200,
-      "/api/works": 401
-    },
-    "fifteenPageThirdRun": {
-      "at": "2026-10-03T05:06:43.831Z",
-      "episodeId": "b1e13953-1813-4e5b-a26d-d1bc047e1933",
-      "jobId": "7a01eb13-4a36-456c-95fd-afd28a9b9060",
-      "status": "failed",
-      "pagesPreserved": 15,
-      "panelsPreserved": 60,
-      "panelHash": "cf9f428b111c4c4834aaa139ab0504c8d785e8b04b9b6f42dff559ebe4d1b5a7",
-      "creditsPreserved": true,
-      "savePhaseStarted": false,
-      "consumeEntries": 0,
-      "refundEntries": 0,
-      "netCredits": 0,
-      "elapsedSeconds": 747.624,
-      "semanticAcceptance": "not_run_autofill_failed",
-      "actualPageImageGeneration": "not_run"
+    "stagingSourceCommit": "0f21d49bd789a44f7218186464f2086651a71762",
+    "runtimeStatusReceipt": "receipts/oci-runtime-image-0f21d49-status-2026-10-03T18-48-32-390Z.json",
+    "runtimeStatusObservedAtUtc": "2026-10-03T18:48:32.390Z",
+    "apiStable": { "desired": 1, "running": 1, "pending": 0 },
+    "workersIdle": true,
+    "health": { "healthz": 200, "readyz": 200 },
+    "latestSourceDeployed": false,
+    "runtimeProof": "receipts/stage-source-0f21d49-runtime-proof.json",
+    "runtimeImageDigest": "sha256:adcf8b9b5c5ed1a29541b5de82511806cc6ddab344968fc65e379f96f8ccc8a8",
+    "runtimeTrees": {
+      "dist": {
+        "fileCount": 403,
+        "treeDigest": "be5bce3cf399243ed6fad177512dc41291bd7695bfc6b138d90772181fbc5cf5"
+      },
+      "public": {
+        "fileCount": 28,
+        "treeDigest": "3db6457914778ed5587abaeab794578b70cd9351c6db9a0c9ffd518007791368"
+      }
     },
     "latestSourceActualFifteenPageResult": {
-      "environment": "real OpenAI / actual PageService / transactional in-memory persistence",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "status": "rejected",
-      "primaryReceipt": "receipts/local-long15-3f5e289-result.json",
-      "strictReceipt": "receipts/local-long15-3f5e289-strict-evaluation.json",
-      "compilerCalls": {
-        "beatPlanCalls": 2,
-        "beatOutlineCalls": 1,
-        "detailPlanCalls": 5,
-        "auditCalls": 1,
-        "checkpointCalls": 19,
-        "beginCommitCalls": 1,
-        "creditMutationCalls": 0,
-        "fullDraftBriefChecks": 9,
-        "auditOwnedSourceChecks": 15
-      },
-      "stageQueueOrDatabaseUsed": false,
-      "imageGenerationModeTested": false
+      "status": "not_run_blocked_auto_review",
+      "requestedBackendSourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
+      "finalCodeBackendIdentical": true,
+      "persistenceKind": "not_run",
+      "blockerReceipt": "receipts/source-coverage-945fec2-provider-blocker.json",
+      "manualStatus": "not_run",
+      "updatedPages": 0,
+      "updatedPanels": 0,
+      "actualProviderAssertion": false,
+      "physicalAndroidTested": false
     },
-    "generationWorkerIdle": {
-      "desired": 0,
-      "running": 0,
-      "pending": 0,
-      "taskDefinition": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-generation:5"
-    },
-    "expiryAutomation": {
-      "at": "2026-10-03T05:13:16.335Z",
-      "onlyStaging": true,
-      "productionMutated": false,
-      "scheduleArn": "arn:aws:scheduler:ap-northeast-1:452284481392:schedule/lyra-staging-20261003/lyra-staging-20261003-lifecycle-guard",
-      "targetVersion": 3,
-      "beforeState": "ENABLED",
-      "afterState": "DISABLED",
-      "startDate": "2026-10-09T01:10:00+09:00",
-      "reason": "Version3 lacks the required database drain and contract-cleanup proof. Version4 deployment is blocked by automatic review; prevent unverified database stopping and snapshots.",
-      "credentialsOrPermissionsChanged": false,
-      "resourcesDeleted": false,
-      "reactivationRequiredAfterVerifiedVersion4": true
-    },
-    "dedicatedDbContractRemoved": {
-      "readerRole": true,
-      "ownerRole": true,
-      "schema": true,
-      "function": true
-    },
-    "runtimeReadback": {
-      "receipt": "receipts/final-stage-runtime-readback.json",
-      "at": "2026-10-03T08:10:17.349Z",
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "imageDigest": "sha256:84d9785b5e38114dd0fce5aa0840bc843b6d9d5ef66fb02ffd8f19084217d039",
-      "stageOnly": true,
-      "readOnly": true,
-      "stackStatus": "UPDATE_COMPLETE",
-      "services": {
-        "api": {
-          "desired": 1,
-          "running": 1,
-          "pending": 0,
-          "taskDefinition": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-api:5"
-        },
-        "generation": {
-          "desired": 0,
-          "running": 0,
-          "pending": 0,
-          "taskDefinition": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-generation:5"
-        },
-        "export": {
-          "desired": 0,
-          "running": 0,
-          "pending": 0,
-          "taskDefinition": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-export:5"
-        },
-        "deletion": {
-          "desired": 0,
-          "running": 0,
-          "pending": 0,
-          "taskDefinition": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-deletion:5"
-        }
-      },
-      "queues": {
-        "GenerationQueue": {
-          "ApproximateNumberOfMessages": "0",
-          "ApproximateNumberOfMessagesNotVisible": "0",
-          "ApproximateNumberOfMessagesDelayed": "0"
-        },
-        "GenerationDlq": {
-          "ApproximateNumberOfMessages": "0",
-          "ApproximateNumberOfMessagesNotVisible": "0",
-          "ApproximateNumberOfMessagesDelayed": "0"
-        },
-        "ExportQueue": {
-          "ApproximateNumberOfMessages": "0",
-          "ApproximateNumberOfMessagesNotVisible": "0",
-          "ApproximateNumberOfMessagesDelayed": "0"
-        },
-        "ExportDlq": {
-          "ApproximateNumberOfMessages": "0",
-          "ApproximateNumberOfMessagesNotVisible": "0",
-          "ApproximateNumberOfMessagesDelayed": "0"
-        }
-      },
-      "autoscaling": [
-        {
-          "resource": "service/lyra-staging-20261003-cluster/lyra-staging-20261003-generation",
-          "min": 0,
-          "max": 1,
-          "suspended": {
-            "DynamicScalingInSuspended": false,
-            "DynamicScalingOutSuspended": false,
-            "ScheduledScalingSuspended": false
-          }
-        }
-      ],
-      "http": {
-        "/healthz": 200,
-        "/readyz": 200,
-        "/": 200,
-        "/api/works": 401
-      },
-      "mutations": 0
-    },
-    "runtimeArtifactVerification": {
-      "receipt": "receipts/stage-oci-runtime-files-proof-result.json",
-      "files": 401,
-      "allHashesMatch": true,
-      "nonImageConfigurationChanged": false
-    },
-    "latestSourceDiagnosticFifteenPageResult": {
-      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "status": "rejected",
-      "primaryReceipt": "receipts/local-long15-trace-3f5e289-result.json",
-      "strictReceipt": "receipts/local-long15-trace-3f5e289-strict-evaluation.json",
-      "manualReceipt": "receipts/local-long15-trace-3f5e289-manual-review-v2.json",
-      "compilerCalls": {
-        "beatPlanCalls": 2,
-        "beatOutlineCalls": 1,
-        "detailPlanCalls": 5,
-        "auditCalls": 1,
-        "checkpointCalls": 19,
-        "beginCommitCalls": 1,
-        "creditMutationCalls": 0,
-        "fullDraftBriefChecks": 9,
-        "auditOwnedSourceChecks": 15
-      },
-      "attribution": "Full source reaches detail; detail omits source events; audit issues0 misses omissions.",
-      "originalResultsUnchanged": true,
-      "stageQueueOrDatabaseUsed": false
-    },
-    "characterStateWorkflow": {
+    "characterStateWorkflowHistorical": {
       "status": "actual_generation_credit_storage_passed_latest_projection_read_passed",
       "priorReceipt": "receipts/state-qa-final-result.json",
       "latestReceipt": "receipts/state-final-readonly-api-result.json",
@@ -318,64 +194,41 @@
       "credits": 11,
       "physicalDeviceNotVerified": true
     },
-    "stateConfigurationAfterQa": {
-      "receipt": "receipts/stage-autofill-effective-config.json",
-      "disabledSecretVersionUnchanged": true,
-      "generationAndAdmissionOff": true,
-      "recoverySettingsPreserved": true
-    },
-    "localBuildRuntime": {
-      "dockerEngineReady": false,
-      "ordinaryStopFailed": true,
-      "destructiveRepairPerformed": false,
-      "alternative": "Verified existing stage OCI base and isolated source3f dist overlay",
-      "buildReceipt": "receipts/clean-runtime-build-3f5e289.json",
-      "publishReceipt": "receipts/stage-oci-publish-3f5e289-receipt.json",
-      "actualRuntime401FileHashesMatched": true,
-      "iamAndLambdaChanges": 0
-    }
+    "source0fSyntheticSkeleton": "receipts/source0f-v16-fixture-skeleton-acceptance.json",
+    "actualLatestSourceQueueDatabaseAutofill": "not_asserted_without_final_stage_readback_receipt",
+    "expirySchedule": "disabled; API/DB/ALB costs remain",
+    "protectedProductionData": "not copied; prior refusal preserved"
   },
   "apk": {
-    "sourceCommit": "bc46554e05915b13181a7ecdfdbddd0d1a1908c0",
+    "sourceCommit": "0f21d49bd789a44f7218186464f2086651a71762",
     "build": {
-      "at": "2026-10-03T03:14:36.581Z",
-      "id": "c831278f-4d73-4561-bb06-d73a0cc25e74",
-      "status": "FINISHED",
-      "sourceCommit": "bc46554e05915b13181a7ecdfdbddd0d1a1908c0",
-      "platform": "ANDROID",
+      "buildId": "1e64504d-f12b-43be-9e1d-3dfd7728606b",
+      "buildPage": "https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/1e64504d-f12b-43be-9e1d-3dfd7728606b",
+      "sourceSha": "0f21d49bd789a44f7218186464f2086651a71762",
       "profile": "staging",
       "distribution": "INTERNAL",
-      "appVersion": "0.1.18",
-      "appBuildVersion": "1",
-      "buildPage": "https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/c831278f-4d73-4561-bb06-d73a0cc25e74",
-      "artifact": "https://expo.dev/artifacts/eas/eyzVb5sFQMcxWb-lwk7UtDbXiCuFzuf6fZNJfgqAqBs.apk",
-      "downloadedAt": "2026-10-03T03:15:31.676Z",
-      "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/lyra-color-staging-bc46554.apk",
-      "bytes": 107219960,
-      "sha256": "c301db8a086b15a7c38072afa608f1464d7f98bb474554f070451490c555d3c3",
-      "physicalDeviceTested": false
+      "artifact": "https://expo.dev/artifacts/eas/6m74qTGjlY75T2w98Px4EkXQqu9bmeT_guPAAfDU5g4.apk",
+      "downloadedAt": "2026-10-03T14:18:35.572Z",
+      "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/lyra-hy4-separated-staging-0f21d49.apk",
+      "bytes": 107220616,
+      "sha256": "31205d364eba3cf7d797be8f6522370b18d117ebc8d5a2726732c708bbd5c06e",
+      "physicalDeviceTested": false,
+      "productionChanged": false
     },
-    "uiTreeIdentity": [
-      {
-        "scope": "apps/mobile",
-        "apkTree": "25f9f8499741d21c1745c3aafefed466278b2c9d",
-        "applicationTree": "25f9f8499741d21c1745c3aafefed466278b2c9d",
-        "identical": true
-      },
-      {
-        "scope": "apps/web",
-        "apkTree": "57bb14fc02fe7c6b2fc219e3c86955b2fc6e7949",
-        "applicationTree": "57bb14fc02fe7c6b2fc219e3c86955b2fc6e7949",
-        "identical": true
-      }
-    ],
-    "physicalDeviceVerified": false
+    "physicalDeviceVerified": false,
+    "compatibleUiSource": "0f21d49bd789a44f7218186464f2086651a71762",
+    "fullCryptographicSignatureValidation": "passed_apk_signature_scheme_v2",
+    "signatureReceipt": "receipts/apk-final-signature-apksig-8.7.3-r2.json",
+    "signatureTool": "Google apksig ApkVerifier 8.7.3 with JDK17",
+    "signatureErrors": 0,
+    "signatureWarnings": 0,
+    "otherSignatureSchemesAsserted": false
   },
   "external_gates": [
     {
       "name": "new backend staging deployment and 15-page actual acceptance",
-      "status": "deployment_passed_long15_quality_failed_latest_queue_acceptance_unverified",
-      "needed": "Latest backend3f is deployed and actual runtime hashes/health/state read pass. Real-provider long15 quality still fails; latest full SQS/DB long15 acceptance unverified."
+      "status": "blocked_auto_review_before_provider_send",
+      "needed": "Specific user approval is pending. No provider request was sent; final actual SQS/DB readback and all-page source review remain required."
     },
     {
       "name": "AWS IAM Access Analyzer/simulation and dedicated drain Lambda",
@@ -400,13 +253,13 @@
     },
     {
       "name": "Hy4 exact official image/reference-edit API contract",
-      "status": "unconfirmed_disabled",
-      "needed": "Exact official Tencent contract; no substitute or refused retrieval bypass"
+      "status": "deferred_by_user_disabled_web_buttons_only",
+      "needed": "No activation or model substitution in this work."
     },
     {
       "name": "character state 1-credit actual workflow",
-      "status": "passed_actual_credit_storage_latest_projection",
-      "needed": "Physical Android remains unverified; new state generation/admission are OFF."
+      "status": "historical_workflow_passed_new_web_local_gates_passed",
+      "needed": "Prior 1-credit generation/storage evidence is historical. Current state gates are OFF; physical Android remains unverified."
     },
     {
       "name": "representative production data rehearsal",
@@ -434,16 +287,25 @@
     "remote_ci": false
   },
   "history": {
-    "previousManifestCommit": "9c31f38bc4fe48d923c8fc94e9a916271d7f45f9",
-    "previousManifestBlob": "1683207cfd91f87bfbff282cb9f2629ca3decf1a",
-    "previousVerifiedCode": "e5f4eb20aaf7954cb83f3433f3234c1b0f349e12",
-    "note": "Earlier commands/results are retained in Git history and implementation record; they are not final-code backend proof."
-  },
-  "final_backend_gate": {
-    "receipt": "receipts/final-local-backend-gate-receipt.json",
-    "tests": 2899,
-    "files": 359,
-    "skip": 0,
-    "sourceFixed": true
+    "previousManifestCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
+    "previousManifestBlob": "32bb614317341622d4e76938d73707f1009ef416",
+    "previousVerifiedCode": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+    "providerExecution": "current source blocked before provider send; prior source records remain historical only",
+    "note": "Earlier results remain in Git history and implementation record; they are not proof of changed backend code.",
+    "lastPriorRealProvider": {
+      "sourceCommit": "6c0a0142c3698eb76df05e80b71180835feadde8",
+      "status": "rejected",
+      "receipt": "receipts/local-long15-coverage-6c0a014-result.json",
+      "manualReceipt": "receipts/source-coverage-6c0a014-manual-review.json",
+      "failedPages": [
+        1,
+        5,
+        7,
+        8,
+        9,
+        15
+      ],
+      "currentSourceAcceptance": false
+    }
   }
 }
