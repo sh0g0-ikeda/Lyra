@@ -1,0 +1,349 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Parameters": {
+    "VpcId": {
+      "Type": "AWS::EC2::VPC::Id",
+      "AllowedValues": [
+        "vpc-050c9c90a4401dbe5"
+      ]
+    },
+    "PrivateSubnetAId": {
+      "Type": "AWS::EC2::Subnet::Id",
+      "AllowedValues": [
+        "subnet-033182e9f6c2f9d9f"
+      ]
+    },
+    "PrivateSubnetCId": {
+      "Type": "AWS::EC2::Subnet::Id",
+      "AllowedValues": [
+        "subnet-0c10390f399c420e4"
+      ]
+    },
+    "DatabaseSecurityGroupId": {
+      "Type": "AWS::EC2::SecurityGroup::Id",
+      "AllowedValues": [
+        "sg-0f1423c70e713834e"
+      ]
+    },
+    "ExecutionBoundaryArn": {
+      "Type": "String"
+    },
+    "DatabaseHost": {
+      "Type": "String",
+      "AllowedPattern": "^lyra-staging-20261003-db\\.[a-z0-9-]+\\.ap-northeast-1\\.rds\\.amazonaws\\.com$",
+      "AllowedValues": [
+        "lyra-staging-20261003-db.cl2cc620cck3.ap-northeast-1.rds.amazonaws.com"
+      ]
+    },
+    "DrainPassword": {
+      "Type": "String",
+      "NoEcho": true,
+      "AllowedPattern": "^[0-9a-f]{64}$"
+    },
+    "CaSha256": {
+      "Type": "String",
+      "AllowedPattern": "^[0-9a-f]{64}$"
+    },
+    "CodeS3Bucket": {
+      "Type": "String"
+    },
+    "CodeS3Key": {
+      "Type": "String"
+    },
+    "CodeS3ObjectVersion": {
+      "Type": "String",
+      "MinLength": 1
+    },
+    "CodeSha256": {
+      "Type": "String",
+      "AllowedPattern": "^[A-Za-z0-9+/]{43}=$"
+    }
+  },
+  "Resources": {
+    "ProofSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "stage database drain proof only",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "DestinationSecurityGroupId": {
+              "Ref": "DatabaseSecurityGroupId"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": "lyra-staging-20261003"
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": "2026-10-10"
+          }
+        ]
+      }
+    },
+    "DatabaseIngressFromProof": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupId": {
+          "Ref": "DatabaseSecurityGroupId"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": 5432,
+        "ToPort": 5432,
+        "SourceSecurityGroupId": {
+          "Fn::GetAtt": [
+            "ProofSecurityGroup",
+            "GroupId"
+          ]
+        }
+      }
+    },
+    "ProofLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/lyra-staging-20261003-database-drain-proof",
+        "RetentionInDays": 14,
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": "lyra-staging-20261003"
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": "2026-10-10"
+          }
+        ]
+      }
+    },
+    "ProofRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "lyra-staging-20261003-database-drain-proof",
+        "PermissionsBoundary": {
+          "Ref": "ExecutionBoundaryArn"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "exact-proof",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ProofLogGroup",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:CreateNetworkInterface",
+                    "ec2:DescribeNetworkInterfaces",
+                    "ec2:DescribeSubnets",
+                    "ec2:DescribeSecurityGroups",
+                    "ec2:DeleteNetworkInterface",
+                    "ec2:AssignPrivateIpAddresses",
+                    "ec2:UnassignPrivateIpAddresses"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Deny",
+                  "Action": [
+                    "ec2:CreateNetworkInterface",
+                    "ec2:DescribeNetworkInterfaces",
+                    "ec2:DescribeSubnets",
+                    "ec2:DescribeSecurityGroups",
+                    "ec2:DeleteNetworkInterface",
+                    "ec2:AssignPrivateIpAddresses",
+                    "ec2:UnassignPrivateIpAddresses"
+                  ],
+                  "Resource": "*",
+                  "Condition": {
+                    "ArnEquals": {
+                      "lambda:SourceFunctionArn": {
+                        "Fn::Sub": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:lyra-staging-20261003-database-drain-proof"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": "lyra-staging-20261003"
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": "2026-10-10"
+          }
+        ]
+      }
+    },
+    "ProofFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "lyra-staging-20261003-database-drain-proof",
+        "Runtime": "nodejs22.x",
+        "Architectures": [
+          "arm64"
+        ],
+        "Handler": "stage-database-drain-executor.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "ProofRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "S3Bucket": {
+            "Ref": "CodeS3Bucket"
+          },
+          "S3Key": {
+            "Ref": "CodeS3Key"
+          },
+          "S3ObjectVersion": {
+            "Ref": "CodeS3ObjectVersion"
+          }
+        },
+        "Timeout": 10,
+        "MemorySize": 128,
+        "ReservedConcurrentExecutions": 1,
+        "VpcConfig": {
+          "SubnetIds": [
+            {
+              "Ref": "PrivateSubnetAId"
+            },
+            {
+              "Ref": "PrivateSubnetCId"
+            }
+          ],
+          "SecurityGroupIds": [
+            {
+              "Fn::GetAtt": [
+                "ProofSecurityGroup",
+                "GroupId"
+              ]
+            }
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "STAGE_ID": "lyra-staging-20261003",
+            "AWS_ACCOUNT_ID": "452284481392",
+            "DB_HOST": {
+              "Ref": "DatabaseHost"
+            },
+            "DB_NAME": "lyrastaging",
+            "DB_USER": "lyra_stage_drain_reader",
+            "DB_PASSWORD": {
+              "Ref": "DrainPassword"
+            },
+            "RDS_CA_FILE": "/var/task/rds-ca-rsa2048-g1.pem",
+            "RDS_CA_SHA256": {
+              "Ref": "CaSha256"
+            }
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": "lyra-staging-20261003"
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": "2026-10-10"
+          }
+        ]
+      }
+    },
+    "ProofVersion": {
+      "Type": "AWS::Lambda::Version",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "ProofFunction"
+        },
+        "CodeSha256": {
+          "Ref": "CodeSha256"
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "QualifiedFunctionArn": {
+      "Value": {
+        "Ref": "ProofVersion"
+      }
+    },
+    "ProofSecurityGroupId": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ProofSecurityGroup",
+          "GroupId"
+        ]
+      }
+    }
+  }
+}

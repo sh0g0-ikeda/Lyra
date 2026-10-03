@@ -60,7 +60,10 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
   if (!Number.isFinite(nowEpoch)) return result('error-time', currentState);
   if (nowEpoch < Date.parse(ACTIVE_START_AT)) return result('wait-schedule-start', currentState);
 
+  if (typeof inventory.proofExecutorStack?.exists !== 'boolean') return result('error-proof-executor-inventory', currentState);
+  if (inventory.proofExecutorStack.exists && !inventory.proofExecutorStack.owned) return result('error-proof-executor-ownership', currentState);
   if (!inventory.foundationStack.exists) {
+    if (inventory.proofExecutorStack.exists) return result('error-proof-executor-orphaned', currentState);
     const sealedProof = assessDatabaseDrainProof({
       proof: inventory.databaseDrainProof,
       nowEpoch,
@@ -100,6 +103,14 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
     }
     if (inventory.extraOwnedDatabaseIds.length > 0) {
       return result('error-m2-dependency', currentState, { databaseIds: inventory.extraOwnedDatabaseIds });
+    }
+    // Remove VPC Lambda ENIs/security groups before deleting their foundation VPC.
+    // The DB has already been sealed and stopped, so no further proof collection is needed.
+    if (inventory.proofExecutorStack.exists) {
+      if (inventory.proofExecutorStack.status === 'DELETE_IN_PROGRESS') return result('wait-proof-executor-delete', currentState);
+      if (inventory.proofExecutorStack.status === 'DELETE_FAILED') return result('error-proof-executor-delete', currentState);
+      if (!['CREATE_COMPLETE','UPDATE_COMPLETE'].includes(inventory.proofExecutorStack.status)) return result('error-proof-executor-status', currentState);
+      return result('delete-proof-executor', currentState);
     }
     if (inventory.foundationStack.status === 'DELETE_IN_PROGRESS') {
       return result('wait-foundation-delete', currentState);

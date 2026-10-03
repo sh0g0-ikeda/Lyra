@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {performLifecycleDecision,shouldCollectDatabaseDrainProof} from './stage-lifecycle-effects.mjs';
+const now='2026-10-09T15:00:00.000Z';
+const state={version:1,databaseStopRequested:true,databaseDrainProofObservedAt:'2026-10-09T14:59:50.000Z',workersStoppedAt:'2026-10-09T14:59:00.000Z'};
+const decision={action:'stop-database',mutates:true,nextState:state};
+test('DB停止意図の保存が失敗した場合はStopDBを呼ばない',async()=>{let stops=0;await assert.rejects(performLifecycleDecision({decision,now,writeState:async()=>{throw Error('writefailed');},perform:async()=>{stops++;}}));assert.equal(stops,0);});
+test('StopDBが失敗しても証明時刻付きの停止意図が保存される',async()=>{let saved;await assert.rejects(performLifecycleDecision({decision,now,writeState:async x=>{saved=x;},perform:async()=>{throw Error('AWSfail');}}));assert.equal(saved.databaseStopRequested,true);assert.equal(saved.databaseDrainProofObservedAt,state.databaseDrainProofObservedAt);});
+test('StopDB成功後の最終保存が失敗しても先に保存した停止意図が残る',async()=>{let writes=0,saved,stops=0;const writeState=async x=>{writes++;if(writes===2)throw Error('finalfailed');saved=x;};await performLifecycleDecision({decision,now,writeState,perform:async()=>{stops++;}});await assert.rejects(writeState({...state,lastCheckedAt:now}));assert.equal(stops,1);assert.equal(saved.databaseStopRequested,true);assert.equal(saved.databaseDrainProofObservedAt,state.databaseDrainProofObservedAt);assert.equal(saved.workersStoppedAt,state.workersStoppedAt);});
+test('DB停止は証明時刻を保存してから実行する',async()=>{const events=[];await performLifecycleDecision({decision,now,writeState:async x=>{events.push(['write',x.databaseDrainProofObservedAt]);},perform:async a=>{events.push(['perform',a]);}});assert.deepEqual(events,[['write',state.databaseDrainProofObservedAt],['perform','stop-database']]);});
+test('inspect待機判断は外部の保存も停止も実行しない',async()=>{let calls=0;await performLifecycleDecision({decision:{action:'inspect',mutates:false,nextState:{}},now,writeState:async()=>{calls++;},perform:async()=>{calls++;}});assert.equal(calls,0);});
+const input=()=>({action:'wait-db-drain',nowUtc:now,state:{apiStoppedAt:'2026-10-09T14:59:00.000Z',workersStoppedAt:null,databaseStopRequested:false},inventory:{database:{exists:true,owned:true,status:'available'},proofExecutorStack:{exists:true,owned:true,status:'CREATE_COMPLETE'}}});
+test('DB停止APIが失敗してavailableのままなら古い証明を再取得できる',()=>{const x=input();x.state={...x.state,...state};assert.equal(shouldCollectDatabaseDrainProof(x),true);});
+for(const status of ['stopping','stopped','deleting']) test('DBが'+status+'なら証明を再取得しない',()=>{const x=input();x.inventory.database.status=status;assert.equal(shouldCollectDatabaseDrainProof(x),false);});
+test('API停止確認前は証明を取得しない',()=>{const x=input();x.state.apiStoppedAt=null;assert.equal(shouldCollectDatabaseDrainProof(x),false);});
+test('指定開始日時前は証明を取得しない',()=>{const x=input();x.nowUtc='2026-10-08T16:09:59.000Z';assert.equal(shouldCollectDatabaseDrainProof(x),false);});
+test('所有権が未確認なら証明を取得しない',()=>{const x=input();x.inventory.proofExecutorStack.owned=false;assert.equal(shouldCollectDatabaseDrainProof(x),false);});

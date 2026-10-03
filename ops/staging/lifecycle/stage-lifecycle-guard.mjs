@@ -5,15 +5,12 @@ import {
   ListTagsForResourceCommand as ListScalingTagsCommand,
 } from '@aws-sdk/client-application-auto-scaling';
 import { CloudFormationClient, DeleteStackCommand, DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
-import { CloudWatchLogsClient, GetLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
+import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import {
-  DescribeTaskDefinitionCommand,
   DescribeServicesCommand,
-  DescribeTasksCommand,
   ECSClient,
   ListTagsForResourceCommand as ListEcsTagsCommand,
   ListTasksCommand,
-  RunTaskCommand,
   UpdateServiceCommand,
 } from '@aws-sdk/client-ecs';
 import { DescribeDBInstancesCommand, RDSClient, StopDBInstanceCommand } from '@aws-sdk/client-rds';
@@ -30,12 +27,8 @@ import {
   STAGE_DATABASE_ID,
   STAGE_ID,
 } from './stage-lifecycle-guard-core.mjs';
-import {
-  classifyDatabaseDrainProofTasks,
-  createStageDatabaseDrainProofPort,
-  parseDatabaseDrainProofTaskRecord,
-  shouldStartDatabaseDrainProofTask,
-} from './stage-database-drain-proof-port.mjs';
+import { createStageDatabaseDrainInvokePort } from './stage-database-drain-invoke-port.mjs';
+import { performLifecycleDecision, shouldCollectDatabaseDrainProof } from './stage-lifecycle-effects.mjs';
 
 const account = '452284481392';
 const region = 'ap-northeast-1';
@@ -47,7 +40,6 @@ const stateKey = 'lifecycle/guard-state.json';
 const successKey = 'lifecycle/guard-success.json';
 const errorKey = 'lifecycle/guard-last-error.json';
 const databaseDrainProofKey = 'lifecycle/database-drain-proof.json';
-const databaseDrainProofTaskKey = 'lifecycle/database-drain-proof-task.json';
 const dlqUrl = `https://sqs.${region}.amazonaws.com/${account}/${prefix}-lifecycle-dlq`;
 const exactTargetArn = 'arn:aws:application-autoscaling:ap-northeast-1:452284481392:scalable-target/0ec516a28b068004442db2e9a491f8726c9b';
 const services = ['api', 'generation', 'export', 'deletion'];
@@ -66,18 +58,11 @@ const rds = new RDSClient({ region });
 const cfn = new CloudFormationClient({ region });
 const s3 = new S3Client({ region });
 const tagging = new ResourceGroupsTaggingAPIClient({ region });
-const logs = new CloudWatchLogsClient({ region });
-const databaseDrainProofPort = createStageDatabaseDrainProofPort({
-  cfn,
-  ecs,
-  logs,
-  commands: {
-    describeStacks: (input) => new DescribeStacksCommand(input),
-    describeTaskDefinition: (input) => new DescribeTaskDefinitionCommand(input),
-    runTask: (input) => new RunTaskCommand(input),
-    describeTasks: (input) => new DescribeTasksCommand(input),
-    getLogEvents: (input) => new GetLogEventsCommand(input),
-  },
+const proofLambda = new LambdaClient({ region });
+const databaseDrainProofPort = createStageDatabaseDrainInvokePort({
+  functionArn: process.env.DATABASE_DRAIN_EXECUTOR_ARN,
+  lambda: proofLambda,
+  invokeCommand: (input) => new InvokeCommand(input),
 });
 
 function tagsMatch(tags) {
@@ -239,9 +224,10 @@ async function listOwnedDatabaseArns() {
 }
 
 async function collectInventory() {
-  const [runtimeStack, foundationStack] = await Promise.all([
+  const [runtimeStack, foundationStack, proofExecutorStack] = await Promise.all([
     describeStack(`${prefix}-runtime`),
     describeStack(`${prefix}-foundation`),
+    describeStack(`${prefix}-database-drain-proof`),
   ]);
   const [serviceState, queueState, scalableTarget, databaseState, runningTasks, pendingTasks, databaseDrainProof] = await Promise.all([
     serviceInventory(runtimeStack.exists),
@@ -261,7 +247,9 @@ async function collectInventory() {
     throw new Error('TASK_INVENTORY_INCOMPLETE');
   }
   const taskArns = [...runningTasks.taskArns, ...pendingTasks.taskArns];
-  const taskCounts = classifyDatabaseDrainProofTasks(taskArns);
+  if (taskArns.some((arn) => typeof arn !== 'string' || !arn.startsWith(`arn:aws:ecs:${region}:${account}:task/${cluster}/`) || !/^[0-9a-f]{32}$/u.test(arn.split('/').at(-1)))) throw new Error('TASK_INVENTORY_IDENTITY_INVALID');
+  const totalTaskCount = new Set(taskArns).size;
+  const taskCounts = { clusterTaskCount: totalTaskCount, readOnlyProofTaskCount: 0, unknownClusterTaskCount: totalTaskCount };
   for (const [name, service] of Object.entries(serviceState)) {
     if (!service.owned) throw new Error(`SERVICE_NOT_OWNED_${name}`);
   }
@@ -278,6 +266,7 @@ async function collectInventory() {
       extraOwnedDatabaseIds: databaseState.extraOwnedDatabaseIds,
       runtimeStack,
       foundationStack,
+      proofExecutorStack,
       databaseDrainProof,
       ...taskCounts,
     },
@@ -339,6 +328,8 @@ async function perform(action) {
     await rds.send(new StopDBInstanceCommand({ DBInstanceIdentifier: baseDatabase }));
   } else if (action === 'delete-runtime') {
     await cfn.send(new DeleteStackCommand({ StackName: `${prefix}-runtime` }));
+  } else if (action === 'delete-proof-executor') {
+    await cfn.send(new DeleteStackCommand({ StackName: `${prefix}-database-drain-proof` }));
   } else if (action === 'delete-foundation') {
     await cfn.send(new DeleteStackCommand({ StackName: `${prefix}-foundation` }));
   }
@@ -370,52 +361,25 @@ export async function handler(event = {}, context = {}) {
     }
     const now = mode === 'inspect' && event.now ? event.now : new Date().toISOString();
     const state = mode === 'inspect' ? { ...INITIAL_STATE } : parseState(await readJson(stateKey));
-    const rawTaskRecord = await readJson(databaseDrainProofTaskKey);
-    let taskRecord = rawTaskRecord === null ? null : parseDatabaseDrainProofTaskRecord(rawTaskRecord);
     const collected = await collectInventory();
-    let inventory = collected.inventory;
-    if (
-      mode === 'active'
-      && Date.parse(now) >= Date.parse(ACTIVE_START_AT)
-      && taskRecord?.status === 'pending'
-      && state.databaseStopRequested === false
-      && inventory.database.exists === true
-      && inventory.database.owned === true
-      && inventory.database.status === 'available'
-    ) {
-      const polled = await databaseDrainProofPort.poll({ record: taskRecord, nowUtc: now });
-      taskRecord = polled.record;
-      inventory = {
-        ...inventory,
-        ...classifyDatabaseDrainProofTasks(collected.taskArns, taskRecord.taskArn),
-      };
-      if (polled.status === 'completed') {
-        await writeJson(databaseDrainProofKey, polled.proof);
-        await writeJson(databaseDrainProofTaskKey, taskRecord);
-        inventory = { ...inventory, databaseDrainProof: polled.proof };
-      }
-    }
+    const inventory = collected.inventory;
     const decision = decideLifecycleAction({ mode, now, state, inventory });
     if (mode === 'inspect') return { mode, now, decision, inventory, mutated: false };
     if (decision.action.startsWith('error-')) throw new Error(decision.action.toUpperCase());
     let action = decision.action;
     let mutated = decision.mutates;
     let details = decision.details;
-    if (shouldStartDatabaseDrainProofTask({ mode, nowUtc: now, action, state: decision.nextState, inventory, taskRecord })) {
+    if (shouldCollectDatabaseDrainProof({ action, nowUtc: now, state: decision.nextState, inventory })) {
       const safePointAtUtc = decision.nextState.workersStoppedAt ?? decision.nextState.apiStoppedAt;
       if (safePointAtUtc === null) throw new Error('DATABASE_DRAIN_PROOF_SAFE_POINT_MISSING');
       await writeJson(stateKey, { ...decision.nextState, lastAction: action, lastCheckedAt: now });
-      taskRecord = await databaseDrainProofPort.start({
-        nowUtc: now,
-        safePointAtUtc,
-        attemptKey: safePointAtUtc,
-      });
-      await writeJson(databaseDrainProofTaskKey, taskRecord);
-      action = 'start-db-drain-proof';
+      const proof = await databaseDrainProofPort.collect({ nowUtc: now, safePointAtUtc });
+      await writeJson(databaseDrainProofKey, proof);
+      action = 'collect-db-drain-proof';
       mutated = true;
-      details = { ...details, safePointAtUtc };
+      details = { ...details, safePointAtUtc, observedAtUtc: proof.observedAtUtc };
     } else if (decision.mutates) {
-      await perform(decision.action);
+      await performLifecycleDecision({ decision, now, writeState: (value) => writeJson(stateKey, value), perform });
     }
     const recorded = { ...decision.nextState, lastAction: action, lastCheckedAt: now };
     if (action === 'success') {

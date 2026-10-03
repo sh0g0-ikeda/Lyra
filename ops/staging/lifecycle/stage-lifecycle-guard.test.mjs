@@ -68,6 +68,7 @@ function inventory(overrides = {}) {
     extraOwnedDatabaseIds: [],
     runtimeStack: { exists: true, status: 'UPDATE_COMPLETE', owned: true },
     foundationStack: { exists: true, status: 'UPDATE_COMPLETE', owned: true },
+    proofExecutorStack: { exists: false },
     ...overrides,
   };
 }
@@ -498,3 +499,13 @@ test('unfinished lifecycle at final monitoring cutoff fails and cannot mutate', 
   assert.equal(decision.mutates, false);
 });
 
+
+function afterRuntimeRemoved(proofExecutorStack,overrides={}) { return decideLifecycleAction({mode:'active',now:afterDelete,state:{...sealedState(),runtimeDeleteRequested:true},inventory:inventory({runtimeStack:{exists:false},database:{exists:true,status:'stopped',owned:true},scalableTarget:{exists:false},proofExecutorStack,...overrides})}); }
+test('集計Lambdaが残る場合はVPC削除より先に専用stackを削除する',()=>{assert.equal(afterRuntimeRemoved({exists:true,owned:true,status:'CREATE_COMPLETE'}).action,'delete-proof-executor');});
+test('集計Lambda削除中はVPC削除を待つ',()=>{assert.equal(afterRuntimeRemoved({exists:true,owned:true,status:'DELETE_IN_PROGRESS'}).action,'wait-proof-executor-delete');});
+test('集計Lambda削除失敗はVPC削除へ進めない',()=>{assert.equal(afterRuntimeRemoved({exists:true,owned:true,status:'DELETE_FAILED'}).action,'error-proof-executor-delete');});
+test('集計Lambdaが自分の検証環境所有でなければ削除しない',()=>{assert.equal(afterRuntimeRemoved({exists:true,owned:false,status:'CREATE_COMPLETE'}).action,'error-proof-executor-ownership');});
+test('集計Lambdaの存在確認が不明なら停止も削除も進めない',()=>{assert.equal(afterRuntimeRemoved(undefined).action,'error-proof-executor-inventory');});
+test('集計Lambda不在を確認できればVPC削除へ進める',()=>{assert.equal(afterRuntimeRemoved({exists:false}).action,'delete-foundation');});
+test('DBの停止証明がない場合は集計Lambdaを先に削除しない',()=>{assert.equal(afterRuntimeRemoved({exists:true,owned:true,status:'CREATE_COMPLETE'},{databaseDrainProof:null}).action,'wait-db-drain');});
+test('VPC不在でも集計Lambdaが残っていれば完了と報告しない',()=>{const r=decideLifecycleAction({mode:'active',now:afterDelete,state:{...sealedState(),runtimeDeleteRequested:true,foundationDeleteRequested:true},inventory:inventory({foundationStack:{exists:false},runtimeStack:{exists:false},proofExecutorStack:{exists:true,owned:true,status:'CREATE_COMPLETE'}})});assert.equal(r.action,'error-proof-executor-orphaned');});
