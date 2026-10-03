@@ -56,6 +56,10 @@ export interface EpisodeRecord {
   ending_hook: string | null;
   estimated_pages: number;
   entities_involved: string[];
+  readonly starting_entity_states?: ReadonlyArray<{
+    readonly entity_id: string;
+    readonly state_id: string | null;
+  }>;
   page_skeleton_generated: boolean;
   version: number;
   status: StoryStatus;

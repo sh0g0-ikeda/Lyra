@@ -81,6 +81,12 @@ const episode = {
   ending_hook: 'An unseen observer.',
   estimated_pages: 8,
   entities_involved: ['entity-1'],
+  starting_entity_states: [
+    {
+      entity_id: 'entity-1',
+      state_id: '88888888-8888-4888-8888-888888888888',
+    },
+  ],
   page_skeleton_generated: true,
   version: 1,
   edit_history: [],
@@ -299,6 +305,10 @@ async function mockApi(
     }
   }
 
+  if (pathname === `/api/entities/${entity.id}` && route.request().method() === 'PUT') {
+    return json(entity);
+  }
+
   if (pathname === `/api/entities/${entity.id}/reference-set`) {
     return json({
       entity_id: entity.id,
@@ -483,6 +493,51 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await page.getByRole('button', { name: 'Pages', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
+});
+
+test('Mobileが保存した開始状態を旧Webの話とbaseキャラ保存で消さない', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockApi(route));
+
+  await page.goto('/');
+
+  const episodeSection = page
+    .getByRole('heading', { name: 'Episode draft', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  const episodeRequestPromise = page.waitForRequest((request) =>
+    request.method() === 'PUT' &&
+    new URL(request.url()).pathname === `/api/episodes/${episode.id}`
+  );
+  const episodeResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === 'PUT' &&
+    new URL(response.url()).pathname === `/api/episodes/${episode.id}`
+  );
+  await episodeSection.locator('.episode-save-desktop').click();
+  const episodePayload = (await episodeRequestPromise).postDataJSON() as Record<string, unknown>;
+  await (await episodeResponsePromise).finished();
+
+  expect(episodePayload).not.toHaveProperty('starting_entity_states');
+
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  const characterEditor = page
+    .getByRole('heading', { name: 'Character editor', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  const entityRequestPromise = page.waitForRequest((request) =>
+    request.method() === 'PUT' &&
+    new URL(request.url()).pathname === `/api/entities/${entity.id}`
+  );
+  await characterEditor.getByRole('button', { name: 'Save character', exact: true }).click();
+  const entityPayload = (await entityRequestPromise).postDataJSON() as Record<string, unknown>;
+
+  expect(Object.keys(entityPayload).sort()).toEqual([
+    'entity_type',
+    'free_description',
+    'name',
+    'prompt_supplement',
+    'speech_profile',
+    'structured_fields',
+  ]);
 });
 
 test('キャラ編集では画像取り込みを自由記述の前に置き不要な詳細入力を隠す', async ({ page }) => {
