@@ -1,4 +1,4 @@
-import { ValidationError } from '../../domain/errors/index.js';
+import { ConfigurationError, ValidationError } from '../../domain/errors/index.js';
 import type { AppLanguage } from '../../domain/types/language.js';
 import type {
   EpisodeStoryAutofillExecutionRepository,
@@ -15,6 +15,9 @@ import type {
   EpisodeStateAutofillOptions,
   PageServicePort,
 } from '../page/PageService.js';
+
+const EPISODE_STORY_AUTOFILL_PROGRESS_PERSISTENCE_ERROR =
+  'Episode story autofill progress could not be persisted';
 
 export interface ProcessEpisodeStoryAutofillJobResult {
   status: 'processed' | 'skipped';
@@ -194,8 +197,9 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
       totalChunks: number | null;
     },
   ): Promise<void> {
+    let updated: boolean;
     try {
-      await this.repository.updateEpisodeStoryAutofillProgress({
+      updated = await this.repository.updateEpisodeStoryAutofillProgress({
         jobId,
         userId,
         stage: progress.stage,
@@ -208,6 +212,15 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         jobId,
         reason: sanitizePersistedErrorMessage(error, 'Progress update failed'),
       });
+      throw new ConfigurationError(EPISODE_STORY_AUTOFILL_PROGRESS_PERSISTENCE_ERROR);
+    }
+
+    if (!updated) {
+      console.warn('episode_story_autofill_progress_update_failed', {
+        jobId,
+        reason: 'Progress update was not accepted',
+      });
+      throw new ConfigurationError(EPISODE_STORY_AUTOFILL_PROGRESS_PERSISTENCE_ERROR);
     }
   }
 }

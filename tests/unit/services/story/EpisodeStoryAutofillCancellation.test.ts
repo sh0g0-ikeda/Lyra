@@ -24,7 +24,14 @@ class FakeExecutionRepository implements EpisodeStoryAutofillExecutionRepository
   public failed = false;
   public cancelled = false;
   public commitStarted = false;
-  public failureInput: { stateBlocker?: { code: string } } | null = null;
+  public failureInput: {
+    jobId: string;
+    userId: string;
+    errorMessage: string;
+    stateBlocker?: { code: string };
+  } | null = null;
+  public progressOutcomes: Array<boolean | Error> = [];
+  public progressCallCount = 0;
 
   public async claimQueuedEpisodeStoryAutofillJob(): Promise<GenerationJob | null> {
     return this.job;
@@ -33,7 +40,12 @@ class FakeExecutionRepository implements EpisodeStoryAutofillExecutionRepository
   public async updateEpisodeStoryAutofillProgress(
     _input: UpdateEpisodeStoryAutofillProgressInput,
   ): Promise<boolean> {
-    return true;
+    this.progressCallCount += 1;
+    const outcome = this.progressOutcomes.shift() ?? true;
+    if (outcome instanceof Error) {
+      throw outcome;
+    }
+    return outcome;
   }
 
   public async isEpisodeStoryAutofillCancellationRequested(): Promise<boolean> {
@@ -64,7 +76,12 @@ class FakeExecutionRepository implements EpisodeStoryAutofillExecutionRepository
     return true;
   }
 
-  public async failEpisodeStoryAutofill(input: { stateBlocker?: { code: string } }): Promise<boolean> {
+  public async failEpisodeStoryAutofill(input: {
+    jobId: string;
+    userId: string;
+    errorMessage: string;
+    stateBlocker?: { code: string };
+  }): Promise<boolean> {
     this.failed = true;
     this.failureInput = input;
     return true;
@@ -74,8 +91,9 @@ class FakeExecutionRepository implements EpisodeStoryAutofillExecutionRepository
 class ControlledPageService implements PageServicePort {
   public executionControl: EpisodePagePlanExecutionControl | undefined;
   public stateOptions: EpisodeStateAutofillOptions | undefined;
-  public onAutofill: (() => Promise<void>) | null = null;
+  public onAutofill: ((progressReporter?: EpisodePagePlanProgressReporter) => Promise<void>) | null = null;
   public result = buildApplyResult();
+  public autofillCalls = 0;
 
   public async updatePageSettings(): Promise<PageSummary> {
     throw new Error('not used');
@@ -89,19 +107,72 @@ class ControlledPageService implements PageServicePort {
     _userId: string,
     _episodeId: string,
     _language: AppLanguage,
-    _progressReporter?: EpisodePagePlanProgressReporter,
+    progressReporter?: EpisodePagePlanProgressReporter,
     _organizationId?: string | null,
     executionControl?: EpisodePagePlanExecutionControl,
     stateOptions?: EpisodeStateAutofillOptions,
   ): Promise<EpisodePagePlanApplyResult> {
+    this.autofillCalls += 1;
     this.executionControl = executionControl;
     this.stateOptions = stateOptions;
-    await this.onAutofill?.();
+    await this.onAutofill?.(progressReporter);
     return this.result;
   }
 }
 
 describe('EpisodeStoryAutofillWorkerService cancellation', () => {
+  it.each([
+    ['falseを返す', false],
+    ['例外を投げる', new Error('database unavailable')],
+  ])('開始時の進捗保存が%s場合はprovider処理を開始しない', async (_caseName, progressOutcome) => {
+    const repository = new FakeExecutionRepository();
+    repository.progressOutcomes = [progressOutcome];
+    const pageService = new ControlledPageService();
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'failed' });
+    expect(repository.progressCallCount).toBe(1);
+    expect(pageService.autofillCalls).toBe(0);
+    expect(repository.commitStarted).toBe(false);
+    expect(repository.failed).toBe(true);
+    expect(repository.failureInput?.errorMessage).toBe(
+      'Episode story autofill progress could not be persisted',
+    );
+    expect(repository.failureInput?.errorMessage).not.toContain('database unavailable');
+  });
+
+  it.each([
+    ['falseを返す', false],
+    ['例外を投げる', new Error('database unavailable')],
+  ])('処理中の進捗保存が%s場合は後続provider処理と保存を開始しない', async (_caseName, progressOutcome) => {
+    const repository = new FakeExecutionRepository();
+    repository.progressOutcomes = [true, progressOutcome];
+    const pageService = new ControlledPageService();
+    let providerContinuationReached = false;
+    pageService.onAutofill = async (progressReporter) => {
+      await progressReporter?.({
+        stage: 'compiling_chunk',
+        message: 'Compiling page details.',
+        currentChunk: 1,
+        totalChunks: 2,
+      });
+      providerContinuationReached = true;
+      await pageService.executionControl?.beginCommit();
+    };
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'failed' });
+    expect(repository.progressCallCount).toBe(2);
+    expect(pageService.autofillCalls).toBe(1);
+    expect(providerContinuationReached).toBe(false);
+    expect(repository.commitStarted).toBe(false);
+    expect(repository.failed).toBe(true);
+    expect(repository.failureInput?.errorMessage).toBe(
+      'Episode story autofill progress could not be persisted',
+    );
+    expect(repository.failureInput?.errorMessage).not.toContain('database unavailable');
+  });
+
   it('通常の話全体反映もPageService内でjobを完了しworkerから重複完了しない', async () => {
     const repository = new FakeExecutionRepository();
     const pageService = new ControlledPageService();
