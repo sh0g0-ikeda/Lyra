@@ -58,6 +58,9 @@ test('install SQL exposes only the exact counter function to the fixed stage rea
   assert.match(contract.installSql, /GRANT EXECUTE ON FUNCTION lyra_stage_ops\.collect_database_drain_counts\(\) TO lyra_stage_drain_reader/u);
   assert.match(contract.installSql, /GRANT CONNECT ON DATABASE lyrastaging TO lyra_stage_drain_reader/u);
   assert.match(contract.verifySql, /grantor = 10/u);
+  assert.match(contract.verifySql, /role_membership_count NOT IN \(0, 2\)/u);
+  assert.match(contract.verifySql, /role_membership_count = 2/u);
+  assert.doesNotMatch(contract.verifySql, /NOT installer_is_superuser\s+AND\s+\(\s+role_membership_count <> 2/u);
   assert.match(contract.verifySql, /AND prosrc = /u);
   assert.doesNotMatch(contract.installSql, /GRANT SELECT ON (?:ALL TABLES|TABLE public\.[a-z_]+ TO lyra_stage_drain_reader)/u);
   assert.doesNotMatch(contract.teardownSql, /CASCADE|DROP TABLE|DROP DATABASE|TRUNCATE/u);
@@ -245,6 +248,22 @@ test('local PostgreSQL proves the reader can execute only the counter function a
        AS $tampered$SELECT clock_timestamp(), '0'::text, '0'::text, '0'::text, '0'::text, '0'::text, '0'::text, '0'::text$tampered$`,
       /STAGE_DATABASE_DRAIN_FUNCTION_INVALID/u,
     );
+
+    // RDS 18.3 CREATEROLE creates the owner and reader without self-membership.
+    // The controller removes the local automatic memberships; the non-super installer must still verify zero rows.
+    await client.query('RESET SESSION AUTHORIZATION');
+    await client.query('REVOKE lyra_stage_drain_owner FROM lyra_staging');
+    await client.query('REVOKE lyra_stage_drain_reader FROM lyra_staging');
+    assert.deepEqual(await readMemberships(), []);
+    await client.query('SET LOCAL SESSION AUTHORIZATION lyra_staging');
+    await client.query(localize(contract.verifySql));
+    await client.query('RESET SESSION AUTHORIZATION');
+    await client.query('GRANT lyra_stage_drain_owner TO lyra_staging WITH ADMIN TRUE, INHERIT FALSE, SET FALSE');
+    await client.query('GRANT lyra_stage_drain_reader TO lyra_staging WITH ADMIN TRUE, INHERIT FALSE, SET FALSE');
+    assert.deepEqual(await readMemberships(), [
+      { granted_role: 'lyra_stage_drain_owner', member_role: 'lyra_staging', grantor: 10, admin_option: true, inherit_option: false, set_option: false },
+      { granted_role: 'lyra_stage_drain_reader', member_role: 'lyra_staging', grantor: 10, admin_option: true, inherit_option: false, set_option: false },
+    ]);
 
     await client.query('SET LOCAL SESSION AUTHORIZATION lyra_staging');
     await client.query(localize(contract.teardownSql));

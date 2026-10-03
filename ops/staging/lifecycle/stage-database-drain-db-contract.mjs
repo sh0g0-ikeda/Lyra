@@ -59,10 +59,9 @@ const ROLE_MEMBERSHIP_VALIDATION = `
      OR role_membership_count NOT IN (0, 2)
      OR (installer_is_superuser AND role_membership_count <> 0)
      OR (
-       NOT installer_is_superuser
+       role_membership_count = 2
        AND (
-         role_membership_count <> 2
-         OR NOT EXISTS (
+         NOT EXISTS (
            SELECT 1 FROM pg_catalog.pg_auth_members
            WHERE roleid = owner_oid AND member = installer_oid AND grantor = 10
              AND admin_option AND NOT inherit_option AND NOT set_option
