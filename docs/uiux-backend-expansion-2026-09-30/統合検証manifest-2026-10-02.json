@@ -1,399 +1,431 @@
 {
-  "schema_version": 2,
-  "observed_at_utc": "2026-10-02T14:04:28.568Z",
+  "schema_version": 3,
+  "observed_at_utc": "2026-10-03T08:11:46.184Z",
   "production_ready": false,
   "local_required_gates_completed": true,
   "integration_branch": "codex/lyra-dots-integration-20261002",
-  "verified_code_commit": "e5f4eb20aaf7954cb83f3433f3234c1b0f349e12",
+  "verified_code_commit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
   "source_commit": "23878f92a8666efd949f3560cfeea8e4a9cfb6f7",
   "source_clean": true,
   "baseline_commit": "2bb4e2dabd24c3116c5dae86a177754b367e245d",
-  "note": "Later documentation-only commits do not change executable/test scopes. Current evidence below replaces older dependency and empty-DB limitations; historical results stay in Git and archive history.",
   "original_checkout": {
-    "head": "85625cde07e9e0a90a6ac389d099355a573e93ca",
-    "protected_paths": 28,
-    "unchanged": true,
-    "backup_manifest_sha256": "922aeda788a07d56ea04867ce41530873ea8761005d51c4d3a595e717056393b"
-  },
-  "scope_sha256": {
-    "backend": "09f13f6913957c059c9762f655d1ffe869ed594b360a4d19b6082435f1b805af",
-    "mobile": "00492155ab3782a951c3de40de5b87c216a3308b93a24c24128c0567f71f9776",
-    "web": "a60eedd350411f5062a3b1a139468741ec57cceed305d17517b91ab58e46a50f"
-  },
-  "frontend_scopes_unchanged_since": "18dceb9cf322c3676d1094feb883b290aa65d612",
-  "environment": {
-    "runtime": "Bun 1.3.14 / Windows x64; Node 24.13.1",
-    "postgres": [
-      "16.10",
-      "18.3"
-    ],
-    "postgres_scope": "Dedicated disposable loopback-only native processes; no existing DB changed",
-    "backend_install": "Frozen lock with an empty isolated cache; 311 available lock paths / 225 unique versions matched bun.lock, zero mismatch. 81 absent optional/platform paths listed in receipt.",
-    "mobile_install": "Fresh npm ci / package lock unchanged",
-    "web_install": "Fresh npm ci / package lock unchanged",
-    "missing_dependency_bodies": [],
-    "dependency_manifest_changed": false,
-    "lock_verification_receipt": "receipts/installed-lock-verification.json"
+    "checkedAt": "2026-10-03T08:11:19.098Z",
+    "baselineHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "currentHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "baselinePaths": 28,
+    "changedBaselinePaths": [],
+    "unrelatedAdditionalPath": "store-assets/google-play",
+    "discardedChanges": false
   },
   "checks": [
     {
-      "name": "Backend full Vitest on PG16",
+      "name": "backend vitest",
       "status": "passed",
-      "command": "bun run test --maxWorkers=4 --hookTimeout=120000",
-      "exit_code": 0,
-      "log": "logs/backend-vitest-final-complete-pg16.log",
-      "files": 358,
-      "tests_passed": 2810,
-      "tests_skipped": 0,
-      "real_disposable_db": true
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "tests": 2899,
+      "files": 359,
+      "receipt": "receipts/final-local-backend-gate-receipt.json"
     },
     {
-      "name": "PG18 full integration",
+      "name": "backend bun",
       "status": "passed",
-      "command": "bun run test tests/integration --maxWorkers=2 --hookTimeout=120000",
-      "exit_code": 0,
-      "log": "logs/pg18-integration-final-complete.log",
-      "files": 28,
-      "tests_passed": 274,
-      "tests_skipped": 0,
-      "real_disposable_db": true
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "tests": 2899,
+      "files": 359,
+      "receipt": "receipts/final-local-backend-gate-receipt.json"
     },
     {
-      "name": "Native Bun without DB",
+      "name": "backend build",
       "status": "passed",
-      "command": "bun --no-install test --timeout 15000 (DATABASE_URL unset)",
-      "exit_code": 0,
-      "log": "logs/backend-bun-final-complete-no-db.log",
-      "tests_passed": 2536,
-      "tests_skipped": 326,
-      "note": "Bun counts lifecycle hooks among skipped tests; actual DB integration is separate."
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "receipt": "receipts/final-local-backend-gate-receipt.json"
     },
     {
-      "name": "Native Bun PG18 image deletion and preflight",
+      "name": "mobile-typecheck",
       "status": "passed",
-      "command": "bun --no-install test ./tests/integration/accountDeletionFencedStateReferences.test.ts ./tests/integration/releaseCompatibilityPreflight.test.ts --timeout 15000",
-      "exit_code": 0,
-      "log": "logs/bun-pg-fenced-and-preflight-final.log",
-      "tests_passed": 15,
-      "assertions": 113
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "receipt": "receipts/final-frontend-gate-receipt.json"
     },
     {
-      "name": "Backend TypeScript build",
+      "name": "mobile-lint",
       "status": "passed",
-      "command": "bun run build",
-      "exit_code": 0,
-      "log": "logs/backend-build-final-complete.log"
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "receipt": "receipts/final-frontend-gate-receipt.json"
     },
     {
-      "name": "Mobile full Vitest",
+      "name": "web-typecheck",
       "status": "passed",
-      "command": "node node_modules/vitest/vitest.mjs run --maxWorkers=4 (cwd apps/mobile)",
-      "exit_code": 0,
-      "log": "logs/mobile-test.log",
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "receipt": "receipts/final-frontend-gate-receipt.json"
+    },
+    {
+      "name": "web-lint",
+      "status": "passed",
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "receipt": "receipts/final-frontend-gate-receipt.json"
+    },
+    {
+      "name": "web-build",
+      "status": "passed",
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "receipt": "receipts/final-frontend-gate-receipt.json"
+    },
+    {
+      "name": "Web Playwright",
+      "status": "passed_identical_ui_tree",
+      "tests": 19,
+      "sourceScope": {
+        "scope": "apps/web",
+        "apkTree": "57bb14fc02fe7c6b2fc219e3c86955b2fc6e7949",
+        "applicationTree": "57bb14fc02fe7c6b2fc219e3c86955b2fc6e7949",
+        "identical": true
+      },
+      "receipt": "receipts/web-color-hy4-green-results.json"
+    },
+    {
+      "name": "Mobile Vitest",
+      "status": "passed_identical_ui_tree",
+      "tests": 1025,
       "files": 186,
-      "tests_passed": 1014
+      "sourceScope": {
+        "scope": "apps/mobile",
+        "apkTree": "25f9f8499741d21c1745c3aafefed466278b2c9d",
+        "applicationTree": "25f9f8499741d21c1745c3aafefed466278b2c9d",
+        "identical": true
+      },
+      "receipt": "logs/mobile-color-final-tests.log"
     },
     {
-      "name": "Mobile TypeScript",
+      "name": "stage lifecycle/DB contract",
       "status": "passed",
-      "command": "node node_modules/typescript/bin/tsc --noEmit (cwd apps/mobile)",
-      "exit_code": 0,
-      "log": "logs/mobile-typecheck.log"
+      "tests": 114,
+      "files": 15,
+      "skipped": 0,
+      "sourceHashes": {
+        "stage-lifecycle-guard-core.mjs": "d062560dbd02092de81e0eed00ce640d5c0aa7e27c57a3c5fa53ce20e090bcb8",
+        "stage-lifecycle-guard.mjs": "6ff08f6bb287d5cc8fdc190dfd92e154dc8494e8be0be2a30a458ed8b0e6316e",
+        "stage-lifecycle-guard.test.mjs": "72bfd25dbe14f4c176c61ef8503331c745ad2d6dc50c477b837c40205c840f60",
+        "stage-database-drain-proof.mjs": "2fe5661bf1f3bf163997b5e470f8176aa1b689e5d12f1a7c603dac1501815247",
+        "stage-database-drain-proof.test.mjs": "e2bb10d924f1e3938bce1f07f8d5ecd4ca2507030a0d5c661a85406b7745ecc9",
+        "stage-database-drain-proof-port.mjs": "41e0b21c687e57e94cc695fa05c7798daa260b96dc9c633c943e3d8155bee87c",
+        "stage-database-drain-proof-port.test.mjs": "4f1260c341bd07e93b1c3908c5aea70c2c65c4299238507b6c8ab8f7213394b9",
+        "stage-database-drain-invoke-port.mjs": "e6aca040ed19f258f06eaafd413d24935e9041f4d30de541db2747989775e3f6",
+        "stage-database-drain-invoke-port.test.mjs": "0f887f9955a492be298f4bca5d731707fdc5cf1eadbd6d6296c8c20c10852cbd",
+        "stage-database-drain-executor.mjs": "30f5990afa1322999d085b98e98fc409346418034c2ead3df5e619bbe25616f4",
+        "stage-database-drain-executor.test.mjs": "98ce61c46ab004e7e8e4bbcb233c5a36c7a41e13ab3692134fcc9cffa17a4110",
+        "stage-database-drain-db-contract.mjs": "35f96a388df4cc27e42d3f3dba8580bb714474dbec921b5687348c9d7903f7f2",
+        "stage-database-drain-db-contract.test.mjs": "4941a9d147c949f207ace3cb8c49762e6118d5859228fd08acb7d5e438a5f5ab",
+        "stage-lifecycle-effects.mjs": "a3a7e71c5d2d1682636bae12f111c57acdd7759ddf211f61ab0099421ed2ef9b",
+        "stage-lifecycle-effects.test.mjs": "d9375e87ae2ed96c2753dfe2a6765702ab7864d035a353266f8bca17e6d63057"
+      },
+      "receipt": "receipts/final-lifecycle-v4b-pg-receipt.json"
     },
     {
-      "name": "Mobile ESLint",
+      "name": "local DB deployment invariants",
       "status": "passed",
-      "command": "node node_modules/eslint/bin/eslint.js . --max-warnings=0 (cwd apps/mobile)",
-      "exit_code": 0,
-      "log": "logs/mobile-lint.log"
-    },
-    {
-      "name": "Expo online dependency check",
-      "status": "passed",
-      "command": "node node_modules/expo/bin/cli install --check",
-      "exit_code": 0,
-      "log": "logs/mobile-expo-install-check.log"
-    },
-    {
-      "name": "Expo Doctor",
-      "status": "passed",
-      "command": "node node_modules/expo-doctor/build/index.js",
-      "exit_code": 0,
-      "log": "logs/mobile-expo-doctor.log",
-      "checks_passed": 20,
-      "checks_total": 20
-    },
-    {
-      "name": "Android JS/assets export",
-      "status": "passed",
-      "command": "node node_modules/expo/bin/cli export --platform android --max-workers 2",
-      "exit_code": 0,
-      "log": "logs/mobile-export-android.log",
-      "signed_artifact": false,
-      "device_test": false,
-      "offline": true
-    },
-    {
-      "name": "iOS JS/assets export",
-      "status": "passed",
-      "command": "node node_modules/expo/bin/cli export --platform ios --max-workers 2",
-      "exit_code": 0,
-      "log": "logs/mobile-export-ios.log",
-      "signed_artifact": false,
-      "device_test": false,
-      "offline": true
-    },
-    {
-      "name": "Web TypeScript",
-      "status": "passed",
-      "command": "node node_modules/typescript/bin/tsc -b (cwd apps/web)",
-      "exit_code": 0,
-      "log": "logs/web-typecheck.log",
-      "exit_evidence": "Current-turn tool execution returned exit 0; empty stdout log is preserved."
-    },
-    {
-      "name": "Web ESLint",
-      "status": "passed",
-      "command": "node node_modules/eslint/bin/eslint.js . (cwd apps/web)",
-      "exit_code": 0,
-      "log": "logs/web-lint.log",
-      "exit_evidence": "Current-turn tool execution returned exit 0; empty stdout log is preserved."
-    },
-    {
-      "name": "Web build",
-      "status": "passed",
-      "command": "node node_modules/vite/bin/vite.js build (cwd apps/web)",
-      "exit_code": 0,
-      "log": "logs/web-build.log",
-      "warning": "Existing bundle chunk exceeds 500 kB",
-      "exit_evidence": "Current-turn tool execution returned exit 0."
-    },
-    {
-      "name": "Web Edge operations",
-      "status": "passed",
-      "command": "node apps/web/node_modules/@playwright/test/cli.js test --config=.tmp/dots-integration/playwright-local.config.ts",
-      "exit_code": 0,
-      "log": "logs/web-playwright.log",
-      "executions": 32,
-      "unique_cases": 16,
-      "visual_duplicates": 16,
-      "real_api": false,
-      "exit_evidence": "Current-turn tool execution returned exit 0."
-    },
-    {
-      "name": "Mobile generated contract",
-      "status": "passed",
-      "command": "node scripts/generateMobileApiContract.mjs --check",
-      "exit_code": 0,
-      "log": "logs/mobile-contract-check.log"
-    },
-    {
-      "name": "Backend API inventory",
-      "status": "passed",
-      "command": "node scripts/auditBackendApiInventory.mjs --check",
-      "exit_code": 0,
-      "log": "logs/api-inventory-check.log",
-      "endpoints": 150
-    },
-    {
-      "name": "Historical migrations 001-041",
-      "status": "passed",
-      "command": "Compare Git tree entries at 2bb4e2d and HEAD",
-      "exit_code": 0,
-      "log": "logs/historical-migrations-check.log",
-      "migrations": 41
-    },
-    {
-      "name": "Original and source preservation",
-      "status": "passed",
-      "command": "Rehash all 28 protected paths and verify both HEADs/status",
-      "exit_code": 0,
-      "log": "logs/original-source-protection.log",
-      "protected_paths": 28
-    },
-    {
-      "name": "pg16 migrate",
-      "status": "passed",
-      "command": "bun run migrate",
-      "exit_code": 0,
-      "log": "logs/pg16-migrate-final.log"
-    },
-    {
-      "name": "pg16 db-check-invariants",
-      "status": "passed",
-      "command": "bun run db:check-invariants",
-      "exit_code": 0,
-      "log": "logs/pg16-db-check-invariants-final.log",
-      "checks_passed": 71
-    },
-    {
-      "name": "pg16 db-check-lineage",
-      "status": "passed",
-      "command": "bun run db:check-lineage",
-      "exit_code": 0,
-      "log": "logs/pg16-db-check-lineage-final.log"
-    },
-    {
-      "name": "pg16 release-check backend-only",
-      "status": "passed",
-      "command": "bun run release:check --profile backend-only",
-      "exit_code": 0,
-      "log": "logs/pg16-release-check-backend-only.log",
-      "checks_passed": 74,
-      "remote_storage_policy_verified": false
-    },
-    {
-      "name": "pg16 release-check-prod backend-only",
-      "status": "passed",
-      "command": "bun run release:check:prod --profile backend-only",
-      "exit_code": 0,
-      "log": "logs/pg16-release-check-prod-backend-only.log",
-      "checks_passed": 74,
-      "remote_storage_policy_verified": false
-    },
-    {
-      "name": "pg16 new-mobile misconfiguration rejected",
-      "status": "passed_expected_rejection",
-      "command": "bun run release:check --profile new-mobile (quotes OFF, paid runtime unconfigured)",
-      "exit_code": 1,
-      "log": "logs/pg16-release-new-mobile-expected-rejection.log",
-      "expected_rejection": true
-    },
-    {
-      "name": "pg18 migrate",
-      "status": "passed",
-      "command": "bun run migrate",
-      "exit_code": 0,
-      "log": "logs/pg18-migrate-final.log"
-    },
-    {
-      "name": "pg18 db-check-invariants",
-      "status": "passed",
-      "command": "bun run db:check-invariants",
-      "exit_code": 0,
-      "log": "logs/pg18-db-check-invariants-final.log",
-      "checks_passed": 71
-    },
-    {
-      "name": "pg18 db-check-lineage",
-      "status": "passed",
-      "command": "bun run db:check-lineage",
-      "exit_code": 0,
-      "log": "logs/pg18-db-check-lineage-final.log"
-    },
-    {
-      "name": "pg18 release-check backend-only",
-      "status": "passed",
-      "command": "bun run release:check --profile backend-only",
-      "exit_code": 0,
-      "log": "logs/pg18-release-check-backend-only.log",
-      "checks_passed": 74,
-      "remote_storage_policy_verified": false
-    },
-    {
-      "name": "pg18 release-check-prod backend-only",
-      "status": "passed",
-      "command": "bun run release:check:prod --profile backend-only",
-      "exit_code": 0,
-      "log": "logs/pg18-release-check-prod-backend-only.log",
-      "checks_passed": 74,
-      "remote_storage_policy_verified": false
-    },
-    {
-      "name": "pg18 new-mobile misconfiguration rejected",
-      "status": "passed_expected_rejection",
-      "command": "bun run release:check --profile new-mobile (quotes OFF, paid runtime unconfigured)",
-      "exit_code": 1,
-      "log": "logs/pg18-release-new-mobile-expected-rejection.log",
-      "expected_rejection": true
-    },
-    {
-      "name": "Local production routes with real PG18",
-      "status": "passed",
-      "tests_passed": 11,
-      "real_cloud_auth": false,
-      "real_provider_calls": false,
-      "receipt": "receipts/local-api-smoke.json"
-    },
-    {
-      "name": "Manually viewed current Web screenshots",
-      "status": "passed",
-      "viewed": 4,
-      "native_device": false,
-      "real_api": false,
-      "path": "visual/"
-    },
-    {
-      "name": "Native Bun full PG18",
-      "status": "passed",
-      "files": 358,
-      "tests_passed": 2810,
-      "tests_skipped": 0,
-      "command": "bun --no-install test --timeout 15000 --bail=1",
-      "exit_code": 0,
-      "log": "logs/backend-bun-pg18-async-assertions-final.log",
-      "note": "After explicit user-approved await/assert conversion; approved file hashes preserved in the application receipt. Earlier timeout history is retained."
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "checks": 71,
+      "violations": 0,
+      "receipt": "receipts/final-local-db-invariants-receipt.json"
     }
   ],
-  "prior_failures_resolved": [
-    {
-      "issue": "Missing AWS package bodies and shared Bun cache version mismatch",
-      "proof": "Fresh isolated install, 199 version matches, final build and full Vitest"
+  "application_acceptance": {
+    "stagingSourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+    "latestSourceDeployed": true,
+    "http": {
+      "/healthz": 200,
+      "/readyz": 200,
+      "/": 200,
+      "/api/works": 401
     },
-    {
-      "issue": "Google link fixture exceeded TTL by 1ms",
-      "proof": "Single fixture createdAt, constraint unchanged, real DB suite passed"
+    "fifteenPageThirdRun": {
+      "at": "2026-10-03T05:06:43.831Z",
+      "episodeId": "b1e13953-1813-4e5b-a26d-d1bc047e1933",
+      "jobId": "7a01eb13-4a36-456c-95fd-afd28a9b9060",
+      "status": "failed",
+      "pagesPreserved": 15,
+      "panelsPreserved": 60,
+      "panelHash": "cf9f428b111c4c4834aaa139ab0504c8d785e8b04b9b6f42dff559ebe4d1b5a7",
+      "creditsPreserved": true,
+      "savePhaseStarted": false,
+      "consumeEntries": 0,
+      "refundEntries": 0,
+      "netCredits": 0,
+      "elapsedSeconds": 747.624,
+      "semanticAcceptance": "not_run_autofill_failed",
+      "actualPageImageGeneration": "not_run"
     },
-    {
-      "issue": "Lineage test table lookup fell through to populated public schema",
-      "proof": "Explicit fixture schema, all 26 cases and PG18 full integration passed"
+    "latestSourceActualFifteenPageResult": {
+      "environment": "real OpenAI / actual PageService / transactional in-memory persistence",
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "status": "rejected",
+      "primaryReceipt": "receipts/local-long15-3f5e289-result.json",
+      "strictReceipt": "receipts/local-long15-3f5e289-strict-evaluation.json",
+      "compilerCalls": {
+        "beatPlanCalls": 2,
+        "beatOutlineCalls": 1,
+        "detailPlanCalls": 5,
+        "auditCalls": 1,
+        "checkpointCalls": 19,
+        "beginCommitCalls": 1,
+        "creditMutationCalls": 0,
+        "fullDraftBriefChecks": 9,
+        "auditOwnedSourceChecks": 15
+      },
+      "stageQueueOrDatabaseUsed": false,
+      "imageGenerationModeTested": false
     },
-    {
-      "issue": "Fenced deletion suite async rejection wait",
-      "proof": "Explicitly await real rejection without weakening error/rollback assertion; Bun PG18 15 cases passed; general matcher defect not established"
+    "generationWorkerIdle": {
+      "desired": 0,
+      "running": 0,
+      "pending": 0,
+      "taskDefinition": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-generation:5"
+    },
+    "expiryAutomation": {
+      "at": "2026-10-03T05:13:16.335Z",
+      "onlyStaging": true,
+      "productionMutated": false,
+      "scheduleArn": "arn:aws:scheduler:ap-northeast-1:452284481392:schedule/lyra-staging-20261003/lyra-staging-20261003-lifecycle-guard",
+      "targetVersion": 3,
+      "beforeState": "ENABLED",
+      "afterState": "DISABLED",
+      "startDate": "2026-10-09T01:10:00+09:00",
+      "reason": "Version3 lacks the required database drain and contract-cleanup proof. Version4 deployment is blocked by automatic review; prevent unverified database stopping and snapshots.",
+      "credentialsOrPermissionsChanged": false,
+      "resourcesDeleted": false,
+      "reactivationRequiredAfterVerifiedVersion4": true
+    },
+    "dedicatedDbContractRemoved": {
+      "readerRole": true,
+      "ownerRole": true,
+      "schema": true,
+      "function": true
+    },
+    "runtimeReadback": {
+      "receipt": "receipts/final-stage-runtime-readback.json",
+      "at": "2026-10-03T08:10:17.349Z",
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "imageDigest": "sha256:84d9785b5e38114dd0fce5aa0840bc843b6d9d5ef66fb02ffd8f19084217d039",
+      "stageOnly": true,
+      "readOnly": true,
+      "stackStatus": "UPDATE_COMPLETE",
+      "services": {
+        "api": {
+          "desired": 1,
+          "running": 1,
+          "pending": 0,
+          "taskDefinition": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-api:5"
+        },
+        "generation": {
+          "desired": 0,
+          "running": 0,
+          "pending": 0,
+          "taskDefinition": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-generation:5"
+        },
+        "export": {
+          "desired": 0,
+          "running": 0,
+          "pending": 0,
+          "taskDefinition": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-export:5"
+        },
+        "deletion": {
+          "desired": 0,
+          "running": 0,
+          "pending": 0,
+          "taskDefinition": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-deletion:5"
+        }
+      },
+      "queues": {
+        "GenerationQueue": {
+          "ApproximateNumberOfMessages": "0",
+          "ApproximateNumberOfMessagesNotVisible": "0",
+          "ApproximateNumberOfMessagesDelayed": "0"
+        },
+        "GenerationDlq": {
+          "ApproximateNumberOfMessages": "0",
+          "ApproximateNumberOfMessagesNotVisible": "0",
+          "ApproximateNumberOfMessagesDelayed": "0"
+        },
+        "ExportQueue": {
+          "ApproximateNumberOfMessages": "0",
+          "ApproximateNumberOfMessagesNotVisible": "0",
+          "ApproximateNumberOfMessagesDelayed": "0"
+        },
+        "ExportDlq": {
+          "ApproximateNumberOfMessages": "0",
+          "ApproximateNumberOfMessagesNotVisible": "0",
+          "ApproximateNumberOfMessagesDelayed": "0"
+        }
+      },
+      "autoscaling": [
+        {
+          "resource": "service/lyra-staging-20261003-cluster/lyra-staging-20261003-generation",
+          "min": 0,
+          "max": 1,
+          "suspended": {
+            "DynamicScalingInSuspended": false,
+            "DynamicScalingOutSuspended": false,
+            "ScheduledScalingSuspended": false
+          }
+        }
+      ],
+      "http": {
+        "/healthz": 200,
+        "/readyz": 200,
+        "/": 200,
+        "/api/works": 401
+      },
+      "mutations": 0
+    },
+    "runtimeArtifactVerification": {
+      "receipt": "receipts/stage-oci-runtime-files-proof-result.json",
+      "files": 401,
+      "allHashesMatch": true,
+      "nonImageConfigurationChanged": false
+    },
+    "latestSourceDiagnosticFifteenPageResult": {
+      "sourceCommit": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "status": "rejected",
+      "primaryReceipt": "receipts/local-long15-trace-3f5e289-result.json",
+      "strictReceipt": "receipts/local-long15-trace-3f5e289-strict-evaluation.json",
+      "manualReceipt": "receipts/local-long15-trace-3f5e289-manual-review-v2.json",
+      "compilerCalls": {
+        "beatPlanCalls": 2,
+        "beatOutlineCalls": 1,
+        "detailPlanCalls": 5,
+        "auditCalls": 1,
+        "checkpointCalls": 19,
+        "beginCommitCalls": 1,
+        "creditMutationCalls": 0,
+        "fullDraftBriefChecks": 9,
+        "auditOwnedSourceChecks": 15
+      },
+      "attribution": "Full source reaches detail; detail omits source events; audit issues0 misses omissions.",
+      "originalResultsUnchanged": true,
+      "stageQueueOrDatabaseUsed": false
+    },
+    "characterStateWorkflow": {
+      "status": "actual_generation_credit_storage_passed_latest_projection_read_passed",
+      "priorReceipt": "receipts/state-qa-final-result.json",
+      "latestReceipt": "receipts/state-final-readonly-api-result.json",
+      "generationSource": "9577908de3b52b62083446243259ef66026cdca4",
+      "projectionSource": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+      "creditCost": 1,
+      "actualConfirmationCalls": 2,
+      "actualNetConsumption": 1,
+      "localDisplayFix": "61da135",
+      "localFixDeployed": true,
+      "credits": 11,
+      "physicalDeviceNotVerified": true
+    },
+    "stateConfigurationAfterQa": {
+      "receipt": "receipts/stage-autofill-effective-config.json",
+      "disabledSecretVersionUnchanged": true,
+      "generationAndAdmissionOff": true,
+      "recoverySettingsPreserved": true
+    },
+    "localBuildRuntime": {
+      "dockerEngineReady": false,
+      "ordinaryStopFailed": true,
+      "destructiveRepairPerformed": false,
+      "alternative": "Verified existing stage OCI base and isolated source3f dist overlay",
+      "buildReceipt": "receipts/clean-runtime-build-3f5e289.json",
+      "publishReceipt": "receipts/stage-oci-publish-3f5e289-receipt.json",
+      "actualRuntime401FileHashesMatched": true,
+      "iamAndLambdaChanges": 0
     }
-  ],
+  },
+  "apk": {
+    "sourceCommit": "bc46554e05915b13181a7ecdfdbddd0d1a1908c0",
+    "build": {
+      "at": "2026-10-03T03:14:36.581Z",
+      "id": "c831278f-4d73-4561-bb06-d73a0cc25e74",
+      "status": "FINISHED",
+      "sourceCommit": "bc46554e05915b13181a7ecdfdbddd0d1a1908c0",
+      "platform": "ANDROID",
+      "profile": "staging",
+      "distribution": "INTERNAL",
+      "appVersion": "0.1.18",
+      "appBuildVersion": "1",
+      "buildPage": "https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/c831278f-4d73-4561-bb06-d73a0cc25e74",
+      "artifact": "https://expo.dev/artifacts/eas/eyzVb5sFQMcxWb-lwk7UtDbXiCuFzuf6fZNJfgqAqBs.apk",
+      "downloadedAt": "2026-10-03T03:15:31.676Z",
+      "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/lyra-color-staging-bc46554.apk",
+      "bytes": 107219960,
+      "sha256": "c301db8a086b15a7c38072afa608f1464d7f98bb474554f070451490c555d3c3",
+      "physicalDeviceTested": false
+    },
+    "uiTreeIdentity": [
+      {
+        "scope": "apps/mobile",
+        "apkTree": "25f9f8499741d21c1745c3aafefed466278b2c9d",
+        "applicationTree": "25f9f8499741d21c1745c3aafefed466278b2c9d",
+        "identical": true
+      },
+      {
+        "scope": "apps/web",
+        "apkTree": "57bb14fc02fe7c6b2fc219e3c86955b2fc6e7949",
+        "applicationTree": "57bb14fc02fe7c6b2fc219e3c86955b2fc6e7949",
+        "identical": true
+      }
+    ],
+    "physicalDeviceVerified": false
+  },
   "external_gates": [
     {
-      "name": "Signed iOS/Android real-device and old installed client acceptance",
+      "name": "new backend staging deployment and 15-page actual acceptance",
+      "status": "deployment_passed_long15_quality_failed_latest_queue_acceptance_unverified",
+      "needed": "Latest backend3f is deployed and actual runtime hashes/health/state read pass. Real-provider long15 quality still fails; latest full SQS/DB long15 acceptance unverified."
+    },
+    {
+      "name": "AWS IAM Access Analyzer/simulation and dedicated drain Lambda",
+      "status": "blocked_auto_review",
+      "requestsSent": 0,
+      "needed": "Explicit approval for internal IAM documents/ARNs to named staging AWS validation service; no rejection bypass"
+    },
+    {
+      "name": "one-week verified shutdown/cleanup",
+      "status": "not_proven_schedule_disabled",
+      "needed": "Verified new guard, protected trusted cleanup receipt, real stop/snapshot/delete rehearsal"
+    },
+    {
+      "name": "physical Android/new APK and old store client",
       "status": "not_run",
-      "needed": "Available target devices, authorized test accounts and existing signed test build or approved build/credential path"
+      "needed": "Install provided internal APK on physical Android and exercise login/edit/generation/recovery"
     },
     {
-      "name": "Actual AWS ECS/RDS/flags, representative protected production-data bridge rehearsal",
-      "status": "blocked",
-      "needed": "Restore usability of existing lyra-prod profile; STS check exited 255, cause unclassified. No higher-privilege profile/login/permission change attempted."
+      "name": "Google OAuth/linking",
+      "status": "not_run_flag_off",
+      "needed": "Existing authorized Google external configuration and actual account acceptance"
     },
     {
-      "name": "Real Google linking, provider quotes/refunds, store sandbox notifications and S3 role/storage recovery",
-      "status": "not_run",
-      "needed": "Authorized test environment/accounts and bounded provider spending/settings approval where necessary"
+      "name": "Hy4 exact official image/reference-edit API contract",
+      "status": "unconfirmed_disabled",
+      "needed": "Exact official Tencent contract; no substitute or refused retrieval bypass"
     },
     {
-      "name": "Production target ARM64 container build",
-      "status": "not_run",
-      "needed": "Working Docker engine or existing equivalent local/CI runner; Docker existing data preserved"
+      "name": "character state 1-credit actual workflow",
+      "status": "passed_actual_credit_storage_latest_projection",
+      "needed": "Physical Android remains unverified; new state generation/admission are OFF."
     },
     {
-      "name": "Hy4 Preview image generation/edit contract",
-      "status": "unconfirmed_off",
-      "needed": "Official exact Tencent image API/input/output/price contract; no substitute or refused document-fetch retry"
+      "name": "representative production data rehearsal",
+      "status": "blocked_auto_review",
+      "needed": "Explicit approval for protected snapshot copy into named isolated test destination; no production credentials read"
     },
     {
-      "name": "Public GitHub publication and remote CI",
-      "status": "not_run",
-      "needed": "Resolve original refusal/authorization through its original channel; no bypass in this session"
+      "name": "Stripe real purchase",
+      "status": "deferred_by_user",
+      "needed": "User elected not to exercise checkout during this QA"
+    },
+    {
+      "name": "public GitHub PR216 update/remote CI",
+      "status": "blocked_prior_refusal",
+      "needed": "Resolve original refusal through original channel; no retry or separate-session bypass"
     }
   ],
-  "test_harness_change": {
-    "status": "applied_after_informed_user_approval",
-    "files": 20,
-    "async_expectations": 275,
-    "patch": "qa-harness/async-postgres-assertions-review.patch",
-    "receipt": "receipts/async-postgres-assertions-applied.json",
-    "reason": "Automatic approval review referred to an older single-file ownership scope. After the concrete diff and overwrite risk were disclosed, the human user explicitly approved application and continued validation. Original hashes, SQL, fixtures and matcher expected arguments were rechecked."
-  },
   "publication": {
+    "staging": true,
     "production": false,
     "store": false,
     "main_merge": false,
@@ -401,403 +433,17 @@
     "github_retry": false,
     "remote_ci": false
   },
-  "evidence_archive": "Lyra-Codex-completion-20261002-evidence.tar",
-  "log_directory": "logs",
-  "evidence_paths_note": "Paths resolve from extracted archive root. source.bundle preserves history; logs/receipts/visual/qa-harness are separate. Runtime/cache/DB data/credentials are excluded.",
-  "logs": [
-    {
-      "path": "logs/api-inventory-check.log",
-      "sha256": "c15309e5c69f0770d0379aec83e13f27208f2d3d1966bb563dc7b9a8b0d4335f",
-      "bytes": 63
-    },
-    {
-      "path": "logs/backend-build-793883d.log",
-      "sha256": "16a683f54cfc3663075598d115d8cd04c3cc073760166cdd72019f5748c788fb",
-      "bytes": 37
-    },
-    {
-      "path": "logs/backend-build-final-complete.log",
-      "sha256": "16a683f54cfc3663075598d115d8cd04c3cc073760166cdd72019f5748c788fb",
-      "bytes": 37
-    },
-    {
-      "path": "logs/backend-build-final.log",
-      "sha256": "16a683f54cfc3663075598d115d8cd04c3cc073760166cdd72019f5748c788fb",
-      "bytes": 37
-    },
-    {
-      "path": "logs/backend-build.log",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "bytes": 0
-    },
-    {
-      "path": "logs/backend-bun-793883d-no-db.log",
-      "sha256": "1dfdb43dabcb49a7f06e5f62c5aa2fd999fdf2bb55fb0c09d40017c822b9f4d5",
-      "bytes": 586889
-    },
-    {
-      "path": "logs/backend-bun-final-complete-no-db.log",
-      "sha256": "24bc1c62dd68e77e49f98a8271e8a918ff8252cd14b23cd19d553ee1409fb75d",
-      "bytes": 586887
-    },
-    {
-      "path": "logs/backend-bun-final-pg18.log",
-      "sha256": "477e70755886d639520e5978c9bce37fb62ad00774502d768416c188a3f46543",
-      "bytes": 4269
-    },
-    {
-      "path": "logs/backend-bun-no-db-final.log",
-      "sha256": "03ddfb5c2a56f408ed074747cd59b58a15466a52ec40ba6c7a0b307127320fa6",
-      "bytes": 586279
-    },
-    {
-      "path": "logs/backend-bun-pg18-async-assertions-final.log",
-      "sha256": "a8855b68c1d98c8d76089fa471a27c7f2fdd793149a79ee8ad8677be85150ee4",
-      "bytes": 549365
-    },
-    {
-      "path": "logs/backend-bun-pg18-isolated-final.log",
-      "sha256": "9385ba6b070b5773698ca415124cc5de26711f4cf67b668048d681cedf7d355b",
-      "bytes": 2237
-    },
-    {
-      "path": "logs/backend-vitest-793883d-pg16.log",
-      "sha256": "7cc27ce6e387c767d973459fb07be726b3056c33d9ada121d01cf6615cf71bc3",
-      "bytes": 5139
-    },
-    {
-      "path": "logs/backend-vitest-final-complete-pg16.log",
-      "sha256": "4925373283ca85e9c20523baaae69a3a7c693ac91df91fbb026cf026f9d6a126",
-      "bytes": 5139
-    },
-    {
-      "path": "logs/backend-vitest-final-pg16.log",
-      "sha256": "771c7c6ffd3467e70a318e2639f37d36629ab7d077bf882ea025f3d401819cec",
-      "bytes": 5138
-    },
-    {
-      "path": "logs/backend-vitest-pg16.log",
-      "sha256": "6277fc3f49aeed96955b5bfc897aadeb1e0fb783482677cde621ca142920ae7e",
-      "bytes": 5674
-    },
-    {
-      "path": "logs/bun-fenced-complete-fixed.log",
-      "sha256": "6804d98a22e80398456d0541540fb2f08f0c51ec4b2f06571351341cc8cf5be4",
-      "bytes": 2093
-    },
-    {
-      "path": "logs/bun-fenced-complete.log",
-      "sha256": "eba020f46ffddb8709c4e9fb8cfa4e31e573da8b904e4bdf7ec63a2470a3287d",
-      "bytes": 2095
-    },
-    {
-      "path": "logs/bun-fenced-early-failure.log",
-      "sha256": "e4d386303b6a46032171be04e1597d3325d2b5df09558d8593309ddff3667694",
-      "bytes": 96
-    },
-    {
-      "path": "logs/bun-fenced-emptydb-diagnostic.log",
-      "sha256": "e9f83a6f9b913e4757c93f657676d79656b879d893064eb5bd93c91f2438dc59",
-      "bytes": 427
-    },
-    {
-      "path": "logs/bun-fenced-explicit-rejection.log",
-      "sha256": "879d5f9f8bf40b2cc66e0e35c2cc97bc61e4b537547df4135b345ab1706c1b62",
-      "bytes": 356
-    },
-    {
-      "path": "logs/bun-fenced-storage-unit.log",
-      "sha256": "9e8ed53590ac986a4c4ea3d4a5009de9eb94be0557bf0cb0e3f8ed4564d3887f",
-      "bytes": 8664
-    },
-    {
-      "path": "logs/bun-fenced-targeted-pg16.log",
-      "sha256": "1a527a2b9914b171b3cdd7c6f1f2e585b04e559d1686c61c17d979caed189b14",
-      "bytes": 427
-    },
-    {
-      "path": "logs/bun-pg-fenced-and-preflight-final.log",
-      "sha256": "4e24592711f9def8e8cbd1ced6eadd45ff5c6951dbdfdd0ae4fdc11e9e6a41aa",
-      "bytes": 2482
-    },
-    {
-      "path": "logs/bun-pg-matchobject-repro.test.log",
-      "sha256": "685aeaa72c58c574b212bf0a69bc759b619266222ad3951b13dbb4b8bd6bbd02",
-      "bytes": 1324
-    },
-    {
-      "path": "logs/bun-pg18-account-recovery-explicit-await.log",
-      "sha256": "9cc61fb5dc272b35f9003f116f65f6d73715be386fdb1e406e4d7f472486ae81",
-      "bytes": 312
-    },
-    {
-      "path": "logs/dependency-google-regression.log",
-      "sha256": "ebc03259dc90fccdf959d2caff5d1da93592c6719dcdc55d0054c3db569b76b5",
-      "bytes": 375
-    },
-    {
-      "path": "logs/fresh-backend-install.log",
-      "sha256": "a7cd83ca71986f4f214c652292a773e566af5f766a2e65771b002fda4bae29f2",
-      "bytes": 757
-    },
-    {
-      "path": "logs/fresh-backend-isolated-cache-install.log",
-      "sha256": "6802b9573b6d6b421694d98a2818e2cb8ea73e62cdc37fd116434c60d87ecc44",
-      "bytes": 757
-    },
-    {
-      "path": "logs/fresh-mobile-install.log",
-      "sha256": "8cc851fdb1bcdf2d0e84243fe7988dec9ab2655076ba53d3860095a59659fc47",
-      "bytes": 605
-    },
-    {
-      "path": "logs/fresh-web-install.log",
-      "sha256": "80429b43e83e73c2e11fa604b868e0e013a97ab78e57c5ad2b6e5041d61d8331",
-      "bytes": 110
-    },
-    {
-      "path": "logs/historical-migrations-check.log",
-      "sha256": "5db31516b2228efa7bd94aea36042e9cb0566523235b4e100be7448c598e98a1",
-      "bytes": 141
-    },
-    {
-      "path": "logs/installed-lock-verification.log",
-      "sha256": "e29aa18b30e352f77c7e2b7af439e990b34a8e90184f54b95218d5f562fb0c03",
-      "bytes": 435
-    },
-    {
-      "path": "logs/local-api-server.log",
-      "sha256": "4aa0863d9d5e651b9b2b8a99149b14254913b738910a4f4baa918958ca966a6a",
-      "bytes": 2385
-    },
-    {
-      "path": "logs/local-api-smoke-final.log",
-      "sha256": "b408d1acfdaa9f148c6eef0be88b5db1a44f2b8142a9a538d6c0cb80433b157a",
-      "bytes": 86
-    },
-    {
-      "path": "logs/mobile-contract-check.log",
-      "sha256": "a9f58776a09b5dac438049683f24bf85764e0ff8e7455952456165c68c158627",
-      "bytes": 13
-    },
-    {
-      "path": "logs/mobile-expo-doctor.log",
-      "sha256": "c1aa3a5c3ad4f08da57172b30fd535b98c8deffa8af1e607b81e6fd9692791a6",
-      "bytes": 94
-    },
-    {
-      "path": "logs/mobile-expo-install-check.log",
-      "sha256": "75845a87d53397225df70909f3f66edeab54b4c6e300f89c364aa307e090ecf5",
-      "bytes": 43
-    },
-    {
-      "path": "logs/mobile-export-android.log",
-      "sha256": "6a8ba98a5eeba3b9bd1f670cce0192436911fe31e4dd841d7e52e9f1ba6f5025",
-      "bytes": 1848
-    },
-    {
-      "path": "logs/mobile-export-ios.log",
-      "sha256": "240aaaf4a55f130201a2e8d4a729021ab2cb1482e721e31d0d3bc7d88cf9d874",
-      "bytes": 1833
-    },
-    {
-      "path": "logs/mobile-lint.log",
-      "sha256": "dce01c65cd0f8e690b1e2f31440cd354ea1c2ab8fc1e8d1fdb52a129cc9aecc7",
-      "bytes": 14
-    },
-    {
-      "path": "logs/mobile-test.log",
-      "sha256": "cd81ce097be2ea47a3c7aca5e3c6c49ccb159606f14601cd1697e2dd7d19db13",
-      "bytes": 300
-    },
-    {
-      "path": "logs/mobile-typecheck.log",
-      "sha256": "dce01c65cd0f8e690b1e2f31440cd354ea1c2ab8fc1e8d1fdb52a129cc9aecc7",
-      "bytes": 14
-    },
-    {
-      "path": "logs/original-source-protection.log",
-      "sha256": "537960d2cb975c73f137e9b9889d18c946c49089642f116320b11357c434ed75",
-      "bytes": 142
-    },
-    {
-      "path": "logs/pg-16.10-1-init.log",
-      "sha256": "f5240cabfa39c6ae93efd930ddf954a9bd4628bd3779577e45529ddc7ff140e5",
-      "bytes": 1022
-    },
-    {
-      "path": "logs/pg-16.10-1-server.log",
-      "sha256": "0649d6f4064598ebaa81b91d728c198e0de5f45f529951292abbae328810d39e",
-      "bytes": 107133
-    },
-    {
-      "path": "logs/pg-16.10-1-stop.log",
-      "sha256": "2e85aa5c9d832dc278d9b896bcf189f475c74c3a70582c1e71695b523c90d44f",
-      "bytes": 76
-    },
-    {
-      "path": "logs/pg-18.3-1-init.log",
-      "sha256": "b19f260fd9ddd5ae2cf77481e50aa61bd9801f4b5302db6230cd0952b5b113aa",
-      "bytes": 1022
-    },
-    {
-      "path": "logs/pg-18.3-1-server.log",
-      "sha256": "1109c67bfea4e35e612ffb7eb43d4aac617fcb62cf34d2040a0bf4763c9ddf58",
-      "bytes": 99656
-    },
-    {
-      "path": "logs/pg-18.3-1-stop.log",
-      "sha256": "b8ba065ea094a43c89659461e8a5cf945db2520a76d78191df87b3ceca9f278c",
-      "bytes": 72
-    },
-    {
-      "path": "logs/pg16-db-check-invariants-final.log",
-      "sha256": "ddbf76652ec08643db020af17504751d4912d03a167554fbcaf4cf2f44efe1b2",
-      "bytes": 125
-    },
-    {
-      "path": "logs/pg16-db-check-lineage-final.log",
-      "sha256": "7222c96b18923dc3c5940b2993156964c17361b8829338289adf6ccb2f442d16",
-      "bytes": 282
-    },
-    {
-      "path": "logs/pg16-migrate-final.log",
-      "sha256": "d7cecdb4864109ecf5d8dd795f9823a9db9971760ef36a3362aa6552a6c390d6",
-      "bytes": 62
-    },
-    {
-      "path": "logs/pg16-release-check-backend-only.log",
-      "sha256": "f2dcce97e69072b9eca4762cce235c6b0315de5fdc79a78474c78d85cfb13950",
-      "bytes": 243
-    },
-    {
-      "path": "logs/pg16-release-check-prod-backend-only.log",
-      "sha256": "f379ce71ecd75a4e83d932ce413a304fc079ea92fbd3892d467e28a4e30b80a6",
-      "bytes": 248
-    },
-    {
-      "path": "logs/pg16-release-new-mobile-expected-rejection.log",
-      "sha256": "72481154bdf1cbfc94a90d23c106141d20403c49ba82529de544ca03069babee",
-      "bytes": 962
-    },
-    {
-      "path": "logs/pg18-auth-check-subjects.log",
-      "sha256": "8fdfb80b8adb9c89e062408ee6709d63c4d64ed044ad29340c0e709c361d985c",
-      "bytes": 181
-    },
-    {
-      "path": "logs/pg18-db-check-invariants-final.log",
-      "sha256": "ddbf76652ec08643db020af17504751d4912d03a167554fbcaf4cf2f44efe1b2",
-      "bytes": 125
-    },
-    {
-      "path": "logs/pg18-db-check-invariants.log",
-      "sha256": "d77e9d3ec7490b070c3dbdfa8a7a3e41fa176153b193d13875020df41e70c304",
-      "bytes": 112
-    },
-    {
-      "path": "logs/pg18-db-check-lineage-final.log",
-      "sha256": "7222c96b18923dc3c5940b2993156964c17361b8829338289adf6ccb2f442d16",
-      "bytes": 282
-    },
-    {
-      "path": "logs/pg18-db-check-lineage.log",
-      "sha256": "cbb8016a41a9d8585b75c7d04f74d94a24b8e74c33ef9ec7f959f9a4eb272d45",
-      "bytes": 269
-    },
-    {
-      "path": "logs/pg18-db-check-pre-migration.log",
-      "sha256": "e21e6680058e5ab64c36d7979e9ccc5b2f8389ad12ff2aa60f9b1bc7f63263f4",
-      "bytes": 1306
-    },
-    {
-      "path": "logs/pg18-integration-793883d.log",
-      "sha256": "8d81c95a50a619cf11174b64da17bad05b631335407fc3a1abaa8cf49527b210",
-      "bytes": 353
-    },
-    {
-      "path": "logs/pg18-integration-final-complete.log",
-      "sha256": "44ddacc245ade5186d7bd1764ec9af9bd040bb453869490c966e31a9d2edb5ad",
-      "bytes": 351
-    },
-    {
-      "path": "logs/pg18-integration-final.log",
-      "sha256": "1cb333ac89baaa26bcd41cbe0705829cbdc253cc4f5af2b345dcc6c709da5101",
-      "bytes": 5869
-    },
-    {
-      "path": "logs/pg18-integration-repaired.log",
-      "sha256": "cc8aadfded94e285470129dd00daf413a29bc4f6c0d10bbb35e6fd0116a34b6a",
-      "bytes": 350
-    },
-    {
-      "path": "logs/pg18-integration.log",
-      "sha256": "f8b19108ca075ed7664c2e7e66400f9324d6b5af6b9fbea298c58a13eafb53f6",
-      "bytes": 1763
-    },
-    {
-      "path": "logs/pg18-migrate-final.log",
-      "sha256": "d7cecdb4864109ecf5d8dd795f9823a9db9971760ef36a3362aa6552a6c390d6",
-      "bytes": 62
-    },
-    {
-      "path": "logs/pg18-migrate.log",
-      "sha256": "954a37ee0378dfac8e53b6ec45420e9482f56dc9015013f07e76ad0c98d9839a",
-      "bytes": 2908
-    },
-    {
-      "path": "logs/pg18-production-lineage-targeted-vitest-final.log",
-      "sha256": "abe445cb2e48d9cc24ba38750fb84b93f26144c7b5a2c0a8532102e894b9df28",
-      "bytes": 377
-    },
-    {
-      "path": "logs/pg18-release-check-backend-only.log",
-      "sha256": "f2dcce97e69072b9eca4762cce235c6b0315de5fdc79a78474c78d85cfb13950",
-      "bytes": 243
-    },
-    {
-      "path": "logs/pg18-release-check-prod-backend-only.log",
-      "sha256": "f379ce71ecd75a4e83d932ce413a304fc079ea92fbd3892d467e28a4e30b80a6",
-      "bytes": 248
-    },
-    {
-      "path": "logs/pg18-release-new-mobile-expected-rejection.log",
-      "sha256": "72481154bdf1cbfc94a90d23c106141d20403c49ba82529de544ca03069babee",
-      "bytes": 962
-    },
-    {
-      "path": "logs/web-build.log",
-      "sha256": "5cc849754f9fc4e24c5be59f9557b77bdde154fac897802de126174352dc8f93",
-      "bytes": 1165
-    },
-    {
-      "path": "logs/web-lint.log",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "bytes": 0
-    },
-    {
-      "path": "logs/web-playwright.log",
-      "sha256": "18c843e670c38b81d06c780deab094725fa89352c708c7390efb7b59c433f115",
-      "bytes": 5059
-    },
-    {
-      "path": "logs/web-typecheck.log",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "bytes": 0
-    },
-    {
-      "path": "logs/pg18-start-wrapper-after-stop.log",
-      "sha256": "65814f2dfdc499638abef854f3e851181a60b4665775f2aa11ce934020d86347",
-      "bytes": 471
-    }
-  ],
-  "operational_history": [
-    {
-      "name": "Old startup wrapper resumed after deliberate temporary-DB shutdown",
-      "exit_code": 1,
-      "product_failure": false,
-      "log": "logs/pg18-start-wrapper-after-stop.log",
-      "note": "Historical process-tree wait; current DB gates and controlled shutdown succeeded."
-    }
-  ]
+  "history": {
+    "previousManifestCommit": "9c31f38bc4fe48d923c8fc94e9a916271d7f45f9",
+    "previousManifestBlob": "1683207cfd91f87bfbff282cb9f2629ca3decf1a",
+    "previousVerifiedCode": "e5f4eb20aaf7954cb83f3433f3234c1b0f349e12",
+    "note": "Earlier commands/results are retained in Git history and implementation record; they are not final-code backend proof."
+  },
+  "final_backend_gate": {
+    "receipt": "receipts/final-local-backend-gate-receipt.json",
+    "tests": 2899,
+    "files": 359,
+    "skip": 0,
+    "sourceFixed": true
+  }
 }
