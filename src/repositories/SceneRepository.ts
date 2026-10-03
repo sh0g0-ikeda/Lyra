@@ -122,7 +122,8 @@ interface EntityStateRow extends QueryResultRow {
 }
 
 const currentBaseReferenceIdSql = `(SELECT rs.primary_ref_id FROM reference_sets rs
-  WHERE rs.entity_id = entity_states.entity_id AND rs.status = 'ready'
+  WHERE rs.entity_id = entity_states.entity_id
+    AND rs.primary_ref_id IS NOT NULL
     AND EXISTS (SELECT 1 FROM jsonb_array_elements(
       CASE WHEN jsonb_typeof(rs.reference_images) = 'array' THEN rs.reference_images ELSE '[]'::jsonb END
     ) AS image WHERE image->>'ref_id' = rs.primary_ref_id AND COALESCE(image->>'s3_key', '') <> '')

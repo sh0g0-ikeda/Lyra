@@ -69,6 +69,30 @@ describePostgres('entity state image retention', () => {
     expect(presentEntityStateReference(created).reference_status).toBe('draft');
   });
 
+  it('partial reference setでも確認済みprimaryをstate baseとして読み、欠損や空primary keyはstaleにする', async () => {
+    const ids = createFixtureIds();
+    await insertFixture(pool, ids, { personalStateKey: 'unused-personal.png', organizationStateKey: 'unused-org.png', snapshotKey: 'unused-snapshot.png' });
+    const baseKey = `saved/${ids.userId}/entities/${ids.personalEntityId}/base.png`;
+    const stateKey = `saved/${ids.userId}/entities/${ids.personalEntityId}/states/${ids.personalStateId}/ref.png`;
+    await pool.query(`INSERT INTO reference_sets (entity_id, reference_images, primary_ref_id, status)
+      VALUES ($1, $2::jsonb, 'base', 'partial')`, [ids.personalEntityId, JSON.stringify([{ ref_id: 'base', s3_key: baseKey }])]);
+    const descriptor = {
+      ref_id: 'ref', s3_key: stateKey, storage_owner_user_id: ids.userId, image_model: 'gpt-image-2', base_ref_id: 'base',
+      created_at: '2026-10-01T00:00:00Z',
+      input_fingerprint: computeStateReferenceFingerprint({ entityId: ids.personalEntityId, stateId: ids.personalStateId, name: 'injured', description: 'A cheek scar', baseRefId: 'base' }),
+    };
+    await pool.query('UPDATE entity_states SET reference_image = $2::jsonb WHERE id = $1', [ids.personalStateId, JSON.stringify(descriptor)]);
+    const repository = new PostgresSceneRepository(new PoolTransactionDatabase(pool));
+    const read = async () => repository.findEntityStatesByEntityIdAndUserId(ids.personalEntityId, ids.userId);
+
+    expect(presentEntityStateReference((await read())[0]!).reference_status).toBe('confirmed');
+    await pool.query('UPDATE reference_sets SET primary_ref_id = NULL WHERE entity_id = $1', [ids.personalEntityId]);
+    expect(presentEntityStateReference((await read())[0]!).reference_status).toBe('stale');
+    await pool.query(`UPDATE reference_sets SET primary_ref_id = 'base', reference_images = $2::jsonb WHERE entity_id = $1`, [ids.personalEntityId, JSON.stringify([
+      { ref_id: 'base', s3_key: '' },
+    ])]);
+    expect(presentEntityStateReference((await read())[0]!).reference_status).toBe('stale');
+  });
   it('live state descriptorとinput snapshot参照をprune保護し、退会対象はpersonal state画像だけにする', async () => {
     const ids = createFixtureIds();
     const personalStateKey = `state-images/${ids.personalStateId}/personal.png`;
