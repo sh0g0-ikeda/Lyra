@@ -2209,7 +2209,10 @@ function completePanelSuggestionWithFallback(
     sfxText: coalesceText(source?.sfxText, fallbackCreative?.sfxText),
     backgroundNote: coalesceText(source?.backgroundNote, fallbackCreative?.backgroundNote),
     panelNotes: coalesceText(source?.panelNotes, fallbackCreative?.panelNotes),
-    entities: coalesceAssignments(source?.entities, fallbackCreative?.entities),
+    // A present legacy/provider panel may intentionally omit this field (no
+    // change) or provide [] (clear). Only a wholly missing panel may inherit
+    // fallback assignments.
+    entities: source === undefined ? fallbackCreative?.entities : source.entities,
   };
 }
 
@@ -2322,9 +2325,6 @@ function repairPanelSuggestionAgainstFallback(
     includeFallbackCreativeFields: options?.includeFallbackCreativeFields === true,
   });
   const allowFallbackCreativeRepair = options?.includeFallbackCreativeFields === true;
-  const repairedEntities = shouldRepairEmptyEntityAssignments(source, fallback, allowFallbackCreativeRepair)
-    ? fallback?.entities
-    : completed.entities;
   const fallbackComposition = fallback?.composition;
   const repairedSituation = shouldRepairGenericCompilerText(completed.situationText)
     ? repairCreativeText(undefined, fallback?.situationText, [], allowFallbackCreativeRepair)
@@ -2396,31 +2396,8 @@ function repairPanelSuggestionAgainstFallback(
           },
     backgroundNote: repairedBackground,
     panelNotes: repairedPanelNotes,
-    entities: repairedEntities,
+    entities: completed.entities,
   };
-}
-
-function shouldRepairEmptyEntityAssignments(
-  source: PageAutofillPanelSuggestion | undefined,
-  fallback: PageAutofillPanelSuggestion | undefined,
-  allowFallbackCreativeRepair: boolean,
-): boolean {
-  if (!allowFallbackCreativeRepair || !Array.isArray(source?.entities) || source.entities.length > 0) {
-    return false;
-  }
-  if (!Array.isArray(fallback?.entities) || fallback.entities.length === 0) {
-    return false;
-  }
-
-  return (
-    shouldRepairGenericCompilerText(source.backgroundNote) ||
-    shouldRepairGenericCompilerText(source.composition?.compositionPrompt) ||
-    shouldRepairGenericCompilerText(source.composition?.customNote) ||
-    shouldRepairRedundantFieldText(source.backgroundNote, [
-      source.situationText,
-      source.composition?.compositionPrompt,
-    ])
-  );
 }
 
 function repairCreativeText(
@@ -2485,19 +2462,6 @@ function coalesceDialogue(
   source: PageAutofillPanelSuggestion['dialogue'],
   fallback: PageAutofillPanelSuggestion['dialogue'],
 ): PageAutofillPanelSuggestion['dialogue'] {
-  if (Array.isArray(source)) {
-    return source;
-  }
-  if (Array.isArray(fallback) && fallback.length > 0) {
-    return fallback;
-  }
-  return fallback;
-}
-
-function coalesceAssignments(
-  source: PageAutofillPanelSuggestion['entities'],
-  fallback: PageAutofillPanelSuggestion['entities'],
-): PageAutofillPanelSuggestion['entities'] {
   if (Array.isArray(source)) {
     return source;
   }
@@ -2576,9 +2540,17 @@ function preserveLegacyEpisodeStateAssignments(
     for (const panelSuggestion of pageSuggestion.panels) {
       const panel = panelsByOrder.get(panelSuggestion.order)!;
       const proposed = panelSuggestion.entities;
-      // The existing merge deliberately leaves assignments alone for an empty or
-      // absent suggestion, so preserve that behavior instead of inventing a cast.
-      if (proposed === undefined || proposed.length === 0) {
+      if (proposed === undefined) {
+        continue;
+      }
+      if (proposed.length === 0) {
+        if (panel.entities.some((assignment) => assignment.stateId !== null)) {
+          throw new EpisodeStatePlanError(
+            'STATE_ASSIGNMENT_CONFLICT',
+            `Legacy story autofill would remove a manually selected state at panel ${panel.id}`,
+          );
+        }
+        assignmentsByPanelId.set(panel.id, []);
         continue;
       }
       const proposedEntityIds = new Set(proposed.map((assignment) => assignment.entityId));
@@ -2703,9 +2675,8 @@ function mergePanelSuggestion(
   }
 
   const assignments =
-    (overwriteExisting || panel.entities.length === 0) &&
     Array.isArray(suggestion.entities) &&
-    suggestion.entities.length > 0
+    (overwriteExisting || (panel.entities.length === 0 && suggestion.entities.length > 0))
       ? suggestion.entities
       : null;
   if (assignments !== null) {

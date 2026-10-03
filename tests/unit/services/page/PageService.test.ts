@@ -1140,31 +1140,96 @@ describe('PageService', () => {
     expect(assignments.updates).toHaveLength(0);
   });
 
-  it.each([undefined, []] as const)(
-    'legacy autofill の候補にキャラがない場合は既存の手動状態を変更しない (%j)', async (entities) => {
+  it.each([false, true])(
+    'legacy autofill の entities が未指定なら既存の手動状態を変更しない (atomic=$atomic)', async (atomic) => {
       const context = buildEpisodePlanningContext();
       const compiled = await new FakeEpisodePagePlanCompiler().compilePlan({ compilerBrief: '', language: 'ja' });
       const panelSuggestion = compiled.suggestion.pages[0]!.panels[0]!;
       context.pages[0]!.panels[0]!.entities = [{
         ...panelSuggestion.entities![0]!, stateId: 'manual-state',
       }];
-      panelSuggestion.entities = entities === undefined ? undefined : [];
+      panelSuggestion.entities = undefined;
       const pageRepository = new FakePageRepository();
       pageRepository.episodePlanningContext = context;
+      const panelRepository = new FakePanelRepository();
       const assignments = new FakePanelEntityAssignmentService();
-      const service = new PageService(pageRepository, new FakePanelRepository(), assignments, undefined, {
-        compilePlan: async () => compiled,
-      });
+      const persistence = atomic ? new FakeEpisodePlanPersistence(context, {
+        pageRepository, panelRepository, panelEntityAssignmentService: assignments,
+      }) : undefined;
+      const service = new PageService(
+        pageRepository, panelRepository, assignments, undefined,
+        { compilePlan: async () => compiled }, undefined, undefined, undefined,
+        false, {}, persistence,
+      );
 
-      await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+      await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja', undefined, null,
+        atomic ? { checkpoint: async () => undefined, beginCommit: async () => undefined } : undefined);
 
-      if (entities !== undefined) {
-        expect(assignments.updates).toHaveLength(0);
-      }
-      for (const update of assignments.updates) {
-        expect(update.assignments[0]!.stateId).toBe('manual-state');
-      }
+      expect(assignments.updates).toHaveLength(0);
       expect(context.pages[0]!.panels[0]!.entities[0]!.stateId).toBe('manual-state');
+    },
+  );
+
+  it.each([false, true])(
+    'legacy autofill の明示 entities=[] は状態なし割り当てを通常・atomic保存で消去する (atomic=$atomic)', async (atomic) => {
+      const context = buildEpisodePlanningContext();
+      const compiled = await new FakeEpisodePagePlanCompiler().compilePlan({ compilerBrief: '', language: 'ja' });
+      const panelSuggestion = compiled.suggestion.pages[0]!.panels[0]!;
+      context.pages[0]!.panels[0]!.entities = [{
+        ...panelSuggestion.entities![0]!, stateId: null,
+      }];
+      panelSuggestion.entities = [];
+      // This used to make fallback repair silently put the lead character back.
+      panelSuggestion.backgroundNote = 'current setting';
+      const pageRepository = new FakePageRepository();
+      pageRepository.episodePlanningContext = context;
+      const panelRepository = new FakePanelRepository();
+      const assignments = new FakePanelEntityAssignmentService();
+      const persistence = atomic ? new FakeEpisodePlanPersistence(context, {
+        pageRepository, panelRepository, panelEntityAssignmentService: assignments,
+      }) : undefined;
+      const service = new PageService(
+        pageRepository, panelRepository, assignments, undefined,
+        { compilePlan: async () => compiled }, undefined, undefined, undefined,
+        false, {}, persistence,
+      );
+
+      await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja', undefined, null,
+        atomic ? { checkpoint: async () => undefined, beginCommit: async () => undefined } : undefined);
+
+      expect(assignments.updates).toEqual([{ panelId: 'panel-1', assignments: [] }]);
+    },
+  );
+
+  it.each([false, true])(
+    'legacy autofill の明示 entities=[] が手動状態を消す場合は全書き込み前に拒否する (atomic=$atomic)', async (atomic) => {
+      const context = buildEpisodePlanningContext();
+      const compiled = await new FakeEpisodePagePlanCompiler().compilePlan({ compilerBrief: '', language: 'ja' });
+      const panelSuggestion = compiled.suggestion.pages[0]!.panels[0]!;
+      context.pages[0]!.panels[0]!.entities = [{
+        ...panelSuggestion.entities![0]!, stateId: 'manual-state',
+      }];
+      panelSuggestion.entities = [];
+      const pageRepository = new FakePageRepository();
+      pageRepository.episodePlanningContext = context;
+      const panelRepository = new FakePanelRepository();
+      const assignments = new FakePanelEntityAssignmentService();
+      const persistence = atomic ? new FakeEpisodePlanPersistence(context, {
+        pageRepository, panelRepository, panelEntityAssignmentService: assignments,
+      }) : undefined;
+      const service = new PageService(
+        pageRepository, panelRepository, assignments, undefined,
+        { compilePlan: async () => compiled }, undefined, undefined, undefined,
+        false, {}, persistence,
+      );
+
+      await expect(service.autofillEpisodeFromStory(
+        'user-1', 'episode-1', 'ja', undefined, null,
+        atomic ? { checkpoint: async () => undefined, beginCommit: async () => undefined } : undefined,
+      )).rejects.toMatchObject({ code: 'STATE_ASSIGNMENT_CONFLICT' });
+      expect(pageRepository.updatedInputs).toHaveLength(0);
+      expect(panelRepository.updatedPanels).toHaveLength(0);
+      expect(assignments.updates).toHaveLength(0);
     },
   );
 
@@ -3013,7 +3078,7 @@ describe('PageService', () => {
     expect(compilerBrief).toContain('末尾で主人公が鍵を拾う。');
   });
 
-  it('episode story plan は sparse compiler suggestion を story fallback で field-level 補完する', async () => {
+  it('episode story plan は sparse compiler suggestion の演出を補完し entities 未指定は変更しない', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
     const assignmentService = new FakePanelEntityAssignmentService();
@@ -3053,7 +3118,7 @@ describe('PageService', () => {
     expect(result).toMatchObject({
       updatedPageCount: 1,
       updatedPanelCount: 1,
-      updatedAssignmentCount: 1,
+      updatedAssignmentCount: 0,
     });
     expect(pageRepository.updatedInput).toMatchObject({
       storySourceSceneIds: ['scene-1'],
@@ -3073,16 +3138,7 @@ describe('PageService', () => {
         customNote: expect.any(String),
       }),
     );
-    expect(assignmentService.updates).toEqual([
-      {
-        panelId: 'panel-1',
-        assignments: [
-          expect.objectContaining({
-            entityId: '11111111-1111-4111-8111-111111111111',
-          }),
-        ],
-      },
-    ]);
+    expect(assignmentService.updates).toHaveLength(0);
   });
 
   it('episode story plan は generic な compiler 成功項目を story fallback で置き換える', async () => {
@@ -3160,11 +3216,7 @@ describe('PageService', () => {
     expect(assignmentService.updates).toEqual([
       {
         panelId: 'panel-1',
-        assignments: [
-          expect.objectContaining({
-            entityId: '11111111-1111-4111-8111-111111111111',
-          }),
-        ],
+        assignments: [],
       },
     ]);
   });
@@ -3255,11 +3307,10 @@ describe('PageService', () => {
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
     expect(result.compilerUsed).toBe(true);
-    expect(assignmentService.updates).toHaveLength(1);
+    expect(assignmentService.updates).toHaveLength(0);
     const assignedEntityIds = assignmentService.updates.flatMap((update) =>
       update.assignments.map((assignment) => assignment.entityId),
     );
-    expect(assignedEntityIds).toContain('11111111-1111-4111-8111-111111111111');
     expect(assignedEntityIds).not.toContain('shadow-entity');
   });
 

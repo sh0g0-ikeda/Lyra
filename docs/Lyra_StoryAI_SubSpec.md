@@ -68,10 +68,12 @@ are not useful image-model prompt content.
 ## 6. Quality gates and fallback
 
 Schema validity alone is not sufficient. Successful compiler output is checked for
-empty entity assignments, missing visual beats, generic repeated composition,
+incorrectly empty assignments where the source requires a visible character,
+missing source facts or continuing actions, missing visual beats, generic repeated composition,
 speaker/dialogue mismatch, invalid page coverage, and frame/panel count mismatch.
 Repair is field-level where possible. Deterministic fallback must use only entities
-supported by the story context and must not promote unrelated work entities.
+supported by the story context and must not promote unrelated work entities or
+repopulate explicit empty lists for character-free cutaways.
 
 Fallback use is recorded in server logs and job metadata, not exposed as technical
 provider detail in the normal UI. User-facing errors explain the action the user can

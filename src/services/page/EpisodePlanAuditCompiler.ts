@@ -12,7 +12,10 @@ export type EpisodePlanAuditIssueCode =
   | 'dialogue_misplacement'
   | 'knowledge_violation'
   | 'page_handoff_break'
-  | 'unsupported_story_fact';
+  | 'unsupported_story_fact'
+  | 'source_omission'
+  | 'ongoing_action_dropped'
+  | 'visible_entity_mismatch';
 
 export interface EpisodePlanAuditIssue {
   code: EpisodePlanAuditIssueCode;

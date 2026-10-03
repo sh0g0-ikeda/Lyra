@@ -49,7 +49,7 @@ export function resolveEpisodePlanStateAssignments(
         panelId: panel.id,
         pageNumber: page.pageNumber,
         order: panel.order,
-        assignments: proposed.entities !== undefined && proposed.entities.length > 0
+        assignments: proposed.entities !== undefined
           ? proposed.entities
           : panel.entities,
       };

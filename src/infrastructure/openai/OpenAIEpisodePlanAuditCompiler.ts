@@ -119,7 +119,8 @@ function buildSystemPrompt(language: CompileEpisodePlanAuditInput['language']): 
   return [
     'Check whether each line belongs at that exact moment, whether the named speaker can know and say it, and whether the next line is a coherent response.',
     'Treat scene character-state notes such as costume, injury, hair, and expression as continuity facts until the source explicitly changes them.',
-    'Use severity=error only when the draft cannot be safely saved without repair. Use warning for non-blocking improvements.',
+    'Use severity=error for a concrete missing source fact, dropped ongoing action, or visible entity contradiction when a safe field-level repair can restore the source. These repairable facts must not be downgraded merely because the remaining draft can be saved.',
+    'Use severity=warning only for optional improvements that do not correct a source fact, ongoing action, visible staging, continuity, or readability defect.',
     'Return field-level repairs for every repairable error. Change only fields named in changed_fields and never change page IDs, page numbers, panel orders, or panel counts.',
     'Every field named in changed_fields must have a corresponding patch value. Use an empty array, never null, to clear dialogue, entities, or source_scene_ids. Never use null for roles, sizes, composition, dialogue_in_panel, dialogue_mode, or page_dialogue_toggle.',
     'Do not return repairs for warnings or pages that are not named by an error.',

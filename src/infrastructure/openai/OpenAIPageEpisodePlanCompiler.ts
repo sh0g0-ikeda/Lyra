@@ -31,6 +31,19 @@ const RETRYABLE_DETAIL_PLAN_FAILURE_REASONS = new Set<StructuredOpenAIResponseFa
   'no_output',
   'incomplete_max_output_tokens',
 ]);
+const episodePagePlanProviderResponseSchema = episodePagePlanSuggestionSchema.superRefine((payload, context) => {
+  payload.pages.forEach((page, pageIndex) => {
+    page.panels.forEach((panel, panelIndex) => {
+      if (!Array.isArray(panel.entities)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'entities must be a non-null array in provider output',
+          path: ['pages', pageIndex, 'panels', panelIndex, 'entities'],
+        });
+      }
+    });
+  });
+});
 
 export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPort {
   public constructor(
@@ -52,7 +65,7 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
           maxOutputTokens: EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS,
           schemaName: 'episode_page_plan',
           jsonSchema: episodePagePlanJsonSchema,
-          responseSchema: episodePagePlanSuggestionSchema,
+          responseSchema: episodePagePlanProviderResponseSchema,
           errorLabel: 'OpenAI episode page plan compiler',
           sanitize: sanitizeEpisodePagePlanPayload,
           input: [
@@ -546,51 +559,46 @@ const nullableDialogueArraySchema = {
   ],
 } as const;
 
-const nullableEntityAssignmentsSchema = {
-  anyOf: [
-    {
-      type: 'array',
-      maxItems: 20,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: [
-          'entity_id',
-          'role',
-          'expression',
-          'custom_expression',
-          'action',
-          'custom_action',
-          'position',
-          'facing_direction',
-          'effect_note',
-          'state_id',
-        ],
-        properties: {
-          entity_id: { type: 'string' },
-          role: { type: 'string', enum: ['primary', 'secondary', 'background'] },
-          expression: {
-            type: 'string',
-            enum: ['determined', 'calm', 'angry', 'sad', 'surprised', 'custom'],
-          },
-          custom_expression: nullableStringSchema,
-          action: {
-            type: 'string',
-            enum: ['standing_firm', 'attacking', 'defending', 'running', 'custom'],
-          },
-          custom_action: nullableStringSchema,
-          position: {
-            type: 'string',
-            enum: ['left', 'center', 'right', 'background'],
-          },
-          facing_direction: nullableStringSchema,
-          effect_note: nullableStringSchema,
-          state_id: nullableStringSchema,
-        },
+const entityAssignmentsSchema = {
+  type: 'array',
+  maxItems: 20,
+  items: {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'entity_id',
+      'role',
+      'expression',
+      'custom_expression',
+      'action',
+      'custom_action',
+      'position',
+      'facing_direction',
+      'effect_note',
+      'state_id',
+    ],
+    properties: {
+      entity_id: { type: 'string' },
+      role: { type: 'string', enum: ['primary', 'secondary', 'background'] },
+      expression: {
+        type: 'string',
+        enum: ['determined', 'calm', 'angry', 'sad', 'surprised', 'custom'],
       },
+      custom_expression: nullableStringSchema,
+      action: {
+        type: 'string',
+        enum: ['standing_firm', 'attacking', 'defending', 'running', 'custom'],
+      },
+      custom_action: nullableStringSchema,
+      position: {
+        type: 'string',
+        enum: ['left', 'center', 'right', 'background'],
+      },
+      facing_direction: nullableStringSchema,
+      effect_note: nullableStringSchema,
+      state_id: nullableStringSchema,
     },
-    { type: 'null' },
-  ],
+  },
 } as const;
 
 const nullablePageSettingsSchema = {
@@ -671,7 +679,7 @@ const episodePagePlanJsonSchema = {
                 sfx_text: nullableStringSchema,
                 background_note: nullableStringSchema,
                 panel_notes: nullableStringSchema,
-                entities: nullableEntityAssignmentsSchema,
+                entities: entityAssignmentsSchema,
               },
             },
           },

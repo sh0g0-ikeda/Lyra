@@ -201,6 +201,18 @@ packs sized by estimated structured-output cost; it must not use a fixed three-p
 split. A page is never split between packs, and a pack may contain the full episode
 when it fits the safe output budget.
 
+Episode detail provider output declares a non-null entity assignment array for
+every panel. An explicit empty array means no character is visible in that panel;
+fallback must not repopulate it. Omitted assignments in legacy/internal suggestions
+retain the existing character list. Applying an explicit empty list clears existing
+assignments atomically, subject to the existing manual-state preservation/conflict
+policy. Close-ups, off-panel viewpoints, and exterior cutaways may legitimately have
+no visible entity.
+
+Source omissions, dropped ongoing actions, and visible-entity contradictions are
+repairable semantic findings when a safe field patch restores the input story. They
+use the bounded repair passes below; they do not add a new persistence-blocking gate.
+
 The combined draft is reviewed for cross-page repetition, dialogue placement,
 chronology, page handoffs, entity assignment, and editable visual fields before any
 page or panel content is persisted. Review repairs are field-level patches: page and

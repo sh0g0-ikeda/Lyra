@@ -37,6 +37,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
                         angle: 'front',
                         composition_prompt: 'Show both characters and the open rooftop space.',
                       },
+                      entities: [],
                     },
                   ],
                 },
@@ -92,7 +93,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
                 sfxText: undefined,
                 backgroundNote: undefined,
                 panelNotes: undefined,
-                entities: undefined,
+                entities: [],
               },
             ],
           },
@@ -100,7 +101,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-5',
-      compilerPromptVersion: 'episode_page_plan_v7',
+      compilerPromptVersion: 'episode_page_plan_v8',
     });
 
     const request = requests[0];
@@ -139,7 +140,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
                 items: {
                   properties: {
                     dialogue: { anyOf: Array<{ maxItems?: number }> };
-                    entities: { anyOf: Array<{ maxItems?: number }> };
+                    entities: { type: string; maxItems: number };
                   };
                 };
               };
@@ -156,11 +157,58 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     ]);
     expect(schema.properties.pages.items.properties.panels.maxItems).toBe(20);
     expect(schema.properties.pages.items.properties.panels.items.properties.dialogue.anyOf[0]?.maxItems).toBe(4);
-    expect(schema.properties.pages.items.properties.panels.items.properties.entities.anyOf[0]?.maxItems).toBe(20);
+    expect(schema.properties.pages.items.properties.panels.items.properties.entities.type).toBe('array');
+    expect(schema.properties.pages.items.properties.panels.items.properties.entities.maxItems).toBe(20);
     expect(userPrompt).toContain('[CHAPTER ARC]');
     expect(userPrompt).toContain('[CURRENT PAGES]');
   });
 
+  it('外景で entities=[] を指定した structured output を受理する', async () => {
+    const client = {
+      postJson: async () => ({
+        body: {
+          output_text: JSON.stringify({
+            pages: [{
+              page_id: '11111111-1111-4111-8111-111111111111',
+              page_number: 1,
+              panels: [{ order: 1, entities: [] }],
+            }],
+          }),
+        },
+        requestId: 'req-empty-entities',
+      }),
+    } as unknown as OpenAIClient;
+
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .resolves.toMatchObject({ suggestion: { pages: [{ panels: [{ entities: [] }] }] } });
+  });
+
+  it('entities=null の structured output を response validation で拒否する', async () => {
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: {
+            output_text: JSON.stringify({
+              pages: [{
+                page_id: '11111111-1111-4111-8111-111111111111',
+                page_number: 1,
+                panels: [{ order: 1, entities: null }],
+              }],
+            }),
+          },
+          requestId: `req-null-entities-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .rejects.toMatchObject({ reason: 'invalid_payload' });
+    expect(requestCount).toBe(2);
+  });
   it('JSON の前後に余計な文章があっても最初の JSON object を読める', async () => {
     const client = {
       postJson: async () => ({
@@ -172,7 +220,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
                 {
                   page_id: '11111111-1111-4111-8111-111111111111',
                   page_number: 1,
-                  panels: [{ order: 1 }],
+                  panels: [{ order: 1, entities: [] }],
                 },
               ],
             }),
@@ -318,7 +366,7 @@ function validCompilerResponse(): {
         pages: [{
           page_id: '11111111-1111-4111-8111-111111111111',
           page_number: 1,
-          panels: [{ order: 1 }],
+          panels: [{ order: 1, entities: [] }],
         }],
       }),
     },

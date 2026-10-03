@@ -54,4 +54,39 @@ describe('resolveEpisodePlanStateAssignments', () => {
     expect(resolveEpisodePlanStateAssignments({ ...request, policy: 'overwrite_existing' }).get(SECOND)?.[0]?.stateId)
       .toBe(INJURED);
   });
+
+  it('明示的な空の人物一覧を上書きする場合に既存配置を削除する', () => {
+    const request = input('overwrite_existing');
+    request.suggestion.pages[0]!.panels[0]!.entities = [];
+    const result = resolveEpisodePlanStateAssignments(request);
+    expect(result.get(FIRST)).toEqual([]);
+    expect(result.get(SECOND)?.[0]?.entityId).toBe(ACTOR);
+    expect(result.get(SECOND)?.[0]?.stateId).toBe(INJURED);
+  });
+
+  it('空の人物一覧が手動状態の保存方針と競合する場合に全体を拒否する', () => {
+    const request = {
+      ...input('preserve_existing'),
+      startingStates: [{ entityId: ACTOR, stateId: MANUAL }],
+    };
+    request.pages[0]!.panels[0]!.entities[0]!.stateId = MANUAL;
+    request.pages[0]!.panels[1]!.entities[0]!.stateId = INJURED;
+    request.suggestion.pages[0]!.panels[0]!.entities = [];
+    expect(() => resolveEpisodePlanStateAssignments(request)).toThrowError(EpisodeStatePlanError);
+    expect(resolveEpisodePlanStateAssignments({ ...request, policy: 'overwrite_existing' }).get(FIRST))
+      .toEqual([]);
+  });
+
+  it('人物一覧を省略した旧形式の場合に既存配置を維持する', () => {
+    const request = input('overwrite_existing');
+    const result = resolveEpisodePlanStateAssignments({
+      ...request,
+      suggestion: { pages: [{
+        ...request.suggestion.pages[0]!,
+        panels: [{ order: 1 }, request.suggestion.pages[0]!.panels[1]!],
+      }] },
+    });
+    expect(result.get(FIRST)?.[0]?.entityId).toBe(ACTOR);
+    expect(result.get(FIRST)?.[0]?.stateId).toBeNull();
+  });
 });

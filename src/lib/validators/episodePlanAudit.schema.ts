@@ -16,6 +16,9 @@ export const episodePlanAuditIssueCodes = [
   'knowledge_violation',
   'page_handoff_break',
   'unsupported_story_fact',
+  'source_omission',
+  'ongoing_action_dropped',
+  'visible_entity_mismatch',
 ] as const;
 
 export const episodePlanAuditPageRepairFields = [

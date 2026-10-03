@@ -17,7 +17,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
               accepted: false,
               issues: [
                 {
-                  code: 'duplicate_dialogue',
+                  code: 'visible_entity_mismatch',
                   severity: 'error',
                   page_ids: [
                     '11111111-1111-4111-8111-111111111111',
@@ -68,7 +68,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       accepted: false,
       issues: [
         {
-          code: 'duplicate_dialogue',
+          code: 'visible_entity_mismatch',
           severity: 'error',
           pageIds: [
             '11111111-1111-4111-8111-111111111111',
@@ -104,6 +104,12 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(input[0]?.content[0]?.text).toContain('merely because they own the viewpoint or speak off-panel');
     expect(input[0]?.content[0]?.text).toContain('until the source explicitly ends it');
     expect(input[0]?.content[0]?.text).toContain('a concrete source or continuity defect, not a stylistic preference');
+    expect(input[0]?.content[0]?.text).toContain(
+      'missing source fact, dropped ongoing action, or visible entity contradiction',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'Use severity=warning only for optional improvements',
+    );
     expect(input[0]?.content[0]?.text).toContain('Return field-level repairs');
     expect(input[0]?.content[0]?.text).toContain(
       'Every field named in changed_fields must have a corresponding patch value',
@@ -112,6 +118,14 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(text.format).toMatchObject({ type: 'json_schema', strict: true });
 
     const rootProperties = readObject(text.format.schema.properties);
+    const issues = readObject(rootProperties.issues);
+    const issueItems = readObject(issues.items);
+    const issueProperties = readObject(issueItems.properties);
+    expect(readObject(issueProperties.code).enum).toEqual(expect.arrayContaining([
+      'source_omission',
+      'ongoing_action_dropped',
+      'visible_entity_mismatch',
+    ]));
     const panelRepairs = readObject(rootProperties.panel_repairs);
     const panelRepairItems = readObject(panelRepairs.items);
     const panelRepairProperties = readObject(panelRepairItems.properties);
