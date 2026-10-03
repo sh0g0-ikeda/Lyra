@@ -128,6 +128,7 @@ function buildSystemPrompt(language: CompileEpisodePlanAuditInput['language']): 
     'Audit the complete episode across page boundaries as a manga continuity and readability editor.',
     STORY_SOURCE_POLICY,
     'Compare the compiled draft against source story, ledger ownership including text_plan, and the untruncated counts in TEXT DISTRIBUTION.',
+    'Do not accept a required prerequisite, cause, or ongoing action merely because it appears in page purpose, continuity, entry/exit state, handoff, or ledger text. If the relevant panel fields do not stage it, report source_omission or ongoing_action_dropped with a field-level repair.',
     STORY_TEXT_POLICY,
     STORY_SPEAKER_POLICY,
     STORY_DIALOGUE_FLOW_POLICY,
