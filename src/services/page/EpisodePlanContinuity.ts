@@ -419,6 +419,15 @@ export function buildEpisodePlanAuditBrief(input: {
   const pages = [...input.suggestion.pages].sort(compareSuggestionPages);
   const panelCount = pages.reduce((count, page) => count + page.panels.length, 0);
   const entityLabels = buildEntityLabelLookup(input.context);
+  const planByPageId = new Map(input.plan.pages.map((page) => [page.pageId, page] as const));
+  const localizedPageLedgers = new Map<string, string>();
+  for (const page of pages) {
+    const ownedPlan = planByPageId.get(page.pageId);
+    if (ownedPlan === undefined) {
+      throw new ConfigurationError('Episode audit is missing page ownership');
+    }
+    localizedPageLedgers.set(page.pageId, formatAuditOwnedSourceLedger(ownedPlan));
+  }
   const deterministicFindingLines = formatDeterministicAuditFindingLines(
     detectDeterministicContinuityIssues(input.suggestion),
   );
@@ -459,8 +468,14 @@ export function buildEpisodePlanAuditBrief(input: {
   ];
   // Reserve exact dialogue and source/ownership first. Visual excerpts may be
   // compacted, but losing speakers or the end of a conversation is not safe.
-  const reserved = [...before, ...after].join('\n').length + pages.length * (PAGE_HEADER_MAX_CHARS + 4) + panelCount * 4 + 100;
-  const remaining = AUDIT_BRIEF_MAX_CHARS - reserved;
+  const localizedLedgerChars = Array.from(localizedPageLedgers.values()).reduce(
+    (total, ledger) => total + ledger.length + 1,
+    0,
+  );
+  const baseReserved = [...before, ...after].join('\n').length
+    + pages.length * (PAGE_HEADER_MAX_CHARS + 4)
+    + panelCount * 4
+    + 100;
   const minimumPanelSummaryLengths = pages.flatMap((page) =>
     page.panels.map((panel) =>
       buildAuditPanelSummary(panel, entityLabels, 0).length,
@@ -470,17 +485,30 @@ export function buildEpisodePlanAuditBrief(input: {
     (total, length) => total + length,
     0,
   );
+  const baseRemaining = AUDIT_BRIEF_MAX_CHARS - baseReserved;
   if (
-    remaining < panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
-    || remaining < minimumPanelSummaryChars
+    baseRemaining < panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
+    || baseRemaining < minimumPanelSummaryChars
   ) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
   }
+  const remainingWithLocalizedLedgers = baseRemaining - localizedLedgerChars;
+  const includeLocalizedLedgers =
+    remainingWithLocalizedLedgers >= panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
+    && remainingWithLocalizedLedgers >= minimumPanelSummaryChars;
+  const remaining = includeLocalizedLedgers
+    ? remainingWithLocalizedLedgers
+    : baseRemaining;
   const optionalPanelChars = panelCount === 0
     ? 0
     : Math.floor((remaining - minimumPanelSummaryChars) / panelCount);
   const brief = [...before, '', '[COMPILED EPISODE DRAFT]',
-    ...pages.flatMap((page) => formatAuditPage(page, optionalPanelChars, entityLabels)), ...after].join('\n');
+    ...pages.flatMap((page) => formatAuditPage(
+      page,
+      optionalPanelChars,
+      entityLabels,
+      includeLocalizedLedgers ? localizedPageLedgers.get(page.pageId) : undefined,
+    )), ...after].join('\n');
   if (brief.length > AUDIT_BRIEF_MAX_CHARS) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
   }
@@ -812,6 +840,7 @@ function formatAuditPage(
   page: EpisodePagePlanPageSuggestion,
   optionalPanelChars: number,
   entityLabels: ReadonlyMap<string, string>,
+  ownedSourceLedger: string | undefined,
 ): string[] {
   const header = truncatePromptText(
     [
@@ -824,7 +853,18 @@ function formatAuditPage(
   const panels = [...page.panels]
     .sort((left, right) => left.order - right.order)
     .map((panel) => `  ${buildAuditPanelSummary(panel, entityLabels, optionalPanelChars)}`);
-  return [header, ...panels];
+  return [header, ...(ownedSourceLedger === undefined ? [] : [ownedSourceLedger]), ...panels];
+}
+
+function formatAuditOwnedSourceLedger(page: EpisodeBeatPlanPage): string {
+  const textPlan = page.textPlan;
+  return [
+    `  owner_page_id=${page.pageId}`,
+    `  story_beats=${truncatePromptText(page.storyBeats.join(' / ') || 'none', LEDGER_FIELD_MAX_CHARS * 2)}`,
+    `  new_information=${truncatePromptText(page.newInformation.join(' / ') || 'none', LEDGER_FIELD_MAX_CHARS)}`,
+    `  required_text=${truncatePromptText(textPlan?.requiredTextBeats.join(' / ') || 'none', LEDGER_FIELD_MAX_CHARS)}`,
+    `  visual_only=${truncatePromptText(textPlan?.visualOnlyBeats.join(' / ') || 'none', LEDGER_FIELD_MAX_CHARS)}`,
+  ].join('\n');
 }
 
 function buildAuditPanelSummary(

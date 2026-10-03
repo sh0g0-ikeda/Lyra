@@ -28,6 +28,58 @@ describe('EpisodePlanContinuity', () => {
     expect(brief).toContain('thought:voice-id@right "exact-4"');
   });
 
+  it('監査 brief は全15ページで所有台帳と実パネルを同じページ entry に並べる', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 15);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 15);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 15).map((page) => ({
+      ...page,
+      panels: [{
+        order: 1,
+        situationText: `実パネル-${page.pageNumber}`,
+        dialogue: [],
+        entities: [],
+      }],
+    }));
+
+    for (const page of plan.pages) {
+      page.storyBeats = [`所有出来事-${page.pageNumber}`];
+      page.newInformation = [`新情報-${page.pageNumber}`];
+      page.textPlan = {
+        requiredTextBeats: [`必須テキスト-${page.pageNumber}`],
+        visualOnlyBeats: [`必須映像-${page.pageNumber}`],
+        densityReason: `密度理由-${page.pageNumber}`,
+      };
+    }
+
+    const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+    const compiledDraft = brief.slice(
+      brief.indexOf('[COMPILED EPISODE DRAFT]'),
+      brief.indexOf('[TEXT DISTRIBUTION]'),
+    );
+
+    for (const page of plan.pages) {
+      const header = `Page ${page.pageNumber} (${page.pageId})`;
+      const nextPage = plan.pages.find((candidate) => candidate.pageNumber === page.pageNumber + 1);
+      const start = compiledDraft.indexOf(header);
+      const end = nextPage === undefined
+        ? compiledDraft.length
+        : compiledDraft.indexOf(`Page ${nextPage.pageNumber} (${nextPage.pageId})`, start + header.length);
+      const pageEntry = compiledDraft.slice(start, end);
+
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(pageEntry).toContain(`owner_page_id=${page.pageId}`);
+      expect(pageEntry).toContain(`story_beats=所有出来事-${page.pageNumber}`);
+      expect(pageEntry).toContain(`new_information=新情報-${page.pageNumber}`);
+      expect(pageEntry).toContain(`required_text=必須テキスト-${page.pageNumber}`);
+      expect(pageEntry).toContain(`visual_only=必須映像-${page.pageNumber}`);
+      expect(pageEntry).toContain(`Panel 1`);
+    }
+    expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+  });
+
   it('全話台帳 brief にページ容量とシーン内のキャラ状態を含める', () => {
     const context = buildContext();
     context.entities = [
@@ -122,6 +174,42 @@ describe('EpisodePlanContinuity', () => {
     expect(briefContainsPage(brief, 1)).toBe(true);
     expect(briefContainsPage(brief, PAGE_COUNT)).toBe(true);
     expect(brief).toContain(`Panel 8`);
+  }, 20_000);
+
+  it('局所台帳の追加分だけが上限を超える場合は旧必須情報を保って補足だけを省く', () => {
+    const context = buildContext();
+    const sourceEndMarker = 'FULL-SOURCE-END-MARKER';
+    context.episode.storyFullDraft = `FULL-SOURCE-BEGIN-${'原文'.repeat(3_970)}-${sourceEndMarker}`;
+    const plan = buildBeatPlan();
+    const suggestion = buildVerboseSuggestion();
+    const finalDialogueMarker = 'FINAL-COMPLETE-DIALOGUE-MARKER';
+    for (const page of suggestion.pages) {
+      page.panels = page.panels.slice(0, 8);
+      for (const panel of page.panels) {
+        const isFinal = page.pageNumber === PAGE_COUNT && panel.order === 8;
+        panel.dialogue = [{
+          entityId: null,
+          type: 'narration',
+          position: 'right',
+          text: `${isFinal ? finalDialogueMarker : 'BOUNDARY-DIALOGUE'}-${page.pageNumber}-${panel.order}-${'情報'.repeat(30)}`,
+        }];
+      }
+    }
+
+    const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+    const compiledDraft = brief.slice(
+      brief.indexOf('[COMPILED EPISODE DRAFT]'),
+      brief.indexOf('[TEXT DISTRIBUTION]'),
+    );
+
+    expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+    expect(brief).toContain(sourceEndMarker);
+    expect(brief).toContain('[GLOBAL EPISODE LEDGER]');
+    expect(brief).toContain(finalDialogueMarker);
+    expect(brief).toContain('[TEXT DISTRIBUTION]');
+    expect(briefContainsPage(compiledDraft, 1)).toBe(true);
+    expect(briefContainsPage(compiledDraft, PAGE_COUNT)).toBe(true);
+    expect(compiledDraft).not.toContain('owner_page_id=');
   }, 20_000);
 
   it('上限付近で主体属性と構図・演出メモの最小予約が入らない場合は監査を失敗させる', () => {
