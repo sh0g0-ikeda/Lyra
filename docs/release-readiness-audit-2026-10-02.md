@@ -182,3 +182,8 @@ See the updated [integration manifest](uiux-backend-expansion-2026-09-30/統合�
 - **APK/画面**: c831278f-4d73-4561-bb06-d73a0cc25e74 FINISHED、com.lyra.mobile.staging/0.1.18。https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/c831278f-4d73-4561-bb06-d73a0cc25e74 。実Webで通常2buttons有効/Hy4両方無効。物理Android・旧store client未実施。
 - **運用/残事項**: Ops15files/114tests PASS、実RDS drain契約install/count/teardown・4対象不存在PASS。旧expiryはDISABLED。新IAM文書送信/解析は自動承認拒否requests0・回答待ち、同効果迂回なし。DB/ALB/API固定費継続、一週間自動停止/料金ゼロは未成立。公開GitHub更新拒否を再試行せずlocal PR/bundle。Stripe実購入はユーザー見送り。Google外部設定、Hy4公式契約、代表data移行/復旧、物理APK/旧版、最新SQS/DB長編受入・意味品質改善、shutdown/cleanup実演が残る。本番反映可能との判定は未成立。
 - **保護/公開**: 元HEAD85625cd・dirty28paths内容/削除状態不変、store-assets/google-play保護。Dots23878f9/clean再確認。main merge/本番/store/public GitHub更新0。
+
+
+### 長編意味欠落の次候補（設計のみ・未実装）
+
+段階traceをAstraが独立レビューし、原作から位置付き文・節IDを作り、既存audit call内で各IDに対応する実panel/entity action fieldの完全一致引用を返すsidecar契約を次候補とした。beat ledgerだけを基準にするとledger自身の省略を固定化するため不可。ID過不足/重複・field存在・引用一致は機械検証できるが、「安定点灯」を「十分充電」と誤対応する意味判定は証明できない。未検証のため今回の修正として採用せず、flag既定OFFの限定検証候補に留める。追加provider call、旧経路への保存拒否、保存済みページ再生成、モデル置換は導入しない。採用前に今回の4省略検出/修復、P14正当な継続動作、偽引用/未知panel、token/timeout/最大2audit/legacy soft-save互換を検証する必要がある。設計レビュー自身のnetwork/provider/AWS/writeは0。
