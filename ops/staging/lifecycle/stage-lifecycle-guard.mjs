@@ -5,11 +5,15 @@ import {
   ListTagsForResourceCommand as ListScalingTagsCommand,
 } from '@aws-sdk/client-application-auto-scaling';
 import { CloudFormationClient, DeleteStackCommand, DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
+import { CloudWatchLogsClient, GetLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import {
+  DescribeTaskDefinitionCommand,
   DescribeServicesCommand,
+  DescribeTasksCommand,
   ECSClient,
   ListTagsForResourceCommand as ListEcsTagsCommand,
   ListTasksCommand,
+  RunTaskCommand,
   UpdateServiceCommand,
 } from '@aws-sdk/client-ecs';
 import { DescribeDBInstancesCommand, RDSClient, StopDBInstanceCommand } from '@aws-sdk/client-rds';
@@ -17,17 +21,33 @@ import { GetResourcesCommand, ResourceGroupsTaggingAPIClient } from '@aws-sdk/cl
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { GetQueueAttributesCommand, ListQueueTagsCommand, SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 
-import { decideLifecycleAction, INITIAL_STATE } from './stage-lifecycle-guard-core.mjs';
+import {
+  ACTIVE_START_AT,
+  decideLifecycleAction,
+  INITIAL_STATE,
+  isCloudFormationStackNotFound,
+  STAGE_CLUSTER_ID,
+  STAGE_DATABASE_ID,
+  STAGE_ID,
+} from './stage-lifecycle-guard-core.mjs';
+import {
+  classifyDatabaseDrainProofTasks,
+  createStageDatabaseDrainProofPort,
+  parseDatabaseDrainProofTaskRecord,
+  shouldStartDatabaseDrainProofTask,
+} from './stage-database-drain-proof-port.mjs';
 
 const account = '452284481392';
 const region = 'ap-northeast-1';
-const prefix = 'lyra-staging-20261003';
-const cluster = `${prefix}-cluster`;
-const baseDatabase = `${prefix}-db`;
+const prefix = STAGE_ID;
+const cluster = STAGE_CLUSTER_ID;
+const baseDatabase = STAGE_DATABASE_ID;
 const bucket = `${prefix}-build-${account}`;
 const stateKey = 'lifecycle/guard-state.json';
 const successKey = 'lifecycle/guard-success.json';
 const errorKey = 'lifecycle/guard-last-error.json';
+const databaseDrainProofKey = 'lifecycle/database-drain-proof.json';
+const databaseDrainProofTaskKey = 'lifecycle/database-drain-proof-task.json';
 const dlqUrl = `https://sqs.${region}.amazonaws.com/${account}/${prefix}-lifecycle-dlq`;
 const exactTargetArn = 'arn:aws:application-autoscaling:ap-northeast-1:452284481392:scalable-target/0ec516a28b068004442db2e9a491f8726c9b';
 const services = ['api', 'generation', 'export', 'deletion'];
@@ -46,6 +66,19 @@ const rds = new RDSClient({ region });
 const cfn = new CloudFormationClient({ region });
 const s3 = new S3Client({ region });
 const tagging = new ResourceGroupsTaggingAPIClient({ region });
+const logs = new CloudWatchLogsClient({ region });
+const databaseDrainProofPort = createStageDatabaseDrainProofPort({
+  cfn,
+  ecs,
+  logs,
+  commands: {
+    describeStacks: (input) => new DescribeStacksCommand(input),
+    describeTaskDefinition: (input) => new DescribeTaskDefinitionCommand(input),
+    runTask: (input) => new RunTaskCommand(input),
+    describeTasks: (input) => new DescribeTasksCommand(input),
+    getLogEvents: (input) => new GetLogEventsCommand(input),
+  },
+});
 
 function tagsMatch(tags) {
   const tagMap = Array.isArray(tags)
@@ -86,7 +119,7 @@ async function describeStack(name) {
     if (!stack?.StackStatus) throw new Error('STACK_INVENTORY_INCOMPLETE');
     return { exists: true, status: stack.StackStatus, owned: tagsMatch(stack.Tags) };
   } catch (error) {
-    if (error?.name === 'ValidationError') return { exists: false };
+    if (isCloudFormationStackNotFound(error, name)) return { exists: false };
     throw error;
   }
 }
@@ -210,7 +243,7 @@ async function collectInventory() {
     describeStack(`${prefix}-runtime`),
     describeStack(`${prefix}-foundation`),
   ]);
-  const [serviceState, queueState, scalableTarget, databaseState, runningTasks, pendingTasks] = await Promise.all([
+  const [serviceState, queueState, scalableTarget, databaseState, runningTasks, pendingTasks, databaseDrainProof] = await Promise.all([
     serviceInventory(runtimeStack.exists),
     queueInventory(foundationStack.exists),
     targetInventory(runtimeStack.exists),
@@ -221,8 +254,14 @@ async function collectInventory() {
     foundationStack.exists
       ? ecs.send(new ListTasksCommand({ cluster, desiredStatus: 'PENDING' }))
       : { taskArns: [] },
+    readJson(databaseDrainProofKey),
   ]);
   if (runningTasks.nextToken || pendingTasks.nextToken) throw new Error('TASK_INVENTORY_PAGINATED');
+  if (!Array.isArray(runningTasks.taskArns) || !Array.isArray(pendingTasks.taskArns)) {
+    throw new Error('TASK_INVENTORY_INCOMPLETE');
+  }
+  const taskArns = [...runningTasks.taskArns, ...pendingTasks.taskArns];
+  const taskCounts = classifyDatabaseDrainProofTasks(taskArns);
   for (const [name, service] of Object.entries(serviceState)) {
     if (!service.owned) throw new Error(`SERVICE_NOT_OWNED_${name}`);
   }
@@ -230,14 +269,18 @@ async function collectInventory() {
     if (!queue.owned) throw new Error(`QUEUE_NOT_OWNED_${name}`);
   }
   return {
-    ...serviceState,
-    queues: queueState,
-    scalableTarget,
-    database: databaseState.database,
-    extraOwnedDatabaseIds: databaseState.extraOwnedDatabaseIds,
-    runtimeStack,
-    foundationStack,
-    clusterTaskCount: (runningTasks.taskArns?.length ?? 0) + (pendingTasks.taskArns?.length ?? 0),
+    taskArns,
+    inventory: {
+      ...serviceState,
+      queues: queueState,
+      scalableTarget,
+      database: databaseState.database,
+      extraOwnedDatabaseIds: databaseState.extraOwnedDatabaseIds,
+      runtimeStack,
+      foundationStack,
+      databaseDrainProof,
+      ...taskCounts,
+    },
   };
 }
 
@@ -255,6 +298,7 @@ function requireNonNegativeCount(value, code) {
 function parseState(value) {
   if (value === null) return { ...INITIAL_STATE };
   if (typeof value !== 'object' || value.version !== 1) throw new Error('STATE_INVALID');
+  const merged = { ...INITIAL_STATE, ...value };
   const booleanNames = [
     'apiStopRequested',
     'scalingDeregistered',
@@ -263,12 +307,21 @@ function parseState(value) {
     'runtimeDeleteRequested',
     'foundationDeleteRequested',
   ];
-  if (!Number.isSafeInteger(value.zeroStreak) || value.zeroStreak < 0) throw new Error('STATE_INVALID');
-  if (booleanNames.some((name) => typeof value[name] !== 'boolean')) throw new Error('STATE_INVALID');
-  if (value.apiStopRequestedAt !== null && (
-    typeof value.apiStopRequestedAt !== 'string' || !Number.isFinite(Date.parse(value.apiStopRequestedAt))
-  )) throw new Error('STATE_INVALID');
-  return Object.fromEntries(Object.keys(INITIAL_STATE).map((name) => [name, value[name]]));
+  if (!Number.isSafeInteger(merged.zeroStreak) || merged.zeroStreak < 0) throw new Error('STATE_INVALID');
+  if (booleanNames.some((name) => typeof merged[name] !== 'boolean')) throw new Error('STATE_INVALID');
+  for (const name of [
+    'apiStopRequestedAt',
+    'apiStoppedAt',
+    'workersStoppedAt',
+    'databaseDrainProofObservedAt',
+  ]) {
+    if (merged[name] !== null && (
+      typeof merged[name] !== 'string' ||
+      !Number.isFinite(Date.parse(merged[name])) ||
+      new Date(Date.parse(merged[name])).toISOString() !== merged[name]
+    )) throw new Error('STATE_INVALID');
+  }
+  return Object.fromEntries(Object.keys(INITIAL_STATE).map((name) => [name, merged[name]]));
 }
 
 async function perform(action) {
@@ -315,15 +368,57 @@ export async function handler(event = {}, context = {}) {
     ) {
       throw new Error('FUNCTION_IDENTITY_MISMATCH');
     }
-    const state = mode === 'inspect' ? { ...INITIAL_STATE } : parseState(await readJson(stateKey));
-    const inventory = await collectInventory();
     const now = mode === 'inspect' && event.now ? event.now : new Date().toISOString();
+    const state = mode === 'inspect' ? { ...INITIAL_STATE } : parseState(await readJson(stateKey));
+    const rawTaskRecord = await readJson(databaseDrainProofTaskKey);
+    let taskRecord = rawTaskRecord === null ? null : parseDatabaseDrainProofTaskRecord(rawTaskRecord);
+    const collected = await collectInventory();
+    let inventory = collected.inventory;
+    if (
+      mode === 'active'
+      && Date.parse(now) >= Date.parse(ACTIVE_START_AT)
+      && taskRecord?.status === 'pending'
+      && state.databaseStopRequested === false
+      && inventory.database.exists === true
+      && inventory.database.owned === true
+      && inventory.database.status === 'available'
+    ) {
+      const polled = await databaseDrainProofPort.poll({ record: taskRecord, nowUtc: now });
+      taskRecord = polled.record;
+      inventory = {
+        ...inventory,
+        ...classifyDatabaseDrainProofTasks(collected.taskArns, taskRecord.taskArn),
+      };
+      if (polled.status === 'completed') {
+        await writeJson(databaseDrainProofKey, polled.proof);
+        await writeJson(databaseDrainProofTaskKey, taskRecord);
+        inventory = { ...inventory, databaseDrainProof: polled.proof };
+      }
+    }
     const decision = decideLifecycleAction({ mode, now, state, inventory });
     if (mode === 'inspect') return { mode, now, decision, inventory, mutated: false };
     if (decision.action.startsWith('error-')) throw new Error(decision.action.toUpperCase());
-    if (decision.mutates) await perform(decision.action);
-    const recorded = { ...decision.nextState, lastAction: decision.action, lastCheckedAt: now };
-    if (decision.action === 'success') {
+    let action = decision.action;
+    let mutated = decision.mutates;
+    let details = decision.details;
+    if (shouldStartDatabaseDrainProofTask({ mode, nowUtc: now, action, state: decision.nextState, inventory, taskRecord })) {
+      const safePointAtUtc = decision.nextState.workersStoppedAt ?? decision.nextState.apiStoppedAt;
+      if (safePointAtUtc === null) throw new Error('DATABASE_DRAIN_PROOF_SAFE_POINT_MISSING');
+      await writeJson(stateKey, { ...decision.nextState, lastAction: action, lastCheckedAt: now });
+      taskRecord = await databaseDrainProofPort.start({
+        nowUtc: now,
+        safePointAtUtc,
+        attemptKey: safePointAtUtc,
+      });
+      await writeJson(databaseDrainProofTaskKey, taskRecord);
+      action = 'start-db-drain-proof';
+      mutated = true;
+      details = { ...details, safePointAtUtc };
+    } else if (decision.mutates) {
+      await perform(decision.action);
+    }
+    const recorded = { ...decision.nextState, lastAction: action, lastCheckedAt: now };
+    if (action === 'success') {
       await writeJson(successKey, {
         completedAt: now,
         stageId: prefix,
@@ -332,7 +427,7 @@ export async function handler(event = {}, context = {}) {
       });
     }
     await writeJson(stateKey, recorded);
-    return { mode, now, action: decision.action, mutated: decision.mutates, details: decision.details };
+    return { mode, now, action, mutated, details };
   } catch (error) {
     if (mode === 'active') await recordFailure(error, context);
     throw error;
