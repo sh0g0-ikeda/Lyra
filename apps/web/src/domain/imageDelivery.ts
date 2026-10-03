@@ -21,3 +21,26 @@ export function pageImageDeliveryPath(pageId:string,image?:ImageDeliveryMetadata
 export function imageDeliveryNotice(language:'ja'|'en'):string {
   return language==='ja' ? 'このセッションでは、この画像を表示・保存できません。作品やページの編集は続けられます。' : 'This image cannot be viewed or saved in this session. You can continue editing the work and page.';
 }
+
+
+export function entityReferenceImageDeliveryPath(entityId: string, refId: string, image?: ImageDeliveryMetadata | null, webDeliveryEnabled?: boolean): string {
+  if (!canReadWebImage(image, webDeliveryEnabled)) throw new Error('Image delivery is unavailable for this session');
+  const prefix = delivery(image) === 'web' ? '/api/web/entities' : '/api/entities';
+  return `${prefix}/${encodeURIComponent(entityId)}/reference/${encodeURIComponent(refId)}/image`;
+}
+export function entityReferenceCandidateDeliveryPath(entityId: string, image?: ImageDeliveryMetadata | null, webDeliveryEnabled?: boolean): string {
+  if (!canReadWebImage(image, webDeliveryEnabled)) throw new Error('Image delivery is unavailable for this session');
+  const prefix = delivery(image) === 'web' ? '/api/web/entities' : '/api/entities';
+  return `${prefix}/${encodeURIComponent(entityId)}/reference-candidate-image`;
+}
+
+/** Candidate metadata cannot erase a job's restriction or mask a conflict. */
+export function mergeImageDeliveryMetadata(pinned: ImageDeliveryMetadata, actual: ImageDeliveryMetadata): ImageDeliveryMetadata {
+  const result: ImageDeliveryMetadata = {};
+  for (const key of ['image_model', 'provider_model_id', 'provider', 'mobile_access'] as const) {
+    const expected = pinned[key]; const returned = actual[key];
+    if (expected === undefined && returned === undefined) continue;
+    result[key] = expected != null && returned != null && expected !== returned ? 'unknown' : returned ?? expected ?? null;
+  }
+  return result;
+}

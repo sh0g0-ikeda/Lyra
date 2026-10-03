@@ -374,6 +374,19 @@ dedicated Web client and rejection tests with both old and new Mobile tokens. Hy
 image generation remains unavailable until its actual provider contract is known;
 there is no substitution with an unrelated image model.
 
+Standard OpenAI image generation must reject an assigned confirmed primary/state
+reference with Web-only, unknown or conflicting provider provenance before job
+admission or debit, and recheck before an image provider call. Flexible-generation
+requests and references must never fall back to an OpenAI image model. An assigned character's
+active primary remains subject to this check even when a named state provides
+the rendered reference; a compatible state cannot bypass a Web-only primary. A new
+preview does not replace the confirmed reference until confirmation; confirming a
+standard compatible reference restores standard page eligibility without deleting
+historical images. Unassigned characters and inactive historical references do not
+block unrelated pages. The same input boundary applies to explicit entity-preview
+sources and state-preview bases. Web identifies both providers and Web-only output;
+Mobile retains standard generation and displays the Web-only notice.
+
 The production source lineage differs from main. The release preserves its legacy
 HTTP contracts and scheduled-billing, push, export, page planning and editorial
 behavior while retaining candidate deletion/refund/ownership protections. Applied

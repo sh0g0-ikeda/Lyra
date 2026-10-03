@@ -1,6 +1,6 @@
 import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStatus } from './googleIdentityLink';
 import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
-import { pageImageDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
+import { pageImageDeliveryPath, entityReferenceImageDeliveryPath, entityReferenceCandidateDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
 import type {
   BalloonRecord,
   BillingBalanceRecord,
@@ -24,6 +24,7 @@ import type {
   OrganizationUsageSummaryRecord,
   OrganizationWorkspaceRecord,
   PageRecord,
+  PageGenerationReadinessRecord,
   PanelFrameRecord,
   PanelRecord,
   SceneRecord,
@@ -462,6 +463,10 @@ export class LyraApiClient {
     });
   }
 
+  public getPageGenerationReadiness(pageId: string, organizationId?: string | null): Promise<PageGenerationReadinessRecord> {
+    return this.request(`/api/pages/${pageId}/generation-readiness${organizationQuery(organizationId)}`);
+  }
+
   public generatePage(
     pageId: string,
     organizationId?: string | null,
@@ -625,9 +630,11 @@ export class LyraApiClient {
     entityId: string,
     refId: string,
     organizationId?: string | null,
+    image?: ImageDeliveryMetadata | null,
+    webDeliveryEnabled?: boolean,
   ): Promise<BlobResponse> {
     const response = await fetch(
-      this.toUrl(`/api/entities/${entityId}/reference/${encodeURIComponent(refId)}/image${organizationQuery(organizationId)}`),
+      this.toUrl(`${entityReferenceImageDeliveryPath(entityId, refId, image, webDeliveryEnabled)}${organizationQuery(organizationId)}`),
       this.buildRequest({ method: 'GET' }),
     );
     if (!response.ok) {
@@ -644,13 +651,15 @@ export class LyraApiClient {
     entityId: string,
     candidateToken: string,
     organizationId?: string | null,
+    image?: ImageDeliveryMetadata | null,
+    webDeliveryEnabled?: boolean,
   ): Promise<BlobResponse> {
     const params = new URLSearchParams({ candidate_token: candidateToken });
     if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
       params.set('organization_id', organizationId);
     }
     const response = await fetch(
-      this.toUrl(`/api/entities/${entityId}/reference-candidate-image?${params.toString()}`),
+      this.toUrl(`${entityReferenceCandidateDeliveryPath(entityId, image, webDeliveryEnabled)}?${params.toString()}`),
       this.buildRequest({ method: 'GET' }),
     );
     if (!response.ok) {

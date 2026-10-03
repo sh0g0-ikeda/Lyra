@@ -55,6 +55,10 @@ const messages = {
     en: 'This operation cannot be completed in the current state. Reload the page, check the latest state, then try again.',
     ja: '現在の状態ではこの操作を完了できません。ページを再読み込みし、最新の状態を確認してからもう一度お試しください。',
   },
+  referenceModelIncompatible: {
+    en: 'These references cannot be sent to the standard image model. Generate and confirm a standard preview to use standard page generation again.',
+    ja: 'この参照画像は通常生成の画像モデルへ送信できません。通常生成したプレビューを確定し直すと、通常のページ生成に戻れます。',
+  },
   credits: {
     en: 'Credits are insufficient. Add credits, then try again.',
     ja: 'クレジットが不足しています。クレジットを購入してからもう一度お試しください。',
@@ -260,6 +264,9 @@ export function formatUserFacingErrorMessage(
 }
 
 function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: string): LocalizedMessage | null {
+  if (normalizedCode === 'PAGE_REFERENCE_MODEL_INCOMPATIBLE' || normalizedCode === 'ENTITY_REFERENCE_MODEL_INCOMPATIBLE') {
+    return messages.referenceModelIncompatible;
+  }
   if (normalizedCode === 'BILLING_TIMEOUT') {
     return messages.billingTimeout;
   }

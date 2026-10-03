@@ -82,6 +82,10 @@ export interface EntityRecord {
 }
 
 export interface EntityReferenceImageRecord {
+  image_model?: string | null;
+  provider_model_id?: string | null;
+  provider?: string | null;
+  mobile_access?: 'available' | 'web_only' | 'unavailable';
   ref_id: string;
   cdn_url?: string | null;
   source: 'upload' | 'generated';
@@ -121,6 +125,14 @@ export interface GeneratedImageRecord {
   cdn_url?: string | null;
   generation_mode: 'standard' | 'thinking' | null;
   generated_at: string | null;
+}
+
+export interface PageGenerationReadinessRecord {
+  ready: boolean;
+  blockers: Array<{ code: string; entity_id: string | null; field: string; action: string; message_key: string }>;
+  warnings: string[];
+  estimated_credit_cost: number;
+  page_revision: string;
 }
 
 export interface PageRecord {

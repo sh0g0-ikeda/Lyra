@@ -1,5 +1,5 @@
 import { GoogleSignInButton, GoogleIdentityLinkPanel } from './components/GoogleAuthControls';
-import { canReadWebImage, imageDeliveryNotice } from './domain/imageDelivery';
+import { canReadWebImage, imageDeliveryNotice, mergeImageDeliveryMetadata, type ImageDeliveryMetadata } from './domain/imageDelivery';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import {
   BookOpen,
@@ -363,7 +363,7 @@ interface GenericStructuredFieldRow {
   value: string;
 }
 
-interface ReferenceCandidate {
+interface ReferenceCandidate extends ImageDeliveryMetadata {
   candidate_token: string;
   cdn_url?: string;
   source: 'upload' | 'generated';
@@ -648,6 +648,10 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Generate in color': 'カラー生成',
   'Generate monochrome page': '白黒で生成',
   'More flexible generation': 'より自由な生成',
+  'Standard generation: GPT Image 2 (OpenAI)': '通常生成：GPT Image 2（OpenAI）',
+  'More flexible generation: Hy4 Preview (Tencent). Requests and references are not sent to OpenAI image models. Images are available only on the web.': '自由生成：Hy4 Preview（Tencent）。依頼と参照画像はOpenAIの画像モデルへ送らず、作成した画像はweb版でのみ利用できます。',
+  'Characters confirmed with flexible generation cannot be used for standard page generation. Generate and confirm a standard preview to use standard page generation again.': '自由生成で確定したキャラは通常のページ生成には使用できません。通常生成したプレビューを確定し直すと、通常のページ生成に戻れます。',
+  'Hy4 Preview · Web only': 'Hy4 Preview・web版限定',
   'Generate in color (Hy4 Preview)': 'カラー生成（Hy4 Preview）',
   'Generate in black and white (Hy4 Preview)': '白黒で生成（Hy4 Preview）',
   'We are checking the Hy4 Preview image generation and reference-image editing API. It is not available yet.': 'Hy4 Previewの画像生成・参照画像編集APIを確認中です。現在は利用できません。',
@@ -2901,7 +2905,15 @@ function StudioShell(props: {
     activeOrganizationId === null
       ? balanceQuery.data?.total_credits ?? null
       : activeOrganizationBalance?.total_credits ?? null;
+  const pageProviderReadinessQuery = useQuery({
+    queryKey: scopedQueryKey(['page-generation-readiness', selectedPage?.id ?? '', selectedPage?.updated_at ?? '']),
+    queryFn: () => api.getPageGenerationReadiness(selectedPage?.id ?? '', activeOrganizationId),
+    enabled: activeTab === 'pages' && selectedPage !== null,
+    staleTime: 0,
+    retry: false,
+  });
   const pageGenerationBlockers = getPageGenerationBlockers({
+    serverReadiness: pageProviderReadinessQuery.data,
     page: selectedPage,
     panels,
     frames,
@@ -5782,6 +5794,7 @@ function StudioShell(props: {
                   </PanelSection>
 
                   <PanelSection title="Preview / Confirm" collapsible>
+                    <p className="muted">{translateUiString(uiLanguage, 'Standard generation: GPT Image 2 (OpenAI)')}</p>
                     <div className="state-pill-row">
                       <span className="state-pill state-pill-neutral">
                         {translateUiString(uiLanguage, 'Preview generation costs 1 credit.')}
@@ -5842,6 +5855,7 @@ function StudioShell(props: {
                                 return nextValue;
                               });
                               await invalidateScopedQuery(['entity-reference-set', selectedEntity.id]);
+                              await invalidateScopedQuery(['page-generation-readiness']);
                             })
                           }
                           type="button"
@@ -5851,6 +5865,20 @@ function StudioShell(props: {
                         </button>
                       </div>
                     ) : null}
+                    <section aria-label={translateUiString(uiLanguage, 'More flexible generation')}>
+                      <h3>{translateUiString(uiLanguage, 'More flexible generation')}</h3>
+                      <p className="muted">{translateUiString(uiLanguage, 'More flexible generation: Hy4 Preview (Tencent). Requests and references are not sent to OpenAI image models. Images are available only on the web.')}</p>
+                      <p className="muted">{translateUiString(uiLanguage, 'Characters confirmed with flexible generation cannot be used for standard page generation. Generate and confirm a standard preview to use standard page generation again.')}</p>
+                      <div className="toolbar">
+                        <button className="secondary-button" disabled type="button" aria-describedby="hy4-character-unavailable">
+                          {translateUiString(uiLanguage, 'Generate in color (Hy4 Preview)')}
+                        </button>
+                        <button className="secondary-button" disabled type="button" aria-describedby="hy4-character-unavailable">
+                          {translateUiString(uiLanguage, 'Generate in black and white (Hy4 Preview)')}
+                        </button>
+                      </div>
+                      <p className="muted" id="hy4-character-unavailable">{translateUiString(uiLanguage, 'We are checking the Hy4 Preview image generation and reference-image editing API. It is not available yet.')}</p>
+                    </section>
                     <GenerationReadinessNotice
                       blockers={entityReferenceGenerationBlockers}
                       language={uiLanguage}
@@ -5890,6 +5918,7 @@ function StudioShell(props: {
                                     entityId={selectedEntity?.id ?? ''}
                                     errorLabel={translateUiString(uiLanguage, 'Could not load image.')}
                                     enabled={selectedEntity !== null}
+                                    webImageDeliveryEnabled={webImageDeliveryEnabled}
                                     onClick={(url) => openImageLightbox(url, translateUiString(uiLanguage, 'Generated preview'))}
                                     organizationId={activeOrganizationId}
                                     queryKey={scopedQueryKey(['entity-reference-candidate-image', selectedEntity?.id, candidate.candidate_token])}
@@ -5951,20 +5980,23 @@ function StudioShell(props: {
                             {entityReferenceSetQuery.data.reference_images.map((image) => (
                               <div key={image.ref_id} className="reference-card reference-card-portrait">
                                 <div className="reference-card-media">
-                                  <AuthenticatedImage
+                                  {!canReadWebImage(image, webImageDeliveryEnabled) ? <p className="muted">{imageDeliveryNotice(uiLanguage)}</p> : <AuthenticatedImage
                                     enabled={selectedEntity !== null}
                                     loadImage={() =>
                                       api.exportEntityReferenceImage(
                                         selectedEntity?.id ?? '',
                                         image.ref_id,
                                         activeOrganizationId,
+                                        image,
+                                        webImageDeliveryEnabled,
                                       )
                                     }
                                     onClick={(url) => openImageLightbox(url, translateUiString(uiLanguage, 'Confirmed references'))}
-                                    queryKey={scopedQueryKey(['entity-reference-image', selectedEntity?.id, image.ref_id, image.created_at])}
-                                  />
+                                    queryKey={scopedQueryKey(['entity-reference-image', selectedEntity?.id, image.ref_id, image.created_at, image.image_model, webImageDeliveryEnabled])}
+                                  />}
                                 </div>
                                 <div className="reference-card-body">
+                                  {image.image_model === 'hy4-preview' ? <span className="state-pill state-pill-neutral">{translateUiString(uiLanguage, 'Hy4 Preview · Web only')}</span> : null}
                                   <strong>{image.ref_id === entityReferenceSetQuery.data.primary_ref_id ? translateUiString(uiLanguage, 'Primary') : translateUiString(uiLanguage, image.source)}</strong>
                                 </div>
                                 <div className="reference-card-actions">
@@ -5984,6 +6016,7 @@ function StudioShell(props: {
                                           activeOrganizationId,
                                         );
                                         await invalidateScopedQuery(['entity-reference-set', selectedEntity.id]);
+                              await invalidateScopedQuery(['page-generation-readiness']);
                                       });
                                     }}
                                     type="button"
@@ -6752,9 +6785,10 @@ function StudioShell(props: {
                             {translateUiString(uiLanguage, 'Page generation starts at 3 credits.')}
                           </span>
                         </div>
+                        <p className="muted">{translateUiString(uiLanguage, 'Standard generation: GPT Image 2 (OpenAI)')}</p>
                         <section aria-label={translateUiString(uiLanguage, 'More flexible generation')}>
                           <h3>{translateUiString(uiLanguage, 'More flexible generation')}</h3>
-                          <p className="muted">Hy4 Preview</p>
+                          <p className="muted">{translateUiString(uiLanguage, 'More flexible generation: Hy4 Preview (Tencent). Requests and references are not sent to OpenAI image models. Images are available only on the web.')}</p>
                           <div className="toolbar">
                             <button className="secondary-button" disabled type="button" aria-describedby="hy4-preview-unavailable">
                               {translateUiString(uiLanguage, 'Generate in color (Hy4 Preview)')}
@@ -7053,6 +7087,7 @@ function ReferenceCandidateImage(props: {
   api: LyraApiClient;
   candidate: ReferenceCandidate;
   enabled: boolean;
+  webImageDeliveryEnabled?: boolean;
   entityId: string;
   errorLabel: string;
   onClick: (url: string) => void;
@@ -7060,12 +7095,15 @@ function ReferenceCandidateImage(props: {
   queryKey: readonly unknown[];
 }) {
   const [directUrlFailed, setDirectUrlFailed] = useState(false);
-  const directUrl = props.candidate.cdn_url;
+  const language = useContext(UiLanguageContext);
+  const imageAllowed = canReadWebImage(props.candidate, props.webImageDeliveryEnabled);
+  const directUrl = props.candidate.image_model === 'hy4-preview' ? undefined : props.candidate.cdn_url;
 
   useEffect(() => {
     setDirectUrlFailed(false);
   }, [directUrl]);
 
+  if (!imageAllowed) return <p className="muted">{imageDeliveryNotice(language)}</p>;
   if (directUrl !== undefined && directUrl.trim().length > 0 && !directUrlFailed) {
     return (
       <img
@@ -7088,6 +7126,8 @@ function ReferenceCandidateImage(props: {
           props.entityId,
           props.candidate.candidate_token,
           props.organizationId,
+          props.candidate,
+          props.webImageDeliveryEnabled,
         )
       }
       onClick={props.onClick}
@@ -10080,7 +10120,11 @@ function sameReferenceCandidates(left: ReferenceCandidate[], right: ReferenceCan
       (candidate, index) =>
         candidate.candidate_token === right[index]?.candidate_token &&
         candidate.cdn_url === right[index]?.cdn_url &&
-        candidate.source === right[index]?.source,
+        candidate.source === right[index]?.source &&
+        candidate.image_model === right[index]?.image_model &&
+        candidate.provider_model_id === right[index]?.provider_model_id &&
+        candidate.provider === right[index]?.provider &&
+        candidate.mobile_access === right[index]?.mobile_access,
     )
   );
 }
@@ -10098,7 +10142,8 @@ function extractGeneratedReferenceCandidates(job: GenerationJobRecord): Referenc
     return [];
   }
 
-  return (job.result.candidates as unknown[]).flatMap((candidate) => {
+  const generationResult = job.result;
+  return (generationResult.candidates as unknown[]).flatMap((candidate) => {
     if (
       typeof candidate !== 'object' ||
       candidate === null ||
@@ -10110,6 +10155,7 @@ function extractGeneratedReferenceCandidates(job: GenerationJobRecord): Referenc
 
     return [
       {
+        ...mergeImageDeliveryMetadata(generationResult, candidate as Record<string, unknown>),
         candidate_token: (candidate as { candidate_token: string }).candidate_token,
         ...(
           typeof (candidate as { cdn_url?: unknown }).cdn_url === 'string'

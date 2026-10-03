@@ -6,6 +6,12 @@ import {
 } from '../../../apps/web/src/lib/userFacingErrors.js';
 
 describe('userFacingErrors', () => {
+  it('自由生成参照による拒否では通常プレビューの再確定を案内する', () => {
+    const failure = { code: 'PAGE_REFERENCE_MODEL_INCOMPATIBLE', status: 409, message: 'provider details hidden' };
+    expect(formatUserFacingErrorMessage(failure, 'ja')).toContain('通常生成したプレビューを確定');
+    expect(formatUserFacingErrorMessage(failure, 'en')).toContain('confirm a standard preview');
+  });
+
   it('通信失敗では再読み込みを促す', () => {
     expect(formatUserFacingError(new TypeError('Failed to fetch'), 'ja')).toContain('ページを再読み込み');
   });

@@ -2,6 +2,7 @@ import type {
   EntityRecord,
   GenerationJobRecord,
   PageRecord,
+  PageGenerationReadinessRecord,
   PanelFrameRecord,
   PanelRecord,
 } from '../types/api.js';
@@ -29,6 +30,7 @@ export interface GenerationBlocker {
 }
 
 export interface PageGenerationReadinessInput {
+  serverReadiness?: PageGenerationReadinessRecord | null;
   page: PageRecord | null;
   panels: PanelRecord[];
   frames: PanelFrameRecord[];
@@ -139,6 +141,15 @@ export function getPageGenerationBlockers(input: PageGenerationReadinessInput): 
     }));
   }
 
+  if (input.serverReadiness?.blockers?.some((item) => item.code === 'CHARACTER_REFERENCE_MODEL_INCOMPATIBLE')) {
+    blockers.push(blocker({
+      code: 'page.character_reference_model_incompatible',
+      title: text('These character references require flexible generation', 'このキャラ参照には自由生成が必要です'),
+      detail: text('Characters confirmed with flexible generation cannot be used for standard page generation. Generate and confirm a standard preview to use standard page generation again.', '自由生成で確定したキャラは通常のページ生成には使用できません。通常生成したプレビューを確定し直すと、通常のページ生成に戻れます。'),
+      actionLabel: text('Open characters', 'キャラクターを開く'),
+      target: 'entities',
+    }));
+  }
   const assignedCharacterIds = collectAssignedCharacterIds(input.panels, input.entities);
   if (assignedCharacterIds.length > MAX_PAGE_REFERENCE_IMAGES) {
     blockers.push(blocker({

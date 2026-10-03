@@ -858,6 +858,186 @@ test('ページ設計とページ生成の操作をページ編集の保存導�
   await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
 });
 
+test('キャラ画面ではHy4 PreviewをWeb限定の自由生成として案内し、未設定時に受付しない', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  let providerOrAdmissionPosts = 0;
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === 'POST' && (pathname.includes('hy4') || pathname.includes('generate-reference') || pathname.includes('generation-quotes'))) {
+      providerOrAdmissionPosts += 1;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+
+  const flexibleGeneration = page.getByRole('region', { name: 'More flexible generation', exact: true });
+  await expect(flexibleGeneration.getByText('More flexible generation: Hy4 Preview (Tencent). Requests and references are not sent to OpenAI image models. Images are available only on the web.', { exact: true })).toBeVisible();
+  await expect(flexibleGeneration.getByRole('button', { name: 'Generate in color (Hy4 Preview)', exact: true })).toBeDisabled();
+  await expect(flexibleGeneration.getByRole('button', { name: 'Generate in black and white (Hy4 Preview)', exact: true })).toBeDisabled();
+  await expect(page.getByText('Standard generation: GPT Image 2 (OpenAI)', { exact: true })).toBeVisible();
+  expect(providerOrAdmissionPosts).toBe(0);
+
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
+  const flexibleGenerationJa = page.getByRole('region', { name: 'より自由な生成', exact: true });
+  await expect(flexibleGenerationJa.getByText('自由生成：Hy4 Preview（Tencent）。依頼と参照画像はOpenAIの画像モデルへ送らず、作成した画像はweb版でのみ利用できます。', { exact: true })).toBeVisible();
+  await expect(page.getByText('通常生成：GPT Image 2（OpenAI）', { exact: true })).toBeVisible();
+});
+
+test('Hy4確定キャラを使うページ生成は通常CTAを止め、キャラ設定へ案内する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  let generationRequests = 0;
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/pages/${pageRecord.id}/generation-readiness`) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ready: false,
+          blockers: [{
+            code: 'CHARACTER_REFERENCE_MODEL_INCOMPATIBLE',
+            entity_id: entity.id,
+            field: 'entities',
+            action: 'open_characters',
+            message_key: 'page.blocker.characterReferenceModelIncompatible',
+          }],
+          warnings: [],
+          estimated_credit_cost: 3,
+          page_revision: pageRecord.updated_at,
+        }),
+      });
+      return;
+    }
+    if (request.method() === 'POST' && pathname === `/api/pages/${pageRecord.id}/generate`) {
+      generationRequests += 1;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+
+  await expect(page.getByRole('button', { name: 'Generate in color', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Generate monochrome page', exact: true })).toBeDisabled();
+  await expect(page.getByText('Characters confirmed with flexible generation cannot be used for standard page generation. Generate and confirm a standard preview to use standard page generation again.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open characters', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Character editor', exact: true })).toBeVisible();
+  expect(generationRequests).toBe(0);
+});
+
+test('Hy4確定レファレンスはWeb限定バッジを表示し、通常画像URLを要求しない', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  let regularReferenceImageRequests = 0;
+  let rawCdnRequests = 0;
+  await page.route('**/api/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === `/api/entities/${entity.id}/reference-set`) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          entity_id: entity.id,
+          primary_ref_id: 'hy4-ref-1',
+          status: 'ready',
+          updated_at: entity.updated_at,
+          reference_images: [{
+            ref_id: 'hy4-ref-1',
+            image_model: 'hy4-preview',
+            provider_model_id: 'hy4-preview',
+            provider: 'tencent',
+            mobile_access: 'web_only',
+            source: 'generated',
+            created_at: entity.updated_at,
+          }],
+        }),
+      });
+      return;
+    }
+    if (pathname.includes('/reference/') && pathname.endsWith('/image')) {
+      regularReferenceImageRequests += 1;
+    }
+    await mockApi(route);
+  });
+  await page.route('https://cdn.example.test/**', async (route) => {
+    rawCdnRequests += 1;
+    await route.abort();
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+
+  await expect(page.getByText('Hy4 Preview · Web only', { exact: true })).toBeVisible();
+  await expect(page.getByText('https://cdn.example.test/ref-1.png', { exact: true })).toHaveCount(0);
+  expect(regularReferenceImageRequests).toBe(0);
+  expect(rawCdnRequests).toBe(0);
+});
+
+test('Hy4生成候補はWeb配信権限なしでは通常候補画像口とCDNを使わない', async ({ page }) => {
+  const jobId = '99999999-9999-4999-8999-999999999999';
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await seedTrackedJobs(page, [jobId]);
+  let regularCandidateImageRequests = 0;
+  let rawCdnRequests = 0;
+  await page.route('**/api/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === `/api/jobs/${jobId}`) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: jobId,
+          job_type: 'entity_generate',
+          status: 'completed',
+          generation_mode: null,
+          credit_cost: 1,
+          params: { entity_id: entity.id },
+          result: {
+            image_model: 'hy4-preview',
+            provider_model_id: 'hy4-preview',
+            provider: 'tencent',
+            candidates: [{ candidate_token: 'hy4-candidate', cdn_url: 'https://cdn.example.test/hy4-candidate.png' }],
+          },
+          error_message: null,
+          retry_count: 0,
+          created_at: entity.updated_at,
+          started_at: entity.updated_at,
+          completed_at: entity.updated_at,
+          expires_at: null,
+          cancel_requested_at: null,
+          cancel_requested_by: null,
+          cancelled_at: null,
+          commit_started_at: null,
+        }),
+      });
+      return;
+    }
+    if (pathname.includes('/reference-candidate-image')) {
+      regularCandidateImageRequests += 1;
+    }
+    await mockApi(route);
+  });
+  await page.route('https://cdn.example.test/**', async (route) => {
+    rawCdnRequests += 1;
+    await route.abort();
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+
+  await expect(page.getByText('This image cannot be viewed or saved in this session. You can continue editing the work and page.', { exact: true })).toBeVisible();
+  expect(regularCandidateImageRequests).toBe(0);
+  expect(rawCdnRequests).toBe(0);
+});
+
 test('白黒で生成は保存後に白黒指定のページjobを送る', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);

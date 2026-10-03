@@ -290,6 +290,7 @@ const generationBlockerMessages: Record<
   PAGE_GENERATING: 'screen.pages.blocker.pageGenerating',
   PAGE_REOPEN_REQUIRED: 'screen.pages.blocker.pageReopenRequired',
   CHARACTER_REFERENCE_REQUIRED: 'screen.pages.blocker.characterReferenceRequired',
+  CHARACTER_REFERENCE_MODEL_INCOMPATIBLE: 'screen.pages.blocker.characterReferenceModelIncompatible',
   REFERENCE_IMAGE_LIMIT_EXCEEDED: 'screen.pages.blocker.referenceImageLimitExceeded',
   ACTIVE_GENERATION_JOB: 'screen.pages.blocker.activeGenerationJob',
   INSUFFICIENT_CREDITS: 'screen.pages.blocker.insufficientCredits'
