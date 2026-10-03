@@ -55,7 +55,7 @@ class FakeCreditService implements CreditServicePort {
 }
 
 class FixedRateLimitStore implements RateLimitStore {
-  private calls = 0;
+  public calls = 0;
 
   public async consume(): Promise<RateLimitResult> {
     this.calls += 1;
@@ -136,6 +136,32 @@ describe('operational guards', () => {
         message: 'Rate limit exceeded for read. Retry after 60 seconds',
       },
     });
+  });
+
+  it('mounted sub-appを通るpage generate requestもgeneration bucketを一度だけ消費する', async () => {
+    const rateLimitStore = new FixedRateLimitStore();
+    const app = createApp({
+      creditService: new FakeCreditService(),
+      userProvisioningService: new FakeUserProvisioningService(),
+      rateLimitStore,
+      jwtSecret,
+    });
+    const token = await createToken();
+
+    const response = await app.request(
+      '/api/pages/550e8400-e29b-41d4-a716-446655440000/generate',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ unexpected: true }),
+      },
+    );
+
+    expect(response.status).toBe(422);
+    expect(rateLimitStore.calls).toBe(1);
   });
 
   it('allows protected routes without Authorization when dev auth bypass is enabled', async () => {

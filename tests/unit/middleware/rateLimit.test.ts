@@ -179,6 +179,63 @@ describe('createRateLimitMiddleware', () => {
       },
     ]);
   });
+
+  it('同じrequestが複数のmounted sub-appを通っても認証済みbucketは一度だけ消費する', async () => {
+    const store = new RecordingRateLimitStore();
+    const rateLimitMiddleware = createRateLimitMiddleware(store);
+    const app = new Hono<AppEnv>();
+    const first = createMountedTestApp(rateLimitMiddleware, '/first');
+    const second = createMountedTestApp(rateLimitMiddleware, '/second');
+    app.route('/api', first);
+    app.route('/api', second);
+
+    const response = await app.request('/api/second', { method: 'POST' });
+
+    expect(response.status).toBe(200);
+    expect(store.calls).toEqual([{
+      key: 'default:user-1',
+      maxRequests: RATE_LIMIT_RULES.default.maxRequests,
+      windowSeconds: RATE_LIMIT_RULES.default.windowSeconds,
+    }]);
+  });
+
+  it('別requestは同じbucketをそれぞれ一度ずつ消費する', async () => {
+    const store = new RecordingRateLimitStore();
+    const rateLimitMiddleware = createRateLimitMiddleware(store);
+    const app = new Hono<AppEnv>();
+    app.route('/api', createMountedTestApp(rateLimitMiddleware, '/target'));
+
+    await app.request('/api/target', { method: 'POST' });
+    await app.request('/api/target', { method: 'POST' });
+
+    expect(store.calls.map((call) => call.key)).toEqual([
+      'default:user-1',
+      'default:user-1',
+    ]);
+  });
+
+  it('認証済みbucketを消費済みでもpublic IP bucketは別に消費する', async () => {
+    const store = new RecordingRateLimitStore();
+    const app = new Hono<AppEnv>();
+    app.use('*', async (c, next) => {
+      c.set('user', user);
+      await next();
+    });
+    app.use('*', createRateLimitMiddleware(store));
+    app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook'));
+    app.post('/api/webhooks/stripe', (c) => c.json({ ok: true }));
+
+    const response = await app.request('/api/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'cloudfront-viewer-address': '198.51.100.7:443' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(store.calls.map((call) => call.key)).toEqual([
+      'default:user-1',
+      'webhook:public:198.51.100.7',
+    ]);
+  });
 });
 
 describe('createPublicIpRateLimitMiddleware', () => {
@@ -249,5 +306,19 @@ function createAuthenticatedTestApp(store: RateLimitStore): Hono<AppEnv> {
   });
   app.use('*', createRateLimitMiddleware(store));
   app.all('*', (c) => c.json({ ok: true }));
+  return app;
+}
+
+function createMountedTestApp(
+  rateLimitMiddleware: ReturnType<typeof createRateLimitMiddleware>,
+  path: string,
+): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+  app.use('*', async (c, next) => {
+    c.set('user', user);
+    await next();
+  });
+  app.use('*', rateLimitMiddleware);
+  app.post(path, (c) => c.json({ ok: true }));
   return app;
 }
