@@ -292,6 +292,19 @@
                   "Resource": {
                     "Fn::Sub": "arn:${AWS::Partition}:s3:::${AssetsBucketName}"
                   }
+                },
+                {
+                  "Sid": "AssumeExactStageStateV2Roles",
+                  "Effect": "Allow",
+                  "Action": "sts:AssumeRole",
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-image-create"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-recovery"
+                    }
+                  ]
                 }
               ]
             }
@@ -439,6 +452,14 @@
                         "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${ClusterName}"
                       }
                     }
+                  }
+                },
+                {
+                  "Sid": "AssumeExactStageStateV2RecoveryRole",
+                  "Effect": "Allow",
+                  "Action": "sts:AssumeRole",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-recovery"
                   }
                 }
               ]

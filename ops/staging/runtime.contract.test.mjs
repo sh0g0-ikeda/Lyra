@@ -62,4 +62,12 @@ assert.deepEqual(protection.Action,['ecs:GetTaskProtection','ecs:UpdateTaskProte
 assert.deepEqual(protection.Resource,{'Fn::Sub':'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${ClusterName}/*'});
 assert.deepEqual(protection.Condition.ArnEquals['ecs:cluster'],{'Fn::Sub':'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${ClusterName}'});
 assert.equal(resources.GenerationTaskDefinition.Properties.ContainerDefinitions[0].Environment.find(e=>e.Name==='ECS_TASK_SCALE_IN_PROTECTION_ENABLED')?.Value,'true');
+
+const stageImageRole = { 'Fn::Sub': 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-image-create' };
+const stageRecoveryRole = { 'Fn::Sub': 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-recovery' };
+const apiStateAssumption = resources.ApiTaskRole.Properties.Policies[0].PolicyDocument.Statement.find(s => s.Sid === 'AssumeExactStageStateV2Roles');
+const workerStateAssumption = resources.WorkerTaskRole.Properties.Policies[0].PolicyDocument.Statement.find(s => s.Sid === 'AssumeExactStageStateV2RecoveryRole');
+assert.deepEqual(apiStateAssumption, { Sid: 'AssumeExactStageStateV2Roles', Effect: 'Allow', Action: 'sts:AssumeRole', Resource: [stageImageRole, stageRecoveryRole] });
+assert.deepEqual(workerStateAssumption, { Sid: 'AssumeExactStageStateV2RecoveryRole', Effect: 'Allow', Action: 'sts:AssumeRole', Resource: stageRecoveryRole });
+
 console.log('runtime contract passed');
