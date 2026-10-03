@@ -222,6 +222,14 @@ The source takes precedence over a conflicting outline or ledger. Detail and aud
 compare each action's prerequisite, execution, immediate result, and stated order
 against actual panel fields. Missing or altered authored dialogue and action steps
 use the existing field-level repair contract and semantic soft-save policy.
+Chapter/episode arc summaries, page purpose, continuity, and generated ledgers are
+planning context, not authored display text. A successful episode detail compiler's
+omitted dialogue receives no generated fallback; existing manual-field preservation
+still applies. Server fallback must not turn this context into speech, thought, or
+narration. Explicitly authored display text in the full source
+and provider-supplied dialogue remain subject to the existing source-fidelity audit.
+The bounded coverage sidecar samples high-risk facts; it does not limit the full
+episode audit to those sampled facts. Legacy single-page fallback is unchanged.
 
 The OpenAI episode auditor returns a bounded source-coverage sidecar in the same
 structured response: one entry per page, at most two high-risk facts per entry,

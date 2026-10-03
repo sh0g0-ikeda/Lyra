@@ -118,6 +118,16 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(input[0]?.content[0]?.text).toContain('exact interior wording and the unambiguous speaker or thinker');
     expect(input[0]?.content[0]?.text).toContain('explicitly assigned narration or caption/display text');
     expect(input[0]?.content[0]?.text).toContain('type=narration and entity_id=null');
+    expect(input[0]?.content[0]?.text).toContain(
+      'planning context only and are not displayed dialogue, thought, narration, or caption',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'use an existing dialogue field repair to remove it while preserving explicitly authored display text',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'the bounded source_coverage sidecar samples at most two high-risk facts per page and does not limit the body audit',
+    );
+    expect(input[0]?.content[0]?.text).toContain('Audit every important source action in the body');
     expect(input[0]?.content[0]?.text).toContain('return an error and an existing dialogue field repair');
     expect(input[0]?.content[0]?.text).toContain('prerequisite, action, immediate result, and stated order');
     expect(input[0]?.content[0]?.text).toContain(
@@ -299,7 +309,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v17');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v18');
     expect(requestCount).toBe(1);
   });
 

@@ -1008,7 +1008,7 @@ describe('PageService', () => {
     expect(assignmentService.updates).toHaveLength(0);
   });
 
-  it('episode story plan は pages と panels に一括適用する', async () => {
+  it('episode story plan は pages と panels に一括適用し provider が省略した無音へ計画要約を補完しない', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
     const assignmentService = new FakePanelEntityAssignmentService();
@@ -1056,6 +1056,7 @@ describe('PageService', () => {
       },
     });
     expect(panelRepository.updatedPanels[0]?.input.panelNotes ?? null).toBeNull();
+    expect(panelRepository.updatedPanels[0]?.input.dialogue).toBeUndefined();
     expect(assignmentService.updates).toEqual([
       {
         panelId: 'panel-1',
@@ -2775,6 +2776,102 @@ describe('PageService', () => {
         }),
       }),
     ]));
+  });
+
+  it('監査の dialogue field repair は計画要約由来の表示文だけを除去して原文台詞を原子的保存へ渡す', async () => {
+    const context = buildEpisodePlanningContext();
+    const arcSummary = '公園で消えた灯台の光に気づいた主人公が、古い地図を頼りに出発する。';
+    const authoredSpeech = 'あの光、どうしたんだろう';
+    context.episode.introduction = arcSummary;
+    context.episode.storyFullDraft = `主人公は「${authoredSpeech}」と小さくつぶやく。`;
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPanelRepository = new FakePanelRepository();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(),
+      panelRepository: transactionPanelRepository,
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+    });
+    const baseDetailCompiler = new FakeEpisodePagePlanCompiler();
+    const detailCompiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(input): Promise<CompiledEpisodePagePlan> {
+        const compiled = await baseDetailCompiler.compilePlan(input);
+        return {
+          ...compiled,
+          suggestion: {
+            pages: compiled.suggestion.pages.map((page) => ({
+              ...page,
+              panels: page.panels.map((panel) => ({
+                ...panel,
+                dialogueInPanel: true,
+                dialogue: [{
+                  entityId: null,
+                  text: arcSummary,
+                  type: 'narration',
+                  position: 'top',
+                }, {
+                  entityId: '11111111-1111-4111-8111-111111111111',
+                  text: authoredSpeech,
+                  type: 'speech',
+                  position: 'right',
+                }],
+              })),
+            })),
+          },
+        };
+      },
+    };
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    auditCompiler.audits = [{
+      accepted: false,
+      issues: [{
+        code: 'dialogue_misplacement',
+        severity: 'error',
+        pageIds: ['page-1'],
+        message: 'Planning context was rendered as narration.',
+        repairInstruction: 'Remove the context summary and preserve the authored speech.',
+      }],
+      panelRepairs: [{
+        pageId: 'page-1',
+        panelOrder: 1,
+        changedFields: ['dialogue'],
+        patch: {
+          dialogue: [{
+            entityId: '11111111-1111-4111-8111-111111111111',
+            text: authoredSpeech,
+            type: 'speech',
+            position: 'right',
+          }],
+        },
+      }],
+    }, { accepted: true, issues: [] }];
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      detailCompiler,
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+      persistence,
+    );
+
+    await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja'))
+      .resolves.toMatchObject({ compilerUsed: true });
+
+    expect(auditCompiler.inputs).toHaveLength(2);
+    const savedDialogue = transactionPanelRepository.updatedPanels
+      .find((entry) => entry.panelId === 'panel-1')?.input.dialogue;
+    expect(savedDialogue).toEqual([{
+      entityId: '11111111-1111-4111-8111-111111111111',
+      text: authoredSpeech,
+      type: 'speech',
+      position: 'right',
+    }]);
+    expect(JSON.stringify(savedDialogue)).not.toContain(arcSummary);
   });
 
   it('worker経由の通常話全体反映はpage保存とjob完了を同じtransactionへ渡す', async () => {

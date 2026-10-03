@@ -3898,23 +3898,6 @@ function buildFallbackEpisodePlanSuggestion(
             .filter((value, index, array) => array.indexOf(value) === index);
           const shotType = fallbackShotTypeForRole(panelPlan.role ?? 'action');
           const angle = fallbackAngleForRole(panelPlan.role ?? 'action');
-          const dialogue = buildFallbackDialogueLines(
-            [
-              panelBeat,
-              pageBeat,
-              pagePurpose,
-              continuityNote,
-              scene?.location,
-              scene?.time,
-              scene?.atmosphere,
-            ],
-            context.entities,
-            panelEntityIds,
-            panelPlan,
-            panel.order,
-            language,
-          );
-
           return {
             order: panel.order,
             panelRole: panelPlan.role,
@@ -3951,7 +3934,9 @@ function buildFallbackEpisodePlanSuggestion(
             },
             dialogueInPanel:
               page.dialogueMode !== 'balloon_only' && panelPlan.focus !== 'setting',
-            dialogue,
+            // Episode arc and ledger prose are planning context. A successful
+            // compiler omission is intentional silence, not fallback dialogue.
+            dialogue: undefined,
             backgroundNote: buildFallbackBackground(scene, panelPlan, language),
             panelNotes:
               panelPlan.focus === 'setting'

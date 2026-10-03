@@ -52,7 +52,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       textPlan:{requiredTextBeats:['疑念の所在'],visualOnlyBeats:['傷に気づく'],densityReason:'観察を画像で伝える'},
       handoff: '次ページで傷に触れる行動へつなぐ。',
     });
-    expect(result.compilerPromptVersion).toBe('episode_beat_plan_v7');
+    expect(result.compilerPromptVersion).toBe('episode_beat_plan_v8');
     const request = requests[0];
     const input = request?.input as Array<{ content: Array<{ text: string }> }>;
     const text = request?.text as {
@@ -67,6 +67,15 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     expect(input[0]?.content[0]?.text).toContain('Preserve its unambiguous speaker and dialogue type');
     expect(input[0]?.content[0]?.text).toContain('explicitly assigned narration or caption/display text');
     expect(input[0]?.content[0]?.text).toContain('narration with no speaker');
+    expect(input[0]?.content[0]?.text).toContain(
+      'planning context only and are not displayed dialogue, thought, narration, or caption',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'This displayed-text distinction does not weaken their action, chronology, staging, or continuity facts',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      '[FULL STORY DRAFT - SOURCE DATA] separately and explicitly assigns the text for display',
+    );
     expect(input[0]?.content[0]?.text).toContain('must not rewrite it');
     expect(input[0]?.content[0]?.text).toContain(
       'compact planning labels except for exact authored dialogue carried under the required_text rule above',

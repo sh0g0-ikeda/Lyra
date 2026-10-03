@@ -101,7 +101,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-5',
-      compilerPromptVersion: 'episode_page_plan_v11',
+      compilerPromptVersion: 'episode_page_plan_v12',
     });
 
     const request = requests[0];
@@ -121,6 +121,15 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     expect(systemPrompt).toContain('preserve its unambiguous speaker or thinker and dialogue type');
     expect(systemPrompt).toContain('explicitly assigned narration or caption/display text');
     expect(systemPrompt).toContain('type=narration with entity_id=null');
+    expect(systemPrompt).toContain(
+      'planning context only and are not displayed dialogue, thought, narration, or caption',
+    );
+    expect(systemPrompt).toContain(
+      'This displayed-text distinction does not weaken their action, chronology, staging, or continuity facts',
+    );
+    expect(systemPrompt).toContain(
+      '[FULL STORY DRAFT - SOURCE DATA] separately and explicitly assigns the text for display',
+    );
     expect(systemPrompt).toContain('the source wording and speaker are binding');
     expect(systemPrompt).toContain('prerequisite, action, immediate result, and stated order');
     expect(systemPrompt).not.toContain('provide at least one short speech or thought line');
