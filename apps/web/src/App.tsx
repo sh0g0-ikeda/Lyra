@@ -7354,8 +7354,19 @@ function TutorialGuide() {
   );
 }
 
-function NoticeBanner(props: { notice: NoticeState }) {
-  return <div className={`notice ${props.notice.type}`}>{props.notice.message}</div>;
+function NoticeBanner(props: { notice: NoticeState }): ReactNode {
+  const noticeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (props.notice.type === 'error') {
+      noticeRef.current?.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }
+  }, [props.notice]);
+
+  return (
+    <div ref={noticeRef} className={`notice ${props.notice.type}`} role={props.notice.type === 'error' ? 'alert' : 'status'}>
+      {props.notice.message}
+    </div>
+  );
 }
 
 function ProcessingHint(props: { message: string; progressPercent?: number | null; queued?: boolean; showProgress?: boolean }) {

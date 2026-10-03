@@ -1149,3 +1149,36 @@ for (const [caseName, session] of [
     await expect(page.getByRole('heading', { name: 'The screen could not be displayed' })).toHaveCount(0);
   });
 }
+
+for (const width of [1440, 390]) {
+  test(`画面下部の生成が拒否された場合にエラー案内が見える (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await seedEnglishUi(page);
+    await seedAuthenticatedSession(page);
+    let generationRequests = 0;
+    await page.route('**/api/**', async (route) => {
+      if (new URL(route.request().url()).pathname === `/api/pages/${pageRecord.id}/generate`) {
+        generationRequests += 1;
+        await route.fulfill({ status: 429, contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded for generation. Retry after 30 seconds' } }) });
+        return;
+      }
+      await mockApi(route);
+    });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Pages', exact: true }).click();
+    const generate = page.getByRole('button', { name: 'Generate page', exact: true });
+    await generate.scrollIntoViewIfNeeded();
+    await generate.click();
+    const errorNotice = page.locator('.notice.error');
+    await expect(errorNotice).toBeVisible();
+    await expect.poll(() => errorNotice.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.y >= 0 && rect.y + rect.height <= window.innerHeight && element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+    })).toBe(true);
+    await expect(errorNotice).toHaveAttribute('role', 'alert');
+    await expect(generate).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Generate monochrome page', exact: true })).toBeEnabled();
+    expect(generationRequests).toBe(1);
+  });
+}
