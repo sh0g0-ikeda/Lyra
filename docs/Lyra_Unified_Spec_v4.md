@@ -213,6 +213,16 @@ Source omissions, dropped ongoing actions, and visible-entity contradictions are
 repairable semantic findings when a safe field patch restores the input story. They
 use the bounded repair passes below; they do not add a new persistence-blocking gate.
 
+Explicitly authored dialogue, narration, and caption text are copied without
+shortening or paraphrasing, with the source's unambiguous speaker and dialogue type.
+Narration retains no speaker. Quoted names, titles, or labels
+are not automatically dialogue. A bounded beat ledger keeps an exact line when it
+fits, otherwise a source locator; it must not supply a shortened replacement quote.
+The source takes precedence over a conflicting outline or ledger. Detail and audit
+compare each action's prerequisite, execution, immediate result, and stated order
+against actual panel fields. Missing or altered authored dialogue and action steps
+use the existing field-level repair contract and semantic soft-save policy.
+
 The OpenAI episode auditor returns a bounded source-coverage sidecar in the same
 structured response: one entry per page, at most two high-risk facts per entry,
 at most two actual panel-field citations per fact, and exact quotes of 4–40

@@ -2693,6 +2693,90 @@ describe('PageService', () => {
     expect(transactionAssignmentService.updates.length).toBeGreaterThan(0);
   });
 
+  it('引用台詞の監査修復は原文全文と話者を原子的保存へ渡す', async () => {
+    const context = buildEpisodePlanningContext();
+    context.episode.storyFullDraft = 'ココは「道が残っていれば、きっと着ける」と言う。ナレーション「風が止んだ」。';
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPageRepository = new FakePageRepository();
+    transactionPageRepository.episodePlanningContext = context;
+    const transactionPanelRepository = new FakePanelRepository();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: transactionPageRepository,
+      panelRepository: transactionPanelRepository,
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+    });
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    auditCompiler.audits = [
+      {
+        accepted: false,
+        issues: [{
+          code: 'dialogue_misplacement',
+          severity: 'error',
+          pageIds: ['page-1'],
+          message: 'The authored line was shortened.',
+          repairInstruction: 'Restore the exact authored line and speaker.',
+        }],
+        panelRepairs: [{
+          pageId: 'page-1',
+          panelOrder: 1,
+          changedFields: ['dialogue'],
+          patch: {
+            dialogue: [{
+              entityId: '11111111-1111-4111-8111-111111111111',
+              text: '道が残っていれば、きっと着ける',
+              type: 'speech',
+              position: 'right',
+            }, {
+              entityId: null,
+              text: '風が止んだ',
+              type: 'narration',
+              position: 'left',
+            }],
+          },
+        }],
+      },
+      { accepted: true, issues: [] },
+    ];
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      new FakeEpisodePagePlanCompiler(),
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+      persistence,
+    );
+
+    await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja'))
+      .resolves.toMatchObject({ compilerUsed: true });
+
+    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(persistence.calls).toHaveLength(1);
+    expect(transactionPanelRepository.updatedPanels).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        panelId: 'panel-1',
+        input: expect.objectContaining({
+          dialogue: [{
+            entityId: '11111111-1111-4111-8111-111111111111',
+            text: '道が残っていれば、きっと着ける',
+            type: 'speech',
+            position: 'right',
+          }, {
+            entityId: null,
+            text: '風が止んだ',
+            type: 'narration',
+            position: 'left',
+          }],
+        }),
+      }),
+    ]));
+  });
+
   it('worker経由の通常話全体反映はpage保存とjob完了を同じtransactionへ渡す', async () => {
     const context = buildEpisodePlanningContext();
     const pageRepository = new FakePageRepository();

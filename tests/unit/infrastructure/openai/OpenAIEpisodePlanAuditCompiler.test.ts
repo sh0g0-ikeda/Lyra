@@ -114,6 +114,12 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(input[0]?.content[0]?.text).toContain('merely because they own the viewpoint or speak off-panel');
     expect(input[0]?.content[0]?.text).toContain('until the source explicitly ends it');
     expect(input[0]?.content[0]?.text).toContain('a concrete source or continuity defect, not a stylistic preference');
+    expect(input[0]?.content[0]?.text).toContain('Check every explicitly authored source dialogue line');
+    expect(input[0]?.content[0]?.text).toContain('exact interior wording and the unambiguous speaker or thinker');
+    expect(input[0]?.content[0]?.text).toContain('explicitly assigned narration or caption/display text');
+    expect(input[0]?.content[0]?.text).toContain('type=narration and entity_id=null');
+    expect(input[0]?.content[0]?.text).toContain('return an error and an existing dialogue field repair');
+    expect(input[0]?.content[0]?.text).toContain('prerequisite, action, immediate result, and stated order');
     expect(input[0]?.content[0]?.text).toContain(
       'missing source fact, dropped ongoing action, or visible entity contradiction',
     );
@@ -293,7 +299,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v16');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v17');
     expect(requestCount).toBe(1);
   });
 

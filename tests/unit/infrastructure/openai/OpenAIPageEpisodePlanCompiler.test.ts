@@ -101,7 +101,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-5',
-      compilerPromptVersion: 'episode_page_plan_v10',
+      compilerPromptVersion: 'episode_page_plan_v11',
     });
 
     const request = requests[0];
@@ -117,6 +117,12 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     expect(systemPrompt).toContain('merely because they own the viewpoint or speak off-panel');
     expect(systemPrompt).toContain('until the source explicitly ends it');
     expect(systemPrompt).toContain('a concrete source or continuity defect, not a stylistic preference');
+    expect(systemPrompt).toContain('Copy every explicitly authored source dialogue line exactly');
+    expect(systemPrompt).toContain('preserve its unambiguous speaker or thinker and dialogue type');
+    expect(systemPrompt).toContain('explicitly assigned narration or caption/display text');
+    expect(systemPrompt).toContain('type=narration with entity_id=null');
+    expect(systemPrompt).toContain('the source wording and speaker are binding');
+    expect(systemPrompt).toContain('prerequisite, action, immediate result, and stated order');
     expect(systemPrompt).not.toContain('provide at least one short speech or thought line');
 
 
