@@ -11,8 +11,10 @@ import { CreditService } from '../credit/CreditService.js';
 import { OrganizationService } from '../organization/OrganizationService.js';
 import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
 import { collectPageReferenceImages } from './PageReferenceIdentity.js';
+import { isOpenAIImageInputCompatible } from '../../domain/generation/ImageInputProviderPolicy.js';
+import { findIncompatibleAssignedCharacterPrimaryIds } from './PageCharacterPrimaryReferencePolicy.js';
 
-export type PageGenerationBlockerCode = 'GENERATION_DISABLED' | 'FRAME_REQUIRED' | 'PANEL_REQUIRED' | 'FRAME_PANEL_MISMATCH' | 'PANEL_ORDER_INVALID' | 'DIALOGUE_SPEAKER_REQUIRED' | 'DIALOGUE_SPEAKER_NOT_IN_PANEL' | 'DIALOGUE_SPEAKER_INVALID' | 'ASSIGNED_ENTITY_INVALID' | 'PAGE_GENERATING' | 'PAGE_REOPEN_REQUIRED' | 'CHARACTER_REFERENCE_REQUIRED' | 'REFERENCE_IMAGE_LIMIT_EXCEEDED' | 'ACTIVE_GENERATION_JOB' | 'INSUFFICIENT_CREDITS';
+export type PageGenerationBlockerCode = 'GENERATION_DISABLED' | 'FRAME_REQUIRED' | 'PANEL_REQUIRED' | 'FRAME_PANEL_MISMATCH' | 'PANEL_ORDER_INVALID' | 'DIALOGUE_SPEAKER_REQUIRED' | 'DIALOGUE_SPEAKER_NOT_IN_PANEL' | 'DIALOGUE_SPEAKER_INVALID' | 'ASSIGNED_ENTITY_INVALID' | 'PAGE_GENERATING' | 'PAGE_REOPEN_REQUIRED' | 'CHARACTER_REFERENCE_REQUIRED' | 'CHARACTER_REFERENCE_MODEL_INCOMPATIBLE' | 'REFERENCE_IMAGE_LIMIT_EXCEEDED' | 'ACTIVE_GENERATION_JOB' | 'INSUFFICIENT_CREDITS';
 export interface PageGenerationBlocker {
   code: PageGenerationBlockerCode;
   entityId: string | null;
@@ -58,6 +60,11 @@ export async function assessSavedPageGeneration(client: DatabaseClient, userId: 
   const entityMap=new Map(entities.map(entity=>[entity.id,entity]));
   const assignments=Array.from(new Map(panels.flatMap(panel=>panel.entities.map(assignment=>[`${assignment.entityId}:${assignment.stateId??'default'}`,{entityId:assignment.entityId,stateId:assignment.stateId}] as const))).values());
   const references=await repository.findResolvedReferenceImagesByAssignmentsAndUserId(assignments,context.workId,userId,organizationId);
+  const assignedEntityIds=new Set(assignments.map(assignment=>assignment.entityId));
+  const primaryReferences=await repository.findPrimaryReferenceImagesByEntityIdsAndUserId(Array.from(assignedEntityIds),context.workId,userId,organizationId);
+  for(const entityId of findIncompatibleAssignedCharacterPrimaryIds(assignedEntityIds,entities,primaryReferences)){
+    add('CHARACTER_REFERENCE_MODEL_INCOMPATIBLE','entities','open_characters','page.blocker.characterReferenceModelIncompatible',entityId);
+  }
   for(const panel of panels){
     for(const assignment of panel.entities){
       const entity=entityMap.get(assignment.entityId);
@@ -65,6 +72,7 @@ export async function assessSavedPageGeneration(client: DatabaseClient, userId: 
       const ref=references.find(item=>item.entityId===assignment.entityId&&item.stateId===assignment.stateId);
       const required=entity.entityType==='character'||(ref!==undefined&&ref.stateDescription!==null);
       if((assignment.stateId!==null&&(!ref||!ref.stateExists)) || (required&&(!ref||ref.refId===null||ref.s3Key===null||ref.ownerUserId===null)))add('CHARACTER_REFERENCE_REQUIRED','entities','open_characters','page.blocker.characterReference',assignment.entityId);
+      else if(ref!==undefined&&ref.refId!==null&&ref.s3Key!==null&&!isOpenAIImageInputCompatible(ref))add('CHARACTER_REFERENCE_MODEL_INCOMPATIBLE','entities','open_characters','page.blocker.characterReferenceModelIncompatible',assignment.entityId);
       else if(ref?.s3Key&&ref.ownerUserId){try{ensureOwnedEntityReferenceImageKey(ref.s3Key,ref.ownerUserId,assignment.entityId);}catch{add('CHARACTER_REFERENCE_REQUIRED','entities','open_characters','page.blocker.characterReference',assignment.entityId);}}
     }
     for(const line of panel.dialogue){

@@ -877,6 +877,45 @@ it('新しい派生状態がページに含まれる場合はjob作成とクレ�
   expect(creditService.consumed).toEqual([]);
 });
 
+it.each([
+  ['Hy4 primary + GPT named state', 'hy4-preview', 'gpt-image-2'],
+  ['GPT primary + Hy4 named state', 'gpt-image-2', 'hy4-preview'],
+])('%sはjob作成とクレジット消費前に409で停止する', async (_label, primaryModel, stateModel) => {
+  const pageRepository = new FakePageRepository();
+  pageRepository.context = buildPageContext({
+    hasVariantState: true,
+    panels: [{
+      ...buildPanelContext('entity-1'),
+      entities: [{ ...buildPanelContext('entity-1').entities[0]!, stateId: 'state-1' }],
+    }],
+  });
+  const entityRepository = new FakeEntityRepository();
+  entityRepository.references = [{
+    entityId: 'entity-1', refId: 'primary-ref',
+    s3Key: 'saved/user-1/entities/entity-1/primary-ref.png',
+    cdnUrl: 'https://img.lyra.test/primary-ref.png', imageModel: primaryModel,
+    providerModelId: primaryModel, provider: primaryModel === 'hy4-preview' ? 'tencent' : 'openai',
+  }];
+  entityRepository.resolvedReferences = [{
+    entityId: 'entity-1', stateId: 'state-1', stateName: '外傷', stateDescription: '左頬の傷',
+    stateExists: true, ownerUserId: 'user-1', refId: 'state-ref',
+    s3Key: 'saved/user-1/entities/entity-1/state-ref.png', cdnUrl: null,
+    imageModel: stateModel, providerModelId: stateModel,
+    provider: stateModel === 'hy4-preview' ? 'tencent' : 'openai',
+  }];
+  const jobs = new FakeGenerationJobRepository();
+  const credits = new FakeCreditService();
+  const service = new PageGenerationService(
+    pageRepository, entityRepository, jobs, credits, new FakeQueue(), new ModeSelector(),
+  );
+
+  await expect(service.enqueuePageGeneration(userId, pageId)).rejects.toMatchObject({
+    code: 'PAGE_REFERENCE_MODEL_INCOMPATIBLE', statusCode: 409,
+  });
+  expect(jobs.created).toBeNull();
+  expect(credits.consumed).toEqual([]);
+});
+
 // Compatibility contract: alias assignments share one base image; confirmed variants remain distinct.
 it.each([4, 13])('同じbase画像を参照する旧状態が%i件ある場合は従来の3クレジットで受付する', async (assignmentCount) => {
   const states = Array.from({ length: assignmentCount }, (_, index) => index === 0 ? null : `legacy-${index}`);

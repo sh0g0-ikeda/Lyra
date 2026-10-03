@@ -1,5 +1,9 @@
 import type { PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import {
+  requireOpenAIImageInputCompatible,
+  requireOpenAIPageJobCompatible,
+} from '../../domain/generation/ImageInputProviderPolicy.js';
 import type { ImageProvenance } from '../../domain/generation/ImageAccessPolicy.js';
 import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import sharp from 'sharp';
@@ -140,6 +144,7 @@ export class PageGenerationWorkerService {
     private readonly organizationService?: OrganizationServicePort,
     private readonly cancellationControl?: GenerationJobCancellationControlRepository,
     private readonly quotedInputs?: QuotedGenerationInputsPort,
+    private readonly configuredImageModel?: string,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessPageGenerationJobResult> {
@@ -163,6 +168,7 @@ export class PageGenerationWorkerService {
     }
 
     try {
+      requireOpenAIPageJobCompatible(job.params, this.configuredImageModel);
       if (hasGenerationQuote(job) && this.quotedInputs === undefined) {
         throw new ConfigurationError('Quoted page execution is not configured');
       }
@@ -222,6 +228,11 @@ export class PageGenerationWorkerService {
 
       if (await this.finalizeCancellationIfRequested(job.id)) {
         return { status: 'processed', jobStatus: 'cancelled' };
+      }
+      for (const image of inputImages) {
+        if (image.role === 'entity_reference' && image.reference !== undefined) {
+          requireOpenAIImageInputCompatible(image.reference);
+        }
       }
 
       const renderResult = await measurePageGenerationStage(stageTimingsMs, 'rendering', () =>

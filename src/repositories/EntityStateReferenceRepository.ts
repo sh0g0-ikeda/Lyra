@@ -45,6 +45,7 @@ interface StateContextRow extends QueryResultRow {
   state_reference_image: unknown;
   base_ref_id: string | null;
   base_s3_key: string | null;
+  base_reference_image: unknown;
 }
 
 interface LockedReferenceSetRow extends QueryResultRow {
@@ -97,7 +98,8 @@ export class PostgresEntityStateReferenceRepository implements EntityStateRefere
              COALESCE(entity_states.updated_at, entity_states.created_at) AS state_revision,
              ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })} AS state_reference_image,
              reference_sets.primary_ref_id AS base_ref_id,
-             primary_image.value->>'s3_key' AS base_s3_key
+             primary_image.value->>'s3_key' AS base_s3_key,
+             primary_image.value AS base_reference_image
       FROM entity_states
       INNER JOIN entities ON entities.id = entity_states.entity_id
       INNER JOIN works ON works.id = entities.work_id
@@ -546,6 +548,7 @@ function mapStateContext(row: StateContextRow): EntityStateReferenceContextCandi
     baseReference: row.base_ref_id === null || row.base_s3_key === null
       ? null
       : {
+          ...readImageProvenance(row.base_reference_image),
           refId: row.base_ref_id,
           s3Key: row.base_s3_key,
           storageOwnerUserId: row.entity_owner_user_id,

@@ -1,4 +1,4 @@
-import { readImageProvenance, toImageProvenanceRecord } from '../domain/generation/ImageAccessPolicy.js';
+import { readImageProvenance, toImageProvenanceRecord, type ImageProvenance } from '../domain/generation/ImageAccessPolicy.js';
 import type { QueryResultRow } from 'pg';
 import { readableStateReferenceSql } from './FencedStateReferenceReadGuard.js';
 import type {
@@ -28,7 +28,7 @@ const nextEntityRevisionSql = (table: 'entities' | 'reference_sets'): string =>
 export type { CreateEntityInput, Entity, UpdateEntityInput };
 export type { EntityListCursor } from '../domain/pagination.js';
 
-export interface EntityPrimaryReferenceImage {
+export interface EntityPrimaryReferenceImage extends ImageProvenance {
   entityId: string;
   ownerUserId?: string;
   refId: string;
@@ -41,7 +41,7 @@ export interface EntityReferenceAssignment {
   stateId: string | null;
 }
 
-export interface EntityResolvedReferenceImage {
+export interface EntityResolvedReferenceImage extends ImageProvenance {
   entityId: string;
   stateId: string | null;
   stateName: string | null;
@@ -512,6 +512,7 @@ export class PostgresEntityRepository
 
       return [
         {
+          ...primaryReference,
           entityId: row.entity_id,
           ownerUserId: row.owner_user_id ?? userId,
           refId: row.primary_ref_id,
@@ -1118,7 +1119,9 @@ function mapResolvedReferenceImage(row: ResolvedReferenceImageRow): EntityResolv
       refId: validDescriptor?.refId ?? legacyReference?.refId ?? null,
       s3Key: validDescriptor?.s3Key ?? legacyReference?.s3Key ?? null,
       cdnUrl: legacyReference?.cdnUrl ?? null,
-      imageModel: validDescriptor?.imageModel ?? null,
+      imageModel: validDescriptor?.imageModel ?? legacyReference?.imageModel ?? null,
+      providerModelId: validDescriptor?.providerModelId ?? legacyReference?.providerModelId ?? null,
+      provider: validDescriptor?.provider ?? legacyReference?.provider ?? null,
     };
   }
 
@@ -1135,11 +1138,13 @@ function mapResolvedReferenceImage(row: ResolvedReferenceImageRow): EntityResolv
     refId: primaryReference?.refId ?? null,
     s3Key: primaryReference?.s3Key ?? null,
     cdnUrl: primaryReference?.cdnUrl ?? null,
-    imageModel: null,
+    imageModel: primaryReference?.imageModel ?? null,
+    providerModelId: primaryReference?.providerModelId ?? null,
+    provider: primaryReference?.provider ?? null,
   };
 }
 
-function parseStateReferenceImage(value: unknown): {
+function parseStateReferenceImage(value: unknown): ImageProvenance & {
   refId: string;
   s3Key: string;
   ownerUserId: string;
@@ -1158,6 +1163,7 @@ function parseStateReferenceImage(value: unknown): {
     return null;
   }
   return {
+    ...readImageProvenance(value),
     refId: descriptor.ref_id as string,
     s3Key: descriptor.s3_key as string,
     ownerUserId: descriptor.storage_owner_user_id as string,

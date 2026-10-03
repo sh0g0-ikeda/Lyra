@@ -11,7 +11,7 @@ export interface EntityStateReferenceDescriptor extends ImageProvenance {
   inputFingerprint: string;
 }
 
-export interface EntityStateBaseReference {
+export interface EntityStateBaseReference extends ImageProvenance {
   refId: string;
   s3Key: string;
   storageOwnerUserId: string;

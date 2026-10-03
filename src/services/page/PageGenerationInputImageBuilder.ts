@@ -12,7 +12,10 @@ import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { LayoutGuideImageRendererPort } from './LayoutGuideImageRenderer.js';
 import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
+import { requireOpenAIImageInputCompatible } from '../../domain/generation/ImageInputProviderPolicy.js';
 import { buildPageReferenceSubjectLabel, collectPageReferenceImages } from './PageReferenceIdentity.js';
+import { requireAssignedCharacterPrimariesCompatible } from './PageCharacterPrimaryReferencePolicy.js';
+import type { Entity } from '../../domain/types/entity.js';
 
 export interface BuildPageGenerationInputImagesInput {
   userId: string;
@@ -43,6 +46,18 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
+    const assignments = collectAssignments(page.panels);
+    await assertAssignedCharacterPrimaries(
+      this.entityRepository,
+      assignments,
+      page.workId,
+      input.userId,
+      page.organizationId ?? input.organizationId ?? null,
+    );
+    const references = await resolveReferences(this.entityRepository, assignments, page.workId, input.userId, page.organizationId ?? input.organizationId ?? null);
+    for (const reference of references) {
+      if (hasResolvedImage(reference)) requireOpenAIImageInputCompatible(reference);
+    }
   }
 
   public async buildInputImages(
@@ -59,6 +74,14 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     const organizationId = page.organizationId ?? input.organizationId ?? null;
     const assignments = collectAssignments(page.panels);
     const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, input.userId, organizationId);
+    await assertAssignedCharacterPrimaries(
+      this.entityRepository,
+      assignments,
+      page.workId,
+      input.userId,
+      organizationId,
+      entities,
+    );
     const entityNameById = new Map(entities.map((entity) => [entity.id, entity.name]));
     const references = await resolveReferences(
       this.entityRepository,
@@ -75,6 +98,7 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     for (const assignment of assignments) {
       const reference = referenceByAssignment.get(referenceAssignmentKey(assignment));
       if (reference !== undefined && hasResolvedImage(reference)) {
+        requireOpenAIImageInputCompatible(reference);
         ensureOwnedEntityReferenceImageKey(reference.s3Key, reference.ownerUserId ?? input.userId, assignment.entityId);
       }
     }
@@ -104,7 +128,9 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
           stateId: reference.stateId,
           refId: reference.refId,
           s3Key: reference.s3Key,
-          imageModel: reference.imageModel,
+          imageModel: reference.imageModel ?? null,
+          providerModelId: reference.providerModelId,
+          provider: reference.provider,
           subjectLabel,
         },
       });
@@ -141,6 +167,23 @@ function collectAssignments(
   }
 
   return Array.from(orderedAssignments.values());
+}
+
+async function assertAssignedCharacterPrimaries(
+  repository: EntityRepository,
+  assignments: EntityReferenceAssignment[],
+  workId: string,
+  userId: string,
+  organizationId: string | null,
+  loadedEntities?: Entity[],
+): Promise<void> {
+  const assignedEntityIds = new Set(assignments.map((assignment) => assignment.entityId));
+  if (assignedEntityIds.size === 0) return;
+  const entities = loadedEntities ?? await repository.findByWorkIdAndUserId(workId, userId, organizationId);
+  const primaryReferences = await repository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+    Array.from(assignedEntityIds), workId, userId, organizationId,
+  );
+  requireAssignedCharacterPrimariesCompatible(assignedEntityIds, entities, primaryReferences);
 }
 
 function assertResolvedStates(
@@ -200,7 +243,9 @@ async function resolveReferences(
       refId: primaryReference?.refId ?? null,
       s3Key: primaryReference?.s3Key ?? null,
       cdnUrl: primaryReference?.cdnUrl ?? null,
-      imageModel: null,
+      imageModel: primaryReference?.imageModel ?? null,
+      providerModelId: primaryReference?.providerModelId ?? null,
+      provider: primaryReference?.provider ?? null,
     };
   });
 }

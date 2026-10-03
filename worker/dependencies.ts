@@ -328,6 +328,7 @@ export function resolveWorkerDependencies(
       organizationService,
       generationJobCancellationControl,
       quotedInputs,
+      env.OPENAI_API_KEY !== undefined && !env.LOCAL_IMAGE_FALLBACK_ENABLED ? env.OPENAI_IMAGE_MODEL : undefined,
     ),
     entityGenerationWorkerService: new EntityGenerationWorkerService(
       entityGenerationExecutionRepository,
@@ -344,6 +345,7 @@ export function resolveWorkerDependencies(
       generationJobCancellationControl,
       new PostgresEntityStateReferenceRepository(db),
       quotedInputs,
+      generationJobCancellationControl,
     ),
     episodeStoryAutofillWorkerService: new EpisodeStoryAutofillWorkerService(
       episodeStoryAutofillExecutionRepository,

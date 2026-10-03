@@ -84,6 +84,41 @@ run('legacy atomic save-and-generate compatibility',()=>{
   expect(await rejectionOf(instance.getGenerationReadiness(randomUUID(),ids.pageId))).toMatchObject({code:'NOT_FOUND'});
  });
 
+ it('参照不要のobjectに画像がなくてもmodel互換blockerを誤って追加しない',async()=>{
+  const ids=await fixture();const objectId=randomUUID();
+  await pool.query("INSERT INTO entities(id,work_id,user_id,entity_type,name) VALUES($1,$2,$3,'object','sword')",[objectId,ids.workId,ids.userId]);
+  await pool.query('UPDATE panels SET entities=$2::jsonb WHERE id=$1',[ids.panelId,JSON.stringify([{
+   entity_id:objectId,role:'primary',expression:'calm',custom_expression:null,action:'standing_firm',custom_action:null,
+   position:'center',facing_direction:null,effect_note:null,state_id:null,
+  }])]);
+
+  const readiness=await service().getGenerationReadiness(ids.userId,ids.pageId);
+  expect(readiness.ready).toBe(true);
+  expect(readiness.blockers.map(blocker=>blocker.code)).not.toContain('CHARACTER_REFERENCE_MODEL_INCOMPATIBLE');
+ });
+
+ it('割当characterのHy4 primaryはblockしGPT primary再confirmで履歴を残したまま回復する',async()=>{
+  const ids=await fixture();const entityId=randomUUID();
+  await pool.query("INSERT INTO entities(id,work_id,user_id,entity_type,name) VALUES($1,$2,$3,'character','hero')",[entityId,ids.workId,ids.userId]);
+  const hy4={ref_id:'hy4',s3_key:`saved/${ids.userId}/entities/${entityId}/hy4.png`,cdn_url:'https://example.invalid/hy4.png',source:'generated',created_at:'2026-01-01T00:00:00Z',image_model:'hy4-preview',provider_model_id:'hy4-preview',provider:'tencent'};
+  await pool.query("INSERT INTO reference_sets(entity_id,reference_images,primary_ref_id,status) VALUES($1,$2::jsonb,'hy4','ready')",[entityId,JSON.stringify([hy4])]);
+  await pool.query('UPDATE panels SET entities=$2::jsonb WHERE id=$1',[ids.panelId,JSON.stringify([{
+   entity_id:entityId,role:'primary',expression:'calm',custom_expression:null,action:'standing_firm',custom_action:null,
+   position:'center',facing_direction:null,effect_note:null,state_id:null,
+  }])]);
+
+  const blocked=await service().getGenerationReadiness(ids.userId,ids.pageId);
+  expect(blocked.blockers).toContainEqual(expect.objectContaining({
+   code:'CHARACTER_REFERENCE_MODEL_INCOMPATIBLE',entityId,
+  }));
+
+  const gpt={...hy4,ref_id:'gpt',s3_key:`saved/${ids.userId}/entities/${entityId}/gpt.png`,cdn_url:'https://example.invalid/gpt.png',image_model:'gpt-image-2',provider_model_id:'gpt-image-2',provider:'openai'};
+  await pool.query("UPDATE reference_sets SET reference_images=$2::jsonb,primary_ref_id='gpt' WHERE entity_id=$1",[entityId,JSON.stringify([hy4,gpt])]);
+  const restored=await service().getGenerationReadiness(ids.userId,ids.pageId);
+  expect(restored.blockers.map(blocker=>blocker.code)).not.toContain('CHARACTER_REFERENCE_MODEL_INCOMPATIBLE');
+  expect((await pool.query('SELECT jsonb_array_length(reference_images) AS count FROM reference_sets WHERE entity_id=$1',[entityId])).rows[0]).toEqual({count:2});
+ });
+
  it('canonical base/旧note状態は重複せず確定variantのみ追加参照として保存課金する',async()=>{
   const ids=await fixture();const entityIds:string[]=[];
   for(let index=0;index<4;index++){

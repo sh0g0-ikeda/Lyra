@@ -65,6 +65,26 @@ export class ConflictError extends AppError {
   }
 }
 
+export class PageReferenceModelIncompatibleError extends AppError {
+  public constructor() {
+    super(
+      'PAGE_REFERENCE_MODEL_INCOMPATIBLE',
+      'The confirmed character reference cannot be sent to the selected page image provider. Confirm a compatible character image first.',
+      409,
+    );
+  }
+}
+
+export class EntityReferenceModelIncompatibleError extends AppError {
+  public constructor() {
+    super(
+      'ENTITY_REFERENCE_MODEL_INCOMPATIBLE',
+      'The selected character reference cannot be sent to the selected image provider. Choose a compatible source image or generate without a source image.',
+      409,
+    );
+  }
+}
+
 export class AccountLinkRequiredError extends AppError {
   public constructor() {
     super('ACCOUNT_LINK_REQUIRED', 'Use the existing sign-in method and link this provider from your account.', 409);

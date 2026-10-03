@@ -27,6 +27,17 @@ const jobId = '00000000-0000-4000-8000-000000000006';
 const stateRevision = '2026-09-30T00:00:00.000Z';
 
 describe('EntityStateReferenceService', () => {
+  it('Hy4 primaryをstate baseに使う場合はjob作成と課金前に409を返す', async () => {
+    const fixture = createFixture({ generationEnabled: true, baseImageModel: 'hy4-preview' });
+
+    await expect(
+      fixture.service.enqueueReferenceGeneration(userId, entityId, stateId, null),
+    ).rejects.toMatchObject({ code: 'ENTITY_REFERENCE_MODEL_INCOMPATIBLE', statusCode: 409 });
+
+    expect(fixture.jobs.create).not.toHaveBeenCalled();
+    expect(fixture.credit.consumeCredits).not.toHaveBeenCalled();
+  });
+
   it('feature OFFではjob作成と課金の前に409を返す', async () => {
     const fixture = createFixture({ generationEnabled: false });
 
@@ -187,8 +198,14 @@ function createFixture(options: {
   generationEnabled: boolean;
   queueError?: Error;
   completedJob?: boolean;
+  baseImageModel?: string;
 }) {
   const context = buildContext();
+  if (context.baseReference !== null && options.baseImageModel !== undefined) {
+    context.baseReference.imageModel = options.baseImageModel;
+    context.baseReference.providerModelId = options.baseImageModel;
+    context.baseReference.provider = options.baseImageModel === 'hy4-preview' ? 'tencent' : 'openai';
+  }
   const stateRepository = new FakeStateRepository(context);
   const create = vi.fn(async (input: CreateGenerationJobInput): Promise<GenerationJob> => ({
     ...buildJob(input.params, 'queued'),

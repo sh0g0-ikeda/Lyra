@@ -24,6 +24,8 @@ import {
 import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
 import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
 import { pageReferenceImageKey } from './PageReferenceIdentity.js';
+import { requireOpenAIImageInputCompatible } from '../../domain/generation/ImageInputProviderPolicy.js';
+import { requireAssignedCharacterPrimariesCompatible } from './PageCharacterPrimaryReferencePolicy.js';
 
 export interface EnqueuePageGenerationResult {
   jobId: string;
@@ -296,6 +298,8 @@ export class PageGenerationService implements PageGenerationServicePort {
       userId,
       organizationId,
     );
+    requireAssignedCharacterPrimariesCompatible(new Set(assignedEntityIds), entities, references);
+    for (const reference of references) requireOpenAIImageInputCompatible(reference);
 
     const referenceImageCount = new Set(references.map((reference) => reference.entityId)).size;
     if (referenceImageCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
@@ -334,9 +338,15 @@ export class PageGenerationService implements PageGenerationServicePort {
     const references = await resolve.call(
       this.entityRepository, assignments, page.workId, userId, page.organizationId ?? null,
     );
-    const entityTypes = new Map((await this.entityRepository.findByWorkIdAndUserId(
+    const entities = await this.entityRepository.findByWorkIdAndUserId(
       page.workId, userId, page.organizationId ?? null,
-    )).map((entity) => [entity.id, entity.entityType]));
+    );
+    const entityTypes = new Map(entities.map((entity) => [entity.id, entity.entityType]));
+    const assignedEntityIds = new Set(assignments.map((assignment) => assignment.entityId));
+    const primaryReferences = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+      Array.from(assignedEntityIds), page.workId, userId, page.organizationId ?? null,
+    );
+    requireAssignedCharacterPrimariesCompatible(assignedEntityIds, entities, primaryReferences);
     const available = new Set<string>();
     for (const assignment of assignments) {
       const reference = references.find((candidate) =>
@@ -356,6 +366,7 @@ export class PageGenerationService implements PageGenerationServicePort {
         throw new ValidationError('Assigned character state reference has no storage owner');
       }
       ensureOwnedEntityReferenceImageKey(reference.s3Key, reference.ownerUserId, assignment.entityId);
+      requireOpenAIImageInputCompatible(reference);
       available.add(pageReferenceImageKey(reference));
     }
     if (available.size > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {

@@ -347,6 +347,33 @@ class FakeOrganizationService {
 }
 
 describe('EntityGenerationWorkerService', () => {
+  it('明示Hy4 jobはOpenAI generatorを呼ばずfailedにして一度返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({ params: {
+      entity_id: 'entity-1',
+      entity_type: 'character',
+      previous_entity_status: 'draft',
+      image_model: 'hy4-preview',
+      provider_model_id: 'hy4-preview',
+      provider: 'tencent',
+    } });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const storedImageLoader = new FakeStoredImageLoader();
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      storedImageLoader,
+      creditService,
+      imageModel: 'gpt-image-2',
+    });
+
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(referenceGenerator.input).toBeNull();
+    expect(storedImageLoader.loadedS3Keys).toEqual([]);
+    expect(creditService.refunded).toMatchObject({ userId: 'user-1', amount: 8, jobId: 'job-1' });
+  });
+
   it('quote対応workerがない場合はproviderを呼ばず失敗・返金する', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.job!.params.quote_id = 'quote-1';

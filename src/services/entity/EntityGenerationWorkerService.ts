@@ -2,6 +2,10 @@ import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityRefere
 import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import {
+  requireOpenAIEntityInputCompatible,
+  requireOpenAIEntityJobCompatible,
+} from '../../domain/generation/ImageInputProviderPolicy.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type {
   EntityReferenceContext,
@@ -20,6 +24,7 @@ import type { EntityGenerationExecutionRepository } from '../../repositories/Ent
 import type { EntityStateReferenceRepository } from '../../repositories/EntityStateReferenceRepository.js';
 import type {
   GenerationJobCancellationControlRepository,
+  GenerationJobRepository,
 } from '../../repositories/GenerationJobRepository.js';
 import type {
   EntityReferenceGeneratorPort,
@@ -35,6 +40,7 @@ import type {
 } from './EntityReferencePromptCompiler.js';
 import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolicy.js';
 import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
+import { resolveEntityImageProvenance } from './EntityImageProvenance.js';
 
 export interface ProcessEntityGenerationJobResult {
   status: 'processed' | 'skipped';
@@ -59,6 +65,7 @@ export class EntityGenerationWorkerService {
     private readonly cancellationControl?: GenerationJobCancellationControlRepository,
     private readonly stateRepository?: EntityStateReferenceRepository,
     private readonly quotedInputs?: QuotedGenerationInputsPort,
+    private readonly sourceProvenanceJobs?: Pick<GenerationJobRepository, 'findByIdAndUserId'>,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
@@ -84,6 +91,7 @@ export class EntityGenerationWorkerService {
 
       let workIdForAudit: string | null = null;
       try {
+        requireOpenAIEntityJobCompatible(job.params, this.imageModel);
         if (hasGenerationQuote(job) && this.quotedInputs === undefined) {
           throw new ConfigurationError('Quoted entity execution is not configured');
         }
@@ -99,6 +107,7 @@ export class EntityGenerationWorkerService {
             throw new ConfigurationError('Entity state generation job params are invalid');
           }
           const state = quoted?.snapshot.state ?? await this.loadCurrentStateContext(job, params);
+          requireOpenAIEntityInputCompatible(state.baseReference);
           entity = toEntityReferenceContext(state);
           workIdForAudit = state.workId;
           const draftPrompt = this.promptBuilder.buildStateGenerationPrompt(state);
@@ -114,6 +123,22 @@ export class EntityGenerationWorkerService {
           );
           if (baseEntity === null) {
             throw new ConfigurationError('Entity not found for generation job');
+          }
+          if (quoted === null && params.source_s3_key !== undefined) {
+            ensureAllowedReferenceSourceKey(
+              params.source_s3_key,
+              job.userId,
+              params.entity_id,
+              'source_s3_key',
+            );
+            requireOpenAIEntityInputCompatible(await resolveEntityImageProvenance({
+              userId: job.userId,
+              entityId: params.entity_id,
+              organizationId: job.organizationId ?? null,
+              s3Key: params.source_s3_key,
+              references: baseEntity.referenceSet.images,
+              jobs: this.sourceProvenanceJobs,
+            }));
           }
           entity = baseEntity;
           workIdForAudit = entity.workId;

@@ -675,6 +675,64 @@ describe('PageGenerationInputImageBuilder', () => {
     expect(loader.calls).toEqual([]);
   });
 
+  it('active confirmed Hy4 referenceは画像読込前に409で拒否する', async () => {
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = [{
+      entityId: 'entity-1', stateId: null, stateName: null, stateDescription: null,
+      stateExists: true, ownerUserId: 'user-1', refId: 'hy4-ref',
+      s3Key: 'saved/user-1/entities/entity-1/hy4-ref.png', cdnUrl: null,
+      imageModel: 'hy4-preview', providerModelId: 'hy4-preview', provider: 'tencent',
+    }];
+    const loader = new FakeStoredImageLoader();
+    const builder = new PageGenerationInputImageBuilder(
+      new FakePageRepository(), entityRepository, loader, new FakeLayoutGuideImageRenderer(),
+    );
+
+    await expect(builder.assertRenderableState({ userId: 'user-1', pageId: 'page-1' }))
+      .rejects.toMatchObject({ code: 'PAGE_REFERENCE_MODEL_INCOMPATIBLE', statusCode: 409 });
+    await expect(builder.buildInputImages({ userId: 'user-1', pageId: 'page-1' }))
+      .rejects.toMatchObject({ code: 'PAGE_REFERENCE_MODEL_INCOMPATIBLE', statusCode: 409 });
+    expect(loader.calls).toEqual([]);
+  });
+
+  it.each([
+    ['Hy4 primary + GPT named state', 'hy4-preview', 'gpt-image-2'],
+    ['GPT primary + Hy4 named state', 'gpt-image-2', 'hy4-preview'],
+  ])('%sは画像読込前に409で拒否する', async (_label, primaryModel, stateModel) => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.generationContext = {
+      ...pageRepository.generationContext!,
+      panels: [{
+        ...pageRepository.generationContext!.panels[0]!,
+        entities: [{ ...pageRepository.generationContext!.panels[0]!.entities[0]!, stateId: 'state-1' }],
+      }],
+    };
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.references = [{
+      entityId: 'entity-1', refId: 'primary-ref',
+      s3Key: 'saved/user-1/entities/entity-1/primary-ref.png', cdnUrl: 'https://img.lyra.app/primary-ref.png',
+      imageModel: primaryModel,
+      providerModelId: primaryModel,
+      provider: primaryModel === 'hy4-preview' ? 'tencent' : 'openai',
+    }];
+    entityRepository.resolvedReferences = [{
+      entityId: 'entity-1', stateId: 'state-1', stateName: '外傷', stateDescription: '左頬の傷',
+      stateExists: true, ownerUserId: 'user-1', refId: 'state-ref',
+      s3Key: 'saved/user-1/entities/entity-1/state-ref.png', cdnUrl: null,
+      imageModel: stateModel,
+      providerModelId: stateModel,
+      provider: stateModel === 'hy4-preview' ? 'tencent' : 'openai',
+    }];
+    const loader = new FakeStoredImageLoader();
+    const builder = new PageGenerationInputImageBuilder(
+      pageRepository, entityRepository, loader, new FakeLayoutGuideImageRenderer(),
+    );
+
+    await expect(builder.assertRenderableState({ userId: 'user-1', pageId: 'page-1' }))
+      .rejects.toMatchObject({ code: 'PAGE_REFERENCE_MODEL_INCOMPATIBLE', statusCode: 409 });
+    expect(loader.calls).toEqual([]);
+  });
+
   it('reference画像が入力上限を超える場合はOpenAI入力を作らない', async () => {
     const loader = new FakeStoredImageLoader();
     loader.imageData = Buffer.alloc(OPENAI_INPUT_IMAGE_MAX_BYTES + 1);

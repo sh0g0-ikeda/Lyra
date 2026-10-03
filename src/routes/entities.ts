@@ -1,4 +1,4 @@
-import { requireWebImageDeliveryAccess } from './webImageDelivery.js';
+import { hasWebImageDeliveryAccess, requireWebImageDeliveryAccess } from './webImageDelivery.js';
 import { imageMobileAccess, publicImageProvenance } from '../domain/generation/ImageAccessPolicy.js';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
@@ -404,7 +404,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       selectedS3Keys,
       primaryS3Key,
       promptSupplement: body.data.prompt_supplement,
-    }, organizationId);
+    }, organizationId, hasWebImageDeliveryAccess(c) ? 'authorized_web' : 'mobile');
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity.reference_confirmed', 'entity', entityId, {
       selected_count: selectedS3Keys.length,
       primary_selected: primaryS3Key !== undefined,

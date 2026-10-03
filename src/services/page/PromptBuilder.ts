@@ -1109,7 +1109,9 @@ async function resolveReferences(
       refId: primaryReference?.refId ?? null,
       s3Key: primaryReference?.s3Key ?? null,
       cdnUrl: primaryReference?.cdnUrl ?? null,
-      imageModel: null,
+      imageModel: primaryReference?.imageModel ?? null,
+      providerModelId: primaryReference?.providerModelId ?? null,
+      provider: primaryReference?.provider ?? null,
     };
   });
 }
@@ -1174,7 +1176,9 @@ function buildInputSnapshotReferences(
     stateId: reference.stateId,
     refId: reference.refId,
     s3Key: reference.s3Key,
-    imageModel: reference.imageModel,
+    imageModel: reference.imageModel ?? null,
+    providerModelId: reference.providerModelId,
+    provider: reference.provider,
     subjectLabel: buildPageReferenceSubjectLabel(
       entityMap.get(reference.entityId)?.name ?? reference.entityId,
       reference,

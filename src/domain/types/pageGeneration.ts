@@ -80,6 +80,8 @@ export interface PageGenerationInputSnapshotReference {
   refId: string;
   s3Key: string;
   imageModel: string | null;
+  providerModelId?: string | null;
+  provider?: string | null;
   subjectLabel: string;
   modelInputOrder: number;
 }

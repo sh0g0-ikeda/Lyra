@@ -1,4 +1,5 @@
 import { assertImageDeliveryAllowed, readGenerationImageProvenance, type ImageDeliveryAudience } from '../../domain/generation/ImageAccessPolicy.js';
+import { requireOpenAIEntityInputCompatible } from '../../domain/generation/ImageInputProviderPolicy.js';
 import { randomUUID } from 'node:crypto';
 import { CREDIT_COSTS } from '../../domain/constants/credits.js';
 import {
@@ -106,6 +107,7 @@ export class EntityStateReferenceService implements EntityStateReferenceServiceP
     }
 
     const context = await this.requireReadyContext(userId, entityId, stateId, organizationId);
+    requireOpenAIEntityInputCompatible(context.baseReference);
     const recoveryService = this.dependencies.recoveryService ?? new NoopEntityGenerationRecoveryService();
     await recoveryService.recoverStaleJobsForEntity(userId, entityId, organizationId);
     if (

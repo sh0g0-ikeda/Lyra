@@ -265,6 +265,40 @@ class FakeOrganizationService {
 }
 
 describe('PageGenerationWorkerService', () => {
+  it('明示Hy4 jobはOpenAI rendererを呼ばずfailedにして一度返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob = buildJob({ params: {
+      ...buildJob().params,
+      image_model: 'hy4-preview',
+      provider_model_id: 'hy4-preview',
+      provider: 'tencent',
+    } });
+    const renderer = new FakeRenderer();
+    const storage = new FakeStorage();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      repository,
+      new FakePromptBuilder(),
+      new FakePromptCompiler(),
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      storage,
+      credits,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      'gpt-image-2',
+    );
+
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(renderer.calls).toEqual([]);
+    expect(storage.calls).toEqual([]);
+    expect(credits.refunds).toHaveLength(1);
+    expect(repository.failureInput?.errorMessage).toContain('confirmed character reference');
+  });
+
   it('quote対応workerがない場合はproviderを呼ばず失敗・返金する', async () => {
     const repository = new FakeExecutionRepository();
     repository.claimedJob!.params.quote_id = 'quote-1';

@@ -18,6 +18,10 @@ import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPol
 import { isReservedFencedStateReferenceNamespace } from '../../domain/state/FencedStateReferenceKey.js';
 import { findConfirmedQuotedStateReference } from '../../repositories/FencedStateReferenceReadGuard.js';
 import { ensureAllowedReferenceSourceKey } from '../entity/EntityReferenceSourceKeyPolicy.js';
+import { requireOpenAIEntityInputCompatible, requireOpenAIImageInputCompatible } from '../../domain/generation/ImageInputProviderPolicy.js';
+import { resolveEntityImageProvenance } from '../entity/EntityImageProvenance.js';
+import { PostgresGenerationJobRepository } from '../../repositories/GenerationJobRepository.js';
+import { requireAssignedCharacterPrimariesCompatible } from '../page/PageCharacterPrimaryReferencePolicy.js';
 
 export interface QuotedPageInputs { prompt: BuiltPagePrompt; inputImages: PageGenerationInputImage[] }
 export interface QuotedEntityInputs { snapshot: Extract<GenerationQuoteSnapshot,{kind:'entity'}>; inputImages:Array<{dataUrl:string}> }
@@ -34,12 +38,25 @@ export class QuotedGenerationInputs implements QuotedGenerationInputsPort {
     const quote=await this.requireQuote(job);
     const snapshot=quote.plan.snapshot;
     if(snapshot.kind!=='page' || job.jobType!=='page_generate') throw new ConfigurationError('Quoted generation operation mismatch');
-    if(!await new PostgresPageRepository(this.database).findGenerationContextByIdAndUserId(quote.plan.targetId,job.userId,job.organizationId ?? null)) throw new NotFoundError('Quoted page is no longer available');
+    const page=await new PostgresPageRepository(this.database).findGenerationContextByIdAndUserId(quote.plan.targetId,job.userId,job.organizationId ?? null);
+    if(!page) throw new NotFoundError('Quoted page is no longer available');
+    const assignedEntityIds=new Set(snapshot.prompt.inputSnapshot.panels.flatMap((panel)=>panel.entityIds));
+    if(assignedEntityIds.size>0){
+      const repository=new PostgresEntityRepository(this.database);
+      const entities=await repository.findByWorkIdAndUserId(page.workId,job.userId,job.organizationId ?? null);
+      const primaryReferences=await repository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+        Array.from(assignedEntityIds),page.workId,job.userId,job.organizationId ?? null,
+      );
+      requireAssignedCharacterPrimariesCompatible(assignedEntityIds,entities,primaryReferences);
+    }
     if(job.params.quality!==quote.plan.quality || job.params.render_style!==quote.plan.renderStyle || job.generationMode!==quote.plan.generationMode) throw new ConfigurationError('Quoted page options changed');
     const images:PageGenerationInputImage[]=[];
     for(const reference of snapshot.prompt.inputSnapshot.references ?? []){
+      requireOpenAIImageInputCompatible({imageModel:reference.imageModel,providerModelId:reference.providerModelId,provider:reference.provider});
       images.push({role:'entity_reference',label:reference.subjectLabel,dataUrl:await this.load(reference.s3Key,reference.entityId,job,reference),
-        reference:{entityId:reference.entityId,stateId:reference.stateId,refId:reference.refId,s3Key:reference.s3Key,imageModel:reference.imageModel,subjectLabel:reference.subjectLabel}});
+        reference:{entityId:reference.entityId,stateId:reference.stateId,refId:reference.refId,s3Key:reference.s3Key,
+          imageModel:reference.imageModel,providerModelId:reference.providerModelId,provider:reference.provider,
+          subjectLabel:reference.subjectLabel}});
     }
     // New quotes freeze one resolved map. Omitted control means an old quote:
     // retain its original unnumbered custom guide without reading live geometry.
@@ -63,6 +80,11 @@ export class QuotedGenerationInputs implements QuotedGenerationInputsPort {
       }
     }
     const key=snapshot.state?.baseReference.s3Key ?? snapshot.sourceS3Key;
+    if(snapshot.state!==null) requireOpenAIEntityInputCompatible(snapshot.state.baseReference);
+    if(key!==null && snapshot.state===null) requireOpenAIEntityInputCompatible(await resolveEntityImageProvenance({
+      userId:job.userId,entityId:snapshot.entity.entityId,organizationId:job.organizationId ?? null,s3Key:key,
+      references:snapshot.entity.referenceSet.images,jobs:new PostgresGenerationJobRepository(this.database),
+    }));
     if(snapshot.sourceImage!==undefined){
       const expected=snapshot.sourceImage;
       if(key!==expected.s3Key) throw new ConfigurationError('Quoted source candidate mismatch');

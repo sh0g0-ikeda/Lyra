@@ -1,6 +1,6 @@
 import { assessSavedPageGeneration, type PageGenerationReadinessResult } from './PageGenerationReadiness.js';
 import { randomUUID } from 'node:crypto';
-import { ConflictError, NotFoundError, PageStaleError, ValidationError } from '../../domain/errors/index.js';
+import { ConflictError, NotFoundError, PageReferenceModelIncompatibleError, PageStaleError, ValidationError } from '../../domain/errors/index.js';
 import { fingerprintQuoteInput } from '../../domain/generation/GenerationQuotePolicy.js';
 import type { GenerationQuotePlanResolver } from '../../repositories/GenerationQuotePlanResolver.js';
 import type { DatabaseClient, TransactionRunner } from '../../lib/db.js';
@@ -95,6 +95,9 @@ export class PageAtomicGenerationService implements PageAtomicGenerationServiceP
       if (current.status === 'confirmed' || current.status === 'generating') throw new ConflictError('Page must be editable before generation');
       await this.saveDrafts(client, userId, pageId, organizationId, current, {...input, page: pageInput});
       const readiness = await assessSavedPageGeneration(client, userId, pageId, organizationId, true, false);
+      if (readiness.blockers.some((blocker) => blocker.code === 'CHARACTER_REFERENCE_MODEL_INCOMPATIBLE')) {
+        throw new PageReferenceModelIncompatibleError();
+      }
       if (!readiness.ready) throw new ValidationError(`Page generation is blocked: ${readiness.blockers.map(blocker=>blocker.code).join(', ')}`);
       // The shared substrate performs canonical/state-reference resolution and
       // actual pricing against these transaction-visible saved inputs.

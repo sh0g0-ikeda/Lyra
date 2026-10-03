@@ -23,6 +23,10 @@ import { PostgresOrganizationRepository } from './OrganizationRepository.js';
 import { PostgresEntityReferenceUploadTokenRepository } from './EntityReferenceUploadTokenRepository.js';
 import { lockStoryEpisodeAdmission } from './StoryEpisodeAdmissionLock.js';
 import { bindTransaction } from './TransactionBoundDatabase.js';
+import { requireOpenAIEntityInputCompatible, requireOpenAIImageInputCompatible } from '../domain/generation/ImageInputProviderPolicy.js';
+import { resolveEntityImageProvenance } from '../services/entity/EntityImageProvenance.js';
+import { PostgresGenerationJobRepository } from './GenerationJobRepository.js';
+import { requireAssignedCharacterPrimariesCompatible } from '../services/page/PageCharacterPrimaryReferencePolicy.js';
 
 export interface GenerationQuotePlanResolver {
   prepare(client: DatabaseClient,userId:string,organizationId:string|null,request:GenerationQuoteRequest):Promise<PreparedGenerationQuoteSource>;
@@ -115,12 +119,16 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
     const resolvedReferences=await entities.findResolvedReferenceImagesByAssignmentsAndUserId(assignments,page.workId,userId,organizationId);
     for(const reference of resolvedReferences){
       if(reference.s3Key!==null && reference.refId!==null){
+        requireOpenAIImageInputCompatible(reference);
         if(reference.ownerUserId===null) throw new ValidationError('Reference storage owner is unavailable');
         ensureOwnedEntityReferenceImageKey(reference.s3Key,reference.ownerUserId,reference.entityId);
       }
     }
     const assigned=new Set(page.panels.flatMap((panel)=>panel.entities.map((assignment)=>assignment.entityId)));
-    const characters=(await entities.findByWorkIdAndUserId(page.workId,userId,organizationId)).filter((entity)=>entity.entityType==='character' && assigned.has(entity.id));
+    const workEntities=await entities.findByWorkIdAndUserId(page.workId,userId,organizationId);
+    const characters=workEntities.filter((entity)=>entity.entityType==='character' && assigned.has(entity.id));
+    const primaryReferences=await entities.findPrimaryReferenceImagesByEntityIdsAndUserId(Array.from(assigned),page.workId,userId,organizationId);
+    requireAssignedCharacterPrimariesCompatible(assigned,workEntities,primaryReferences);
     if(characters.some((entity)=>!references.some((reference)=>reference.entityId===entity.id))) throw new ValidationError('Confirm assigned character references before generation');
     const snapshot:GenerationQuoteSnapshot={kind:'page',prompt,layoutConfig:page.layoutConfig};
     return plan(request,selection,{targetId,workId:page.workId,referenceCount:references.length,generationMode:profile.mode,snapshot,
@@ -149,6 +157,8 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
     if(request.sourceCandidate!==undefined){
       if(statePreview || candidate===null || candidate.expiresAt<=Date.now() || candidate.s3Key!==request.sourceCandidate.s3Key) throw new ConflictError('Source candidate changed or expired');
       ensureAllowedReferenceSourceKey(candidate.s3Key,userId,entityId);
+      requireOpenAIEntityInputCompatible(await resolveEntityImageProvenance({userId,entityId,organizationId,s3Key:candidate.s3Key,
+        references:entity.referenceSet.images,jobs:new PostgresGenerationJobRepository(bound)}));
       return plan(request,selection,{targetId,workId:entity.workId,referenceCount:1,generationMode:null,
         snapshot:{kind:'entity',entity,state:null,sourceS3Key:candidate.s3Key,sourceImage:candidate},
         jobParams:{entity_id:entityId,entity_type:entity.entityType,previous_entity_status:entity.status,source_s3_key:candidate.s3Key}});
@@ -156,6 +166,7 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
     if(statePreview){
       const state=await new PostgresEntityStateReferenceRepository(bound).findContextByIdAndUserId(entityId,targetId,userId,organizationId);
       if(!state || !isReadyEntityStateReferenceContext(state)) throw new ConflictError('Confirm a base reference and complete the state before preview');
+      requireOpenAIEntityInputCompatible(state.baseReference);
       ensureOwnedEntityReferenceImageKey(state.baseReference.s3Key,state.baseReference.storageOwnerUserId,entityId);
       return plan(request,selection,{targetId,workId:entity.workId,referenceCount:1,generationMode:null,
         snapshot:{kind:'entity',entity,state,sourceS3Key:null},jobParams:{target:'entity_state',entity_id:entityId,entity_type:entity.entityType,
@@ -165,7 +176,7 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
     }
     const source=request.sourceRefId===undefined ? null : entity.referenceSet.images.find((image)=>image.refId===request.sourceRefId);
     if(source===undefined) throw new ValidationError('Selected source reference is not confirmed for this entity');
-    if(source) ensureOwnedEntityReferenceImageKey(source.s3Key,entity.userId,entityId);
+    if(source){requireOpenAIEntityInputCompatible(source);ensureOwnedEntityReferenceImageKey(source.s3Key,entity.userId,entityId);}
     return plan(request,selection,{targetId,workId:entity.workId,referenceCount:source ? 1:0,generationMode:null,
       snapshot:{kind:'entity',entity,state:null,sourceS3Key:source?.s3Key ?? null},jobParams:{entity_id:entityId,entity_type:entity.entityType,previous_entity_status:entity.status,
         ...(source ? {source_s3_key:source.s3Key}: {})}});
