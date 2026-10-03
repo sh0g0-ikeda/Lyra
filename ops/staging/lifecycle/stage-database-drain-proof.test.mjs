@@ -95,9 +95,15 @@ test('strict result parser rejects extra, missing, malformed, and unbounded coun
 test('Bun override source guards the exact stage database and emits only the prefixed proof JSON', () => {
   const source = buildStageDatabaseDrainProofBunSource({
     ...identity,
-    databaseHost: 'lyra-staging-20261003-db.example.ap-northeast-1.rds.amazonaws.com',
+    databaseHost: 'lyra-staging-20261003-db.cl2cc620cck3.ap-northeast-1.rds.amazonaws.com',
     databaseName: 'lyrastaging',
     statementTimeoutMs: 4_000,
+  });
+  const compactOverrides = JSON.stringify({
+    containerOverrides: [{
+      name: 'migration',
+      command: ['/usr/local/bin/bun', '-e', source],
+    }],
   });
 
   assert.match(source, /dist\/src\/lib\/runtimeSecretEnv\.js/u);
@@ -108,6 +114,10 @@ test('Bun override source guards the exact stage database and emits only the pre
   assert.match(source, /DATABASE_HOST_MISMATCH/u);
   assert.match(source, /DATABASE_NAME_MISMATCH/u);
   assert.doesNotMatch(source, /@aws-sdk|PutObject|GetSecretValueCommand/u);
+  assert.ok(
+    Buffer.byteLength(compactOverrides, 'utf8') <= 7_600,
+    `compact ECS overrides must stay within the safety budget: ${Buffer.byteLength(compactOverrides, 'utf8')} bytes`,
+  );
   const AsyncFunction = Object.getPrototypeOf(async function noop() {}).constructor;
   assert.doesNotThrow(() => new AsyncFunction(source));
   assert.throws(() => buildStageDatabaseDrainProofBunSource({

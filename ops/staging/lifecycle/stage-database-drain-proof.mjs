@@ -193,51 +193,50 @@ export function buildStageDatabaseDrainProofBunSource(input) {
     databaseId: input.databaseId,
   });
   const serializedCounterMap = JSON.stringify(RESULT_COUNTERS);
-  const serializedResultKeys = JSON.stringify(RESULT_KEYS);
   // ECS containerOverrides are limited to 8 KiB. Preserve the query semantics
   // while removing formatting whitespace before embedding the one-off source.
   const serializedQuery = JSON.stringify(DATABASE_DRAIN_PROOF_QUERY.replace(/\s+/gu, ' ').trim());
 
-  return `const E=new Set(['DATABASE_URL_MISSING','DATABASE_URL_INVALID','DATABASE_HOST_MISMATCH','DATABASE_NAME_MISMATCH','DATABASE_DRAIN_PROOF_RESULT_INVALID']);
+  return `const E=['DATABASE_URL_MISSING','DATABASE_URL_INVALID','DATABASE_HOST_MISMATCH','DATABASE_NAME_MISMATCH','DATABASE_DRAIN_PROOF_RESULT_INVALID'],F=i=>{throw Error(E[i])};
 let z;
 try {
   const {loadRuntimeSecretEnv:L}=await import('./dist/src/lib/runtimeSecretEnv.js');
   await L();
   const u=process.env.DATABASE_URL;
-  if(typeof u!=='string'||u.length===0)throw new Error('DATABASE_URL_MISSING');
+  if(typeof u!=='string'||u.length===0)F(0);
   let x;
-  try{x=new URL(u);}catch{throw new Error('DATABASE_URL_INVALID');}
-  if(x.protocol!=='postgres:'&&x.protocol!=='postgresql:')throw new Error('DATABASE_URL_INVALID');
-  if(x.hostname.toLowerCase()!==${JSON.stringify(databaseHost)})throw new Error('DATABASE_HOST_MISMATCH');
+  try{x=new URL(u);}catch{F(1);}
+  if(x.protocol!=='postgres:'&&x.protocol!=='postgresql:')F(1);
+  if(x.hostname.toLowerCase()!==${JSON.stringify(databaseHost)})F(2);
   let n;
-  try{n=decodeURIComponent(x.pathname.slice(1));}catch{throw new Error('DATABASE_URL_INVALID');}
-  if(n!==${JSON.stringify(databaseName)})throw new Error('DATABASE_NAME_MISMATCH');
+  try{n=decodeURIComponent(x.pathname.slice(1));}catch{F(1);}
+  if(n!==${JSON.stringify(databaseName)})F(3);
   const m=await import('./dist/src/lib/db.js');
   z=m.closeDatabasePool;
   const r=await m.db.transaction(async(q)=>{
     await q.query('SET TRANSACTION READ ONLY');
     await q.query(${JSON.stringify(`SET LOCAL statement_timeout = '${timeout}ms'`)});
     const s=await q.query(${serializedQuery});
-    if(!s||!Array.isArray(s.rows)||s.rows.length!==1)throw new Error('DATABASE_DRAIN_PROOF_RESULT_INVALID');
+    if(!s||!Array.isArray(s.rows)||s.rows.length!==1)F(4);
     return s.rows[0];
   });
-  const e=${serializedResultKeys}.slice().sort(),a=Object.keys(r??{}).sort();
-  if(a.length!==e.length||a.some((k,i)=>k!==e[i]))throw new Error('DATABASE_DRAIN_PROOF_RESULT_INVALID');
+  const M=${serializedCounterMap},e=['observed_at',...Object.keys(M)].sort(),a=Object.keys(r??{}).sort();
+  if(a.length!==e.length||a.some((k,i)=>k!==e[i]))F(4);
   const o=r.observed_at instanceof Date?r.observed_at:new Date(r.observed_at);
-  if(!Number.isFinite(o.getTime()))throw new Error('DATABASE_DRAIN_PROOF_RESULT_INVALID');
+  if(!Number.isFinite(o.getTime()))F(4);
   const c={};
-  for(const [d,k] of Object.entries(${serializedCounterMap})){
+  for(const [d,k] of Object.entries(M)){
     const v=r[d];
-    if(typeof v!=='string'||!/^(?:0|[1-9][0-9]{0,6})$/.test(v))throw new Error('DATABASE_DRAIN_PROOF_RESULT_INVALID');
+    if(typeof v!=='string'||!/^(?:0|[1-9][0-9]{0,6})$/.test(v))F(4);
     const n=Number(v);
-    if(!Number.isSafeInteger(n)||n<0||n>${MAX_COUNTER})throw new Error('DATABASE_DRAIN_PROOF_RESULT_INVALID');
+    if(!Number.isSafeInteger(n)||n<0||n>${MAX_COUNTER})F(4);
     c[k]=n;
   }
   const p={kind:${JSON.stringify(PROOF_KIND)},schemaVersion:${PROOF_SCHEMA_VERSION},...${serializedIdentity},observedAtUtc:o.toISOString(),counters:c};
   await z();z=undefined;
   console.log(${JSON.stringify(DATABASE_DRAIN_PROOF_LOG_PREFIX)}+JSON.stringify(p));
 }catch(x){
-  const e=x instanceof Error&&E.has(x.message)?x.message:'DATABASE_DRAIN_PROOF_GENERATION_FAILED';
+  const e=x instanceof Error&&E.includes(x.message)?x.message:'DATABASE_DRAIN_PROOF_GENERATION_FAILED';
   console.error('LYRA_STAGE_DATABASE_DRAIN_PROOF_ERROR '+e);
   process.exitCode=1;
 }finally{
