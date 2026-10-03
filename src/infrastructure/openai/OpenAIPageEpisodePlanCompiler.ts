@@ -188,6 +188,8 @@ function buildSystemPrompt(language: CompileEpisodePagePlanInput['language']): s
     'This displayed-text distinction does not weaken their action, chronology, staging, or continuity facts; stage those facts in actual panel fields under the source hierarchy.',
     'If a generated outline, ledger, text_plan, or earlier draft shortens or paraphrases an explicitly authored line, the source wording and speaker are binding. Place that exact source line where its authored event belongs.',
     'For each source action chain, stage its prerequisite, action, immediate result, and stated order in actual panel fields. Do not merge distinct steps, reverse them, or stop at preparation when the source states a completed result.',
+    'The source completion boundary, causal or decision basis, small transition action, negative or continuing constraint, and final viewpoint or framing override a shortened ledger. Never stop before an event the source requires completed or reverse an exterior or interior viewpoint.',
+    'Every assigned entity action must agree with situation_text and composition. When a concrete pose or action is not accurately represented by standing_firm, attacking, defending, or running, use action=custom with a concrete custom_action; never label a seated, kneeling, or lying pose as standing_firm.',
     'During repair preserve unaffected panels and fields. If the ledger conflicts with explicit source facts, preserve the source and make the conflict clear in continuity_note rather than inventing facts.',
     `Write free-text fields in natural ${outputLanguage}, concise but sufficient for direct editing and image staging.`,
   ].join(' ');

@@ -577,6 +577,11 @@ describe('EpisodePlanContinuity', () => {
     expect(brief).toContain('春香{role=primary,action=standing_firm,position=center}');
     expect(brief).toContain('p2.e=none');
     expect(brief).toContain('p2.d1="届いた。"');
+    // v19 design: the bounded two-fact sidecar samples actual omissions or
+    // contradictions before easy present dialogue, while the body still audits all facts.
+    expect(brief).toContain(
+      'reserve a check for it before sampling dialogue or an already-obvious present fact',
+    );
   });
 
   it('決定論的に検出した重複を同じ監査で必ず修復する対象として渡す', () => {

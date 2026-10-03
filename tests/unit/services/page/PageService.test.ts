@@ -1079,15 +1079,21 @@ describe('PageService', () => {
     { atomic: true, savedStateId: 'state-1', suggestedStateId: null },
     { atomic: false, savedStateId: 'named-state-outside-scenes', suggestedStateId: 'state-1' },
     { atomic: true, savedStateId: 'named-state-outside-scenes', suggestedStateId: 'state-1' },
-  ])('legacy autofill は既存の手動状態を保持し他の演出を更新する ($atomic/$savedStateId)', async ({
+  ])('legacy autofill は既存の手動状態を保持し provider の custom pose を更新する ($atomic/$savedStateId)', async ({
     atomic, savedStateId, suggestedStateId,
   }) => {
     const context = buildEpisodePlanningContext();
     const compiler = new FakeEpisodePagePlanCompiler();
     const compiled = await compiler.compilePlan({ compilerBrief: '', language: 'ja' });
     const suggestion = compiled.suggestion.pages[0]!.panels[0]!.entities![0]!;
+    suggestion.action = 'custom';
+    suggestion.customAction = '窓辺に腰を下ろす';
     context.pages[0]!.panels[0]!.entities = [{
-      ...suggestion, stateId: savedStateId, expression: 'angry', action: 'attacking',
+      ...suggestion,
+      stateId: savedStateId,
+      expression: 'angry',
+      action: 'attacking',
+      customAction: null,
     }];
     suggestion.stateId = suggestedStateId;
     const pageRepository = new FakePageRepository();
@@ -1108,7 +1114,12 @@ describe('PageService', () => {
 
     expect(assignments.updates).toHaveLength(1);
     expect(assignments.updates[0]!.assignments).toEqual([
-      expect.objectContaining({ stateId: savedStateId, expression: 'calm', action: 'standing_firm' }),
+      expect.objectContaining({
+        stateId: savedStateId,
+        expression: 'calm',
+        action: 'custom',
+        customAction: '窓辺に腰を下ろす',
+      }),
     ]);
     expect(context.pages[0]!.panels[0]!.entities[0]!.expression).toBe('angry');
     expect(suggestion.stateId).toBe(suggestedStateId);

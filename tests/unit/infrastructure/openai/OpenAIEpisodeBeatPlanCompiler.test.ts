@@ -52,7 +52,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       textPlan:{requiredTextBeats:['疑念の所在'],visualOnlyBeats:['傷に気づく'],densityReason:'観察を画像で伝える'},
       handoff: '次ページで傷に触れる行動へつなぐ。',
     });
-    expect(result.compilerPromptVersion).toBe('episode_beat_plan_v8');
+    expect(result.compilerPromptVersion).toBe('episode_beat_plan_v9');
     const request = requests[0];
     const input = request?.input as Array<{ content: Array<{ text: string }> }>;
     const text = request?.text as {
@@ -72,6 +72,23 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     );
     expect(input[0]?.content[0]?.text).toContain(
       'This displayed-text distinction does not weaken their action, chronology, staging, or continuity facts',
+    );
+    // v19 design: compact ledgers keep source-critical bases, boundaries, small actions,
+    // constraints, and final framing so later detail passes cannot reinterpret them.
+    expect(input[0]?.content[0]?.text).toContain(
+      'explicit decision bases, small prerequisite or transition actions, terminal completion boundaries',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'must not turn a source requirement to complete through an event into stopping before it',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'Do not add generated or invented camera directions',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'Preserve a source-required final viewpoint or framing as a compact locator',
+    );
+    expect(input[0]?.content[0]?.text).not.toContain(
+      'Do not add explanations, alternatives, examples, camera directions',
     );
     expect(input[0]?.content[0]?.text).toContain(
       '[FULL STORY DRAFT - SOURCE DATA] separately and explicitly assigns the text for display',
@@ -137,11 +154,22 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       },
     ]);
     const request = requests[0];
+    const input = request?.input as Array<{ content: Array<{ text: string }> }>;
     const schema = (request?.text as {
       format: { schema: { properties: { pages: { maxItems: number; items: { properties: Record<string, { maxLength?: number }> } } } } };
     }).format.schema;
 
     expect(request?.max_output_tokens).toBeGreaterThanOrEqual(32_000);
+    expect(result.compilerPromptVersion).toBe('episode_beat_outline_v6');
+    expect(input[0]?.content[0]?.text).toContain(
+      'Do not add generated or invented camera directions',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'Preserve a source-required final viewpoint or framing as a compact story anchor or transition',
+    );
+    expect(input[0]?.content[0]?.text).not.toContain(
+      'Do not include dialogue, camera direction, alternatives',
+    );
     expect(schema.properties.pages.maxItems).toBe(32);
     expect(schema.properties.pages.items.properties.story_anchor?.maxLength).toBe(45);
     expect(schema.properties.pages.items.properties.reserved_transition?.maxLength).toBe(60);

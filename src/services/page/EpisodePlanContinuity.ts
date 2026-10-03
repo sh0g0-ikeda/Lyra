@@ -485,6 +485,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
     '[AUDIT CONTRACT]',
     'Check the entire draft against the source and ledger, not each page in isolation.',
     'Return source_coverage for every page with one or two highest-risk source facts. Prioritize prerequisites, repeated actions such as again/retry, cause-action-result chains, and final closure actions.',
+    'If the source assigns a decision basis, completion boundary, negative or continuing constraint, final viewpoint, or concrete pose that is absent or contradicted in panel fields, reserve a check for it before sampling dialogue or an already-obvious present fact.',
     'source_ref=source ranges only over SOURCE DATA, including FULL STORY DRAFT. Copy a contiguous literal from that range only.',
     'source_ref=ledger ranges only over that page\'s GLOBAL EPISODE LEDGER row. Never cite COMPILED EPISODE DRAFT as a source.',
     'Copy each source_quote and output quote as one contiguous 4 to 40 character substring exactly as displayed under its named ref. Never summarize, paraphrase, translate, concatenate separated spans, or invent an ellipsis.',

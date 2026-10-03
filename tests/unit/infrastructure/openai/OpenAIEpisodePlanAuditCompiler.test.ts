@@ -130,6 +130,20 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(input[0]?.content[0]?.text).toContain('Audit every important source action in the body');
     expect(input[0]?.content[0]?.text).toContain('return an error and an existing dialogue field repair');
     expect(input[0]?.content[0]?.text).toContain('prerequisite, action, immediate result, and stated order');
+    // v19 design: the existing audit issue and entities patch contracts repair source
+    // boundary/viewpoint loss and contradictions between visible staging and pose metadata.
+    expect(input[0]?.content[0]?.text).toContain(
+      'explicit completion boundaries, causal or decision bases, small transition actions',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'Cross-check situation_text and composition with every entity action',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'return an error and repair the field that conflicts with the source',
+    );
+    expect(input[0]?.content[0]?.text).toContain(
+      'use an existing entities field repair with action=custom',
+    );
     expect(input[0]?.content[0]?.text).toContain(
       'missing source fact, dropped ongoing action, or visible entity contradiction',
     );
@@ -309,7 +323,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v18');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v19');
     expect(requestCount).toBe(1);
   });
 

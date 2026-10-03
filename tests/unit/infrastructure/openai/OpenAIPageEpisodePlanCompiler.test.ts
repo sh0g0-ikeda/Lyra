@@ -101,7 +101,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-5',
-      compilerPromptVersion: 'episode_page_plan_v12',
+      compilerPromptVersion: 'episode_page_plan_v13',
     });
 
     const request = requests[0];
@@ -132,6 +132,17 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     );
     expect(systemPrompt).toContain('the source wording and speaker are binding');
     expect(systemPrompt).toContain('prerequisite, action, immediate result, and stated order');
+    // v19 design: detail preserves source boundaries/viewpoints and uses the existing
+    // custom action field when the finite action enum cannot represent a concrete pose.
+    expect(systemPrompt).toContain(
+      'completion boundary, causal or decision basis, small transition action, negative or continuing constraint, and final viewpoint',
+    );
+    expect(systemPrompt).toContain(
+      'Every assigned entity action must agree with situation_text and composition',
+    );
+    expect(systemPrompt).toContain(
+      'use action=custom with a concrete custom_action',
+    );
     expect(systemPrompt).not.toContain('provide at least one short speech or thought line');
 
 

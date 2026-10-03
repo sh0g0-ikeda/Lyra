@@ -222,6 +222,12 @@ The source takes precedence over a conflicting outline or ledger. Detail and aud
 compare each action's prerequisite, execution, immediate result, and stated order
 against actual panel fields. Missing or altered authored dialogue and action steps
 use the existing field-level repair contract and semantic soft-save policy.
+Compression preserves explicit decision bases, prerequisite or transition actions,
+completion boundaries, negative or continuing constraints, and final viewpoint.
+An authored completed action must not become stopping immediately before it.
+Visible situation and composition agree with entity action metadata; poses outside
+the fixed enums use the existing custom action. The auditor repairs contradictions
+through the existing fields without adding a new save-blocking condition.
 Chapter/episode arc summaries, page purpose, continuity, and generated ledgers are
 planning context, not authored display text. A successful episode detail compiler's
 omitted dialogue receives no generated fallback; existing manual-field preservation

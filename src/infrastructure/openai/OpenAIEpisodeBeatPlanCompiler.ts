@@ -164,6 +164,8 @@ function buildSystemPrompt(language: CompileEpisodeBeatPlanInput['language']): s
     'Never paraphrase, shorten, merge, or complete explicitly authored dialogue. Preserve its unambiguous speaker and dialogue type when the source assigns them. Apply the same exact-wording rule to explicitly assigned narration or caption/display text and preserve it as narration with no speaker. Japanese brackets around a name, title, or cited label do not make it dialogue unless the source assigns it as an utterance, private thought, narration, or caption.',
     '[CHAPTER], [CHAPTER ARC], [EPISODE STORY], [EPISODE ARC], outlines, ledgers, page purpose, continuity, and generated summaries are planning context only and are not displayed dialogue, thought, narration, or caption. Never copy or paraphrase their prose into displayed text unless [FULL STORY DRAFT - SOURCE DATA] separately and explicitly assigns the text for display.',
     'This displayed-text distinction does not weaken their action, chronology, staging, or continuity facts; preserve those facts under the source hierarchy and express them in the appropriate visual fields.',
+    'Compression must preserve explicit decision bases, small prerequisite or transition actions, terminal completion boundaries, negative or continuing constraints, and final camera viewpoint or framing. Keep them as compact beats or source locators instead of deleting or weakening them.',
+    'A compact ledger must not turn a source requirement to complete through an event into stopping before it, replace an explicit causal basis with an unsupported choice, or change an exterior or final viewpoint into an interior or generic view.',
     'In required_text_beats, copy an explicitly authored line exactly with its speaker and type when that complete entry fits the 45-character field. If the exact quoted line exceeds a bounded ledger field, write only a compact locator that requires the detail compiler to copy the full line from SOURCE DATA; never create a shortened replacement quote.',
     'A handoff must explain what motion, question, reveal, or emotional pressure carries the reader into the next page.',
     'Do not invent events, characters, locations, props, or facts not supported by the brief.',
@@ -176,7 +178,7 @@ function buildSystemPrompt(language: CompileEpisodeBeatPlanInput['language']): s
     'Keep entry_state, exit_state, dialogue_intent, and handoff concise and factual, at most 60 characters each.',
     'Keep each new_information item at most 45 characters and include at most two necessary items per page.',
     'Do not repeat story context, character descriptions, actions, discoveries, or dialogue purposes already covered by another page.',
-    'Do not add explanations, alternatives, examples, camera directions, newly invented finished dialogue, or decorative prose. The required_text rule above may copy explicitly authored dialogue but must not rewrite it.',
+    'Do not add generated or invented camera directions, explanations, alternatives, examples, newly invented finished dialogue, or decorative prose. Preserve a source-required final viewpoint or framing as a compact locator without elaborating it. The required_text rule above may copy explicitly authored dialogue but must not rewrite it.',
     'Aim to keep all free-text values in this response under 8,000 characters.',
   ].join(' ');
 }
@@ -197,7 +199,7 @@ function buildOutlineSystemPrompt(language: CompileEpisodeBeatPlanOutlineInput['
     'Do not invent events, characters, locations, props, or facts not supported by the brief.',
     `Write all free-text values in natural ${outputLanguage}.`,
     'Keep story_anchor at most 45 characters and reserved_transition at most 60 characters.',
-    'Do not include dialogue, camera direction, alternatives, explanations, or decorative prose.',
+    'Do not include dialogue, alternatives, explanations, or decorative prose. Do not add generated or invented camera directions. Preserve a source-required final viewpoint or framing as a compact story anchor or transition without elaborating it.',
   ].join(' ');
 }
 
