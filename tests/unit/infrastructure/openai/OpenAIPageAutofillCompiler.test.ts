@@ -86,7 +86,7 @@ describe('OpenAIPageAutofillCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-4o-2024-08-06',
-      compilerPromptVersion: 'page_autofill_v6',
+      compilerPromptVersion: 'page_autofill_v7',
     });
 
     const request = requests[0];

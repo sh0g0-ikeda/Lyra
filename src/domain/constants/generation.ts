@@ -83,21 +83,21 @@ export const EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL = 4;
 
 export const PAGE_AUTOFILL_COMPILER_OPENAI_MODEL = 'gpt-4o-2024-08-06';
 export const PAGE_AUTOFILL_COMPILER_MAX_TOKENS = 1200;
-export const PAGE_AUTOFILL_COMPILER_VERSION = 'page_autofill_v6';
+export const PAGE_AUTOFILL_COMPILER_VERSION = 'page_autofill_v7';
 
 export const EPISODE_PAGE_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS = 24000;
-export const EPISODE_PAGE_PLAN_COMPILER_VERSION = 'episode_page_plan_v6';
+export const EPISODE_PAGE_PLAN_COMPILER_VERSION = 'episode_page_plan_v7';
 
 export const EPISODE_BEAT_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_BEAT_PLAN_COMPILER_MAX_TOKENS = 32_000;
-export const EPISODE_BEAT_PLAN_COMPILER_VERSION = 'episode_beat_plan_v3';
-export const EPISODE_BEAT_PLAN_OUTLINE_COMPILER_VERSION = 'episode_beat_outline_v2';
+export const EPISODE_BEAT_PLAN_COMPILER_VERSION = 'episode_beat_plan_v4';
+export const EPISODE_BEAT_PLAN_OUTLINE_COMPILER_VERSION = 'episode_beat_outline_v3';
 
 export const EPISODE_PLAN_AUDIT_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS = 20_000;
 export const EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS = 2;
-export const EPISODE_PLAN_AUDIT_COMPILER_VERSION = 'episode_plan_audit_v7';
+export const EPISODE_PLAN_AUDIT_COMPILER_VERSION = 'episode_plan_audit_v8';
 
 export const PAGE_GENERATION_PLANNER_MAX_TOKENS = 700;
 export const PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS = 1200;

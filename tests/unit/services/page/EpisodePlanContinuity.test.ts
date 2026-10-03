@@ -124,6 +124,59 @@ describe('EpisodePlanContinuity', () => {
     expect(brief).toContain(`Panel 8`);
   }, 20_000);
 
+  it('上限付近で主体属性と構図・演出メモの最小予約が入らない場合は監査を失敗させる', () => {
+    const entityId = '10000000-0000-4000-8000-000000000001';
+    const context = buildContext();
+    context.entities = [
+      {
+        id: entityId,
+        name: '春香',
+        entityType: 'character',
+        freeDescription: null,
+        promptSupplement: null,
+        structuredFields: {},
+      },
+    ];
+    const plan = buildBeatPlan();
+    const suggestion = buildVerboseSuggestion();
+    for (const page of suggestion.pages) {
+      page.panels = page.panels.slice(0, 8);
+      for (const panel of page.panels) {
+        const marker = `${page.pageNumber}-${panel.order}`;
+        panel.dialogue = [{
+          entityId: null,
+          type: 'narration',
+          position: 'right',
+          text: `台詞${marker}:${'固有の説明'.repeat(8)}`,
+        }];
+        panel.composition = {
+          source: 'custom',
+          galleryItemId: null,
+          shotType: 'wide',
+          angle: 'front',
+          compositionPrompt: `外景${marker}:建物全体と港を遠景で見せる。`,
+          customNote: `演出${marker}:人物を画面に出さない。`,
+        };
+        panel.panelNotes = `継続${marker}:作業は室内で続いている。`;
+        panel.entities = [{
+          entityId,
+          role: 'primary',
+          expression: 'determined',
+          customExpression: null,
+          action: 'custom',
+          customAction: 'ハンドルを一定速度で回し続ける',
+          position: 'center',
+          facingDirection: 'front',
+          effectNote: null,
+          stateId: null,
+        }];
+      }
+    }
+
+    expect(() => buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' }))
+      .toThrow('Episode audit cannot fit complete dialogue within its safe input limit');
+  }, 20_000);
+
   it('監査 brief は UUID ではなくキャラ名で登場人物と話者を識別できる', () => {
     const entityId = '10000000-0000-4000-8000-000000000001';
     const context = buildContext();
@@ -175,6 +228,80 @@ describe('EpisodePlanContinuity', () => {
 
     expect(brief).toContain('entities=司カサネ');
     expect(brief).toContain('speech:司カサネ:これは私に届いた手紙だ。');
+  });
+
+  it('監査 brief は構図と演出メモ、可視主体の役割・動作・位置、off-panel 話者を保持する', () => {
+    const entityId = '10000000-0000-4000-8000-000000000001';
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    context.entities = [
+      {
+        id: entityId,
+        name: '春香',
+        entityType: 'character',
+        freeDescription: null,
+        promptSupplement: null,
+        structuredFields: {},
+      },
+    ];
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = [
+      {
+        order: 1,
+        panelRole: 'establish',
+        situationText: '建物の外観と港を遠景で見せる。',
+        composition: {
+          source: 'custom',
+          galleryItemId: null,
+          shotType: 'wide',
+          angle: 'bird_eye',
+          compositionPrompt: '建物の外から港までを広く見渡す。',
+          customNote: '人物ではなく建物と光を主役にする。',
+        },
+        panelNotes: '直前の人物は建物内で作業を続けている。',
+        backgroundNote: '夕暮れの港。',
+        entities: [
+          {
+            entityId,
+            role: 'primary',
+            expression: 'calm',
+            customExpression: null,
+            action: 'standing_firm',
+            customAction: null,
+            position: 'center',
+            facingDirection: 'front',
+            effectNote: null,
+            stateId: null,
+          },
+        ],
+      },
+      {
+        order: 2,
+        panelRole: 'transition',
+        situationText: '港だけを映す。',
+        dialogue: [
+          {
+            entityId,
+            type: 'thought',
+            position: 'right',
+            text: '届いた。',
+          },
+        ],
+        entities: [],
+      },
+    ];
+
+    const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+
+    expect(brief).toContain('composition=建物の外から港までを広く見渡す。');
+    expect(brief).toContain('custom=人物ではなく建物と光を主役にする。');
+    expect(brief).toContain('notes=直前の人物は建物内で作業を続けている。');
+    expect(brief).toContain('春香{role=primary,action=standing_firm,position=center}');
+    expect(brief).toContain('entities=none');
+    expect(brief).toContain('thought:春香:届いた。');
   });
 
   it('決定論的に検出した重複を同じ監査で必ず修復する対象として渡す', () => {

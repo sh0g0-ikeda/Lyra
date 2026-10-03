@@ -100,7 +100,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-5',
-      compilerPromptVersion: 'episode_page_plan_v6',
+      compilerPromptVersion: 'episode_page_plan_v7',
     });
 
     const request = requests[0];
@@ -111,6 +111,11 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     const systemPrompt = input[0].content[0].text;
     const userPrompt = input[1].content[0].text;
     for (const policy of [STORY_SOURCE_POLICY,STORY_TEXT_POLICY,STORY_SPEAKER_POLICY,STORY_DIALOGUE_FLOW_POLICY,STORY_PANEL_POLICY]) expect(systemPrompt).toContain(policy);
+    expect(systemPrompt).toContain('A generic label such as an explanation, entry, or decision is not a substitute');
+    expect(systemPrompt).toContain('return entities=[]');
+    expect(systemPrompt).toContain('merely because they own the viewpoint or speak off-panel');
+    expect(systemPrompt).toContain('until the source explicitly ends it');
+    expect(systemPrompt).toContain('a concrete source or continuity defect, not a stylistic preference');
     expect(systemPrompt).not.toContain('provide at least one short speech or thought line');
 
 

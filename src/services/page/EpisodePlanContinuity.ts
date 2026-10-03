@@ -52,6 +52,9 @@ const MAX_REPAIR_DRAFT_PANEL_SUMMARY_CHARS = 420;
 const MAX_AUDIT_PANEL_SUMMARY_CHARS = 700;
 const PAGE_HEADER_MAX_CHARS = 320;
 const MAX_DIALOGUE_LINES_IN_SUMMARY = 8;
+const MIN_AUDIT_FIELD_EXCERPT_CHARS = 16;
+const AUDIT_ENTITY_LABEL_MAX_CHARS = 48;
+const AUDIT_CUSTOM_ACTION_MAX_CHARS = 64;
 
 export function buildEpisodeBeatPlanCompilerBrief(
   context: EpisodePagePlanContext,
@@ -442,14 +445,26 @@ export function buildEpisodePlanAuditBrief(input: {
   // compacted, but losing speakers or the end of a conversation is not safe.
   const reserved = [...before, ...after].join('\n').length + pages.length * (PAGE_HEADER_MAX_CHARS + 4) + panelCount * 4 + 100;
   const remaining = AUDIT_BRIEF_MAX_CHARS - reserved;
-  if (remaining < panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS) {
+  const minimumPanelSummaryLengths = pages.flatMap((page) =>
+    page.panels.map((panel) =>
+      buildAuditPanelSummary(panel, entityLabels, 0).length,
+    ),
+  );
+  const minimumPanelSummaryChars = minimumPanelSummaryLengths.reduce(
+    (total, length) => total + length,
+    0,
+  );
+  if (
+    remaining < panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
+    || remaining < minimumPanelSummaryChars
+  ) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
   }
-  const panelBudget = calculatePanelSummaryBudget(
-    remaining, panelCount, MAX_AUDIT_PANEL_SUMMARY_CHARS, MIN_COMPLETED_PANEL_SUMMARY_CHARS,
-  );
+  const optionalPanelChars = panelCount === 0
+    ? 0
+    : Math.floor((remaining - minimumPanelSummaryChars) / panelCount);
   const brief = [...before, '', '[COMPILED EPISODE DRAFT]',
-    ...pages.flatMap((page) => formatAuditPage(page, panelBudget, entityLabels)), ...after].join('\n');
+    ...pages.flatMap((page) => formatAuditPage(page, optionalPanelChars, entityLabels)), ...after].join('\n');
   if (brief.length > AUDIT_BRIEF_MAX_CHARS) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
   }
@@ -779,7 +794,7 @@ function formatRepairDraftPanel(
 
 function formatAuditPage(
   page: EpisodePagePlanPageSuggestion,
-  panelBudget: number,
+  optionalPanelChars: number,
   entityLabels: ReadonlyMap<string, string>,
 ): string[] {
   const header = truncatePromptText(
@@ -792,35 +807,80 @@ function formatAuditPage(
   );
   const panels = [...page.panels]
     .sort((left, right) => left.order - right.order)
-    .map((panel) => {
-      const entityIds = (panel.entities ?? []).map((entity) => entity.entityId);
-      const fixed = [
-        `Panel ${panel.order}`,
-        `role=${panel.panelRole ?? 'none'}`,
-        `shot=${panel.composition?.shotType ?? 'none'}`,
-        `angle=${panel.composition?.angle ?? 'none'}`,
-        `entities=${formatEntityLabels(
-          entityIds,
-          entityLabels,
-          Math.max(24, Math.floor(panelBudget * 0.2)),
-        )}`,
-      ].join('|');
-      const remaining = Math.max(48, panelBudget - fixed.length - 3);
-      const dialogueBudget = Math.max(16, Math.floor(remaining * 0.42));
-      const situationBudget = Math.max(16, Math.floor(remaining * 0.36));
-      const backgroundBudget = Math.max(
-        16,
-        remaining - dialogueBudget - situationBudget,
-      );
-      const summary = [
-        fixed,
-        `d=${formatDialogueForBrief(panel.dialogue ?? [], dialogueBudget, entityLabels)}`,
-        `s=${truncatePromptText(panel.situationText ?? 'none', situationBudget)}`,
-        `b=${truncatePromptText(panel.backgroundNote ?? 'none', backgroundBudget)}`,
-      ].join('|');
-      return `  ${truncatePromptText(summary, panelBudget)}`;
-    });
+    .map((panel) => `  ${buildAuditPanelSummary(panel, entityLabels, optionalPanelChars)}`);
   return [header, ...panels];
+}
+
+function buildAuditPanelSummary(
+  panel: EpisodePagePlanPageSuggestion['panels'][number],
+  entityLabels: ReadonlyMap<string, string>,
+  optionalChars: number,
+): string {
+  const fixed = [
+    `Panel ${panel.order}`,
+    `role=${panel.panelRole ?? 'none'}`,
+    `shot=${panel.composition?.shotType ?? 'none'}`,
+    `angle=${panel.composition?.angle ?? 'none'}`,
+    `entities=${formatEntityAssignments(panel.entities ?? [], entityLabels)}`,
+  ].join('|');
+  const fields = [
+    { label: 'd', value: formatDialogueForBrief(panel.dialogue ?? [], MAX_AUDIT_PANEL_SUMMARY_CHARS, entityLabels) },
+    { label: 's', value: normalizeAuditExcerpt(panel.situationText) },
+    { label: 'b', value: normalizeAuditExcerpt(panel.backgroundNote) },
+    { label: 'composition', value: normalizeAuditExcerpt(panel.composition?.compositionPrompt) },
+    { label: 'custom', value: normalizeAuditExcerpt(panel.composition?.customNote) },
+    { label: 'notes', value: normalizeAuditExcerpt(panel.panelNotes) },
+  ];
+  const budgets = fields.map((field) =>
+    Math.min(
+      field.value.length,
+      field.value === 'none' ? 'none'.length : MIN_AUDIT_FIELD_EXCERPT_CHARS,
+    ),
+  );
+  const minimumSummary = [
+    fixed,
+    ...fields.map((field, index) => `${field.label}=${truncatePromptText(field.value, budgets[index] ?? 0)}`),
+  ].join('|');
+  if (minimumSummary.length > MAX_AUDIT_PANEL_SUMMARY_CHARS) {
+    throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
+  }
+
+  let remaining = Math.min(
+    optionalChars,
+    MAX_AUDIT_PANEL_SUMMARY_CHARS - minimumSummary.length,
+  );
+  while (remaining > 0) {
+    const expandable = budgets
+      .map((budget, index) => ({ index, capacity: (fields[index]?.value.length ?? 0) - budget }))
+      .filter((entry) => entry.capacity > 0);
+    if (expandable.length === 0) {
+      break;
+    }
+    const share = Math.max(1, Math.floor(remaining / expandable.length));
+    let consumed = 0;
+    for (const entry of expandable) {
+      const increment = Math.min(entry.capacity, share, remaining - consumed);
+      budgets[entry.index] = (budgets[entry.index] ?? 0) + increment;
+      consumed += increment;
+      if (consumed === remaining) {
+        break;
+      }
+    }
+    if (consumed === 0) {
+      break;
+    }
+    remaining -= consumed;
+  }
+
+  return [
+    fixed,
+    ...fields.map((field, index) => `${field.label}=${truncatePromptText(field.value, budgets[index] ?? 0)}`),
+  ].join('|');
+}
+
+function normalizeAuditExcerpt(value: string | null | undefined): string {
+  const normalized = value?.replace(/\s+/gu, ' ').trim();
+  return normalized === undefined || normalized.length === 0 ? 'none' : normalized;
 }
 
 function normalizeDuplicateCandidate(value: string): string {
@@ -862,6 +922,26 @@ function formatEntityLabels(
   }
   const labels = entityIds.map((entityId) => entityLabels.get(entityId) ?? entityId);
   return truncatePromptText(labels.join(','), maxChars);
+}
+
+function formatEntityAssignments(
+  entities: NonNullable<EpisodePagePlanPageSuggestion['panels'][number]['entities']>,
+  entityLabels: ReadonlyMap<string, string>,
+): string {
+  if (entities.length === 0) {
+    return 'none';
+  }
+  const assignments = entities.map((entity) => {
+    const label = truncatePromptText(
+      entityLabels.get(entity.entityId) ?? entity.entityId,
+      AUDIT_ENTITY_LABEL_MAX_CHARS,
+    );
+    const action = entity.action === 'custom' && entity.customAction !== null
+      ? `custom:${truncatePromptText(entity.customAction, AUDIT_CUSTOM_ACTION_MAX_CHARS)}`
+      : entity.action;
+    return `${label}{role=${entity.role},action=${action},position=${entity.position}}`;
+  });
+  return assignments.join(',');
 }
 
 function formatDialogueForBrief(
