@@ -90,4 +90,12 @@ function validateSubstitutions(value) {
 }
 validateSubstitutions(template);
 
+
+
+// DeregisterTaskDefinition cannot be restricted by task ARN; retain definitions for scoped cleanup.
+for(const name of ['ApiTaskDefinition','GenerationTaskDefinition','ExportTaskDefinition','DeletionTaskDefinition','MigrationTaskDefinition']) {
+ assert.equal(resources[name].UpdateReplacePolicy,'Retain','replacement must not require unscoped deregistration');
+ assert.equal(resources[name].DeletionPolicy,'Retain','stack cleanup must not require unscoped deregistration');
+}
+
 console.log('runtime contract passed');

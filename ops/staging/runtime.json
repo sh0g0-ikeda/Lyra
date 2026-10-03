@@ -712,7 +712,9 @@
             }
           }
         ]
-      }
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain"
     },
     "GenerationTaskDefinition": {
       "Type": "AWS::ECS::TaskDefinition",
@@ -820,7 +822,9 @@
             }
           }
         ]
-      }
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain"
     },
     "ExportTaskDefinition": {
       "Type": "AWS::ECS::TaskDefinition",
@@ -924,7 +928,9 @@
             }
           }
         ]
-      }
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain"
     },
     "DeletionTaskDefinition": {
       "Type": "AWS::ECS::TaskDefinition",
@@ -1028,7 +1034,9 @@
             }
           }
         ]
-      }
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain"
     },
     "MigrationTaskDefinition": {
       "Type": "AWS::ECS::TaskDefinition",
@@ -1132,7 +1140,9 @@
             }
           }
         ]
-      }
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain"
     },
     "ApiService": {
       "Type": "AWS::ECS::Service",
