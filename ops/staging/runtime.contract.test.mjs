@@ -59,8 +59,8 @@ for (const [name,param] of Object.entries({Api:"DesiredApiCount",Generation:"Des
 const protection=resources.WorkerTaskRole.Properties.Policies[0].PolicyDocument.Statement.find(s=>s.Sid==='OwnTaskScaleInProtection');
 assert.ok(protection, 'task protection is limited to owned staging worker tasks');
 assert.deepEqual(protection.Action,['ecs:GetTaskProtection','ecs:UpdateTaskProtection']);
-assert.deepEqual(protection.Resource,{'Fn::Sub':'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${ClusterName}/*'});
-assert.deepEqual(protection.Condition.ArnEquals['ecs:cluster'],{'Fn::Sub':'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${ClusterName}'});
+assert.deepEqual(protection.Resource,{'Fn::Sub':['arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${StageClusterName}/*',{StageClusterName:{'Fn::Select':[1,{'Fn::Split':['/',{Ref:'ClusterArn'}]}]}}]});
+assert.deepEqual(protection.Condition.ArnEquals['ecs:cluster'],{Ref:'ClusterArn'});
 assert.equal(resources.GenerationTaskDefinition.Properties.ContainerDefinitions[0].Environment.find(e=>e.Name==='ECS_TASK_SCALE_IN_PROTECTION_ENABLED')?.Value,'true');
 
 const stageImageRole = { 'Fn::Sub': 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-image-create' };
@@ -69,5 +69,25 @@ const apiStateAssumption = resources.ApiTaskRole.Properties.Policies[0].PolicyDo
 const workerStateAssumption = resources.WorkerTaskRole.Properties.Policies[0].PolicyDocument.Statement.find(s => s.Sid === 'AssumeExactStageStateV2RecoveryRole');
 assert.deepEqual(apiStateAssumption, { Sid: 'AssumeExactStageStateV2Roles', Effect: 'Allow', Action: 'sts:AssumeRole', Resource: [stageImageRole, stageRecoveryRole] });
 assert.deepEqual(workerStateAssumption, { Sid: 'AssumeExactStageStateV2RecoveryRole', Effect: 'Allow', Action: 'sts:AssumeRole', Resource: stageRecoveryRole });
+
+
+
+// Every CloudFormation substitution must resolve before a stage can be updated.
+const pseudoParameters = new Set(['AWS::AccountId','AWS::NotificationARNs','AWS::NoValue','AWS::Partition','AWS::Region','AWS::StackId','AWS::StackName','AWS::URLSuffix']);
+function validateSubstitutions(value) {
+ if (!value || typeof value !== 'object') return;
+ if (Object.hasOwn(value,'Fn::Sub')) {
+  const sub=value['Fn::Sub'];
+  const text=Array.isArray(sub)?sub[0]:sub;
+  const bindings=Array.isArray(sub)?sub[1]:{};
+  for (const match of text.matchAll(/\$\{([^}]+)\}/g)) {
+   const name=match[1];
+   if(name.startsWith('!')) continue;
+   assert.ok(Object.hasOwn(bindings,name)||pseudoParameters.has(name)||Object.hasOwn(template.Parameters,name)||Object.hasOwn(resources,name.split('.')[0]), 'unresolved CloudFormation substitution: '+name);
+  }
+ }
+ for(const child of Object.values(value)) validateSubstitutions(child);
+}
+validateSubstitutions(template);
 
 console.log('runtime contract passed');

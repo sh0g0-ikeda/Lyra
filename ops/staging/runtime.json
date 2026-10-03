@@ -444,12 +444,29 @@
                     "ecs:UpdateTaskProtection"
                   ],
                   "Resource": {
-                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${ClusterName}/*"
+                    "Fn::Sub": [
+                      "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${StageClusterName}/*",
+                      {
+                        "StageClusterName": {
+                          "Fn::Select": [
+                            1,
+                            {
+                              "Fn::Split": [
+                                "/",
+                                {
+                                  "Ref": "ClusterArn"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
                   },
                   "Condition": {
                     "ArnEquals": {
                       "ecs:cluster": {
-                        "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${ClusterName}"
+                        "Ref": "ClusterArn"
                       }
                     }
                   }
