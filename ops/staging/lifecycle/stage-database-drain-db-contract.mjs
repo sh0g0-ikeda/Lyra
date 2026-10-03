@@ -129,6 +129,7 @@ LANGUAGE sql
 VOLATILE
 SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
+SET row_security = off
 AS $function$${FUNCTION_BODY}$function$;
 REVOKE ALL ON FUNCTION ${FUNCTION_SIGNATURE} FROM PUBLIC;
 GRANT USAGE ON SCHEMA ${OPS_SCHEMA} TO ${READER_ROLE};
@@ -283,7 +284,7 @@ ${ROLE_MEMBERSHIP_VALIDATION}
       AND prokind = 'f'
       AND provolatile = 'v'
       AND prolang = (SELECT oid FROM pg_catalog.pg_language WHERE lanname = 'sql')
-      AND proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
+      AND proconfig = ARRAY['search_path=pg_catalog, pg_temp', 'row_security=off']::text[]
       AND prosrc = ${sqlLiteral(FUNCTION_BODY)}
   ) THEN
     RAISE EXCEPTION 'STAGE_DATABASE_DRAIN_FUNCTION_INVALID';
@@ -399,7 +400,7 @@ BEGIN
       AND prokind = 'f'
       AND provolatile = 'v'
       AND prolang = (SELECT oid FROM pg_catalog.pg_language WHERE lanname = 'sql')
-      AND proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
+      AND proconfig = ARRAY['search_path=pg_catalog, pg_temp', 'row_security=off']::text[]
       AND prosrc = ${sqlLiteral(FUNCTION_BODY)}
   ) THEN
     RAISE EXCEPTION 'STAGE_DATABASE_DRAIN_FUNCTION_OWNER_INVALID';

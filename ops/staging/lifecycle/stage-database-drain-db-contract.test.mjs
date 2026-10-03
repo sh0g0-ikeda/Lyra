@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
 import { Pool } from 'pg';
@@ -52,6 +53,7 @@ test('install SQL exposes only the exact counter function to the fixed stage rea
   assert.match(contract.installSql, /GRANT lyra_stage_drain_owner TO lyra_staging WITH SET TRUE, INHERIT FALSE/u);
   assert.match(contract.installSql, /SECURITY DEFINER/u);
   assert.match(contract.installSql, /SET search_path = pg_catalog, pg_temp/u);
+  assert.match(contract.installSql, /SET row_security = off/u);
   assert.match(contract.installSql, /REVOKE ALL ON FUNCTION lyra_stage_ops\.collect_database_drain_counts\(\) FROM PUBLIC/u);
   assert.match(contract.installSql, /GRANT EXECUTE ON FUNCTION lyra_stage_ops\.collect_database_drain_counts\(\) TO lyra_stage_drain_reader/u);
   assert.match(contract.installSql, /GRANT CONNECT ON DATABASE lyrastaging TO lyra_stage_drain_reader/u);
@@ -76,6 +78,17 @@ test('local PostgreSQL proves the reader can execute only the counter function a
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const rlsUserId = randomUUID();
+    await client.query(
+      `INSERT INTO public.users (id, supabase_id, email)
+       VALUES ($1, $2, $3)`,
+      [rlsUserId, `stage-drain-rls-${rlsUserId}`, `stage-drain-rls-${rlsUserId}@example.invalid`],
+    );
+    await client.query(
+      `INSERT INTO public.generation_jobs (id, user_id, job_type, status, generation_mode, credit_cost, params)
+       VALUES ($1, $2, 'entity_generate', 'queued', 'standard', 0, '{}'::jsonb)`,
+      [randomUUID(), rlsUserId],
+    );
     const baseline = await client.query(DATABASE_DRAIN_PROOF_QUERY);
     await client.query('CREATE ROLE lyra_staging CREATEROLE NOINHERIT NOSUPERUSER NOCREATEDB NOREPLICATION NOBYPASSRLS');
     await client.query('ALTER DATABASE lyra_test OWNER TO lyra_staging');
@@ -144,6 +157,23 @@ test('local PostgreSQL proves the reader can execute only the counter function a
     await assert.rejects(client.query('SELECT id FROM public.generation_jobs LIMIT 1'), /permission denied/u);
     await client.query('ROLLBACK TO SAVEPOINT denied_table_read');
     await client.query('RESET SESSION AUTHORIZATION');
+
+    await client.query('ALTER TABLE public.generation_jobs ENABLE ROW LEVEL SECURITY');
+    await client.query(`CREATE POLICY lyra_stage_drain_hide_queued
+      ON public.generation_jobs
+      FOR SELECT
+      TO lyra_stage_drain_owner
+      USING (status <> 'queued')`);
+    await client.query('SET LOCAL SESSION AUTHORIZATION lyra_stage_drain_reader');
+    await client.query('SAVEPOINT hidden_active_row');
+    await assert.rejects(
+      client.query(contract.functionQuery),
+      /query would be affected by row-level security policy/u,
+    );
+    await client.query('ROLLBACK TO SAVEPOINT hidden_active_row');
+    await client.query('RESET SESSION AUTHORIZATION');
+    await client.query('DROP POLICY lyra_stage_drain_hide_queued ON public.generation_jobs');
+    await client.query('ALTER TABLE public.generation_jobs DISABLE ROW LEVEL SECURITY');
 
     const assertAuditRejects = async (mutation, expected) => {
       await client.query('SAVEPOINT invalid_privilege');
