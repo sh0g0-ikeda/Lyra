@@ -11,7 +11,7 @@ it.each(['legacy','balanced_v1'] as const)('%sは指定stage model/reasoningを�
   {expected:profile.beat,run:()=>new OpenAIEpisodeBeatPlanCompiler(client,profile.beat.model,profile.beat.reasoningEffort).compileBeatPlan({compilerBrief:'fixture',language:'ja'})},
   {expected:profile.beat,run:()=>new OpenAIEpisodeBeatPlanCompiler(client,profile.beat.model,profile.beat.reasoningEffort).compileOutline({compilerBrief:'fixture',language:'ja'})},
   {expected:profile.detail,run:()=>new OpenAIPageEpisodePlanCompiler(client,profile.detail.model,profile.detail.reasoningEffort).compilePlan({compilerBrief:'fixture',language:'ja'})},
-  {expected:profile.audit,run:()=>new OpenAIEpisodePlanAuditCompiler(client,profile.audit.model,profile.audit.reasoningEffort).auditPlan({compilerBrief:'fixture',language:'ja',pageIds:['11111111-1111-4111-8111-111111111111']})}
+  {expected:profile.audit,run:()=>new OpenAIEpisodePlanAuditCompiler(client,profile.audit.model,profile.audit.reasoningEffort).auditPlan({compilerBrief:'fixture',language:'ja',pageIds:['11111111-1111-4111-8111-111111111111'],coverageCatalog:{pages:[{pageId:'11111111-1111-4111-8111-111111111111',sources:[{ref:'source',text:'原作事実が存在する'}],outputs:[{ref:'p1.s',text:'画面描写が存在する',panelOrder:1}]}]}})}
  ];
  for(const {expected,run} of inputs){requests.length=0;await expect(run()).rejects.toThrow();expect(requests.length).toBeGreaterThan(0);for(const request of requests){expect(request.model).toBe(expected.model);expect(request.reasoning).toEqual(expected.reasoningEffort===undefined?undefined:{effort:expected.reasoningEffort});expect(request.max_output_tokens).toBeGreaterThan(0);}}
 });

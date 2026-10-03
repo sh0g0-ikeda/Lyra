@@ -16,9 +16,17 @@ import {
   episodePlanAuditPanelRepairFields,
   episodePlanAuditSchema,
 } from '../../lib/validators/episodePlanAudit.schema.js';
+import {
+  EPISODE_PLAN_AUDIT_COVERAGE_MAX_CHECKS_PER_PAGE,
+  EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK,
+  EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
+  EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
+  validateEpisodePlanAuditCoverage,
+} from '../../services/page/EpisodePlanAuditCoverage.js';
 import type {
   CompiledEpisodePlanAudit,
   CompileEpisodePlanAuditInput,
+  EpisodePlanAudit,
   EpisodePlanAuditPageRepair,
   EpisodePlanAuditPageRepairField,
   EpisodePlanAuditPanelRepair,
@@ -45,6 +53,9 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
     if (allowedPageIds.length === 0) {
       throw new ConfigurationError('Episode plan audit requires at least one page ID');
     }
+    if (input.coverageCatalog === undefined) {
+      throw new ConfigurationError('OpenAI episode plan audit requires a coverage catalog');
+    }
 
     const requestInput = [
       {
@@ -59,7 +70,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
     let validated: AuditPayload | null = null;
     for (let attempt = 1; attempt <= EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS; attempt += 1) {
       try {
-        validated = await requestStructuredOpenAIResponse({
+        const candidate = await requestStructuredOpenAIResponse({
           client: this.client,
           model: this.model,
       reasoningEffort: this.reasoningEffort,
@@ -70,6 +81,21 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
           errorLabel: 'OpenAI episode plan audit compiler',
           input: requestInput,
         });
+        const candidateAudit = mapAuditPayload(candidate);
+        try {
+          validateEpisodePlanAuditCoverage(candidateAudit, input.coverageCatalog);
+        } catch (error) {
+          if (!(error instanceof ConfigurationError)) {
+            throw error;
+          }
+          throw new StructuredOpenAIResponseError(
+            'OpenAI episode plan audit compiler returned invalid source coverage',
+            'invalid_payload',
+            true,
+            null,
+          );
+        }
+        validated = candidate;
         break;
       } catch (error) {
         if (
@@ -95,18 +121,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
     }
 
     return {
-      audit: {
-        accepted: validated.accepted,
-        issues: validated.issues.map((issue) => ({
-          code: issue.code,
-          severity: issue.severity,
-          pageIds: issue.page_ids,
-          message: issue.message,
-          repairInstruction: issue.repair_instruction,
-        })),
-        pageRepairs: validated.page_repairs.map(mapPageRepair),
-        panelRepairs: validated.panel_repairs.map(mapPanelRepair),
-      },
+      audit: mapAuditPayload(validated),
       compilerProvider: 'openai',
       compilerModel: this.model,
       compilerPromptVersion: EPISODE_PLAN_AUDIT_COMPILER_VERSION,
@@ -145,6 +160,39 @@ function buildSystemPrompt(language: CompileEpisodePlanAuditInput['language']): 
 }
 
 type AuditPayload = ReturnType<typeof episodePlanAuditSchema.parse>;
+
+function mapAuditPayload(payload: AuditPayload): EpisodePlanAudit {
+  return {
+    accepted: payload.accepted,
+    issues: payload.issues.map((issue) => ({
+      code: issue.code,
+      severity: issue.severity,
+      pageIds: issue.page_ids,
+      message: issue.message,
+      repairInstruction: issue.repair_instruction,
+    })),
+    pageRepairs: payload.page_repairs.map(mapPageRepair),
+    panelRepairs: payload.panel_repairs.map(mapPanelRepair),
+    sourceCoverage: payload.source_coverage.map((page) => ({
+      pageId: page.page_id,
+      checks: page.checks.map((check) => ({
+        sourceRef: check.source_ref,
+        sourceQuote: check.source_quote,
+        status: check.status,
+        outputEvidence: check.output_evidence.map((evidence) => ({
+          outputRef: evidence.output_ref,
+          quote: evidence.quote,
+        })),
+        issueCode: check.issue_code,
+        repairTarget: check.repair_target === null ? null : {
+          scope: check.repair_target.scope,
+          pageId: check.repair_target.page_id,
+          panelOrder: check.repair_target.panel_order,
+        },
+      })),
+    })),
+  };
+}
 
 function mapPageRepair(
   repair: AuditPayload['page_repairs'][number],
@@ -436,7 +484,7 @@ function buildEpisodePlanAuditJsonSchema(
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['accepted', 'issues', 'page_repairs', 'panel_repairs'],
+    required: ['accepted', 'issues', 'page_repairs', 'panel_repairs', 'source_coverage'],
     properties: {
       accepted: { type: 'boolean' },
       issues: {
@@ -513,6 +561,86 @@ function buildEpisodePlanAuditJsonSchema(
               items: { type: 'string', enum: episodePlanAuditPanelRepairFields },
             },
             patch: panelRepairPatchJsonSchema,
+          },
+        },
+      },
+      source_coverage: {
+        type: 'array',
+        minItems: 1,
+        maxItems: STORY_AI_LIMITS.maxSkeletonPages,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['page_id', 'checks'],
+          properties: {
+            page_id: pageIdJsonSchema,
+            checks: {
+              type: 'array',
+              minItems: 1,
+              maxItems: EPISODE_PLAN_AUDIT_COVERAGE_MAX_CHECKS_PER_PAGE,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                  'source_ref',
+                  'source_quote',
+                  'status',
+                  'output_evidence',
+                  'issue_code',
+                  'repair_target',
+                ],
+                properties: {
+                  source_ref: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
+                  },
+                  source_quote: {
+                    type: 'string',
+                    minLength: 4,
+                    maxLength: EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
+                  },
+                  status: { type: 'string', enum: ['present', 'missing'] },
+                  output_evidence: {
+                    type: 'array',
+                    maxItems: EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK,
+                    items: {
+                      type: 'object',
+                      additionalProperties: false,
+                      required: ['output_ref', 'quote'],
+                      properties: {
+                        output_ref: {
+                          type: 'string',
+                          minLength: 1,
+                          maxLength: EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
+                        },
+                        quote: {
+                          type: 'string',
+                          minLength: 4,
+                          maxLength: EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
+                        },
+                      },
+                    },
+                  },
+                  issue_code: nullableEnum(['source_omission', 'ongoing_action_dropped']),
+                  repair_target: {
+                    anyOf: [
+                      {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: ['scope', 'page_id', 'panel_order'],
+                        properties: {
+                          scope: { type: 'string', enum: ['panel'] },
+                          page_id: pageIdJsonSchema,
+                          panel_order: { type: 'integer', minimum: 1, maximum: 1000 },
+                        },
+                      },
+                      { type: 'null' },
+                    ],
+                  },
+                },
+              },
+            },
           },
         },
       },

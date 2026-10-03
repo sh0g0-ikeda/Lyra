@@ -1481,6 +1481,8 @@ describe('PageService', () => {
     const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
     const beatPlanCompiler = new FakeEpisodeBeatPlanCompiler();
     const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const legacyAudit: CompiledEpisodePlanAudit['audit'] = { accepted: true, issues: [] };
+    auditCompiler.audits = [legacyAudit];
     const progressEvents: EpisodePagePlanProgress[] = [];
     const service = new PageService(
       pageRepository,
@@ -1520,6 +1522,8 @@ describe('PageService', () => {
       'page-6',
       'page-7',
     ]);
+    expect(auditCompiler.inputs[0]?.coverageCatalog?.pages).toHaveLength(7);
+    expect(legacyAudit.sourceCoverage).toBeUndefined();
     expect(progressEvents.find((progress) => progress.stage === 'auditing_episode')).toMatchObject({
       currentChunk: null,
       totalChunks: null,

@@ -3,6 +3,7 @@ import type {
   PageAutofillPanelSuggestion,
   PageDialogueMode,
 } from '../../domain/types/page.js';
+import type { EpisodePlanAuditCoverageCatalog } from './EpisodePlanAuditCoverage.js';
 
 export type EpisodePlanAuditIssueCode =
   | 'duplicate_dialogue'
@@ -69,17 +70,45 @@ export interface EpisodePlanAuditPanelRepair {
   patch: EpisodePlanAuditPanelRepairPatch;
 }
 
+export interface EpisodePlanAuditCoverageEvidence {
+  outputRef: string;
+  quote: string;
+}
+
+export interface EpisodePlanAuditCoverageRepairTarget {
+  scope: 'panel';
+  pageId: string;
+  panelOrder: number;
+}
+
+export interface EpisodePlanAuditCoverageCheck {
+  sourceRef: string;
+  sourceQuote: string;
+  status: 'present' | 'missing';
+  outputEvidence: EpisodePlanAuditCoverageEvidence[];
+  issueCode: 'source_omission' | 'ongoing_action_dropped' | null;
+  repairTarget: EpisodePlanAuditCoverageRepairTarget | null;
+}
+
+export interface EpisodePlanAuditSourceCoverage {
+  pageId: string;
+  checks: EpisodePlanAuditCoverageCheck[];
+}
+
 export interface EpisodePlanAudit {
   accepted: boolean;
   issues: EpisodePlanAuditIssue[];
   pageRepairs?: EpisodePlanAuditPageRepair[];
   panelRepairs?: EpisodePlanAuditPanelRepair[];
+  /** Optional for legacy and fake compilers; the OpenAI compiler always returns it. */
+  sourceCoverage?: EpisodePlanAuditSourceCoverage[];
 }
 
 export interface CompileEpisodePlanAuditInput {
   compilerBrief: string;
   language: AppLanguage;
   pageIds: string[];
+  coverageCatalog?: EpisodePlanAuditCoverageCatalog;
   beforeRetry?: () => Promise<void>;
 }
 

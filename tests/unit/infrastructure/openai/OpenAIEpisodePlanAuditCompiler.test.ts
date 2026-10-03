@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEpisodePlanAuditCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
 
+const PAGE_ID = '11111111-1111-4111-8111-111111111111';
+const SECOND_PAGE_ID = '22222222-2222-4222-8222-222222222222';
+
 describe('OpenAIEpisodePlanAuditCompiler', () => {
   it('ページ横断の重複と会話配置を strict JSON で監査する', async () => {
     const requests: Array<Record<string, unknown>> = [];
@@ -47,6 +50,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
                   },
                 },
               ],
+              source_coverage: buildSourceCoveragePayload([PAGE_ID, SECOND_PAGE_ID]),
             }),
           },
           requestId: 'req-audit',
@@ -58,10 +62,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const result = await compiler.auditPlan({
       compilerBrief: '[EPISODE DRAFT]\nPage 1\nPage 2',
       language: 'ja',
-      pageIds: [
-        '11111111-1111-4111-8111-111111111111',
-        '22222222-2222-4222-8222-222222222222',
-      ],
+      pageIds: [PAGE_ID, SECOND_PAGE_ID],
+      coverageCatalog: buildCoverageCatalog([PAGE_ID, SECOND_PAGE_ID]),
     });
 
     expect(result.audit).toEqual({
@@ -89,7 +91,9 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
           },
         },
       ],
+      sourceCoverage: buildExpectedSourceCoverage([PAGE_ID, SECOND_PAGE_ID]),
     });
+    expect(requests).toHaveLength(1);
     const request = requests[0];
     const input = request?.input as Array<{ content: Array<{ text: string }> }>;
     const text = request?.text as {
@@ -118,6 +122,25 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(text.format).toMatchObject({ type: 'json_schema', strict: true });
 
     const rootProperties = readObject(text.format.schema.properties);
+    expect(readArray(text.format.schema.required)).toContain('source_coverage');
+    const sourceCoverage = readObject(rootProperties.source_coverage);
+    const sourceCoverageItems = readObject(sourceCoverage.items);
+    const sourceCoverageProperties = readObject(sourceCoverageItems.properties);
+    const coverageChecks = readObject(sourceCoverageProperties.checks);
+    expect(coverageChecks.maxItems).toBe(2);
+    const coverageCheckItems = readObject(coverageChecks.items);
+    expect(readArray(coverageCheckItems.required)).toEqual(expect.arrayContaining([
+      'source_ref',
+      'source_quote',
+      'status',
+      'output_evidence',
+      'issue_code',
+      'repair_target',
+    ]));
+    const coverageCheckProperties = readObject(coverageCheckItems.properties);
+    expect(readObject(coverageCheckProperties.source_quote).maxLength).toBe(40);
+    expect(readArray(readObject(coverageCheckProperties.issue_code).anyOf)).toHaveLength(2);
+    expect(readArray(readObject(coverageCheckProperties.repair_target).anyOf)).toHaveLength(2);
     const issues = readObject(rootProperties.issues);
     const issueItems = readObject(issues.items);
     const issueProperties = readObject(issueItems.properties);
@@ -171,12 +194,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       },
       {
         status: 'completed',
-        output_text: JSON.stringify({
-          accepted: true,
-          issues: [],
-          page_repairs: [],
-          panel_repairs: [],
-        }),
+        output_text: JSON.stringify(buildAcceptedAuditPayload([PAGE_ID])),
       },
     ];
     const client = {
@@ -193,7 +211,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const result = await compiler.auditPlan({
       compilerBrief: '[EPISODE DRAFT]\nPage 1',
       language: 'ja',
-      pageIds: ['11111111-1111-4111-8111-111111111111'],
+      pageIds: [PAGE_ID],
+      coverageCatalog: buildCoverageCatalog([PAGE_ID]),
       beforeRetry: async () => {
         beforeRetryCount += 1;
       },
@@ -230,7 +249,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       compiler.auditPlan({
         compilerBrief: '[EPISODE DRAFT]\nPage 1',
         language: 'ja',
-        pageIds: ['11111111-1111-4111-8111-111111111111'],
+        pageIds: [PAGE_ID],
+        coverageCatalog: buildCoverageCatalog([PAGE_ID]),
         beforeRetry: async () => {
           throw cancellationError;
         },
@@ -253,12 +273,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       },
       {
         status: 'completed',
-        output_text: JSON.stringify({
-          accepted: true,
-          issues: [],
-          page_repairs: [],
-          panel_repairs: [],
-        }),
+        output_text: JSON.stringify(buildAcceptedAuditPayload([PAGE_ID, SECOND_PAGE_ID])),
       },
     ];
     const client = {
@@ -272,10 +287,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const result = await compiler.auditPlan({
       compilerBrief: '[EPISODE DRAFT]\nPage 1\nPage 2',
       language: 'ja',
-      pageIds: [
-        '11111111-1111-4111-8111-111111111111',
-        '22222222-2222-4222-8222-222222222222',
-      ],
+      pageIds: [PAGE_ID, SECOND_PAGE_ID],
+      coverageCatalog: buildCoverageCatalog([PAGE_ID, SECOND_PAGE_ID]),
     });
 
     expect(result.audit.accepted).toBe(true);
@@ -306,7 +319,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       compiler.auditPlan({
         compilerBrief: '[EPISODE DRAFT]\nPage 1',
         language: 'ja',
-        pageIds: ['11111111-1111-4111-8111-111111111111'],
+        pageIds: [PAGE_ID],
+        coverageCatalog: buildCoverageCatalog([PAGE_ID]),
       }),
     ).rejects.toThrow('refused structured output');
     expect(requestCount).toBe(1);
@@ -329,7 +343,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       compiler.auditPlan({
         compilerBrief: '[EPISODE DRAFT]\nPage 1',
         language: 'ja',
-        pageIds: ['11111111-1111-4111-8111-111111111111'],
+        pageIds: [PAGE_ID],
+        coverageCatalog: buildCoverageCatalog([PAGE_ID]),
       }),
     ).rejects.toThrow('returned invalid JSON');
     expect(requestCount).toBe(2);
@@ -342,12 +357,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       buildDialogueOmissionAuditResponse(),
       {
         status: 'completed',
-        output_text: JSON.stringify({
-          accepted: true,
-          issues: [],
-          page_repairs: [],
-          panel_repairs: [],
-        }),
+        output_text: JSON.stringify(buildAcceptedAuditPayload([PAGE_ID])),
       },
     ];
     const client = {
@@ -361,7 +371,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const result = await compiler.auditPlan({
       compilerBrief: '[EPISODE DRAFT]\nPage 1',
       language: 'ja',
-      pageIds: ['11111111-1111-4111-8111-111111111111'],
+      pageIds: [PAGE_ID],
+      coverageCatalog: buildCoverageCatalog([PAGE_ID]),
       beforeRetry: async () => {
         beforeRetryCount += 1;
       },
@@ -387,7 +398,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       compiler.auditPlan({
         compilerBrief: '[EPISODE DRAFT]\nPage 1',
         language: 'ja',
-        pageIds: ['11111111-1111-4111-8111-111111111111'],
+        pageIds: [PAGE_ID],
+        coverageCatalog: buildCoverageCatalog([PAGE_ID]),
         beforeRetry: async () => {
           throw cancellationError;
         },
@@ -414,13 +426,126 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       compiler.auditPlan({
         compilerBrief: '[EPISODE DRAFT]\nPage 1',
         language: 'ja',
-        pageIds: ['11111111-1111-4111-8111-111111111111'],
+        pageIds: [PAGE_ID],
+        coverageCatalog: buildCoverageCatalog([PAGE_ID]),
       }),
     ).rejects.toThrow('returned an invalid payload');
 
     expect(requestCount).toBe(2);
   });
+
+  it('source coverageの偽引用を同じ監査枠内で一度だけ再試行する', async () => {
+    const responses = [
+      buildAcceptedAuditPayload([PAGE_ID]),
+      buildAcceptedAuditPayload([PAGE_ID]),
+    ];
+    const firstCoverage = responses[0]?.source_coverage as Array<Record<string, unknown>>;
+    const firstChecks = firstCoverage[0]?.checks as Array<Record<string, unknown>>;
+    firstChecks[0]!.source_quote = '原作に存在しない引用';
+    let requestCount = 0;
+    let retryCount = 0;
+    const client = {
+      postJson: async () => ({
+        body: {
+          status: 'completed',
+          output_text: JSON.stringify(responses[requestCount++]),
+        },
+        requestId: `req-coverage-${requestCount}`,
+      }),
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: 'fixture',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog: buildCoverageCatalog([PAGE_ID]),
+      beforeRetry: async () => { retryCount += 1; },
+    });
+
+    expect(result.audit.accepted).toBe(true);
+    expect(requestCount).toBe(2);
+    expect(retryCount).toBe(1);
+  });
+
+  it('source coverageの偽引用が続く場合も二回で停止する', async () => {
+    const invalidPayload = buildAcceptedAuditPayload([PAGE_ID]);
+    const coverage = invalidPayload.source_coverage as Array<Record<string, unknown>>;
+    const checks = coverage[0]?.checks as Array<Record<string, unknown>>;
+    checks[0]!.source_quote = '原作に存在しない引用';
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: { status: 'completed', output_text: JSON.stringify(invalidPayload) },
+          requestId: `req-invalid-coverage-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: 'fixture',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog: buildCoverageCatalog([PAGE_ID]),
+    })).rejects.toThrow('invalid source coverage');
+    expect(requestCount).toBe(2);
+  });
 });
+
+function buildCoverageCatalog(pageIds: string[]): {
+  pages: Array<{
+    pageId: string;
+    sources: Array<{ ref: string; text: string }>;
+    outputs: Array<{ ref: string; text: string; panelOrder: number }>;
+  }>;
+} {
+  return {
+    pages: pageIds.map((pageId, index) => ({
+      pageId,
+      sources: [{ ref: 'source', text: `原作事実${index + 1}が存在する` }],
+      outputs: [{ ref: 'p1.s', text: `画面描写${index + 1}が存在する`, panelOrder: 1 }],
+    })),
+  };
+}
+
+function buildSourceCoveragePayload(pageIds: string[]): Array<Record<string, unknown>> {
+  return pageIds.map((pageId, index) => ({
+    page_id: pageId,
+    checks: [{
+      source_ref: 'source',
+      source_quote: `原作事実${index + 1}`,
+      status: 'present',
+      output_evidence: [{ output_ref: 'p1.s', quote: `画面描写${index + 1}` }],
+      issue_code: null,
+      repair_target: null,
+    }],
+  }));
+}
+
+function buildExpectedSourceCoverage(pageIds: string[]): Array<Record<string, unknown>> {
+  return pageIds.map((pageId, index) => ({
+    pageId,
+    checks: [{
+      sourceRef: 'source',
+      sourceQuote: `原作事実${index + 1}`,
+      status: 'present',
+      outputEvidence: [{ outputRef: 'p1.s', quote: `画面描写${index + 1}` }],
+      issueCode: null,
+      repairTarget: null,
+    }],
+  }));
+}
+
+function buildAcceptedAuditPayload(pageIds: string[]): Record<string, unknown> {
+  return {
+    accepted: true,
+    issues: [],
+    page_repairs: [],
+    panel_repairs: [],
+    source_coverage: buildSourceCoveragePayload(pageIds),
+  };
+}
 
 function buildDialogueOmissionAuditResponse(): Record<string, unknown> {
   return {

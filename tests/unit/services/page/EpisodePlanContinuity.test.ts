@@ -7,6 +7,7 @@ import {
   buildEpisodeBeatPlanCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
   buildEpisodePlanAuditBrief,
+  buildEpisodePlanAuditCoverageCatalog,
   detectDeterministicContinuityIssues,
   validateEpisodeBeatPlanCoverage,
 } from '../../../../src/services/page/EpisodePlanContinuity.js';
@@ -26,6 +27,27 @@ describe('EpisodePlanContinuity', () => {
     const brief=buildEpisodePlanAuditBrief({context,plan,suggestion,language:'ja'});
     expect(brief).toContain('[TEXT DISTRIBUTION]');expect(brief).toContain('lines=5');
     expect(brief).toContain('thought:voice-id@right "exact-4"');
+  });
+
+  it('coverage catalogは原作sourceと実panel出力だけを短いrefで列挙する', () => {
+    const context = buildContext();
+    const plan = buildBeatPlan();
+    const suggestion = buildVerboseSuggestion();
+    context.pages = context.pages.slice(0, 1);
+    plan.pages = plan.pages.slice(0, 1);
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = suggestion.pages[0]!.panels.slice(0, 1);
+    suggestion.pages[0]!.panels[0]!.dialogue = suggestion.pages[0]!.panels[0]!.dialogue?.slice(0, 1);
+    const catalog = buildEpisodePlanAuditCoverageCatalog({ context, plan, suggestion });
+
+    expect(catalog.pages).toHaveLength(1);
+    expect(catalog.pages[0]?.sources.map((source) => source.ref)).toEqual(['source', 'ledger']);
+    expect(catalog.pages[0]?.outputs.length).toBeGreaterThan(0);
+    expect(catalog.pages[0]?.outputs.every((output) => output.panelOrder !== null)).toBe(true);
+    expect(catalog.pages[0]?.outputs.some((output) => output.ref.startsWith('page.'))).toBe(false);
+    expect(buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' })).toContain(
+      'dN=the Nth COMPLETE DIALOGUE line',
+    );
   });
 
   it('監査 brief は全15ページで所有台帳と実パネルを同じページ entry に並べる', () => {

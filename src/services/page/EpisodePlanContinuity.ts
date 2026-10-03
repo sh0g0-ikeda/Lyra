@@ -24,6 +24,10 @@ import type {
   EpisodeBeatPlanPage,
 } from './EpisodeBeatPlanCompiler.js';
 import type { EpisodePlanAuditIssue } from './EpisodePlanAuditCompiler.js';
+import type {
+  EpisodePlanAuditCoverageCatalog,
+  EpisodePlanAuditCoverageCatalogOutput,
+} from './EpisodePlanAuditCoverage.js';
 
 const STORY_BEAT_DUPLICATE_MIN_NORMALIZED_CHARS = 8;
 const DIALOGUE_DUPLICATE_MIN_NORMALIZED_CHARS = 6;
@@ -462,6 +466,10 @@ export function buildEpisodePlanAuditBrief(input: {
     '',
     '[AUDIT CONTRACT]',
     'Check the entire draft against the source and ledger, not each page in isolation.',
+    'Return source_coverage for every page with one or two highest-risk source facts. Prioritize prerequisites, repeated actions such as again/retry, cause-action-result chains, and final closure actions.',
+    'Use source_ref=source for SOURCE DATA or ledger for the GLOBAL EPISODE LEDGER row. Keep each exact source_quote between 4 and 40 characters.',
+    'Use output_ref=p{panel_order}.s/.b/.c/.x/.n/.e/.d{dialogue_index}: s=situation, b=background, c=composition, x=custom composition, n=notes, e=entities, and dN=the Nth COMPLETE DIALOGUE line. Page purpose, continuity, entry/exit, handoff, and ledger text are never output evidence.',
+    'For status=present, cite one or two exact output quotes of 4 to 40 characters. For status=missing, cite no output, return source_omission or ongoing_action_dropped, and link an actual same-page panel repair that restores visible content.',
     `Every panel must have at most ${EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL} dialogue entries. Correct avoidable late-page/final-panel congestion without deleting essential story information or destroying intentional silence.`,
     'Every deterministic finding above is binding: return an error issue and a field-level repair for its target page.',
     'Target page_ids that must be recompiled. For repetition, target the later occurrence unless both pages must change.',
@@ -513,6 +521,70 @@ export function buildEpisodePlanAuditBrief(input: {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
   }
   return brief;
+}
+
+export function buildEpisodePlanAuditCoverageCatalog(input: {
+  context: EpisodePagePlanContext;
+  plan: EpisodeBeatPlan;
+  suggestion: EpisodePagePlanSuggestion;
+}): EpisodePlanAuditCoverageCatalog {
+  const sourceText = buildEpisodeBeatPlanSourceSections(input.context).join('\n');
+  const entityLabels = buildEntityLabelLookup(input.context);
+  const planByPageId = new Map(input.plan.pages.map((page) => [page.pageId, page] as const));
+  return {
+    pages: [...input.suggestion.pages].sort(compareSuggestionPages).map((page) => {
+      const ownedPlan = planByPageId.get(page.pageId);
+      if (ownedPlan === undefined) {
+        throw new ConfigurationError('Episode audit coverage is missing page ownership');
+      }
+      const outputs: EpisodePlanAuditCoverageCatalogOutput[] = [];
+      for (const panel of [...page.panels].sort((left, right) => left.order - right.order)) {
+        addCoverageOutput(outputs, `p${panel.order}.s`, panel.situationText, panel.order);
+        addCoverageOutput(outputs, `p${panel.order}.b`, panel.backgroundNote, panel.order);
+        addCoverageOutput(
+          outputs,
+          `p${panel.order}.c`,
+          panel.composition?.compositionPrompt,
+          panel.order,
+        );
+        addCoverageOutput(
+          outputs,
+          `p${panel.order}.x`,
+          panel.composition?.customNote,
+          panel.order,
+        );
+        addCoverageOutput(outputs, `p${panel.order}.n`, panel.panelNotes, panel.order);
+        const entities = formatEntityAssignments(panel.entities ?? [], entityLabels);
+        if (entities !== 'none') {
+          addCoverageOutput(outputs, `p${panel.order}.e`, entities, panel.order);
+        }
+        for (const [dialogueIndex, line] of (panel.dialogue ?? []).entries()) {
+          addCoverageOutput(outputs, `p${panel.order}.d${dialogueIndex + 1}`, line.text, panel.order);
+        }
+      }
+      return {
+        pageId: page.pageId,
+        sources: [
+          { ref: 'source', text: sourceText },
+          { ref: 'ledger', text: formatBeatPlanPage(ownedPlan, LEDGER_FIELD_MAX_CHARS) },
+        ],
+        outputs,
+      };
+    }),
+  };
+}
+
+function addCoverageOutput(
+  outputs: EpisodePlanAuditCoverageCatalogOutput[],
+  ref: string,
+  text: string | null | undefined,
+  panelOrder: number | null,
+): void {
+  const normalized = text?.trim();
+  if (normalized === undefined || normalized.length === 0) {
+    return;
+  }
+  outputs.push({ ref, text: normalized, panelOrder });
 }
 
 export function detectDeterministicContinuityIssues(

@@ -76,6 +76,7 @@ import {
   buildEpisodeDetailContinuitySupplement,
   buildFullStoryDraftSourceSection,
   buildEpisodePlanAuditBrief,
+  buildEpisodePlanAuditCoverageCatalog,
   detectDeterministicContinuityIssues,
   fingerprintEpisodePlanningContext,
   mergeEpisodePlanAuditIssues,
@@ -1348,6 +1349,11 @@ export class PageService implements PageServicePort {
       ),
       language,
       pageIds: context.pages.map((page) => page.pageId),
+      coverageCatalog: buildEpisodePlanAuditCoverageCatalog({
+        context,
+        plan,
+        suggestion,
+      }),
       beforeRetry: async () => {
         await reportEpisodePlanProgress(progressReporter, {
           stage: 'auditing_episode',
