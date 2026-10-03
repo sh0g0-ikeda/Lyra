@@ -40,6 +40,7 @@ const stateKey = 'lifecycle/guard-state.json';
 const successKey = 'lifecycle/guard-success.json';
 const errorKey = 'lifecycle/guard-last-error.json';
 const databaseDrainProofKey = 'lifecycle/database-drain-proof.json';
+const databaseDrainCleanupReceiptKey = 'lifecycle/database-drain-cleanup.json';
 const dlqUrl = `https://sqs.${region}.amazonaws.com/${account}/${prefix}-lifecycle-dlq`;
 const exactTargetArn = 'arn:aws:application-autoscaling:ap-northeast-1:452284481392:scalable-target/0ec516a28b068004442db2e9a491f8726c9b';
 const services = ['api', 'generation', 'export', 'deletion'];
@@ -229,7 +230,16 @@ async function collectInventory() {
     describeStack(`${prefix}-foundation`),
     describeStack(`${prefix}-database-drain-proof`),
   ]);
-  const [serviceState, queueState, scalableTarget, databaseState, runningTasks, pendingTasks, databaseDrainProof] = await Promise.all([
+  const [
+    serviceState,
+    queueState,
+    scalableTarget,
+    databaseState,
+    runningTasks,
+    pendingTasks,
+    databaseDrainProof,
+    databaseDrainCleanupReceipt,
+  ] = await Promise.all([
     serviceInventory(runtimeStack.exists),
     queueInventory(foundationStack.exists),
     targetInventory(runtimeStack.exists),
@@ -241,6 +251,7 @@ async function collectInventory() {
       ? ecs.send(new ListTasksCommand({ cluster, desiredStatus: 'PENDING' }))
       : { taskArns: [] },
     readJson(databaseDrainProofKey),
+    readJson(databaseDrainCleanupReceiptKey),
   ]);
   if (runningTasks.nextToken || pendingTasks.nextToken) throw new Error('TASK_INVENTORY_PAGINATED');
   if (!Array.isArray(runningTasks.taskArns) || !Array.isArray(pendingTasks.taskArns)) {
@@ -268,6 +279,7 @@ async function collectInventory() {
       foundationStack,
       proofExecutorStack,
       databaseDrainProof,
+      databaseDrainCleanupReceipt,
       ...taskCounts,
     },
   };
@@ -303,6 +315,7 @@ function parseState(value) {
     'apiStoppedAt',
     'workersStoppedAt',
     'databaseDrainProofObservedAt',
+    'databaseContractCleanupObservedAt',
   ]) {
     if (merged[name] !== null && (
       typeof merged[name] !== 'string' ||

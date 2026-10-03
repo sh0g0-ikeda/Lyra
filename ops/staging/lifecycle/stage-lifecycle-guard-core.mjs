@@ -11,6 +11,13 @@ const ZERO_OBSERVATION_INTERVAL_MS = 60 * 1000;
 const DATABASE_DRAIN_PROOF_TTL_MS = 5 * 60 * 1000;
 const DATABASE_DRAIN_PROOF_FUTURE_SKEW_MS = 30 * 1000;
 const MAX_DATABASE_DRAIN_COUNTER = 1_000_000;
+export const DATABASE_DRAIN_CLEANUP_SQL_SHA256 = 'bd03c6ae31dafb6a9cf209f85804235a5bfb4d90c3f84be4cd4c8b3d7943a3eb';
+const DATABASE_DRAIN_CLEANUP_ABSENT_KEYS = Object.freeze([
+  'readerRole',
+  'ownerRole',
+  'schema',
+  'function',
+]);
 const DATABASE_DRAIN_COUNT_NAMES = Object.freeze([
   'activeGenerationJobs',
   'pendingGenerationDispatches',
@@ -33,6 +40,7 @@ export const INITIAL_STATE = Object.freeze({
   workersStoppedAt: null,
   databaseStopRequested: false,
   databaseDrainProofObservedAt: null,
+  databaseContractCleanupObservedAt: null,
   runtimeDeleteRequested: false,
   foundationDeleteRequested: false,
 });
@@ -73,6 +81,7 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
     });
     if (
       !currentState.databaseStopRequested ||
+      currentState.databaseContractCleanupObservedAt === null ||
       !currentState.runtimeDeleteRequested ||
       !currentState.foundationDeleteRequested
     ) {
@@ -82,6 +91,14 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
       });
     }
     if (!sealedProof.ready) return waitForDatabaseDrain(currentState, sealedProof);
+    const sealedCleanup = assessDatabaseDrainCleanup({
+      receipt: inventory.databaseDrainCleanupReceipt,
+      nowEpoch,
+      expectedProofObservedAt: sealedProof.observedAtUtc,
+      expectedCleanupObservedAt: currentState.databaseContractCleanupObservedAt,
+      requireFresh: false,
+    });
+    if (!sealedCleanup.ready) return waitForDatabaseCleanup(currentState, sealedCleanup);
     return result('success', currentState);
   }
   if (!inventory.foundationStack.owned) return result('error-foundation-ownership', currentState);
@@ -98,9 +115,21 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
       expectedObservedAt: currentState.databaseDrainProofObservedAt,
       requireFresh: false,
     });
-    if (!currentState.databaseStopRequested || !sealedProof.ready) {
+    if (
+      !currentState.databaseStopRequested
+      || currentState.databaseContractCleanupObservedAt === null
+      || !sealedProof.ready
+    ) {
       return waitForDatabaseDrain(currentState, sealedProof);
     }
+    const sealedCleanup = assessDatabaseDrainCleanup({
+      receipt: inventory.databaseDrainCleanupReceipt,
+      nowEpoch,
+      expectedProofObservedAt: sealedProof.observedAtUtc,
+      expectedCleanupObservedAt: currentState.databaseContractCleanupObservedAt,
+      requireFresh: false,
+    });
+    if (!sealedCleanup.ready) return waitForDatabaseCleanup(currentState, sealedCleanup);
     if (inventory.extraOwnedDatabaseIds.length > 0) {
       return result('error-m2-dependency', currentState, { databaseIds: inventory.extraOwnedDatabaseIds });
     }
@@ -135,7 +164,9 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
       zeroStreak: 0,
       lastZeroObservedAt: null,
       workersStoppedAt: null,
+      databaseStopRequested: false,
       databaseDrainProofObservedAt: null,
+      databaseContractCleanupObservedAt: null,
     });
   }
   if (inventory.api.running > 0 || inventory.api.pending > 0) {
@@ -147,7 +178,9 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
       zeroStreak: 0,
       lastZeroObservedAt: null,
       workersStoppedAt: null,
+      databaseStopRequested: false,
       databaseDrainProofObservedAt: null,
+      databaseContractCleanupObservedAt: null,
     });
   }
 
@@ -159,22 +192,31 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
   };
   const totalMessages = queueTotal(inventory.queues);
   if (totalMessages > 0) {
+    const queueInvalidatedState = {
+      ...drainState,
+      zeroStreak: 0,
+      lastZeroObservedAt: null,
+      databaseStopRequested: false,
+      databaseDrainProofObservedAt: null,
+      databaseContractCleanupObservedAt: null,
+    };
     if (drainState.scalingDeregistered) {
-      return result('error-queue-after-deregister', { ...drainState, zeroStreak: 0, lastZeroObservedAt: null }, { totalMessages });
+      return result('error-queue-after-deregister', queueInvalidatedState, { totalMessages });
     }
     if (Date.parse(now) - Date.parse(drainState.apiStopRequestedAt) > DRAIN_TIMEOUT_MS) {
-      return result('error-drain-timeout', { ...drainState, zeroStreak: 0, lastZeroObservedAt: null }, { totalMessages });
+      return result('error-drain-timeout', queueInvalidatedState, { totalMessages });
     }
-    return result('wait-drain', { ...drainState, zeroStreak: 0, lastZeroObservedAt: null }, { totalMessages });
+    return result('wait-drain', queueInvalidatedState, { totalMessages });
   }
 
-  const databaseAlreadySealed = currentState.databaseStopRequested && (
-    !inventory.database.exists ||
-    inventory.database.status === 'stopping' ||
-    inventory.database.status === 'stopped'
-  );
+  const databaseProofSealed = currentState.scalingDeregistered
+    && currentState.workersStoppedAt !== null
+    && currentState.databaseDrainProofObservedAt !== null;
+  const databaseCleanupSealed = databaseProofSealed
+    && currentState.databaseContractCleanupObservedAt !== null;
+
   if (!drainState.scalingDeregistered) {
-    const preWorkerProof = assessPreWorkerProof(inventory, currentState, drainState, nowEpoch, databaseAlreadySealed);
+    const preWorkerProof = assessPreWorkerProof(inventory, currentState, drainState, nowEpoch, databaseProofSealed);
     if (!preWorkerProof.ready) return waitForDatabaseDrain(drainState, preWorkerProof);
     if (!inventory.scalableTarget.exists) return result('error-target-missing', drainState);
     if (!inventory.scalableTarget.owned || !inventory.scalableTarget.exact) {
@@ -187,13 +229,15 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
 
   if (inventory.scalableTarget.exists) return result('error-target-still-present', currentState);
   if (inventory.generation.desired > 0) {
-    const preWorkerProof = assessPreWorkerProof(inventory, currentState, drainState, nowEpoch, databaseAlreadySealed);
+    const preWorkerProof = assessPreWorkerProof(inventory, currentState, drainState, nowEpoch, databaseProofSealed);
     if (!preWorkerProof.ready) return waitForDatabaseDrain(drainState, preWorkerProof);
     return result('stop-generation', {
       ...drainState,
       generationStopRequested: true,
       workersStoppedAt: null,
+      databaseStopRequested: false,
       databaseDrainProofObservedAt: null,
+      databaseContractCleanupObservedAt: null,
     });
   }
 
@@ -205,7 +249,9 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
     return result('wait-services', {
       ...drainState,
       workersStoppedAt: null,
+      databaseStopRequested: false,
       databaseDrainProofObservedAt: null,
+      databaseContractCleanupObservedAt: null,
     }, {
       servicesStopped,
       clusterTaskCount: inventory.clusterTaskCount,
@@ -220,32 +266,53 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
   if (taskCounts.proof > 0) {
     return waitForDatabaseDrain(workersStoppedState, { ready: false, reason: 'proof-task-running' });
   }
-  const databaseIsSealed = databaseAlreadySealed;
   const postWorkerProof = assessDatabaseDrainProof({
     proof: inventory.databaseDrainProof,
     nowEpoch,
     notBefore: workersStoppedState.workersStoppedAt,
-    expectedObservedAt: databaseIsSealed ? currentState.databaseDrainProofObservedAt : null,
-    requireFresh: !databaseIsSealed,
+    expectedObservedAt: databaseProofSealed ? currentState.databaseDrainProofObservedAt : null,
+    requireFresh: !databaseProofSealed,
   });
   if (!postWorkerProof.ready) return waitForDatabaseDrain(workersStoppedState, postWorkerProof);
 
+  const cleanupAssessment = assessDatabaseDrainCleanup({
+    receipt: inventory.databaseDrainCleanupReceipt,
+    nowEpoch,
+    expectedProofObservedAt: postWorkerProof.observedAtUtc,
+    expectedCleanupObservedAt: databaseCleanupSealed
+      ? currentState.databaseContractCleanupObservedAt
+      : null,
+    requireFresh: !databaseCleanupSealed,
+  });
+  const proofSealedState = {
+    ...workersStoppedState,
+    databaseDrainProofObservedAt: postWorkerProof.observedAtUtc,
+  };
+  if (!cleanupAssessment.ready) {
+    return waitForDatabaseCleanup(proofSealedState, cleanupAssessment);
+  }
+  const databaseSealedState = {
+    ...proofSealedState,
+    databaseStopRequested: true,
+    databaseContractCleanupObservedAt: cleanupAssessment.observedAtUtc,
+  };
+
   if (inventory.database.exists) {
-    if (!inventory.database.owned) return result('error-database-ownership', workersStoppedState);
+    if (!inventory.database.owned) return result('error-database-ownership', databaseSealedState);
     if (inventory.database.status === 'available') {
-      return result('stop-database', {
-        ...workersStoppedState,
-        databaseStopRequested: true,
-        databaseDrainProofObservedAt: postWorkerProof.observedAtUtc,
-      });
+      return result('stop-database', databaseSealedState);
     }
     if (inventory.database.status !== 'stopped') {
-      return result('wait-database-stop', workersStoppedState, { status: inventory.database.status });
+      return result('wait-database-stop', databaseSealedState, { status: inventory.database.status });
     }
   }
 
-  if (!currentState.databaseStopRequested || currentState.databaseDrainProofObservedAt === null) {
-    return waitForDatabaseDrain(workersStoppedState, { ready: false, reason: 'database-not-sealed' });
+  if (
+    !currentState.databaseStopRequested
+    || currentState.databaseDrainProofObservedAt === null
+    || currentState.databaseContractCleanupObservedAt === null
+  ) {
+    return waitForDatabaseCleanup(databaseSealedState, { ready: false, reason: 'database-not-sealed' });
   }
   if (Date.parse(now) < Date.parse(RUNTIME_DELETE_AT)) return result('wait-runtime-deadline', workersStoppedState);
   if (inventory.runtimeStack.status === 'DELETE_IN_PROGRESS') return result('wait-runtime-delete', workersStoppedState);
@@ -302,6 +369,61 @@ export function assessDatabaseDrainProof({
   return { ready: true, reason: 'ready', observedAtUtc: proof.observedAtUtc };
 }
 
+export function assessDatabaseDrainCleanup({
+  receipt,
+  nowEpoch,
+  expectedProofObservedAt,
+  expectedCleanupObservedAt,
+  requireFresh,
+}) {
+  if (receipt === null || receipt === undefined) return { ready: false, reason: 'missing' };
+  if (!isPlainObject(receipt) || !hasExactKeys(receipt, [
+    'kind',
+    'schemaVersion',
+    'stageId',
+    'databaseId',
+    'proofObservedAtUtc',
+    'cleanupObservedAtUtc',
+    'teardownSqlSha256',
+    'absent',
+  ])) return { ready: false, reason: 'invalid-schema' };
+  if (
+    receipt.kind !== 'lyra-staging-db-drain-cleanup'
+    || receipt.schemaVersion !== 1
+    || receipt.stageId !== STAGE_ID
+    || receipt.databaseId !== STAGE_DATABASE_ID
+  ) return { ready: false, reason: 'ownership' };
+  if (
+    receipt.proofObservedAtUtc !== expectedProofObservedAt
+    || receipt.teardownSqlSha256 !== DATABASE_DRAIN_CLEANUP_SQL_SHA256
+  ) return { ready: false, reason: 'sealed-cleanup-mismatch' };
+  if (
+    !isPlainObject(receipt.absent)
+    || !hasExactKeys(receipt.absent, DATABASE_DRAIN_CLEANUP_ABSENT_KEYS)
+    || DATABASE_DRAIN_CLEANUP_ABSENT_KEYS.some((name) => receipt.absent[name] !== true)
+  ) return { ready: false, reason: 'objects-remain' };
+  if (
+    typeof receipt.cleanupObservedAtUtc !== 'string'
+    || !Number.isFinite(Date.parse(receipt.cleanupObservedAtUtc))
+    || new Date(Date.parse(receipt.cleanupObservedAtUtc)).toISOString() !== receipt.cleanupObservedAtUtc
+  ) return { ready: false, reason: 'invalid-schema' };
+  const cleanupEpoch = Date.parse(receipt.cleanupObservedAtUtc);
+  const proofEpoch = Date.parse(expectedProofObservedAt);
+  if (!Number.isFinite(proofEpoch) || cleanupEpoch < proofEpoch) {
+    return { ready: false, reason: 'before-proof' };
+  }
+  if (cleanupEpoch > nowEpoch + DATABASE_DRAIN_PROOF_FUTURE_SKEW_MS) {
+    return { ready: false, reason: 'future' };
+  }
+  if (requireFresh && nowEpoch - cleanupEpoch > DATABASE_DRAIN_PROOF_TTL_MS) {
+    return { ready: false, reason: 'stale' };
+  }
+  if (
+    expectedCleanupObservedAt !== null
+    && receipt.cleanupObservedAtUtc !== expectedCleanupObservedAt
+  ) return { ready: false, reason: 'sealed-cleanup-mismatch' };
+  return { ready: true, reason: 'ready', observedAtUtc: receipt.cleanupObservedAtUtc };
+}
 export function isCloudFormationStackNotFound(error, stackName) {
   if (
     !isPlainObject(error) ||
@@ -316,15 +438,15 @@ export function isCloudFormationStackNotFound(error, stackName) {
   ).test(error.message);
 }
 
-function assessPreWorkerProof(inventory, currentState, drainState, nowEpoch, databaseAlreadySealed) {
+function assessPreWorkerProof(inventory, currentState, drainState, nowEpoch, databaseProofSealed) {
   return assessDatabaseDrainProof({
     proof: inventory.databaseDrainProof,
     nowEpoch,
-    notBefore: databaseAlreadySealed
+    notBefore: databaseProofSealed
       ? currentState.workersStoppedAt ?? drainState.apiStoppedAt
       : drainState.apiStoppedAt,
-    expectedObservedAt: databaseAlreadySealed ? currentState.databaseDrainProofObservedAt : null,
-    requireFresh: !databaseAlreadySealed,
+    expectedObservedAt: databaseProofSealed ? currentState.databaseDrainProofObservedAt : null,
+    requireFresh: !databaseProofSealed,
   });
 }
 
@@ -352,6 +474,9 @@ function waitForDatabaseDrain(state, assessment) {
   });
 }
 
+function waitForDatabaseCleanup(state, assessment) {
+  return result('wait-db-contract-cleanup', state, { reason: assessment.reason });
+}
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

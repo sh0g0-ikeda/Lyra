@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 
+import { buildStageDatabaseDrainDbContract } from './stage-database-drain-db-contract.mjs';
 import * as lifecycleCore from './stage-lifecycle-guard-core.mjs';
 
-const { decideLifecycleAction, INITIAL_STATE } = lifecycleCore;
+const {
+  DATABASE_DRAIN_CLEANUP_SQL_SHA256,
+  decideLifecycleAction,
+  INITIAL_STATE,
+} = lifecycleCore;
 
 const beforeDelete = '2026-10-09T15:00:00.000Z';
 const afterDelete = '2026-10-09T16:31:00.000Z';
@@ -32,7 +38,26 @@ function drainProof(observedAt = beforeDelete, countOverrides = {}, overrides = 
   };
 }
 
-function sealedState(observedAt = beforeDelete) {
+function cleanupReceipt(proofObservedAtUtc = beforeDelete, cleanupObservedAtUtc = beforeDelete, overrides = {}) {
+  return {
+    kind: 'lyra-staging-db-drain-cleanup',
+    schemaVersion: 1,
+    stageId: 'lyra-staging-20261003',
+    databaseId: 'lyra-staging-20261003-db',
+    proofObservedAtUtc,
+    cleanupObservedAtUtc,
+    teardownSqlSha256: DATABASE_DRAIN_CLEANUP_SQL_SHA256,
+    absent: {
+      readerRole: true,
+      ownerRole: true,
+      schema: true,
+      function: true,
+    },
+    ...overrides,
+  };
+}
+
+function sealedState(observedAt = beforeDelete, cleanupObservedAt = beforeDelete) {
   return {
     ...INITIAL_STATE,
     apiStopRequested: true,
@@ -44,6 +69,7 @@ function sealedState(observedAt = beforeDelete) {
     workersStoppedAt: '2026-10-09T14:59:30.000Z',
     databaseStopRequested: true,
     databaseDrainProofObservedAt: observedAt,
+    databaseContractCleanupObservedAt: cleanupObservedAt,
   };
 }
 
@@ -65,6 +91,7 @@ function inventory(overrides = {}) {
     scalableTarget: { exists: true, owned: true, exact: true },
     database: { exists: true, status: 'available', owned: true },
     databaseDrainProof: drainProof(),
+    databaseDrainCleanupReceipt: cleanupReceipt(),
     extraOwnedDatabaseIds: [],
     runtimeStack: { exists: true, status: 'UPDATE_COMPLETE', owned: true },
     foundationStack: { exists: true, status: 'UPDATE_COMPLETE', owned: true },
@@ -255,6 +282,42 @@ test('any queue residue resets the drain streak and blocks deletion', () => {
   assert.equal(decision.nextState.zeroStreak, 0);
 });
 
+test('sealed proof and cleanup are discarded when any queue counter reappears', () => {
+  const proofObservedAt = '2026-10-09T15:04:00.000Z';
+  const cleanupObservedAt = '2026-10-09T15:04:30.000Z';
+  for (const counter of ['visible', 'inflight', 'delayed']) {
+    const queues = inventory().queues;
+    queues.generation[counter] = 1;
+    const reappeared = decideLifecycleAction({
+      mode: 'active',
+      now: '2026-10-09T15:06:00.000Z',
+      state: sealedState(proofObservedAt, cleanupObservedAt),
+      inventory: inventory({
+        queues,
+        scalableTarget: { exists: false },
+        databaseDrainProof: drainProof(proofObservedAt),
+        databaseDrainCleanupReceipt: cleanupReceipt(proofObservedAt, cleanupObservedAt),
+      }),
+    });
+    assert.equal(reappeared.action, 'error-queue-after-deregister');
+    assert.equal(reappeared.nextState.databaseStopRequested, false);
+    assert.equal(reappeared.nextState.databaseDrainProofObservedAt, null);
+    assert.equal(reappeared.nextState.databaseContractCleanupObservedAt, null);
+
+    const afterQueueClears = decideLifecycleAction({
+      mode: 'active',
+      now: '2026-10-09T15:20:00.000Z',
+      state: reappeared.nextState,
+      inventory: inventory({
+        scalableTarget: { exists: false },
+        databaseDrainProof: drainProof(proofObservedAt),
+        databaseDrainCleanupReceipt: cleanupReceipt(proofObservedAt, cleanupObservedAt),
+      }),
+    });
+    assert.equal(afterQueueClears.action, 'wait-db-drain');
+    assert.equal(afterQueueClears.details.reason, 'stale');
+  }
+});
 test('queue drain that exceeds the bounded window fails closed', () => {
   const queues = inventory().queues;
   queues.generation.inflight = 1;
@@ -284,7 +347,7 @@ test('database stop waits for all four services and all cluster tasks', () => {
   assert.equal(decision.action, 'wait-services');
 });
 
-test('database stop requires a new proof after every worker is confirmed stopped', () => {
+test('database stop requires a new proof and trusted cleanup after every worker is confirmed stopped', () => {
   const state = {
     ...INITIAL_STATE,
     apiStopRequested: true,
@@ -301,6 +364,7 @@ test('database stop requires a new proof after every worker is confirmed stopped
     inventory: inventory({
       scalableTarget: { exists: false },
       databaseDrainProof: drainProof('2026-10-09T15:02:00.000Z'),
+      databaseDrainCleanupReceipt: null,
     }),
   });
   assert.equal(first.action, 'wait-db-drain');
@@ -308,19 +372,105 @@ test('database stop requires a new proof after every worker is confirmed stopped
   assert.equal(first.nextState.workersStoppedAt, '2026-10-09T15:03:00.000Z');
 
   const proofObservedAt = '2026-10-09T15:04:00.000Z';
-  const second = decideLifecycleAction({
+  const withoutCleanup = decideLifecycleAction({
     mode: 'active',
     now: proofObservedAt,
     state: first.nextState,
     inventory: inventory({
       scalableTarget: { exists: false },
       databaseDrainProof: drainProof(proofObservedAt),
+      databaseDrainCleanupReceipt: null,
     }),
   });
-  assert.equal(second.action, 'stop-database');
-  assert.equal(second.nextState.databaseDrainProofObservedAt, proofObservedAt);
+  assert.equal(withoutCleanup.action, 'wait-db-contract-cleanup');
+  assert.equal(withoutCleanup.mutates, false);
+  assert.equal(withoutCleanup.nextState.databaseDrainProofObservedAt, proofObservedAt);
+
+  const delayedCleanup = decideLifecycleAction({
+    mode: 'active',
+    now: '2026-10-09T15:20:00.000Z',
+    state: withoutCleanup.nextState,
+    inventory: inventory({
+      scalableTarget: { exists: false },
+      databaseDrainProof: drainProof(proofObservedAt),
+      databaseDrainCleanupReceipt: null,
+    }),
+  });
+  assert.equal(delayedCleanup.action, 'wait-db-contract-cleanup');
+  assert.equal(delayedCleanup.details.reason, 'missing');
+
+  const cleanupObservedAt = '2026-10-09T15:04:30.000Z';
+  const afterCleanup = decideLifecycleAction({
+    mode: 'active',
+    now: cleanupObservedAt,
+    state: withoutCleanup.nextState,
+    inventory: inventory({
+      scalableTarget: { exists: false },
+      databaseDrainProof: drainProof(proofObservedAt),
+      databaseDrainCleanupReceipt: cleanupReceipt(proofObservedAt, cleanupObservedAt),
+    }),
+  });
+  assert.equal(afterCleanup.action, 'stop-database');
+  assert.equal(afterCleanup.nextState.databaseDrainProofObservedAt, proofObservedAt);
+  assert.equal(afterCleanup.nextState.databaseContractCleanupObservedAt, cleanupObservedAt);
 });
 
+test('cleanup receipt is exact, fresh, bound to the sealed proof, and confirms all four objects absent', () => {
+  const proofObservedAt = '2026-10-09T15:04:00.000Z';
+  const now = '2026-10-09T15:04:30.000Z';
+  const state = {
+    ...sealedState(proofObservedAt, null),
+    databaseStopRequested: false,
+  };
+  const invalidReceipts = [
+    null,
+    cleanupReceipt(proofObservedAt, now, { stageId: 'production' }),
+    cleanupReceipt(proofObservedAt, now, { databaseId: 'other-db' }),
+    cleanupReceipt('2026-10-09T15:03:59.000Z', now),
+    cleanupReceipt(proofObservedAt, now, { teardownSqlSha256: '0'.repeat(64) }),
+    cleanupReceipt(proofObservedAt, '2026-10-09T15:05:01.000Z'),
+    cleanupReceipt(proofObservedAt, now, { absent: { readerRole: true, ownerRole: true, schema: true, function: false } }),
+    cleanupReceipt(proofObservedAt, now, { unexpected: true }),
+  ];
+  for (const databaseDrainCleanupReceipt of invalidReceipts) {
+    const decision = decideLifecycleAction({
+      mode: 'active',
+      now,
+      state,
+      inventory: inventory({
+        scalableTarget: { exists: false },
+        databaseDrainProof: drainProof(proofObservedAt),
+        databaseDrainCleanupReceipt,
+      }),
+    });
+    assert.equal(decision.action, 'wait-db-contract-cleanup');
+    assert.equal(decision.mutates, false);
+  }
+});
+
+test('cleanup SQL hash stays bound to the audited teardown contract', () => {
+  const teardownSql = buildStageDatabaseDrainDbContract('0'.repeat(64)).teardownSql;
+  assert.equal(createHash('sha256').update(teardownSql).digest('hex'), DATABASE_DRAIN_CLEANUP_SQL_SHA256);
+});
+
+test('a failed StopDB can retry from sealed proof and cleanup without invoking the removed DB contract', () => {
+  const proofObservedAt = '2026-10-09T15:04:00.000Z';
+  const cleanupObservedAt = '2026-10-09T15:04:30.000Z';
+  const decision = decideLifecycleAction({
+    mode: 'active',
+    now: '2026-10-09T15:06:00.000Z',
+    state: sealedState(proofObservedAt, cleanupObservedAt),
+    inventory: inventory({
+      scalableTarget: { exists: false },
+      database: { exists: true, status: 'available', owned: true },
+      databaseDrainProof: drainProof(proofObservedAt),
+      databaseDrainCleanupReceipt: cleanupReceipt(proofObservedAt, cleanupObservedAt),
+    }),
+  });
+  assert.equal(decision.action, 'stop-database');
+  assert.equal(decision.nextState.databaseDrainProofObservedAt, proofObservedAt);
+  assert.equal(decision.nextState.databaseContractCleanupObservedAt, cleanupObservedAt);
+});
 test('the recorded read-only proof task preserves the worker stop safe point while it runs', () => {
   const state = {
     ...INITIAL_STATE,
@@ -421,6 +571,7 @@ test('runtime deletion cannot start before its deadline or before database stop'
       scalableTarget: { exists: false },
       database: { exists: true, status: 'available', owned: true },
       databaseDrainProof: drainProof(afterDelete),
+      databaseDrainCleanupReceipt: cleanupReceipt(afterDelete, afterDelete),
     }),
   });
   assert.equal(notStopped.action, 'stop-database');
