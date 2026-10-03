@@ -68,11 +68,11 @@ const labels = (confirmed: boolean): string[] => {
 
 describe('PageGenerationActions', () => {
   it('初回生成と生成済み更新で共通のページ生成操作を表示する', () => {
-    expect(labels(false)).toEqual(['ページ生成', '白黒で生成', 'ページ確定']);
+    expect(labels(false)).toEqual(['カラー生成', '白黒で生成', 'ページ確定']);
   });
 
   it('確定済みページではページ生成の隣に再編集を表示する', () => {
-    expect(labels(true)).toEqual(['ページ生成', '白黒で生成', '再編集']);
+    expect(labels(true)).toEqual(['カラー生成', '白黒で生成', '再編集']);
   });
 
   it('確定済みページでは生成を無効化して再編集だけを実行できる', () => {

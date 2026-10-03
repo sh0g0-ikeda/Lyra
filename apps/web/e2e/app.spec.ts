@@ -834,15 +834,24 @@ test('ページ設計とページ生成の操作をページ編集の保存導�
   const pageStack = page.locator('.page-sections-stack');
   await expect(pageStack.locator('.page-section-frames-panels + .page-section-generate')).toHaveCount(1);
   await expect(pageStack.locator('.page-section-generate + .page-section-style-constraints')).toHaveCount(1);
-  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'Generate page', exact: true })).toBeVisible();
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'Generate in color', exact: true })).toBeVisible();
   await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'Generate monochrome page', exact: true })).toBeVisible();
   await expect(pageStack.locator('.page-section-generate .generated-image')).toHaveCount(1);
+  // Hy4 has no verified image API contract: preparation must never start a job.
+  const flexibleGeneration = page.getByRole('region', { name: 'More flexible generation', exact: true });
+  await expect(flexibleGeneration.getByRole('button', { name: 'Generate in color (Hy4 Preview)', exact: true })).toBeDisabled();
+  await expect(flexibleGeneration.getByRole('button', { name: 'Generate in black and white (Hy4 Preview)', exact: true })).toBeDisabled();
+  await expect(flexibleGeneration.getByText('We are checking the Hy4 Preview image generation and reference-image editing API. It is not available yet.', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Account menu', exact: true }).click();
   await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
   await expect(page.getByRole('heading', { name: 'ページ設計', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'ストーリーから設定を自動入力', exact: true })).toBeVisible();
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'カラー生成', exact: true })).toBeVisible();
   await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
+  const flexibleGenerationJa = page.getByRole('region', { name: 'より自由な生成', exact: true });
+  await expect(flexibleGenerationJa.getByRole('button', { name: 'カラー生成（Hy4 Preview）', exact: true })).toBeDisabled();
+  await expect(flexibleGenerationJa.getByRole('button', { name: '白黒で生成（Hy4 Preview）', exact: true })).toBeDisabled();
 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
@@ -1213,6 +1222,7 @@ for (const width of [1440, 390]) {
     let generationRequests = 0;
     await page.route('**/api/**', async (route) => {
       if (new URL(route.request().url()).pathname === `/api/pages/${pageRecord.id}/generate`) {
+        expect(route.request().postDataJSON()).toBeNull();
         generationRequests += 1;
         await route.fulfill({ status: 429, contentType: 'application/json',
           body: JSON.stringify({ error: { code: 'RATE_LIMITED', message: 'Rate limit exceeded for generation. Retry after 30 seconds' } }) });
@@ -1222,7 +1232,7 @@ for (const width of [1440, 390]) {
     });
     await page.goto('/');
     await page.getByRole('button', { name: 'Pages', exact: true }).click();
-    const generate = page.getByRole('button', { name: 'Generate page', exact: true });
+    const generate = page.getByRole('button', { name: 'Generate in color', exact: true });
     await generate.scrollIntoViewIfNeeded();
     await generate.click();
     const errorNotice = page.locator('.notice.error');

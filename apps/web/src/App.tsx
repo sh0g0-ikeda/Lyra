@@ -645,8 +645,12 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Go to panel layout': 'コマ割りへ移動',
   'Create character': 'キャラを作成',
   'Save character': 'キャラを保存',
-  'Generate page': 'ページ生成',
+  'Generate in color': 'カラー生成',
   'Generate monochrome page': '白黒で生成',
+  'More flexible generation': 'より自由な生成',
+  'Generate in color (Hy4 Preview)': 'カラー生成（Hy4 Preview）',
+  'Generate in black and white (Hy4 Preview)': '白黒で生成（Hy4 Preview）',
+  'We are checking the Hy4 Preview image generation and reference-image editing API. It is not available yet.': 'Hy4 Previewの画像生成・参照画像編集APIを確認中です。現在は利用できません。',
   'Confirm page': 'ページ確定',
   'Reopen page': '再編集',
   'Apply frame template': 'テンプレートを適用',
@@ -1369,7 +1373,7 @@ function formatShortId(id: string): string {
 
 function formatActionSuccessMessage(language: UiLanguage, actionLabel: string, translatedLabel: string): string {
   const isAsyncGenerationAction =
-    actionLabel === 'Generate page' ||
+    actionLabel === 'Generate in color' ||
     actionLabel === 'Generate monochrome page' ||
     actionLabel === 'Generate reference' ||
     actionLabel === 'Generate page skeleton' ||
@@ -1595,7 +1599,7 @@ const tutorialSteps: Array<{
       { en: 'Use Autofill page settings from story to distribute the story into panel details, characters, camera, background, and dialogue.', ja: '話をコマごとの状況、登場人物、カメラ、背景、セリフへ分配したい時は、ストーリーから設定を自動入力します。' },
       { en: 'Autofill page settings from story can take up to about 20 minutes. Keep the screen open while it is running.', ja: 'ストーリーから設定を自動入力は20分程度かかる場合があります。処理中は画面を開いたまま待ってください。' },
       { en: 'Open Pages, review each page, and adjust panel content, frame template, panel order, or panel count.', ja: 'ページを開き、各ページのコマ内容、コマ割り、コマ順、コマ数を調整します。' },
-      { en: 'When ready, press Generate page. The image is created from the current saved page inputs.', ja: '調整できたらページ生成を押します。現在保存されているページ入力から画像を作ります。' },
+      { en: 'When ready, press Generate in color or Generate monochrome page. The image is created from the current saved page inputs.', ja: '調整できたら「カラー生成」か「白黒で生成」を押します。現在保存されているページ入力から画像を作ります。' },
       { en: 'If the image is not right, edit the panel inputs, save, and generate the page again.', ja: '結果が合わない場合は、コマ入力を修正して保存し、もう一度ページ生成します。' },
       { en: 'When finished, choose pages and file format, then download them.', ja: '完成したらページとファイル形式を選び、ダウンロードします。' },
     ],
@@ -2956,7 +2960,7 @@ function StudioShell(props: {
     setActiveTab('story');
   }, []);
   const generatePageDisabled =
-    busyAction === 'Generate page' || busyAction === 'Generate monochrome page' || pageGenerationBlocked;
+    busyAction === 'Generate in color' || busyAction === 'Generate monochrome page' || pageGenerationBlocked;
   const entityPreviewGenerationMessage =
     selectedEntityGenerationJob !== null
       ? selectedEntityGenerationJob.status === 'queued'
@@ -2970,7 +2974,7 @@ function StudioShell(props: {
       ? selectedPageGenerationJob.status === 'queued'
         ? 'Queued. Starts soon.'
         : 'Generating page. It updates when finished.'
-      : busyAction === 'Generate page' || busyAction === 'Generate monochrome page'
+      : busyAction === 'Generate in color' || busyAction === 'Generate monochrome page'
         ? 'Generating page. It updates when finished.'
         : null;
 
@@ -6672,7 +6676,7 @@ function StudioShell(props: {
                               className="primary-button"
                               disabled={generatePageDisabled}
                               onClick={() =>
-                                void runAction('Generate page', async () => {
+                                void runAction('Generate in color', async () => {
                                   if (selectedPageHasFramePanelMismatch) {
                                     throw new Error(translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.'));
                                   }
@@ -6684,7 +6688,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <Play size={16} />
-                              {translateUiString(uiLanguage, 'Generate page')}
+                              {translateUiString(uiLanguage, 'Generate in color')}
                             </button>
                             <button
                               className="secondary-button"
@@ -6748,6 +6752,21 @@ function StudioShell(props: {
                             {translateUiString(uiLanguage, 'Page generation starts at 3 credits.')}
                           </span>
                         </div>
+                        <section aria-label={translateUiString(uiLanguage, 'More flexible generation')}>
+                          <h3>{translateUiString(uiLanguage, 'More flexible generation')}</h3>
+                          <p className="muted">Hy4 Preview</p>
+                          <div className="toolbar">
+                            <button className="secondary-button" disabled type="button" aria-describedby="hy4-preview-unavailable">
+                              {translateUiString(uiLanguage, 'Generate in color (Hy4 Preview)')}
+                            </button>
+                            <button className="secondary-button" disabled type="button" aria-describedby="hy4-preview-unavailable">
+                              {translateUiString(uiLanguage, 'Generate in black and white (Hy4 Preview)')}
+                            </button>
+                          </div>
+                          <p className="muted" id="hy4-preview-unavailable">
+                            {translateUiString(uiLanguage, 'We are checking the Hy4 Preview image generation and reference-image editing API. It is not available yet.')}
+                          </p>
+                        </section>
                         <GenerationReadinessNotice
                           blockers={pageGenerationBlockers}
                           language={uiLanguage}
