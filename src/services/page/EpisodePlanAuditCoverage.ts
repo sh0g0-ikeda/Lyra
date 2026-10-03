@@ -35,6 +35,16 @@ export interface EpisodePlanAuditCoverageCatalog {
   pages: EpisodePlanAuditCoverageCatalogPage[];
 }
 
+export class EpisodePlanAuditCoverageError extends ConfigurationError {
+  public constructor(
+    message: string,
+    public readonly retryInstruction: string,
+  ) {
+    super(message);
+    this.name = 'EpisodePlanAuditCoverageError';
+  }
+}
+
 /**
  * Verifies that provider citations exist in the exact source/output fields and
  * that every reported omission is wired to an existing same-page repair.
@@ -76,8 +86,20 @@ export function validateEpisodePlanAuditCoverage(
       seenChecks.add(checkKey);
 
       const source = sourceByRef.get(check.sourceRef);
-      if (source === undefined || !source.text.includes(check.sourceQuote)) {
-        throw new ConfigurationError('Episode plan audit coverage source quote is not exact');
+      if (source === undefined) {
+        throw new EpisodePlanAuditCoverageError(
+          'Episode plan audit coverage referenced an unknown source',
+          buildUnknownRefRetryInstruction('source', pageId, check.sourceRef, sourceByRef.keys()),
+        );
+      }
+      if (!source.text.includes(check.sourceQuote)) {
+        throw new EpisodePlanAuditCoverageError(
+          'Episode plan audit coverage source quote is not exact',
+          `Coverage correction for the retry: page_id=${boundedPageId(pageId)} `
+            + `source_ref=${JSON.stringify(check.sourceRef)} `
+            + `source_quote=${JSON.stringify(check.sourceQuote)} is not one contiguous exact substring `
+            + 'of that named source. Copy 4 to 40 displayed characters without paraphrasing, joining spans, or adding ellipsis.',
+        );
       }
 
       const evidenceCitations = new Set<string>();
@@ -88,12 +110,23 @@ export function validateEpisodePlanAuditCoverage(
         }
         evidenceCitations.add(evidenceKey);
         const output = outputByRef.get(evidence.outputRef);
-        if (
-          output === undefined
-          || output.panelOrder === null
-          || !output.text.includes(evidence.quote)
-        ) {
+        if (output === undefined) {
+          throw new EpisodePlanAuditCoverageError(
+            'Episode plan audit coverage referenced an unknown output',
+            buildUnknownRefRetryInstruction('output', pageId, evidence.outputRef, outputByRef.keys()),
+          );
+        }
+        if (output.panelOrder === null) {
           throw new ConfigurationError('Episode plan audit coverage output quote is not exact');
+        }
+        if (!output.text.includes(evidence.quote)) {
+          throw new EpisodePlanAuditCoverageError(
+            'Episode plan audit coverage output quote is not exact',
+            `Coverage correction for the retry: page_id=${boundedPageId(pageId)} `
+              + `output_ref=${JSON.stringify(evidence.outputRef)} `
+              + `quote=${JSON.stringify(evidence.quote)} is not one contiguous exact substring of that `
+              + 'citable output prefix. Copy 4 to 40 displayed literal characters and never copy a synthetic trailing ellipsis.',
+          );
         }
       }
 
@@ -134,6 +167,25 @@ export function validateEpisodePlanAuditCoverage(
       }
     }
   }
+}
+
+function buildUnknownRefRetryInstruction(
+  kind: 'source' | 'output',
+  pageId: string,
+  invalidRef: string,
+  validRefs: Iterable<string>,
+): string {
+  const boundedRefs = [...validRefs]
+    .slice(0, 12)
+    .map((ref) => JSON.stringify(ref.slice(0, EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS)))
+    .join(', ');
+  return `Coverage correction for the retry: page_id=${boundedPageId(pageId)} `
+    + `${kind}_ref=${JSON.stringify(invalidRef)} is unknown for this page. `
+    + `Choose the exact named ref from this bounded list: ${boundedRefs}. Do not rename or infer a ref.`;
+}
+
+function boundedPageId(pageId: string): string {
+  return JSON.stringify(pageId.slice(0, 100));
 }
 
 function uniqueByPage<TValue extends { pageId: string }>(

@@ -217,9 +217,11 @@ The OpenAI episode auditor returns a bounded source-coverage sidecar in the same
 structured response: one entry per page, at most two high-risk facts per entry,
 at most two actual panel-field citations per fact, and exact quotes of 4–40
 characters. Source and output references are checked against the current planning
-snapshot. Output citations use the same whitespace-normalized, budget-truncated
-field values rendered in the audit prompt; the prompt and citation catalog are
-built together. Original story text and persisted dialogue remain unchanged.
+snapshot. Output citations use the whitespace-normalized actual field prefixes
+shown in the audit prompt; synthetic truncation markers are not citable evidence.
+The prompt and citation catalog are built together, while original story text and
+persisted dialogue remain unchanged. Literal ellipses in untruncated data remain
+part of that data.
 Page purpose, continuity, and ledger metadata are not visual evidence.
 A reported missing fact must link to an error and an actual panel-field repair on
 the same page. Citation validity proves that quoted text exists, not semantic

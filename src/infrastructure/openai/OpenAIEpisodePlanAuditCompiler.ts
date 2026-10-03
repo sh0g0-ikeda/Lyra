@@ -21,6 +21,7 @@ import {
   EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK,
   EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
   EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
+  EpisodePlanAuditCoverageError,
   validateEpisodePlanAuditCoverage,
 } from '../../services/page/EpisodePlanAuditCoverage.js';
 import type {
@@ -57,7 +58,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
       throw new ConfigurationError('OpenAI episode plan audit requires a coverage catalog');
     }
 
-    const requestInput = [
+    const baseRequestInput = [
       {
         role: 'system' as const,
         content: [{ type: 'input_text' as const, text: buildSystemPrompt(input.language) }],
@@ -67,8 +68,10 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
         content: [{ type: 'input_text' as const, text: input.compilerBrief }],
       },
     ];
+    let requestInput = baseRequestInput;
     let validated: AuditPayload | null = null;
     for (let attempt = 1; attempt <= EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS; attempt += 1) {
+      let coverageRetryInstruction: string | null = null;
       try {
         const candidate = await requestStructuredOpenAIResponse({
           client: this.client,
@@ -88,6 +91,9 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
           if (!(error instanceof ConfigurationError)) {
             throw error;
           }
+          coverageRetryInstruction = error instanceof EpisodePlanAuditCoverageError
+            ? error.retryInstruction
+            : 'Coverage correction for the retry: rebuild source_coverage from exact named refs and contiguous displayed quotes only.';
           throw new StructuredOpenAIResponseError(
             'OpenAI episode plan audit compiler returned invalid source coverage',
             'invalid_payload',
@@ -107,6 +113,18 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
         }
 
         await input.beforeRetry?.();
+        if (coverageRetryInstruction !== null) {
+          requestInput = [
+            ...baseRequestInput,
+            {
+              role: 'user' as const,
+              content: [{
+                type: 'input_text' as const,
+                text: coverageRetryInstruction,
+              }],
+            },
+          ];
+        }
         console.warn('episode_plan_audit_compiler_retry', {
           attempt,
           nextAttempt: attempt + 1,

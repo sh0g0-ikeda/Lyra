@@ -88,6 +88,8 @@ describe('EpisodePlanContinuity', () => {
     expect(artifacts.compilerBrief).toContain('custom=暗部を 保つ');
     expect(artifacts.compilerBrief).toContain('notes=動作を 継続');
     expect(artifacts.compilerBrief).toContain('"もう一度 押す"');
+    expect(artifacts.compilerBrief).toContain('narrator label below is the display alias for entity_id=null');
+    expect(artifacts.compilerBrief).toContain('Copy each source_quote and output quote');
     expect(page?.outputs).toEqual(expect.arrayContaining([
       expect.objectContaining({ ref: 'p1.s', text: '再び 押す' }),
       expect.objectContaining({ ref: 'p1.b', text: '雨 の 港' }),
@@ -106,7 +108,7 @@ describe('EpisodePlanContinuity', () => {
     expect(context.episode.storyFullDraft).toBe('原作の改行は\n  そのまま保持する。');
   });
 
-  it('動的budgetで切り詰めたvisualのellipsisをpromptとcatalogで共有する', () => {
+  it('動的budgetで切り詰めたvisualはsynthetic ellipsisをcatalogへ入れない', () => {
     const context = buildContext();
     context.pages = context.pages.slice(0, 1);
     const plan = buildBeatPlan();
@@ -121,9 +123,32 @@ describe('EpisodePlanContinuity', () => {
       (output) => output.ref === 'p1.s',
     );
 
-    expect(situation?.text.endsWith('...')).toBe(true);
-    expect(artifacts.compilerBrief).toContain(`s=${situation?.text}`);
+    expect(situation?.text.endsWith('...')).toBe(false);
+    expect(artifacts.compilerBrief).toContain(`s=${situation?.text}...`);
     expect(situation?.text).not.toContain('固有の状況'.repeat(300));
+  });
+
+  it('切り詰めていない実fieldのliteral ellipsisはcatalogに保持する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = [{
+      order: 1,
+      situationText: '扉を閉じる...',
+      dialogue: [],
+      entities: [],
+    }];
+
+    const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
+    const situation = artifacts.coverageCatalog.pages[0]?.outputs.find(
+      (output) => output.ref === 'p1.s',
+    );
+
+    expect(situation?.text).toBe('扉を閉じる...');
+    expect(artifacts.compilerBrief).toContain('s=扉を閉じる...|');
   });
 
   it('監査 brief は全15ページで所有台帳と実パネルを同じページ entry に並べる', () => {

@@ -238,10 +238,10 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const background = artifacts.coverageCatalog.pages[0]?.outputs.find(
       (output) => output.ref === 'p1.b',
     );
-    if (background === undefined || !background.text.endsWith('...')) {
+    if (background === undefined || background.text.endsWith('...')) {
       throw new Error('canonical background fixture must be truncated');
     }
-    const ellipsisQuote = background.text.slice(-4);
+    const canonicalPrefixQuote = background.text.slice(-4);
     let requestCount = 0;
     const client = {
       postJson: async () => {
@@ -272,7 +272,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
                     source_ref: 'source',
                     source_quote: '扉の小石を除き',
                     status: 'present',
-                    output_evidence: [{ output_ref: 'p1.b', quote: ellipsisQuote }],
+                    output_evidence: [{ output_ref: 'p1.b', quote: canonicalPrefixQuote }],
                     issue_code: null,
                     repair_target: null,
                   },
@@ -293,7 +293,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v14');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v15');
     expect(requestCount).toBe(1);
   });
 
@@ -516,14 +516,18 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     firstChecks[0]!.source_quote = '原作に存在しない引用';
     let requestCount = 0;
     let retryCount = 0;
+    const requests: Array<Record<string, unknown>> = [];
     const client = {
-      postJson: async () => ({
-        body: {
-          status: 'completed',
-          output_text: JSON.stringify(responses[requestCount++]),
-        },
-        requestId: `req-coverage-${requestCount}`,
-      }),
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: {
+            status: 'completed',
+            output_text: JSON.stringify(responses[requestCount++]),
+          },
+          requestId: `req-coverage-${requestCount}`,
+        };
+      },
     } as unknown as OpenAIClient;
 
     const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
@@ -537,6 +541,47 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(result.audit.accepted).toBe(true);
     expect(requestCount).toBe(2);
     expect(retryCount).toBe(1);
+    expect(JSON.stringify(requests[0]?.input)).not.toContain('Coverage correction for the retry');
+    const retryInput = JSON.stringify(requests[1]?.input);
+    expect(retryInput).toContain('Coverage correction for the retry');
+    expect(retryInput).toContain(`page_id=\\\"${PAGE_ID}\\\"`);
+    expect(retryInput).toContain('source_ref=\\\"source\\\"');
+    expect(retryInput).toContain('source_quote=\\\"原作に存在しない引用\\\"');
+    expect(retryInput).not.toContain('原作事実1が存在する原作事実1が存在する');
+  });
+
+  it('synthetic ellipsisを含むoutput引用へbounded feedbackを返し二回で停止する', async () => {
+    const invalidPayload = buildAcceptedAuditPayload([PAGE_ID]);
+    const coverage = invalidPayload.source_coverage as Array<Record<string, unknown>>;
+    const checks = coverage[0]?.checks as Array<Record<string, unknown>>;
+    checks[0]!.output_evidence = [{ output_ref: 'p1.s', quote: '写1...' }];
+    const requests: Array<Record<string, unknown>> = [];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: { status: 'completed', output_text: JSON.stringify(invalidPayload) },
+          requestId: `req-invalid-output-coverage-${requests.length}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: 'fixture',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog: buildCoverageCatalog([PAGE_ID]),
+    })).rejects.toThrow('invalid source coverage');
+
+    expect(requests).toHaveLength(2);
+    const retryInput = JSON.stringify(requests[1]?.input);
+    expect(retryInput).toContain(`page_id=\\\"${PAGE_ID}\\\"`);
+    expect(retryInput).toContain('output_ref=\\\"p1.s\\\"');
+    expect(retryInput).toContain('quote=\\\"写1...\\\"');
+    expect(retryInput.length).toBeLessThan(15_000);
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('写1...');
+    warnSpy.mockRestore();
   });
 
   it('source coverageの偽引用が続く場合も二回で停止する', async () => {

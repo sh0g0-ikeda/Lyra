@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { EpisodePlanAudit } from '../../../../src/services/page/EpisodePlanAuditCompiler.js';
 import {
+  EpisodePlanAuditCoverageError,
   EPISODE_PLAN_AUDIT_COVERAGE_MAX_CHECKS_PER_PAGE,
   EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK,
   EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
@@ -28,6 +29,54 @@ describe('EpisodePlanAuditCoverage', () => {
       check.outputEvidence[0].outputRef = override.outputRef;
     }
     expect(() => validateEpisodePlanAuditCoverage(audit, buildCatalog())).toThrow();
+  });
+
+  it('偽引用の再試行診断はboundedなrefとquoteだけを返す', () => {
+    const audit = buildPresentAudit();
+    const check = audit.sourceCoverage?.[0]?.checks[0];
+    if (check === undefined) throw new Error('fixture check is missing');
+    check.sourceQuote = '光は港へ帰る船の目印';
+    const catalog = buildCatalog();
+    catalog.pages[0]!.sources[0]!.text = `灯台の光が港に帰る船の目印になる${'秘密本文'.repeat(200)}`;
+
+    let thrown: unknown;
+    try {
+      validateEpisodePlanAuditCoverage(audit, catalog);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(EpisodePlanAuditCoverageError);
+    const feedback = (thrown as EpisodePlanAuditCoverageError).retryInstruction;
+    expect(feedback).toContain(`page_id="${PAGE_ID}"`);
+    expect(feedback).toContain('source_ref="story"');
+    expect(feedback).toContain('source_quote="光は港へ帰る船の目印"');
+    expect(feedback).not.toContain('秘密本文');
+    expect(feedback.length).toBeLessThan(600);
+  });
+
+  it('未表示tailはactual output prefixに存在しない引用として拒否する', () => {
+    const audit = buildPresentAudit();
+    const check = audit.sourceCoverage?.[0]?.checks[0];
+    if (check === undefined) throw new Error('fixture check is missing');
+    check.outputEvidence = [{ outputRef: 'p1.s', quote: '末尾未表示' }];
+    const catalog = buildCatalog();
+    catalog.pages[0]!.outputs[0]!.text = '画面に表示された実prefix';
+
+    expect(() => validateEpisodePlanAuditCoverage(audit, catalog)).toThrow(
+      EpisodePlanAuditCoverageError,
+    );
+  });
+
+  it('実fieldに含まれるliteral ellipsisの連続引用は許可する', () => {
+    const audit = buildPresentAudit();
+    const check = audit.sourceCoverage?.[0]?.checks[0];
+    if (check === undefined) throw new Error('fixture check is missing');
+    check.outputEvidence = [{ outputRef: 'p1.s', quote: '閉じる...' }];
+    const catalog = buildCatalog();
+    catalog.pages[0]!.outputs[0]!.text = '扉を閉じる...';
+
+    expect(() => validateEpisodePlanAuditCoverage(audit, catalog)).not.toThrow();
   });
 
   it('重複checkを拒否する', () => {
