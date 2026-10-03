@@ -566,8 +566,8 @@ function buildEpisodePlanAuditJsonSchema(
       },
       source_coverage: {
         type: 'array',
-        minItems: 1,
-        maxItems: STORY_AI_LIMITS.maxSkeletonPages,
+        minItems: allowedPageIds.length,
+        maxItems: allowedPageIds.length,
         items: {
           type: 'object',
           additionalProperties: false,

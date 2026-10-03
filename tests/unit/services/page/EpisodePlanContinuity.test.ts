@@ -6,6 +6,7 @@ import type {
 import {
   buildEpisodeBeatPlanCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
+  buildEpisodePlanAuditArtifacts,
   buildEpisodePlanAuditBrief,
   buildEpisodePlanAuditCoverageCatalog,
   detectDeterministicContinuityIssues,
@@ -48,6 +49,81 @@ describe('EpisodePlanContinuity', () => {
     expect(buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' })).toContain(
       'dN=the Nth COMPLETE DIALOGUE line',
     );
+  });
+
+  it('監査表示の空白正規化をvisual・dialogueとcoverage catalogで共有する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    context.episode.storyFullDraft = '原作の改行は\n  そのまま保持する。';
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    plan.pages[0]!.storyBeats = ['再び\n   押す'];
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = [{
+      order: 1,
+      situationText: '再び\n   押す',
+      backgroundNote: '雨\t\tの   港',
+      composition: {
+        source: 'custom',
+        compositionPrompt: '扉を\r\n  中央へ置く',
+        customNote: '暗部を   保つ',
+      },
+      panelNotes: '動作を\n 継続',
+      dialogue: [{
+        entityId: null,
+        text: 'もう一度\n   押す',
+        type: 'narration',
+        position: 'top',
+      }],
+      entities: [],
+    }];
+
+    const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
+    const page = artifacts.coverageCatalog.pages[0];
+
+    expect(artifacts.compilerBrief).toContain('s=再び 押す');
+    expect(artifacts.compilerBrief).toContain('b=雨 の 港');
+    expect(artifacts.compilerBrief).toContain('composition=扉を 中央へ置く');
+    expect(artifacts.compilerBrief).toContain('custom=暗部を 保つ');
+    expect(artifacts.compilerBrief).toContain('notes=動作を 継続');
+    expect(artifacts.compilerBrief).toContain('"もう一度 押す"');
+    expect(page?.outputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: 'p1.s', text: '再び 押す' }),
+      expect.objectContaining({ ref: 'p1.b', text: '雨 の 港' }),
+      expect.objectContaining({ ref: 'p1.c', text: '扉を 中央へ置く' }),
+      expect.objectContaining({ ref: 'p1.x', text: '暗部を 保つ' }),
+      expect.objectContaining({ ref: 'p1.n', text: '動作を 継続' }),
+      expect.objectContaining({ ref: 'p1.d1', text: 'もう一度 押す' }),
+    ]));
+    expect(artifacts.compilerBrief).toContain(context.episode.storyFullDraft);
+    expect(page?.sources.find((source) => source.ref === 'source')?.text)
+      .toContain(context.episode.storyFullDraft);
+    const ledger = page?.sources.find((source) => source.ref === 'ledger')?.text;
+    expect(ledger).toContain('beats=再び 押す');
+    expect(artifacts.compilerBrief).toContain(ledger);
+    expect(suggestion.pages[0]?.panels[0]?.dialogue?.[0]?.text).toBe('もう一度\n   押す');
+    expect(context.episode.storyFullDraft).toBe('原作の改行は\n  そのまま保持する。');
+  });
+
+  it('動的budgetで切り詰めたvisualのellipsisをpromptとcatalogで共有する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = suggestion.pages[0]!.panels.slice(0, 1);
+    suggestion.pages[0]!.panels[0]!.dialogue = [];
+
+    const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
+    const situation = artifacts.coverageCatalog.pages[0]?.outputs.find(
+      (output) => output.ref === 'p1.s',
+    );
+
+    expect(situation?.text.endsWith('...')).toBe(true);
+    expect(artifacts.compilerBrief).toContain(`s=${situation?.text}`);
+    expect(situation?.text).not.toContain('固有の状況'.repeat(300));
   });
 
   it('監査 brief は全15ページで所有台帳と実パネルを同じページ entry に並べる', () => {

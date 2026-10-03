@@ -2,6 +2,12 @@ import { STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY } from '../../../../sr
 import { describe, expect, it, vi } from 'vitest';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEpisodePlanAuditCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
+import { buildEpisodePlanAuditArtifacts } from '../../../../src/services/page/EpisodePlanContinuity.js';
+import type { EpisodeBeatPlan } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
+import type {
+  EpisodePagePlanContext,
+  EpisodePagePlanSuggestion,
+} from '../../../../src/domain/types/page.js';
 
 const PAGE_ID = '11111111-1111-4111-8111-111111111111';
 const SECOND_PAGE_ID = '22222222-2222-4222-8222-222222222222';
@@ -124,6 +130,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const rootProperties = readObject(text.format.schema.properties);
     expect(readArray(text.format.schema.required)).toContain('source_coverage');
     const sourceCoverage = readObject(rootProperties.source_coverage);
+    expect(sourceCoverage.minItems).toBe(2);
+    expect(sourceCoverage.maxItems).toBe(2);
     const sourceCoverageItems = readObject(sourceCoverage.items);
     const sourceCoverageProperties = readObject(sourceCoverageItems.properties);
     const coverageChecks = readObject(sourceCoverageProperties.checks);
@@ -223,6 +231,70 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(beforeRetryCount).toBe(1);
     expect(requests[0]?.input).toEqual(requests[1]?.input);
     expect(requests[0]?.text).toEqual(requests[1]?.text);
+  });
+
+  it('canonical表示の改行引用をcatalogと照合して一回で成功する', async () => {
+    const artifacts = buildCanonicalAuditArtifacts();
+    const background = artifacts.coverageCatalog.pages[0]?.outputs.find(
+      (output) => output.ref === 'p1.b',
+    );
+    if (background === undefined || !background.text.endsWith('...')) {
+      throw new Error('canonical background fixture must be truncated');
+    }
+    const ellipsisQuote = background.text.slice(-4);
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: {
+            status: 'completed',
+            output_text: JSON.stringify({
+              accepted: true,
+              issues: [],
+              page_repairs: [],
+              panel_repairs: [],
+              source_coverage: [{
+                page_id: PAGE_ID,
+                checks: [
+                  {
+                    source_ref: 'ledger',
+                    source_quote: '再び 押す',
+                    status: 'present',
+                    output_evidence: [
+                      { output_ref: 'p1.s', quote: '再び 押す' },
+                      { output_ref: 'p1.d1', quote: 'もう一度 押す' },
+                    ],
+                    issue_code: null,
+                    repair_target: null,
+                  },
+                  {
+                    source_ref: 'source',
+                    source_quote: '扉の小石を除き',
+                    status: 'present',
+                    output_evidence: [{ output_ref: 'p1.b', quote: ellipsisQuote }],
+                    issue_code: null,
+                    repair_target: null,
+                  },
+                ],
+              }],
+            }),
+          },
+          requestId: 'req-canonical-coverage',
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: artifacts.compilerBrief,
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog: artifacts.coverageCatalog,
+    });
+
+    expect(result.audit.accepted).toBe(true);
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v14');
+    expect(requestCount).toBe(1);
   });
 
   it('監査再試行前に停止された場合は二回目の外部APIを呼ばない', async () => {
@@ -507,6 +579,75 @@ function buildCoverageCatalog(pageIds: string[]): {
       outputs: [{ ref: 'p1.s', text: `画面描写${index + 1}が存在する`, panelOrder: 1 }],
     })),
   };
+}
+
+function buildCanonicalAuditArtifacts(): ReturnType<typeof buildEpisodePlanAuditArtifacts> {
+  const context: EpisodePagePlanContext = {
+    episodeId: 'episode-1',
+    workId: 'work-1',
+    chapter: {
+      id: 'chapter-1',
+      title: '改行引用',
+      purpose: null,
+      startingState: null,
+      endingState: null,
+      emotionCurve: null,
+      keyBeats: [],
+    },
+    episode: {
+      title: '監査',
+      purpose: null,
+      storyFullDraft: '扉の小石を除き、再び押す。',
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+      estimatedPages: 1,
+    },
+    scenes: [],
+    entities: [],
+    pages: [{
+      pageId: PAGE_ID,
+      pageNumber: 1,
+      frameCount: 1,
+      layoutConfig: {},
+      status: 'designing',
+      dialogueMode: 'image_baked',
+      pageDialogueToggle: true,
+      panels: [],
+    }],
+  };
+  const plan: EpisodeBeatPlan = {
+    pages: [{
+      pageId: PAGE_ID,
+      pageNumber: 1,
+      storyBeats: ['再び\n   押す'],
+      entryState: '扉の前',
+      exitState: '扉が開く',
+      newInformation: [],
+      dialogueIntent: null,
+      handoff: null,
+    }],
+  };
+  const suggestion: EpisodePagePlanSuggestion = {
+    pages: [{
+      pageId: PAGE_ID,
+      pageNumber: 1,
+      panels: [{
+        order: 1,
+        situationText: '再び\n   押す',
+        backgroundNote: `雨の港${'暗い波間'.repeat(300)}末尾未表示`,
+        dialogue: [{
+          entityId: null,
+          text: 'もう一度\n   押す',
+          type: 'narration',
+          position: 'top',
+        }],
+        entities: [],
+      }],
+    }],
+  };
+  return buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
 }
 
 function buildSourceCoveragePayload(pageIds: string[]): Array<Record<string, unknown>> {

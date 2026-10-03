@@ -75,8 +75,7 @@ import {
   buildEpisodeBeatPlanSegmentCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
   buildFullStoryDraftSourceSection,
-  buildEpisodePlanAuditBrief,
-  buildEpisodePlanAuditCoverageCatalog,
+  buildEpisodePlanAuditArtifacts,
   detectDeterministicContinuityIssues,
   fingerprintEpisodePlanningContext,
   mergeEpisodePlanAuditIssues,
@@ -1342,18 +1341,20 @@ export class PageService implements PageServicePort {
       currentChunk: null,
       totalChunks: null,
     });
+    const auditArtifacts = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language,
+    });
     const compiledAudit = await this.episodePlanAuditCompiler!.auditPlan({
       compilerBrief: appendEpisodeStateLedger(
-        buildEpisodePlanAuditBrief({ context, plan, suggestion, language }),
+        auditArtifacts.compilerBrief,
         stateLedger,
       ),
       language,
       pageIds: context.pages.map((page) => page.pageId),
-      coverageCatalog: buildEpisodePlanAuditCoverageCatalog({
-        context,
-        plan,
-        suggestion,
-      }),
+      coverageCatalog: auditArtifacts.coverageCatalog,
       beforeRetry: async () => {
         await reportEpisodePlanProgress(progressReporter, {
           stage: 'auditing_episode',

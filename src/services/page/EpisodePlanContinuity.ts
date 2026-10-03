@@ -420,6 +420,18 @@ export function buildEpisodePlanAuditBrief(input: {
   suggestion: EpisodePagePlanSuggestion;
   language: AppLanguage;
 }): string {
+  return buildEpisodePlanAuditArtifacts(input).compilerBrief;
+}
+
+export function buildEpisodePlanAuditArtifacts(input: {
+  context: EpisodePagePlanContext;
+  plan: EpisodeBeatPlan;
+  suggestion: EpisodePagePlanSuggestion;
+  language: AppLanguage;
+}): {
+  compilerBrief: string;
+  coverageCatalog: EpisodePlanAuditCoverageCatalog;
+} {
   const pages = [...input.suggestion.pages].sort(compareSuggestionPages);
   const panelCount = pages.reduce((count, page) => count + page.panels.length, 0);
   const entityLabels = buildEntityLabelLookup(input.context);
@@ -457,7 +469,7 @@ export function buildEpisodePlanAuditBrief(input: {
       `Page ${page.pageNumber} (${page.pageId})`,
       ...[...page.panels].sort((a, b) => a.order - b.order).flatMap((panel) => (panel.dialogue?.length ?? 0) === 0 ? [] : [
         `  Panel ${panel.order}`,
-        ...panel.dialogue!.map((line) => `    ${line.type}:${line.entityId ?? 'narrator'}@${line.position} ${JSON.stringify(line.text)}`),
+        ...panel.dialogue!.map((line) => `    ${line.type}:${line.entityId ?? 'narrator'}@${line.position} ${JSON.stringify(normalizeAuditExcerpt(line.text))}`),
       ]),
     ]),
     '',
@@ -510,68 +522,49 @@ export function buildEpisodePlanAuditBrief(input: {
   const optionalPanelChars = panelCount === 0
     ? 0
     : Math.floor((remaining - minimumPanelSummaryChars) / panelCount);
-  const brief = [...before, '', '[COMPILED EPISODE DRAFT]',
-    ...pages.flatMap((page) => formatAuditPage(
+  const renderedPages = pages.map((page) => formatAuditPageArtifacts(
       page,
       optionalPanelChars,
       entityLabels,
       includeLocalizedLedgers ? localizedPageLedgers.get(page.pageId) : undefined,
-    )), ...after].join('\n');
+    ));
+  const brief = [...before, '', '[COMPILED EPISODE DRAFT]',
+    ...renderedPages.flatMap((page) => page.lines), ...after].join('\n');
   if (brief.length > AUDIT_BRIEF_MAX_CHARS) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
   }
-  return brief;
+  const sourceText = buildEpisodeBeatPlanSourceSections(input.context).join('\n');
+  return {
+    compilerBrief: brief,
+    coverageCatalog: {
+      pages: renderedPages.map((renderedPage) => {
+        const ownedPlan = planByPageId.get(renderedPage.pageId);
+        if (ownedPlan === undefined) {
+          throw new ConfigurationError('Episode audit coverage is missing page ownership');
+        }
+        return {
+          pageId: renderedPage.pageId,
+          sources: [
+            { ref: 'source', text: sourceText },
+            { ref: 'ledger', text: formatBeatPlanPage(ownedPlan, LEDGER_FIELD_MAX_CHARS) },
+          ],
+          outputs: renderedPage.outputs,
+        };
+      }),
+    },
+  };
 }
 
 export function buildEpisodePlanAuditCoverageCatalog(input: {
   context: EpisodePagePlanContext;
   plan: EpisodeBeatPlan;
   suggestion: EpisodePagePlanSuggestion;
+  language?: AppLanguage;
 }): EpisodePlanAuditCoverageCatalog {
-  const sourceText = buildEpisodeBeatPlanSourceSections(input.context).join('\n');
-  const entityLabels = buildEntityLabelLookup(input.context);
-  const planByPageId = new Map(input.plan.pages.map((page) => [page.pageId, page] as const));
-  return {
-    pages: [...input.suggestion.pages].sort(compareSuggestionPages).map((page) => {
-      const ownedPlan = planByPageId.get(page.pageId);
-      if (ownedPlan === undefined) {
-        throw new ConfigurationError('Episode audit coverage is missing page ownership');
-      }
-      const outputs: EpisodePlanAuditCoverageCatalogOutput[] = [];
-      for (const panel of [...page.panels].sort((left, right) => left.order - right.order)) {
-        addCoverageOutput(outputs, `p${panel.order}.s`, panel.situationText, panel.order);
-        addCoverageOutput(outputs, `p${panel.order}.b`, panel.backgroundNote, panel.order);
-        addCoverageOutput(
-          outputs,
-          `p${panel.order}.c`,
-          panel.composition?.compositionPrompt,
-          panel.order,
-        );
-        addCoverageOutput(
-          outputs,
-          `p${panel.order}.x`,
-          panel.composition?.customNote,
-          panel.order,
-        );
-        addCoverageOutput(outputs, `p${panel.order}.n`, panel.panelNotes, panel.order);
-        const entities = formatEntityAssignments(panel.entities ?? [], entityLabels);
-        if (entities !== 'none') {
-          addCoverageOutput(outputs, `p${panel.order}.e`, entities, panel.order);
-        }
-        for (const [dialogueIndex, line] of (panel.dialogue ?? []).entries()) {
-          addCoverageOutput(outputs, `p${panel.order}.d${dialogueIndex + 1}`, line.text, panel.order);
-        }
-      }
-      return {
-        pageId: page.pageId,
-        sources: [
-          { ref: 'source', text: sourceText },
-          { ref: 'ledger', text: formatBeatPlanPage(ownedPlan, LEDGER_FIELD_MAX_CHARS) },
-        ],
-        outputs,
-      };
-    }),
-  };
+  return buildEpisodePlanAuditArtifacts({
+    ...input,
+    language: input.language ?? 'ja',
+  }).coverageCatalog;
 }
 
 function addCoverageOutput(
@@ -580,11 +573,10 @@ function addCoverageOutput(
   text: string | null | undefined,
   panelOrder: number | null,
 ): void {
-  const normalized = text?.trim();
-  if (normalized === undefined || normalized.length === 0) {
+  if (text === undefined || text === null || text.length === 0) {
     return;
   }
-  outputs.push({ ref, text: normalized, panelOrder });
+  outputs.push({ ref, text, panelOrder });
 }
 
 export function detectDeterministicContinuityIssues(
@@ -908,12 +900,16 @@ function formatRepairDraftPanel(
   return truncatePromptText(summary, panelBudget);
 }
 
-function formatAuditPage(
+function formatAuditPageArtifacts(
   page: EpisodePagePlanPageSuggestion,
   optionalPanelChars: number,
   entityLabels: ReadonlyMap<string, string>,
   ownedSourceLedger: string | undefined,
-): string[] {
+): {
+  pageId: string;
+  lines: string[];
+  outputs: EpisodePlanAuditCoverageCatalogOutput[];
+} {
   const header = truncatePromptText(
     [
       `Page ${page.pageNumber} (${page.pageId})`,
@@ -924,8 +920,16 @@ function formatAuditPage(
   );
   const panels = [...page.panels]
     .sort((left, right) => left.order - right.order)
-    .map((panel) => `  ${buildAuditPanelSummary(panel, entityLabels, optionalPanelChars)}`);
-  return [header, ...(ownedSourceLedger === undefined ? [] : [ownedSourceLedger]), ...panels];
+    .map((panel) => buildAuditPanelPresentation(panel, entityLabels, optionalPanelChars));
+  return {
+    pageId: page.pageId,
+    lines: [
+      header,
+      ...(ownedSourceLedger === undefined ? [] : [ownedSourceLedger]),
+      ...panels.map((panel) => `  ${panel.summary}`),
+    ],
+    outputs: panels.flatMap((panel) => panel.outputs),
+  };
 }
 
 function formatAuditOwnedSourceLedger(page: EpisodeBeatPlanPage): string {
@@ -944,20 +948,47 @@ function buildAuditPanelSummary(
   entityLabels: ReadonlyMap<string, string>,
   optionalChars: number,
 ): string {
+  return buildAuditPanelPresentation(panel, entityLabels, optionalChars).summary;
+}
+
+function buildAuditPanelPresentation(
+  panel: EpisodePagePlanPageSuggestion['panels'][number],
+  entityLabels: ReadonlyMap<string, string>,
+  optionalChars: number,
+): {
+  summary: string;
+  outputs: EpisodePlanAuditCoverageCatalogOutput[];
+} {
+  const formattedEntities = formatEntityAssignments(panel.entities ?? [], entityLabels);
   const fixed = [
     `Panel ${panel.order}`,
     `role=${panel.panelRole ?? 'none'}`,
     `shot=${panel.composition?.shotType ?? 'none'}`,
     `angle=${panel.composition?.angle ?? 'none'}`,
-    `entities=${formatEntityAssignments(panel.entities ?? [], entityLabels)}`,
+    `entities=${formattedEntities}`,
   ].join('|');
   const fields = [
-    { label: 'd', value: formatDialogueForBrief(panel.dialogue ?? [], MAX_AUDIT_PANEL_SUMMARY_CHARS, entityLabels) },
-    { label: 's', value: normalizeAuditExcerpt(panel.situationText) },
-    { label: 'b', value: normalizeAuditExcerpt(panel.backgroundNote) },
-    { label: 'composition', value: normalizeAuditExcerpt(panel.composition?.compositionPrompt) },
-    { label: 'custom', value: normalizeAuditExcerpt(panel.composition?.customNote) },
-    { label: 'notes', value: normalizeAuditExcerpt(panel.panelNotes) },
+    {
+      label: 'd',
+      refSuffix: null,
+      present: (panel.dialogue?.length ?? 0) > 0,
+      value: formatDialogueForBrief(panel.dialogue ?? [], MAX_AUDIT_PANEL_SUMMARY_CHARS, entityLabels),
+    },
+    { label: 's', refSuffix: 's', present: hasAuditText(panel.situationText), value: normalizeAuditExcerpt(panel.situationText) },
+    { label: 'b', refSuffix: 'b', present: hasAuditText(panel.backgroundNote), value: normalizeAuditExcerpt(panel.backgroundNote) },
+    {
+      label: 'composition',
+      refSuffix: 'c',
+      present: hasAuditText(panel.composition?.compositionPrompt),
+      value: normalizeAuditExcerpt(panel.composition?.compositionPrompt),
+    },
+    {
+      label: 'custom',
+      refSuffix: 'x',
+      present: hasAuditText(panel.composition?.customNote),
+      value: normalizeAuditExcerpt(panel.composition?.customNote),
+    },
+    { label: 'notes', refSuffix: 'n', present: hasAuditText(panel.panelNotes), value: normalizeAuditExcerpt(panel.panelNotes) },
   ];
   const budgets = fields.map((field) =>
     Math.min(
@@ -1000,15 +1031,49 @@ function buildAuditPanelSummary(
     remaining -= consumed;
   }
 
-  return [
+  const renderedFields = fields.map((field, index) => ({
+    ...field,
+    rendered: truncatePromptText(field.value, budgets[index] ?? 0),
+  }));
+  const outputs: EpisodePlanAuditCoverageCatalogOutput[] = [];
+  for (const field of renderedFields) {
+    if (field.refSuffix !== null && field.present) {
+      addCoverageOutput(
+        outputs,
+        `p${panel.order}.${field.refSuffix}`,
+        field.rendered,
+        panel.order,
+      );
+    }
+  }
+  if (formattedEntities !== 'none') {
+    addCoverageOutput(outputs, `p${panel.order}.e`, formattedEntities, panel.order);
+  }
+  for (const [dialogueIndex, line] of (panel.dialogue ?? []).entries()) {
+    addCoverageOutput(
+      outputs,
+      `p${panel.order}.d${dialogueIndex + 1}`,
+      normalizeAuditExcerpt(line.text),
+      panel.order,
+    );
+  }
+
+  return {
+    summary: [
     fixed,
-    ...fields.map((field, index) => `${field.label}=${truncatePromptText(field.value, budgets[index] ?? 0)}`),
-  ].join('|');
+      ...renderedFields.map((field) => `${field.label}=${field.rendered}`),
+    ].join('|'),
+    outputs,
+  };
 }
 
 function normalizeAuditExcerpt(value: string | null | undefined): string {
   const normalized = value?.replace(/\s+/gu, ' ').trim();
   return normalized === undefined || normalized.length === 0 ? 'none' : normalized;
+}
+
+function hasAuditText(value: string | null | undefined): boolean {
+  return value !== undefined && value !== null && value.trim().length > 0;
 }
 
 function normalizeDuplicateCandidate(value: string): string {
