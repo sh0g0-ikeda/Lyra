@@ -1476,5 +1476,10 @@
         ]
       }
     }
+  },
+  "Metadata": {
+    "LyraStagingRuntimeRetentionContract": {
+      "Version": "2026-10-03-retain-task-definitions-v1"
+    }
   }
 }
