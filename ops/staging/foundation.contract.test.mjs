@@ -68,6 +68,7 @@ for (const bucketName of ['StagingAssetsBucket', 'BuildSourceBucket']) {
   assert.equal(bucket.PublicAccessBlockConfiguration.BlockPublicAcls, true);
 }
 assert.equal(resource('StagingAssetsBucket', 'AWS::S3::Bucket').VersioningConfiguration.Status, 'Enabled');
+assert.equal(resource('BuildSourceBucket', 'AWS::S3::Bucket').VersioningConfiguration.Status, 'Enabled', 'immutable Lambda S3ObjectVersion requires source-bucket versioning');
 assert.equal(resources.StagingAssetsBucket.DeletionPolicy, 'Retain');
 assert.equal(resources.BuildSourceBucket.DeletionPolicy, 'Retain');
 assert.equal(resource('BuildSourceBucket', 'AWS::S3::Bucket').BucketEncryption.ServerSideEncryptionConfiguration[0].ServerSideEncryptionByDefault.SSEAlgorithm, 'AES256');

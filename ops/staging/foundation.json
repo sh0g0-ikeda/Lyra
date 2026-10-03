@@ -939,6 +939,9 @@
             }
           ]
         },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
         "PublicAccessBlockConfiguration": {
           "BlockPublicAcls": true,
           "BlockPublicPolicy": true,
