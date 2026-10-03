@@ -31,7 +31,7 @@ describe('EpisodePlanAuditCoverage', () => {
     expect(() => validateEpisodePlanAuditCoverage(audit, buildCatalog())).toThrow();
   });
 
-  it('偽引用の再試行診断はboundedなrefとquoteだけを返す', () => {
+  it('偽引用の再試行診断は位置と既知refだけを返しquote本文を返さない', () => {
     const audit = buildPresentAudit();
     const check = audit.sourceCoverage?.[0]?.checks[0];
     if (check === undefined) throw new Error('fixture check is missing');
@@ -50,9 +50,170 @@ describe('EpisodePlanAuditCoverage', () => {
     const feedback = (thrown as EpisodePlanAuditCoverageError).retryInstruction;
     expect(feedback).toContain(`page_id="${PAGE_ID}"`);
     expect(feedback).toContain('source_ref="story"');
-    expect(feedback).toContain('source_quote="光は港へ帰る船の目印"');
+    expect(feedback).toContain('check_index=0');
+    expect(feedback).toContain('ref_known=true');
+    expect(feedback).not.toContain('光は港へ帰る船の目印');
     expect(feedback).not.toContain('秘密本文');
     expect(feedback.length).toBeLessThan(600);
+  });
+
+  it('混合source引用・短文padding・別field参照を一度に診断する', () => {
+    const audit = buildPresentAudit();
+    const first = audit.sourceCoverage?.[0]?.checks[0];
+    if (first === undefined) throw new Error('fixture check is missing');
+    first.sourceQuote = '十分に充電されて絵本を閉じる';
+    first.outputEvidence = [{ outputRef: 'p1.d1', quote: '届いた」' }];
+    audit.sourceCoverage?.[0]?.checks.push({
+      sourceRef: 'story',
+      sourceQuote: '絵本を閉じる',
+      status: 'present',
+      outputEvidence: [{ outputRef: 'p1.s', quote: '手をハンドルから離した瞬間' }],
+      issueCode: null,
+      repairTarget: null,
+    });
+    const catalog = buildCatalog();
+    catalog.pages[0]?.outputs.push(
+      { ref: 'p1.d1', text: '届いた', panelOrder: 1 },
+      { ref: 'p1.c', text: '手をハンドルから離した瞬間', panelOrder: 1 },
+    );
+
+    let thrown: unknown;
+    try {
+      validateEpisodePlanAuditCoverage(audit, catalog);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(EpisodePlanAuditCoverageError);
+    const feedback = (thrown as EpisodePlanAuditCoverageError).retryInstruction;
+    expect(feedback).toContain('citation_errors=3');
+    expect(feedback).toContain('source_ref="story"');
+    expect(feedback).toContain('output_ref="p1.d1"');
+    expect(feedback).toContain('output_ref="p1.s"');
+    expect(feedback).not.toContain('十分に充電されて絵本を閉じる');
+    expect(feedback).not.toContain('届いた」');
+    expect(feedback).not.toContain('手をハンドルから離した瞬間');
+    expect(feedback).toContain('omitted_diagnostics=0');
+    expect(feedback.length).toBeLessThanOrEqual(4_000);
+  });
+
+  it('未知refの任意文字列をechoせずknown=falseとcatalog refだけを返す', () => {
+    const audit = buildPresentAudit();
+    const check = audit.sourceCoverage?.[0]?.checks[0];
+    if (check === undefined) throw new Error('fixture check is missing');
+    check.outputEvidence = [{ outputRef: 'RAW-UNTRUSTED-REF', quote: '光が続く' }];
+
+    let thrown: unknown;
+    try {
+      validateEpisodePlanAuditCoverage(audit, buildCatalog());
+    } catch (error) {
+      thrown = error;
+    }
+
+    const feedback = (thrown as EpisodePlanAuditCoverageError).retryInstruction;
+    expect(feedback).toContain('ref_known=false');
+    expect(feedback).toContain('output_ref="unknown"');
+    expect(feedback).toContain('valid_refs=["p1.s"]');
+    expect(feedback).not.toContain('RAW-UNTRUSTED-REF');
+  });
+
+  it('引用診断は8件と4000文字で止め省略件数を示す', () => {
+    const pages = Array.from({ length: 5 }, (_, pageIndex) => {
+      const pageId = `00000000-0000-4000-8000-${String(pageIndex + 1).padStart(12, '0')}`;
+      return {
+        pageId,
+        sources: [{ ref: 'source', text: '正しい原作本文だけを保持する' }],
+        outputs: [{ ref: 'p1.s', text: '正しい出力本文だけを保持する', panelOrder: 1 }],
+      };
+    });
+    const audit: EpisodePlanAudit = {
+      accepted: true,
+      issues: [],
+      pageRepairs: [],
+      panelRepairs: [],
+      sourceCoverage: pages.map((page, pageIndex) => ({
+        pageId: page.pageId,
+        checks: Array.from({ length: 2 }, (_, checkIndex) => ({
+          sourceRef: 'source',
+          sourceQuote: `偽原作引用${pageIndex}${checkIndex}`,
+          status: 'present' as const,
+          outputEvidence: [{ outputRef: 'p1.s', quote: `偽出力引用${pageIndex}${checkIndex}` }],
+          issueCode: null,
+          repairTarget: null,
+        })),
+      })),
+    };
+
+    let thrown: unknown;
+    try {
+      validateEpisodePlanAuditCoverage(audit, { pages });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(EpisodePlanAuditCoverageError);
+    const feedback = (thrown as EpisodePlanAuditCoverageError).retryInstruction;
+    expect(feedback).toContain('citation_errors=20');
+    expect(feedback).toContain('omitted_diagnostics=12');
+    expect(feedback.match(/diagnostic\[/gu)).toHaveLength(8);
+    expect(feedback.length).toBeLessThanOrEqual(4_000);
+  });
+
+  it('escapeの多いvalid refsでも4000文字内の完全な診断行だけを数える', () => {
+    const pageId = PAGE_ID;
+    const validOutputRefs = Array.from(
+      { length: 12 },
+      (_, index) => (`p${index}"\\field`.repeat(4)).slice(0, 24),
+    );
+    const validSourceRefs = Array.from(
+      { length: 12 },
+      (_, index) => (`s${index}"\\source`.repeat(4)).slice(0, 24),
+    );
+    const pages = [{
+      pageId,
+      sources: validSourceRefs.map((ref, index) => ({ ref, text: `正しい原作本文${index}` })),
+      outputs: validOutputRefs.map((ref, index) => ({
+        ref,
+        text: `正しい出力本文${index}`,
+        panelOrder: index + 1,
+      })),
+    }];
+    const audit: EpisodePlanAudit = {
+      accepted: true,
+      issues: [],
+      pageRepairs: [],
+      panelRepairs: [],
+      sourceCoverage: [{
+        pageId,
+        checks: Array.from({ length: 8 }, (_, checkIndex) => ({
+          sourceRef: `RAW-SOURCE-${checkIndex}`,
+          sourceQuote: `偽原作引用${checkIndex}`,
+          status: 'present' as const,
+          outputEvidence: [{ outputRef: `RAW-UNKNOWN-${checkIndex}`, quote: `偽出力引用${checkIndex}` }],
+          issueCode: null,
+          repairTarget: null,
+        })),
+      }],
+    };
+
+    let thrown: unknown;
+    try {
+      validateEpisodePlanAuditCoverage(audit, { pages });
+    } catch (error) {
+      thrown = error;
+    }
+
+    const feedback = (thrown as EpisodePlanAuditCoverageError).retryInstruction;
+    const rows = feedback.split('\n').filter((line) => line.startsWith('diagnostic['));
+    const shown = Number(feedback.match(/shown_diagnostics=(\d+)/u)?.[1]);
+    const omitted = Number(feedback.match(/omitted_diagnostics=(\d+)/u)?.[1]);
+    expect(feedback.length).toBeLessThanOrEqual(4_000);
+    expect(rows).toHaveLength(shown);
+    expect(shown + omitted).toBe(16);
+    expect(rows.every((row) => /reason=(unknown_ref|not_exact)( valid_refs=.+)?$/u.test(row))).toBe(true);
+    expect(feedback).not.toContain('RAW-UNKNOWN');
+    expect(feedback).not.toContain('偽原作引用');
+    expect(feedback).not.toContain('偽出力引用');
   });
 
   it('未表示tailはactual output prefixに存在しない引用として拒否する', () => {

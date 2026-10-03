@@ -222,6 +222,12 @@ shown in the audit prompt; synthetic truncation markers are not citable evidence
 The prompt and citation catalog are built together, while original story text and
 persisted dialogue remain unchanged. Literal ellipses in untruncated data remain
 part of that data.
+Each displayed visual field and complete dialogue line is labeled with its direct
+panel-field reference. Quoted visual literals exclude synthetic display markers;
+fields shorter than four characters remain actual content but are not citable.
+Citation retry feedback contains bounded positions and known references only
+(at most eight diagnostics and 4,000 characters), with omitted counts. It does not
+echo quotation text, unknown reference values, or the previous coverage response.
 Page purpose, continuity, and ledger metadata are not visual evidence.
 A reported missing fact must link to an error and an actual panel-field repair on
 the same page. Citation validity proves that quoted text exists, not semantic

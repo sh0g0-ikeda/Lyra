@@ -35,6 +35,20 @@ export interface EpisodePlanAuditCoverageCatalog {
   pages: EpisodePlanAuditCoverageCatalogPage[];
 }
 
+const MAX_CITATION_DIAGNOSTICS = 8;
+const MAX_CITATION_RETRY_CHARS = 4_000;
+
+interface CitationDiagnostic {
+  pageId: string;
+  checkIndex: number;
+  evidenceIndex: number | null;
+  kind: 'source' | 'output';
+  ref: string;
+  refKnown: boolean;
+  reason: 'unknown_ref' | 'not_exact';
+  validRefs?: string[];
+}
+
 export class EpisodePlanAuditCoverageError extends ConfigurationError {
   public constructor(
     message: string,
@@ -62,6 +76,14 @@ export function validateEpisodePlanAuditCoverage(
 
   const catalogByPage = uniqueByPage(catalog.pages, 'catalog');
   const coverageByPage = uniqueByPage(coverage, 'coverage');
+  const citationDiagnostics: CitationDiagnostic[] = [];
+  let citationErrorCount = 0;
+  const recordCitationDiagnostic = (diagnostic: CitationDiagnostic): void => {
+    citationErrorCount += 1;
+    if (citationDiagnostics.length < MAX_CITATION_DIAGNOSTICS) {
+      citationDiagnostics.push(diagnostic);
+    }
+  };
   if (
     catalogByPage.size !== coverageByPage.size
     || [...catalogByPage.keys()].some((pageId) => !coverageByPage.has(pageId))
@@ -78,7 +100,7 @@ export function validateEpisodePlanAuditCoverage(
     const outputByRef = uniqueByRef(pageCatalog.outputs, pageId, 'output');
     const seenChecks = new Set<string>();
 
-    for (const check of pageCoverage.checks) {
+    for (const [checkIndex, check] of pageCoverage.checks.entries()) {
       const checkKey = `${check.sourceRef}\u0000${check.sourceQuote}`;
       if (seenChecks.has(checkKey)) {
         throw new ConfigurationError('Episode plan audit coverage contains a duplicate check');
@@ -87,23 +109,30 @@ export function validateEpisodePlanAuditCoverage(
 
       const source = sourceByRef.get(check.sourceRef);
       if (source === undefined) {
-        throw new EpisodePlanAuditCoverageError(
-          'Episode plan audit coverage referenced an unknown source',
-          buildUnknownRefRetryInstruction('source', pageId, check.sourceRef, sourceByRef.keys()),
-        );
-      }
-      if (!source.text.includes(check.sourceQuote)) {
-        throw new EpisodePlanAuditCoverageError(
-          'Episode plan audit coverage source quote is not exact',
-          `Coverage correction for the retry: page_id=${boundedPageId(pageId)} `
-            + `source_ref=${JSON.stringify(check.sourceRef)} `
-            + `source_quote=${JSON.stringify(check.sourceQuote)} is not one contiguous exact substring `
-            + 'of that named source. Copy 4 to 40 displayed characters without paraphrasing, joining spans, or adding ellipsis.',
-        );
+        recordCitationDiagnostic({
+          pageId,
+          checkIndex,
+          evidenceIndex: null,
+          kind: 'source',
+          ref: 'unknown',
+          refKnown: false,
+          reason: 'unknown_ref',
+          validRefs: [...sourceByRef.keys()],
+        });
+      } else if (!source.text.includes(check.sourceQuote)) {
+        recordCitationDiagnostic({
+          pageId,
+          checkIndex,
+          evidenceIndex: null,
+          kind: 'source',
+          ref: check.sourceRef,
+          refKnown: true,
+          reason: 'not_exact',
+        });
       }
 
       const evidenceCitations = new Set<string>();
-      for (const evidence of check.outputEvidence) {
+      for (const [evidenceIndex, evidence] of check.outputEvidence.entries()) {
         const evidenceKey = `${evidence.outputRef}\u0000${evidence.quote}`;
         if (evidenceCitations.has(evidenceKey)) {
           throw new ConfigurationError('Episode plan audit coverage contains duplicate output evidence');
@@ -111,22 +140,30 @@ export function validateEpisodePlanAuditCoverage(
         evidenceCitations.add(evidenceKey);
         const output = outputByRef.get(evidence.outputRef);
         if (output === undefined) {
-          throw new EpisodePlanAuditCoverageError(
-            'Episode plan audit coverage referenced an unknown output',
-            buildUnknownRefRetryInstruction('output', pageId, evidence.outputRef, outputByRef.keys()),
-          );
-        }
-        if (output.panelOrder === null) {
+          recordCitationDiagnostic({
+            pageId,
+            checkIndex,
+            evidenceIndex,
+            kind: 'output',
+            ref: 'unknown',
+            refKnown: false,
+            reason: 'unknown_ref',
+            validRefs: [...outputByRef.keys()],
+          });
+          continue;
+        } else if (output.panelOrder === null) {
           throw new ConfigurationError('Episode plan audit coverage output quote is not exact');
         }
         if (!output.text.includes(evidence.quote)) {
-          throw new EpisodePlanAuditCoverageError(
-            'Episode plan audit coverage output quote is not exact',
-            `Coverage correction for the retry: page_id=${boundedPageId(pageId)} `
-              + `output_ref=${JSON.stringify(evidence.outputRef)} `
-              + `quote=${JSON.stringify(evidence.quote)} is not one contiguous exact substring of that `
-              + 'citable output prefix. Copy 4 to 40 displayed literal characters and never copy a synthetic trailing ellipsis.',
-          );
+          recordCitationDiagnostic({
+            pageId,
+            checkIndex,
+            evidenceIndex,
+            kind: 'output',
+            ref: evidence.outputRef,
+            refKnown: true,
+            reason: 'not_exact',
+          });
         }
       }
 
@@ -167,21 +204,59 @@ export function validateEpisodePlanAuditCoverage(
       }
     }
   }
+
+  if (citationErrorCount > 0) {
+    throw new EpisodePlanAuditCoverageError(
+      'Episode plan audit coverage contains invalid citations',
+      buildCitationRetryInstruction(citationDiagnostics, citationErrorCount),
+    );
+  }
 }
 
-function buildUnknownRefRetryInstruction(
-  kind: 'source' | 'output',
-  pageId: string,
-  invalidRef: string,
-  validRefs: Iterable<string>,
+function buildCitationRetryInstruction(
+  diagnostics: readonly CitationDiagnostic[],
+  totalCount: number,
 ): string {
-  const boundedRefs = [...validRefs]
-    .slice(0, 12)
-    .map((ref) => JSON.stringify(ref.slice(0, EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS)))
-    .join(', ');
-  return `Coverage correction for the retry: page_id=${boundedPageId(pageId)} `
-    + `${kind}_ref=${JSON.stringify(invalidRef)} is unknown for this page. `
-    + `Choose the exact named ref from this bounded list: ${boundedRefs}. Do not rename or infer a ref.`;
+  const rule = 'Fix every listed citation by copying one contiguous 4 to 40 character substring from the exact named ref in the unchanged base input. Do not paraphrase, join fields, translate, pad short text, or add ellipsis.';
+  const diagnosticRows = diagnostics.map((diagnostic, index) => {
+    const refLabel = diagnostic.kind === 'source' ? 'source_ref' : 'output_ref';
+    const validRefs = diagnostic.validRefs === undefined
+      ? ''
+      : ` valid_refs=${JSON.stringify(diagnostic.validRefs.slice(0, 12).map((ref) => boundedRef(ref)))}`;
+    return `diagnostic[${index + 1}]: page_id=${boundedPageId(diagnostic.pageId)} `
+      + `check_index=${diagnostic.checkIndex} `
+      + `${diagnostic.evidenceIndex === null ? '' : `evidence_index=${diagnostic.evidenceIndex} `}`
+      + `kind=${diagnostic.kind} `
+      + `ref_known=${diagnostic.refKnown} `
+      + `${refLabel}=${JSON.stringify(boundedRef(diagnostic.ref))} `
+      + `reason=${diagnostic.reason}${validRefs}`;
+  });
+  const selectedRows: string[] = [];
+  for (const row of diagnosticRows) {
+    const candidateRows = [...selectedRows, row];
+    const candidate = formatCitationRetryInstruction(rule, candidateRows, totalCount);
+    if (candidate.length <= MAX_CITATION_RETRY_CHARS) {
+      selectedRows.push(row);
+    }
+  }
+  return formatCitationRetryInstruction(rule, selectedRows, totalCount);
+}
+
+function formatCitationRetryInstruction(
+  rule: string,
+  rows: readonly string[],
+  totalCount: number,
+): string {
+  return [
+    `Coverage correction for the retry: citation_errors=${totalCount}; `
+      + `shown_diagnostics=${rows.length}; omitted_diagnostics=${Math.max(0, totalCount - rows.length)}.`,
+    rule,
+    ...rows,
+  ].join('\n');
+}
+
+function boundedRef(value: string): string {
+  return value.slice(0, EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS);
 }
 
 function boundedPageId(pageId: string): string {

@@ -27,7 +27,7 @@ describe('EpisodePlanContinuity', () => {
     expect(detectDeterministicContinuityIssues(suggestion)).toContainEqual(expect.objectContaining({code:'dialogue_density',severity:'error'}));
     const brief=buildEpisodePlanAuditBrief({context,plan,suggestion,language:'ja'});
     expect(brief).toContain('[TEXT DISTRIBUTION]');expect(brief).toContain('lines=5');
-    expect(brief).toContain('thought:voice-id@right "exact-4"');
+    expect(brief).toContain('p1.d5="exact-4"|thought:voice-id@right');
   });
 
   it('coverage catalogは原作sourceと実panel出力だけを短いrefで列挙する', () => {
@@ -82,12 +82,12 @@ describe('EpisodePlanContinuity', () => {
     const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
     const page = artifacts.coverageCatalog.pages[0];
 
-    expect(artifacts.compilerBrief).toContain('s=再び 押す');
-    expect(artifacts.compilerBrief).toContain('b=雨 の 港');
-    expect(artifacts.compilerBrief).toContain('composition=扉を 中央へ置く');
-    expect(artifacts.compilerBrief).toContain('custom=暗部を 保つ');
-    expect(artifacts.compilerBrief).toContain('notes=動作を 継続');
-    expect(artifacts.compilerBrief).toContain('"もう一度 押す"');
+    expect(artifacts.compilerBrief).toContain('p1.s="再び 押す"');
+    expect(artifacts.compilerBrief).toContain('p1.b="雨 の 港"');
+    expect(artifacts.compilerBrief).toContain('p1.c="扉を 中央へ置く"');
+    expect(artifacts.compilerBrief).toContain('p1.x="暗部を 保つ"');
+    expect(artifacts.compilerBrief).toContain('p1.n="動作を 継続"');
+    expect(artifacts.compilerBrief).toContain('p1.d1="もう一度 押す"');
     expect(artifacts.compilerBrief).toContain('narrator label below is the display alias for entity_id=null');
     expect(artifacts.compilerBrief).toContain('Copy each source_quote and output quote');
     expect(page?.outputs).toEqual(expect.arrayContaining([
@@ -124,7 +124,7 @@ describe('EpisodePlanContinuity', () => {
     );
 
     expect(situation?.text.endsWith('...')).toBe(false);
-    expect(artifacts.compilerBrief).toContain(`s=${situation?.text}...`);
+    expect(artifacts.compilerBrief).toContain(`p1.s="${situation?.text}"…`);
     expect(situation?.text).not.toContain('固有の状況'.repeat(300));
   });
 
@@ -148,7 +148,71 @@ describe('EpisodePlanContinuity', () => {
     );
 
     expect(situation?.text).toBe('扉を閉じる...');
-    expect(artifacts.compilerBrief).toContain('s=扉を閉じる...|');
+    expect(artifacts.compilerBrief).toContain('p1.s="扉を閉じる..."|');
+  });
+
+  it('直接ref・短い台詞の非引用注記・literal ellipsisを同じartifactで示す', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = [{
+      order: 3,
+      situationText: '扉を閉じる...',
+      dialogue: [{ entityId: null, type: 'narration', position: 'right', text: '届いた' }],
+      entities: [],
+    }];
+
+    const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
+    const outputs = artifacts.coverageCatalog.pages[0]?.outputs ?? [];
+    const panelLine = artifacts.compilerBrief.split('\n').find((line) => line.includes('Panel 3'));
+
+    expect(panelLine).toContain('p3.s="扉を閉じる..."');
+    expect(panelLine?.length).toBeLessThanOrEqual(702);
+    expect(artifacts.compilerBrief).toContain('p3.d1="届いた" (not citable: fewer than 4 characters)');
+    expect(artifacts.compilerBrief).toContain('source_ref=source ranges only over SOURCE DATA');
+    expect(artifacts.compilerBrief).toContain('source_ref=ledger ranges only over that page');
+    expect(outputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: 'p3.s', text: '扉を閉じる...' }),
+      expect.objectContaining({ ref: 'p3.d1', text: '届いた' }),
+    ]));
+    expect(suggestion.pages[0]?.panels[0]?.dialogue?.[0]?.text).toBe('届いた');
+  });
+
+  it('JSON escape後の直接ref表示も各panel 700文字と全体150k以内へ切り詰める', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 6);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 6);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 6).map((page) => ({
+      ...page,
+      panels: page.panels.slice(0, 20).map((panel) => ({
+        ...panel,
+        situationText: `状況${'"\\'.repeat(500)}`,
+        backgroundNote: `背景${'"\\'.repeat(500)}`,
+        composition: {
+          source: 'custom' as const,
+          compositionPrompt: `構図${'"\\'.repeat(500)}`,
+          customNote: `演出${'"\\'.repeat(500)}`,
+        },
+        panelNotes: `注記${'"\\'.repeat(500)}`,
+        dialogue: [],
+        entities: [],
+      })),
+    }));
+
+    const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
+    const panelLines = artifacts.compilerBrief.split('\n').filter((line) => /^  Panel \d+\|/u.test(line));
+
+    expect(artifacts.compilerBrief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+    expect(panelLines).toHaveLength(120);
+    expect(panelLines.every((line) => line.length <= 702)).toBe(true);
+    expect(artifacts.coverageCatalog.pages.flatMap((page) => page.outputs)
+      .every((output) => !output.text.endsWith('…'))).toBe(true);
+    expect(suggestion.pages[0]?.panels[0]?.situationText).toBe(`状況${'"\\'.repeat(500)}`);
   });
 
   it('監査 brief は全15ページで所有台帳と実パネルを同じページ entry に並べる', () => {
@@ -437,8 +501,8 @@ describe('EpisodePlanContinuity', () => {
 
     const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
 
-    expect(brief).toContain('entities=司カサネ');
-    expect(brief).toContain('speech:司カサネ:これは私に届いた手紙だ。');
+    expect(brief).toContain('p1.e="司カサネ');
+    expect(brief).toContain('p1.d1="これは私に届いた手紙だ。"');
   });
 
   it('監査 brief は構図と演出メモ、可視主体の役割・動作・位置、off-panel 話者を保持する', () => {
@@ -507,12 +571,12 @@ describe('EpisodePlanContinuity', () => {
 
     const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
 
-    expect(brief).toContain('composition=建物の外から港までを広く見渡す。');
-    expect(brief).toContain('custom=人物ではなく建物と光を主役にする。');
-    expect(brief).toContain('notes=直前の人物は建物内で作業を続けている。');
+    expect(brief).toContain('p1.c="建物の外から港までを広く見渡す。"');
+    expect(brief).toContain('p1.x="人物ではなく建物と光を主役にする。"');
+    expect(brief).toContain('p1.n="直前の人物は建物内で作業を続けている。"');
     expect(brief).toContain('春香{role=primary,action=standing_firm,position=center}');
-    expect(brief).toContain('entities=none');
-    expect(brief).toContain('thought:春香:届いた。');
+    expect(brief).toContain('p2.e=none');
+    expect(brief).toContain('p2.d1="届いた。"');
   });
 
   it('決定論的に検出した重複を同じ監査で必ず修復する対象として渡す', () => {

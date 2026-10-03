@@ -470,7 +470,12 @@ export function buildEpisodePlanAuditArtifacts(input: {
       `Page ${page.pageNumber} (${page.pageId})`,
       ...[...page.panels].sort((a, b) => a.order - b.order).flatMap((panel) => (panel.dialogue?.length ?? 0) === 0 ? [] : [
         `  Panel ${panel.order}`,
-        ...panel.dialogue!.map((line) => `    ${line.type}:${line.entityId ?? 'narrator'}@${line.position} ${JSON.stringify(normalizeAuditExcerpt(line.text))}`),
+        ...panel.dialogue!.map((line, dialogueIndex) => {
+          const normalized = normalizeAuditExcerpt(line.text);
+          return `    p${panel.order}.d${dialogueIndex + 1}=${JSON.stringify(normalized)}`
+            + `${auditNonCitableSuffix(normalized)}|`
+            + `${line.type}:${line.entityId ?? 'narrator'}@${line.position}`;
+        }),
       ]),
     ]),
     '',
@@ -480,12 +485,14 @@ export function buildEpisodePlanAuditArtifacts(input: {
     '[AUDIT CONTRACT]',
     'Check the entire draft against the source and ledger, not each page in isolation.',
     'Return source_coverage for every page with one or two highest-risk source facts. Prioritize prerequisites, repeated actions such as again/retry, cause-action-result chains, and final closure actions.',
-    'Use source_ref=source only for a contiguous quote copied from SOURCE DATA, including FULL STORY DRAFT. Use source_ref=ledger only for exact text in that page\'s GLOBAL EPISODE LEDGER row. Never cite COMPILED EPISODE DRAFT as a source.',
+    'source_ref=source ranges only over SOURCE DATA, including FULL STORY DRAFT. Copy a contiguous literal from that range only.',
+    'source_ref=ledger ranges only over that page\'s GLOBAL EPISODE LEDGER row. Never cite COMPILED EPISODE DRAFT as a source.',
     'Copy each source_quote and output quote as one contiguous 4 to 40 character substring exactly as displayed under its named ref. Never summarize, paraphrase, translate, concatenate separated spans, or invent an ellipsis.',
     'Positive source example: if source_ref=source contains "灯台の光が船を導く", quote "光が船を導く". Negative examples are "光は船の目印" and "灯台の光...導く".',
     'Positive output example: if output_ref=p1.s contains "枝の先で地図の端を寄せる", quote "地図の端を寄せる". Negative examples are "枝の先で地図を寄せる" and "地図の端を...寄せる".',
     'Use output_ref=p{panel_order}.s/.b/.c/.x/.n/.e/.d{dialogue_index}: s=situation, b=background, c=composition, x=custom composition, n=notes, e=entities, and dN=the Nth COMPLETE DIALOGUE line. Page purpose, continuity, entry/exit, handoff, and ledger text are never output evidence.',
-    'A trailing ... added to a shortened visual field is a display marker, not citable output text; quote only the visible literal prefix before it.',
+    'A trailing … outside a closing JSON quote marks a shortened visual field and is not citable output text; quote only the literal inside the JSON string. Literal ... inside the JSON string remains actual field text.',
+    'A displayed field shorter than 4 characters remains actual panel content and is marked not citable. Do not pad it with brackets or punctuation, and do not report the fact missing merely because that field cannot supply a 4-character quote.',
     'For status=present, cite one or two exact output quotes of 4 to 40 characters. For status=missing, cite no output, return source_omission or ongoing_action_dropped, and link an actual same-page panel repair that restores visible content.',
     `Every panel must have at most ${EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL} dialogue entries. Correct avoidable late-page/final-panel congestion without deleting essential story information or destroying intentional silence.`,
     'Every deterministic finding above is binding: return an error issue and a field-level repair for its target page.',
@@ -970,7 +977,7 @@ function buildAuditPanelPresentation(
     `role=${panel.panelRole ?? 'none'}`,
     `shot=${panel.composition?.shotType ?? 'none'}`,
     `angle=${panel.composition?.angle ?? 'none'}`,
-    `entities=${formattedEntities}`,
+    `p${panel.order}.e=${formattedEntities === 'none' ? 'none' : JSON.stringify(formattedEntities)}${auditNonCitableSuffix(formattedEntities)}`,
   ].join('|');
   const fields = [
     {
@@ -979,21 +986,21 @@ function buildAuditPanelPresentation(
       present: (panel.dialogue?.length ?? 0) > 0,
       value: formatDialogueForBrief(panel.dialogue ?? [], MAX_AUDIT_PANEL_SUMMARY_CHARS, entityLabels),
     },
-    { label: 's', refSuffix: 's', present: hasAuditText(panel.situationText), value: normalizeAuditExcerpt(panel.situationText) },
-    { label: 'b', refSuffix: 'b', present: hasAuditText(panel.backgroundNote), value: normalizeAuditExcerpt(panel.backgroundNote) },
+    { label: `p${panel.order}.s`, refSuffix: 's', present: hasAuditText(panel.situationText), value: normalizeAuditExcerpt(panel.situationText) },
+    { label: `p${panel.order}.b`, refSuffix: 'b', present: hasAuditText(panel.backgroundNote), value: normalizeAuditExcerpt(panel.backgroundNote) },
     {
-      label: 'composition',
+      label: `p${panel.order}.c`,
       refSuffix: 'c',
       present: hasAuditText(panel.composition?.compositionPrompt),
       value: normalizeAuditExcerpt(panel.composition?.compositionPrompt),
     },
     {
-      label: 'custom',
+      label: `p${panel.order}.x`,
       refSuffix: 'x',
       present: hasAuditText(panel.composition?.customNote),
       value: normalizeAuditExcerpt(panel.composition?.customNote),
     },
-    { label: 'notes', refSuffix: 'n', present: hasAuditText(panel.panelNotes), value: normalizeAuditExcerpt(panel.panelNotes) },
+    { label: `p${panel.order}.n`, refSuffix: 'n', present: hasAuditText(panel.panelNotes), value: normalizeAuditExcerpt(panel.panelNotes) },
   ];
   const budgets = fields.map((field) =>
     Math.min(
@@ -1001,9 +1008,24 @@ function buildAuditPanelPresentation(
       field.value === 'none' ? 'none'.length : MIN_AUDIT_FIELD_EXCERPT_CHARS,
     ),
   );
+  const renderFieldAt = (index: number, budget: number): string => {
+    const field = fields[index];
+    if (field === undefined) {
+      throw new ConfigurationError('Episode audit field budget is invalid');
+    }
+    return formatAuditRenderedField(
+      field.label,
+      field.refSuffix !== null,
+      field.present,
+      renderAuditCitableExcerpt(field.value, budget),
+    );
+  };
+  const renderedFieldLengths = fields.map((_field, index) =>
+    renderFieldAt(index, budgets[index] ?? 0).length,
+  );
   const minimumSummary = [
     fixed,
-    ...fields.map((field, index) => `${field.label}=${truncatePromptText(field.value, budgets[index] ?? 0)}`),
+    ...fields.map((_field, index) => renderFieldAt(index, budgets[index] ?? 0)),
   ].join('|');
   if (minimumSummary.length > MAX_AUDIT_PANEL_SUMMARY_CHARS) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
@@ -1023,10 +1045,30 @@ function buildAuditPanelPresentation(
     const share = Math.max(1, Math.floor(remaining / expandable.length));
     let consumed = 0;
     for (const entry of expandable) {
-      const increment = Math.min(entry.capacity, share, remaining - consumed);
-      budgets[entry.index] = (budgets[entry.index] ?? 0) + increment;
-      consumed += increment;
-      if (consumed === remaining) {
+      const availableRenderedChars = remaining - consumed;
+      const maximumIncrement = Math.min(entry.capacity, share);
+      const currentBudget = budgets[entry.index] ?? 0;
+      const currentRenderedLength = renderedFieldLengths[entry.index] ?? 0;
+      let lower = 0;
+      let upper = maximumIncrement;
+      while (lower < upper) {
+        const candidateIncrement = Math.ceil((lower + upper) / 2);
+        const candidateLength = renderFieldAt(entry.index, currentBudget + candidateIncrement).length;
+        if (candidateLength - currentRenderedLength <= availableRenderedChars) {
+          lower = candidateIncrement;
+        } else {
+          upper = candidateIncrement - 1;
+        }
+      }
+      if (lower === 0) {
+        continue;
+      }
+      const nextBudget = currentBudget + lower;
+      const nextRenderedLength = renderFieldAt(entry.index, nextBudget).length;
+      budgets[entry.index] = nextBudget;
+      renderedFieldLengths[entry.index] = nextRenderedLength;
+      consumed += nextRenderedLength - currentRenderedLength;
+      if (consumed >= remaining) {
         break;
       }
     }
@@ -1066,7 +1108,12 @@ function buildAuditPanelPresentation(
   return {
     summary: [
     fixed,
-      ...renderedFields.map((field) => `${field.label}=${field.displayText}`),
+      ...renderedFields.map((field) => formatAuditRenderedField(
+        field.label,
+        field.refSuffix !== null,
+        field.present,
+        field,
+      )),
     ].join('|'),
     outputs,
   };
@@ -1081,20 +1128,40 @@ function hasAuditText(value: string | null | undefined): boolean {
   return value !== undefined && value !== null && value.trim().length > 0;
 }
 
+function auditNonCitableSuffix(value: string): string {
+  return value !== 'none' && value.length < 4
+    ? ' (not citable: fewer than 4 characters)'
+    : '';
+}
+
+function formatAuditRenderedField(
+  label: string,
+  citable: boolean,
+  present: boolean,
+  rendered: { displayText: string; citableText: string; truncated: boolean },
+): string {
+  if (!citable || !present) {
+    return `${label}=${rendered.displayText}`;
+  }
+  return `${label}=${JSON.stringify(rendered.citableText)}${rendered.truncated ? '…' : ''}`
+    + auditNonCitableSuffix(rendered.citableText);
+}
+
 function renderAuditCitableExcerpt(
   value: string,
   maxChars: number,
-): { displayText: string; citableText: string } {
+): { displayText: string; citableText: string; truncated: boolean } {
   const normalized = normalizeAuditExcerpt(value);
   const boundedMaxChars = Math.max(0, maxChars);
   const displayText = truncatePromptText(normalized, boundedMaxChars);
   const truncated = normalized.length > boundedMaxChars;
   if (!truncated || boundedMaxChars <= 3) {
-    return { displayText, citableText: displayText };
+    return { displayText, citableText: displayText, truncated };
   }
   return {
     displayText,
     citableText: normalized.slice(0, boundedMaxChars - 3).trimEnd(),
+    truncated: true,
   };
 }
 
