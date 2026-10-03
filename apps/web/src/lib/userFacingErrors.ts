@@ -1,4 +1,4 @@
-import type { GenerationJobRecord } from '../types/api';
+import type { GenerationJobRecord } from '../types/api.js';
 
 export type UserFacingErrorLanguage = 'ja' | 'en';
 
