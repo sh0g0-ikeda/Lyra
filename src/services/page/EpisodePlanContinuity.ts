@@ -1,4 +1,4 @@
-import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
+import { EPISODE_FULL_STORY_DRAFT_MAX_CHARS, EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
 import { PANEL_FRAME_TEMPLATES } from '../../domain/constants/panelFrameTemplates.js';
 import { resolvePageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
 import { createHash } from 'node:crypto';
@@ -214,12 +214,28 @@ function buildEpisodeBeatPlanSourceSections(context: EpisodePagePlanContext): st
     `Middle: ${canonicalize(context.episode.middle, EPISODE_ARC_FIELD_MAX_CHARS)}`,
     `Climax: ${canonicalize(context.episode.climax, EPISODE_ARC_FIELD_MAX_CHARS)}`,
     `Ending hook: ${canonicalize(context.episode.endingHook, EPISODE_ARC_FIELD_MAX_CHARS)}`,
+    ...buildFullStoryDraftSourceSection(context),
     '',
     '[SCENES]',
     scenes.join('\n') || '(none)',
     '',
     '[AVAILABLE ENTITIES]',
     availableEntities.join('\n') || '(none)',
+  ];
+}
+
+export function buildFullStoryDraftSourceSection(context: EpisodePagePlanContext): string[] {
+  const storyFullDraft = context.episode.storyFullDraft?.trim();
+  if (storyFullDraft === undefined || storyFullDraft.length === 0) {
+    return [];
+  }
+  if (storyFullDraft.length > EPISODE_FULL_STORY_DRAFT_MAX_CHARS) {
+    throw new ConfigurationError('Episode full story draft exceeds the prompt source limit');
+  }
+  return [
+    '',
+    '[FULL STORY DRAFT - SOURCE DATA]',
+    storyFullDraft,
   ];
 }
 

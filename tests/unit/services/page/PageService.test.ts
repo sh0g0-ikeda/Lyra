@@ -3170,6 +3170,96 @@ describe('PageService', () => {
     expect(compilerBrief).toContain('末尾で主人公が鍵を拾う。');
   });
 
+  it.each([
+    ['scene なし', false],
+    ['scene あり', true],
+  ] as const)('continuity v3 は最大長の全文草稿を%sでも全 compiler に欠落なく渡す', async (_label, withScenes) => {
+    const pageRepository = new FakePageRepository();
+    const base = buildMultiPageEpisodePlanningContext(10);
+    const start = 'FULL-DRAFT-BEGIN「最初の引用を保持する」';
+    const middle = 'FULL-DRAFT-MIDDLE 小石を除いてから扉を押し直す。';
+    const end = 'FULL-DRAFT-END「最後の引用を保持する」';
+    const fillerLength = 8_000 - start.length - middle.length - end.length;
+    const storyFullDraft = `${start}${'あ'.repeat(Math.floor(fillerLength / 2))}${middle}${'い'.repeat(Math.ceil(fillerLength / 2))}${end}`;
+    expect(storyFullDraft).toHaveLength(8_000);
+    pageRepository.episodePlanningContext = {
+      ...base,
+      episode: { ...base.episode, storyFullDraft },
+      scenes: withScenes ? base.scenes : [],
+    };
+    const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const beatPlanCompiler = new FakeEpisodeBeatPlanCompiler();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+      undefined,
+      beatPlanCompiler,
+      auditCompiler,
+      true,
+    );
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    const briefs = [
+      ...beatPlanCompiler.outlineInputs.map((input) => input.compilerBrief),
+      ...beatPlanCompiler.inputs.map((input) => input.compilerBrief),
+      ...episodeCompiler.inputs.map((input) => input.compilerBrief),
+      ...auditCompiler.inputs.map((input) => input.compilerBrief),
+    ];
+    expect(beatPlanCompiler.outlineInputs).toHaveLength(1);
+    expect(beatPlanCompiler.inputs.length).toBeGreaterThan(1);
+    expect(episodeCompiler.inputs.length).toBeGreaterThan(1);
+    expect(auditCompiler.inputs).toHaveLength(1);
+    expect(briefs.length).toBeGreaterThan(5);
+    for (const brief of briefs) {
+      expect(brief).toContain('[FULL STORY DRAFT - SOURCE DATA]');
+      expect(brief).toContain(storyFullDraft);
+      expect(brief).toContain(start);
+      expect(brief).toContain(middle);
+      expect(brief).toContain(end);
+    }
+  });
+
+  it('continuity v3 は保存契約を超える全文草稿を切り捨てず provider 呼び出し前に拒否する', async () => {
+    const pageRepository = new FakePageRepository();
+    const base = buildMultiPageEpisodePlanningContext(10);
+    pageRepository.episodePlanningContext = {
+      ...base,
+      episode: { ...base.episode, storyFullDraft: '長'.repeat(8_001) },
+    };
+    const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const beatPlanCompiler = new FakeEpisodeBeatPlanCompiler();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+      undefined,
+      beatPlanCompiler,
+      auditCompiler,
+      true,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+    expect(result).toMatchObject({
+      compilerUsed: false,
+      compilerError: 'Episode full story draft exceeds the prompt source limit',
+      updatedPageCount: 0,
+      updatedPanelCount: 0,
+      updatedAssignmentCount: 0,
+    });
+    expect(beatPlanCompiler.outlineInputs).toHaveLength(0);
+    expect(beatPlanCompiler.inputs).toHaveLength(0);
+    expect(episodeCompiler.inputs).toHaveLength(0);
+    expect(auditCompiler.inputs).toHaveLength(0);
+  });
+
   it('episode story plan は sparse compiler suggestion の演出を補完し entities 未指定は変更しない', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
