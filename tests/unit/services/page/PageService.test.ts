@@ -1872,6 +1872,98 @@ describe('PageService', () => {
     expect(auditCompiler.inputs).toHaveLength(2);
   });
 
+  it('inline repair 無効時もbounded修復後の意味的指摘だけでは保存を破棄しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
+    const panelRepository = new FakePanelRepository();
+    const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    auditCompiler.audits = [
+      {
+        accepted: false,
+        issues: [
+          {
+            code: 'source_omission',
+            severity: 'error',
+            pageIds: ['page-2'],
+            message: 'Page 2 omits a required story beat.',
+            repairInstruction: 'Restore the required beat from the source.',
+          },
+        ],
+      },
+      {
+        accepted: false,
+        issues: [
+          {
+            code: 'ongoing_action_dropped',
+            severity: 'error',
+            pageIds: ['page-3'],
+            message: 'Page 3 does not carry the ongoing action forward.',
+            repairInstruction: 'Continue the action until its explicit resolution.',
+          },
+          {
+            code: 'visible_entity_mismatch',
+            severity: 'error',
+            pageIds: ['page-4'],
+            message: 'Page 4 assigns a character to a character-free cutaway.',
+            repairInstruction: 'Keep the cutaway entity list empty.',
+          },
+        ],
+      },
+    ];
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(episodeCompiler.inputs).toHaveLength(3);
+    expect(pageRepository.updatedInputs).toHaveLength(4);
+    expect(panelRepository.updatedPanels.length).toBeGreaterThan(0);
+  });
+
+  it('inline repair 無効時もbounded修復後の決定的な重複は保存を拒否する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
+    const panelRepository = new FakePanelRepository();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const episodeCompiler = new DuplicateDialogueEpisodePagePlanCompiler();
+    episodeCompiler.repairDuplicate = false;
+    auditCompiler.audits = [
+      { accepted: true, issues: [] },
+      { accepted: true, issues: [] },
+    ];
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(result.compilerError).toContain('deterministic verification');
+    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+  });
+
   it('inline repair 有効時は監査が指定したfieldだけを直してdetail compilerを再実行しない', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
@@ -2510,7 +2602,7 @@ describe('PageService', () => {
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
     expect(result.compilerUsed).toBe(false);
-    expect(result.compilerError).toContain('continuity audit');
+    expect(result.compilerError).toContain('deterministic verification');
     expect(pageRepository.updatedInputs).toHaveLength(0);
     expect(panelRepository.updatedPanels).toHaveLength(0);
     expect(assignmentService.updates).toHaveLength(0);

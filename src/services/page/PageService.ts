@@ -942,9 +942,21 @@ export class PageService implements PageServicePort {
     );
     blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
     if (blockingIssues.length > 0) {
-      throw new ConfigurationError(
-        `Episode continuity audit still found ${blockingIssues.length} issue(s) after bounded repair`,
-      );
+      if (stateLedger !== undefined) {
+        throw new ConfigurationError(
+          `Episode continuity audit still found ${blockingIssues.length} issue(s) after bounded repair`,
+        );
+      }
+      this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
+      console.warn('episode_page_plan_continuity_v3_bounded_review_completed', {
+        episodeId: context.episodeId,
+        repairPassCount: 1,
+        secondAuditReportedErrorCount: blockingIssues.length,
+        issueCodes: blockingIssues.map((issue) => issue.code),
+        affectedPageIds: Array.from(
+          new Set(blockingIssues.flatMap((issue) => issue.pageIds)),
+        ),
+      });
     }
 
     return { ...combined, stateTransitions };
