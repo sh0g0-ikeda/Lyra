@@ -111,6 +111,9 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     id: string;
     kind: 'episode';
   } | null>(null);
+  const [staleActionPending, setStaleActionPending] = useState<'reload' | 'retry' | null>(null);
+  const staleActionPendingRef = useRef<'reload' | 'retry' | null>(null);
+  const staleActionSaveErrorRef = useRef<Error | null>(null);
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
   const lastSyncedEpisodeId = useRef<string | null>(null);
   const lastSyncedSceneId = useRef<string | null>(null);
@@ -304,6 +307,11 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
 
   const updateEpisodeMutation = useMutation({
     mutationFn: () => {
+      if (staleActionPendingRef.current !== null) {
+        const pendingError = new Error(t(language, 'screen.story.savePending'));
+        staleActionSaveErrorRef.current = pendingError;
+        throw pendingError;
+      }
       if (selectedEpisode === null) {
         throw new Error(t(language, "generated.screens.StoryScreen.select.an.episode.first.65b38fbb"));
       }
@@ -504,24 +512,106 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     await updateEpisodeMutation.mutateAsync();
   };
 
+  const clearPendingStaleActionSaveError = (): void => {
+    const pendingError = staleActionSaveErrorRef.current;
+    if (pendingError === null) return;
+    updateEpisodeMutation.reset();
+    setDirtySaveError((current) => current === pendingError ? null : current);
+    staleActionSaveErrorRef.current = null;
+  };
+
   const reloadStaleResource = async (): Promise<void> => {
+    if (staleActionPendingRef.current !== null || updateEpisodeMutation.isPending) return;
     const stillApproved = (): boolean => currentStoryDraftRef.current.scope === episodeScopeKey &&
       currentStoryDraftRef.current.revision === storyEditorRevision;
-    if (!stillApproved()) return;
-    if (activeStaleResource === 'episode' && selectedEpisode !== null && selectedChapter !== null) {
+    if (!stillApproved() || activeStaleResource !== 'episode' || selectedEpisode === null || selectedChapter === null) return;
+    staleActionSaveErrorRef.current = null;
+    staleActionPendingRef.current = 'reload';
+    setStaleActionPending('reload');
+    try {
       const response = await queryClient.fetchQuery({
         queryKey: episodesQueryKey(sessionKey, selectedChapter.id, organizationId),
         queryFn: () => api.getEpisodes(selectedChapter.id, organizationId),
+        staleTime: 0,
       });
       if (!stillApproved()) return;
+      clearPendingStaleActionSaveError();
       const latest = response.episodes.find((episode) => episode.id === selectedEpisode.id);
       setStartingStateDraft(null);
       setEpisodeTitle(latest?.title ?? '');
       setEpisodeDraft(latest === undefined ? '' : episodeMobileDraft(latest));
       setEstimatedPages(String(latest?.estimated_pages ?? 4));
       setImprovement(null);
+      setStaleResource((current) => current?.id === selectedEpisode.id ? null : current);
+    } catch (error: unknown) {
+      if (stillApproved()) setDirtySaveError(error instanceof Error ? error :
+        new Error(t(language, 'generated.screens.StoryScreen.unsaved.changes.could.not.be.saved.88963a72')));
+    } finally {
+      staleActionPendingRef.current = null;
+      setStaleActionPending(null);
     }
-    setStaleResource((current) => current?.kind === activeStaleResource ? null : current);
+  };
+
+  const retryStaleEpisodeSave = async (): Promise<void> => {
+    if (staleActionPendingRef.current !== null || updateEpisodeMutation.isPending ||
+      activeStaleResource !== 'episode' || selectedEpisode === null || selectedChapter === null ||
+      !canEdit || estimatedPagesInvalid || episodeTitle.trim().length === 0) return;
+    const submitted = {
+      title: episodeTitle,
+      draft: episodeDraft,
+      estimatedPages: parseIntInRange(estimatedPages, 1, MAX_ESTIMATED_PAGES),
+      startingEntityStates: startingEntityStatesDraft,
+      scope: episodeScopeKey,
+      revision: storyEditorRevision,
+      episodeId: selectedEpisode.id,
+      chapterId: selectedChapter.id,
+    };
+    if (submitted.estimatedPages === null) return;
+    const sameScope = (): boolean => currentStoryDraftRef.current.scope === submitted.scope;
+    const unchangedDraft = (): boolean => sameScope() &&
+      currentStoryDraftRef.current.revision === submitted.revision;
+    // A synchronous ref closes the gap before React commits its loading state.
+    // A concurrent reload/navigation-save cannot replace this accepted draft.
+    staleActionSaveErrorRef.current = null;
+    staleActionPendingRef.current = 'retry';
+    setStaleActionPending('retry');
+    setDirtySaveError(null);
+    updateEpisodeMutation.reset();
+    try {
+      const response = await queryClient.fetchQuery({
+        queryKey: episodesQueryKey(sessionKey, submitted.chapterId, organizationId),
+        queryFn: () => api.getEpisodes(submitted.chapterId, organizationId),
+        staleTime: 0,
+      });
+      if (!unchangedDraft()) return;
+      const latest = response.episodes.find((episode) => episode.id === submitted.episodeId &&
+        episode.chapter_id === submitted.chapterId);
+      if (latest === undefined) throw new Error(t(language, 'screen.story.latestEpisodeMissing'));
+      const updatedEpisode = await api.updateEpisode(latest.id, buildEpisodeMobileUpdatePayload({
+        draft: submitted.draft,
+        episode: latest,
+        estimatedPages: submitted.estimatedPages,
+        title: submitted.title,
+        startingEntityStates: submitted.startingEntityStates,
+      }), organizationId);
+      queryClient.setQueryData<{ episodes: EpisodeRecord[] }>(
+        episodesQueryKey(sessionKey, submitted.chapterId, organizationId),
+        (current) => replaceEpisodeInResponse(current, updatedEpisode),
+      );
+      if (sameScope()) {
+        clearPendingStaleActionSaveError();
+        setStartingStateDraft((current) => current?.scopeKey === submitted.scope &&
+          !startingStateDraftIsDirty(updatedEpisode.starting_entity_states, current.value) ? null : current);
+        setStaleResource((current) => current?.id === submitted.episodeId ? null : current);
+      }
+      await queryClient.invalidateQueries({ queryKey: episodesQueryKey(sessionKey, submitted.chapterId, organizationId) });
+    } catch (error: unknown) {
+      if (sameScope()) setDirtySaveError(error instanceof Error ? error :
+        new Error(t(language, 'generated.screens.StoryScreen.unsaved.changes.could.not.be.saved.88963a72')));
+    } finally {
+      staleActionPendingRef.current = null;
+      setStaleActionPending(null);
+    }
   };
 
   const improveEpisodeMutation = useMutation({
@@ -796,9 +886,17 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
             tone="warning"
           />
           <PrimaryButton
+            disabled={staleActionPending !== null || updateEpisodeMutation.isPending}
             label={t(language, "generated.screens.StoryScreen.reload.latest.state.327b1d0e")}
+            loading={staleActionPending === 'reload'}
             onPress={() => confirmStaleDraftReload({ language, scope: 'story', onConfirm: () => { void reloadStaleResource(); } })}
             variant="secondary"
+          />
+          <PrimaryButton
+            disabled={!canEdit || staleActionPending !== null || updateEpisodeMutation.isPending || estimatedPagesInvalid || episodeTitle.trim().length === 0}
+            label={t(language, 'screen.story.retryCurrentDraft')}
+            loading={staleActionPending === 'retry'}
+            onPress={() => { void retryStaleEpisodeSave(); }}
           />
         </View>
       )}

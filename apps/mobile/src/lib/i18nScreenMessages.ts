@@ -145,7 +145,10 @@ export const screenTranslations = {
     'screen.story.deleteScene': '「{sceneName}」を削除します。紐づく継続状態やページ材料からも外れる場合があります。この操作は元に戻せません。',
     'screen.story.replacePagePlan': '現在の{pageCount}ページ・{panelCount}コマの編集内容を上書きします。現在の話を保存後、新しい骨格を生成します。この操作は元に戻せません。',
     'screen.story.editingEpisode': '編集中: {episodeTitle}',
-    'screen.story.untitledEpisode': '第{episodeOrder}話'
+    'screen.story.untitledEpisode': '第{episodeOrder}話',
+    'screen.story.retryCurrentDraft': '現在の入力で再試行',
+    'screen.story.savePending': '保存処理が進行中です。完了後にもう一度お試しください。',
+    'screen.story.latestEpisodeMissing': 'この話を確認できませんでした。入力は保持されています。作品と話の選択を確認してください。'
   },
   en: {
     'screen.account.plan.free': 'Free',
@@ -293,7 +296,10 @@ export const screenTranslations = {
     'screen.story.deleteScene': 'Delete "{sceneName}". Linked continuity states and page sources may also be detached. This cannot be undone.',
     'screen.story.replacePagePlan': 'This replaces edits in {pageCount} pages and {panelCount} panels. The current episode is saved before a new plan is generated. This cannot be undone.',
     'screen.story.editingEpisode': 'Editing: {episodeTitle}',
-    'screen.story.untitledEpisode': 'Episode {episodeOrder}'
+    'screen.story.untitledEpisode': 'Episode {episodeOrder}',
+    'screen.story.retryCurrentDraft': 'Retry with current draft',
+    'screen.story.savePending': 'A save is in progress. Try again after it finishes.',
+    'screen.story.latestEpisodeMissing': 'This episode could not be found. Your input is retained. Check the selected work and episode.'
   }
 } as const;
 
