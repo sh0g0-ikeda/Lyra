@@ -52,7 +52,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       textPlan:{requiredTextBeats:['疑念の所在'],visualOnlyBeats:['傷に気づく'],densityReason:'観察を画像で伝える'},
       handoff: '次ページで傷に触れる行動へつなぐ。',
     });
-    expect(result.compilerPromptVersion).toBe('episode_beat_plan_v9');
+    expect(result.compilerPromptVersion).toBe('episode_beat_plan_v10');
     const request = requests[0];
     const input = request?.input as Array<{ content: Array<{ text: string }> }>;
     const text = request?.text as {

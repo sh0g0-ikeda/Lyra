@@ -323,7 +323,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v19');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v20');
     expect(requestCount).toBe(1);
   });
 

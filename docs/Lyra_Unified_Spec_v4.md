@@ -237,6 +237,17 @@ and provider-supplied dialogue remain subject to the existing source-fidelity au
 The bounded coverage sidecar samples high-risk facts; it does not limit the full
 episode audit to those sampled facts. Legacy single-page fallback is unchanged.
 
+When line-start page headings in the original full story map completely,
+uniquely and in increasing order to existing page numbers, segmented beat,
+detail and audit inputs may also include the matching untouched contiguous
+original page excerpts. Generated ledgers allocate pages; they must not restrict
+the original facts to a compressed summary or reverse an explicit completion
+boundary. Ambiguous or incomplete headings omit this optional local supplement
+and retain the full-source input. Audit supplements must fit the existing input
+budget after full source, complete dialogue and minimum panel evidence have been
+reserved; otherwise the supplement is omitted. This changes provider context,
+not persisted story fields, API contracts or the semantic soft-save policy.
+
 The OpenAI episode auditor returns a bounded source-coverage sidecar in the same
 structured response: one entry per page, at most two high-risk facts per entry,
 at most two actual panel-field citations per fact, and exact quotes of 4–40

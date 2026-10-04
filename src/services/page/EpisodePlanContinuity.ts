@@ -59,6 +59,13 @@ const MAX_DIALOGUE_LINES_IN_SUMMARY = 8;
 const MIN_AUDIT_FIELD_EXCERPT_CHARS = 16;
 const AUDIT_ENTITY_LABEL_MAX_CHARS = 48;
 const AUDIT_CUSTOM_ACTION_MAX_CHARS = 64;
+const PAGE_SOURCE_HEADER_PATTERN = /^(?:Page[ \t]+(\d+)|(\d+)[ \t]*ページ目)[ \t]*[:：]/gmu;
+
+interface PageSourceExcerpt {
+  pageId: string;
+  pageNumber: number;
+  text: string;
+}
 
 export function buildEpisodeBeatPlanCompilerBrief(
   context: EpisodePagePlanContext,
@@ -123,6 +130,12 @@ export function buildEpisodeBeatPlanSegmentCompilerBrief(input: {
         !targetPageIds.has(page.pageId) &&
         page.pageNumber > finalTargetPageNumber,
     );
+  const pageSourceExcerpts = buildPageSourceExcerpts(input.context);
+  const targetSourceSection = formatOwnedOriginalSourceSection(
+    'TARGET PAGE ORIGINAL SOURCE',
+    input.targetPages,
+    pageSourceExcerpts,
+  );
 
   return [
     '[PURPOSE]',
@@ -141,6 +154,7 @@ export function buildEpisodeBeatPlanSegmentCompilerBrief(input: {
     '',
     '[TARGET PAGES]',
     ...formatEpisodeBeatPlanPageReferences(input.targetPages),
+    ...targetSourceSection,
     '',
     '[FUTURE RESERVED PAGES]',
     ...(futureOutlinePages.length > 0
@@ -149,6 +163,8 @@ export function buildEpisodeBeatPlanSegmentCompilerBrief(input: {
     '',
     '[BINDING RULES]',
     'Return exactly one detailed ledger entry for each TARGET PAGES reference, preserving its page ID and page number.',
+    'When TARGET PAGE ORIGINAL SOURCE is present, its exact page excerpt is the source of truth; preserve every authored prerequisite, repeated action, immediate result, completion boundary, negative or continuing constraint, final viewpoint, and explicit display line assigned to that page.',
+    'GLOBAL EPISODE OUTLINE and generated ledgers allocate pages but never shorten, replace, or override explicit original source.',
     'Follow the GLOBAL EPISODE OUTLINE. Do not spend FUTURE RESERVED PAGES early.',
     'Continue from ALREADY PLANNED LEDGER without restarting, rewinding, or repeating an event.',
   ].join('\n');
@@ -240,6 +256,77 @@ export function buildFullStoryDraftSourceSection(context: EpisodePagePlanContext
     '',
     '[FULL STORY DRAFT - SOURCE DATA]',
     storyFullDraft,
+  ];
+}
+
+// Page-local excerpts are an optional prompt aid. The full source remains the
+// authority, and any ambiguous mapping disables every local excerpt together.
+function buildPageSourceExcerpts(
+  context: EpisodePagePlanContext,
+): ReadonlyMap<string, PageSourceExcerpt> | null {
+  const storyFullDraft = context.episode.storyFullDraft;
+  if (typeof storyFullDraft !== 'string' || storyFullDraft.trim().length === 0) {
+    return null;
+  }
+  const matches = Array.from(storyFullDraft.matchAll(PAGE_SOURCE_HEADER_PATTERN));
+  const orderedPages = [...context.pages].sort(compareContextPages);
+  if (
+    matches.length !== orderedPages.length
+    || matches.length === 0
+    || new Set(orderedPages.map((page) => page.pageId)).size !== orderedPages.length
+    || new Set(orderedPages.map((page) => page.pageNumber)).size !== orderedPages.length
+  ) {
+    return null;
+  }
+
+  const excerpts = new Map<string, PageSourceExcerpt>();
+  for (const [index, match] of matches.entries()) {
+    const pageNumber = Number(match[1] ?? match[2]);
+    const expectedPage = orderedPages[index];
+    if (
+      expectedPage === undefined
+      || !Number.isSafeInteger(pageNumber)
+      || pageNumber !== expectedPage.pageNumber
+      || excerpts.has(expectedPage.pageId)
+    ) {
+      return null;
+    }
+    const start = match.index;
+    const end = matches[index + 1]?.index ?? storyFullDraft.length;
+    if (start === undefined || end <= start) {
+      return null;
+    }
+    excerpts.set(expectedPage.pageId, {
+      pageId: expectedPage.pageId,
+      pageNumber,
+      text: storyFullDraft.slice(start, end),
+    });
+  }
+  return excerpts.size === orderedPages.length ? excerpts : null;
+}
+
+function formatOwnedOriginalSourceSection(
+  title: string,
+  pages: ReadonlyArray<{ pageId: string; pageNumber: number }>,
+  excerpts: ReadonlyMap<string, PageSourceExcerpt> | null,
+): string[] {
+  if (excerpts === null) {
+    return [];
+  }
+  const selected = [...pages].sort((left, right) =>
+    left.pageNumber - right.pageNumber || left.pageId.localeCompare(right.pageId));
+  const resolved = selected.map((page) => excerpts.get(page.pageId));
+  if (resolved.some((excerpt) => excerpt === undefined)) {
+    return [];
+  }
+  return [
+    '',
+    `[${title}]`,
+    ...resolved.flatMap((excerpt) => excerpt === undefined ? [] : [
+      `[ORIGINAL SOURCE] Page ${excerpt.pageNumber} (${excerpt.pageId})`,
+      excerpt.text,
+      `[END ORIGINAL SOURCE] Page ${excerpt.pageNumber} (${excerpt.pageId})`,
+    ]),
   ];
 }
 
@@ -357,6 +444,11 @@ export function buildEpisodeDetailContinuitySupplement(input: {
   const futurePages = orderedPlan.filter(
     (page) => !input.currentPageIds.has(page.pageId) && !completedPageIds.has(page.pageId),
   );
+  const currentSourceSection = formatOwnedOriginalSourceSection(
+    'CURRENT CHUNK ORIGINAL SOURCE',
+    currentPages,
+    buildPageSourceExcerpts(input.context),
+  );
   const repairSection =
     input.repairIssues === undefined || input.repairIssues.length === 0
       ? []
@@ -387,6 +479,7 @@ export function buildEpisodeDetailContinuitySupplement(input: {
     '',
     '[GLOBAL EPISODE LEDGER]',
     ...orderedPlan.map((page) => formatBeatPlanPage(page, LEDGER_FIELD_MAX_CHARS)),
+    ...currentSourceSection,
     '',
     '[CURRENT CHUNK OWNERSHIP]',
     ...currentPages.map(formatOwnedBeatPlanPage),
@@ -405,7 +498,10 @@ export function buildEpisodeDetailContinuitySupplement(input: {
       : ['(none)']),
     '',
     '[CONTINUITY RULES]',
-    'Use only the beats owned by CURRENT CHUNK OWNERSHIP for these pages.',
+    'Use only events allocated to these pages, but do not treat the generated ledger as exhaustive source text.',
+    'When CURRENT CHUNK ORIGINAL SOURCE is present, the exact original source excerpt is the source of truth and CURRENT CHUNK OWNERSHIP is page-allocation context only.',
+    'Preserve every authored prerequisite, action, immediate result, repeated or retry action, completion boundary, decision basis, negative or continuing constraint, final viewpoint, and explicit display line in the matching original page excerpt.',
+    'Do not move facts from any other page into the current chunk.',
     'Do not repeat dialogue, discoveries, actions, reactions, or visual situations from ALREADY COMPILED PAGES.',
     'Do not use FUTURE RESERVED BEATS early.',
     'The first panel must continue from entry_state, and the final panel must reach exit_state and handoff.',
@@ -444,6 +540,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
     }
     localizedPageLedgers.set(page.pageId, formatAuditOwnedSourceLedger(ownedPlan));
   }
+  const pageSourceExcerpts = buildPageSourceExcerpts(input.context);
   const deterministicFindingLines = formatDeterministicAuditFindingLines(
     detectDeterministicContinuityIssues(input.suggestion),
   );
@@ -484,6 +581,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
     '',
     '[AUDIT CONTRACT]',
     'Check the entire draft against the source and ledger, not each page in isolation.',
+    'When a PAGE-LOCAL ORIGINAL SOURCE block is present, compare that exact excerpt with the immediately following page. The generated ledger allocates page ownership but never shortens, replaces, or overrides explicit original source.',
     'Return source_coverage for every page with one or two highest-risk source facts. Prioritize prerequisites, repeated actions such as again/retry, cause-action-result chains, and final closure actions.',
     'If the source assigns a decision basis, completion boundary, negative or continuing constraint, final viewpoint, or concrete pose that is absent or contradicted in panel fields, reserve a check for it before sampling dialogue or an already-obvious present fact.',
     'source_ref=source ranges only over SOURCE DATA, including FULL STORY DRAFT. Copy a contiguous literal from that range only.',
@@ -505,6 +603,14 @@ export function buildEpisodePlanAuditArtifacts(input: {
     (total, ledger) => total + ledger.length + 1,
     0,
   );
+  const localizedSourceChars = pageSourceExcerpts === null
+    ? 0
+    : pages.reduce((total, page) => {
+        const excerpt = pageSourceExcerpts.get(page.pageId);
+        return excerpt === undefined
+          ? total
+          : total + formatAuditPageSourceLines(excerpt).join('\n').length + 1;
+      }, 0);
   const baseReserved = [...before, ...after].join('\n').length
     + pages.length * (PAGE_HEADER_MAX_CHARS + 4)
     + panelCount * 4
@@ -525,13 +631,21 @@ export function buildEpisodePlanAuditArtifacts(input: {
   ) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
   }
-  const remainingWithLocalizedLedgers = baseRemaining - localizedLedgerChars;
+  const includeLocalizedSources =
+    pageSourceExcerpts !== null
+    && pages.every((page) => pageSourceExcerpts.has(page.pageId))
+    && baseRemaining - localizedSourceChars >= panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
+    && baseRemaining - localizedSourceChars >= minimumPanelSummaryChars;
+  const remainingAfterLocalizedSources = includeLocalizedSources
+    ? baseRemaining - localizedSourceChars
+    : baseRemaining;
+  const remainingWithLocalizedLedgers = remainingAfterLocalizedSources - localizedLedgerChars;
   const includeLocalizedLedgers =
     remainingWithLocalizedLedgers >= panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
     && remainingWithLocalizedLedgers >= minimumPanelSummaryChars;
   const remaining = includeLocalizedLedgers
     ? remainingWithLocalizedLedgers
-    : baseRemaining;
+    : remainingAfterLocalizedSources;
   const optionalPanelChars = panelCount === 0
     ? 0
     : Math.floor((remaining - minimumPanelSummaryChars) / panelCount);
@@ -540,6 +654,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
       optionalPanelChars,
       entityLabels,
       includeLocalizedLedgers ? localizedPageLedgers.get(page.pageId) : undefined,
+      includeLocalizedSources ? pageSourceExcerpts?.get(page.pageId) : undefined,
     ));
   const brief = [...before, '', '[COMPILED EPISODE DRAFT]',
     ...renderedPages.flatMap((page) => page.lines), ...after].join('\n');
@@ -918,6 +1033,7 @@ function formatAuditPageArtifacts(
   optionalPanelChars: number,
   entityLabels: ReadonlyMap<string, string>,
   ownedSourceLedger: string | undefined,
+  originalSourceExcerpt: PageSourceExcerpt | undefined,
 ): {
   pageId: string;
   lines: string[];
@@ -937,12 +1053,23 @@ function formatAuditPageArtifacts(
   return {
     pageId: page.pageId,
     lines: [
+      ...(originalSourceExcerpt === undefined
+        ? []
+        : formatAuditPageSourceLines(originalSourceExcerpt)),
       header,
       ...(ownedSourceLedger === undefined ? [] : [ownedSourceLedger]),
       ...panels.map((panel) => `  ${panel.summary}`),
     ],
     outputs: panels.flatMap((panel) => panel.outputs),
   };
+}
+
+function formatAuditPageSourceLines(excerpt: PageSourceExcerpt): string[] {
+  return [
+    `[PAGE-LOCAL ORIGINAL SOURCE] Page ${excerpt.pageNumber} (${excerpt.pageId})`,
+    excerpt.text,
+    `[END PAGE-LOCAL ORIGINAL SOURCE] Page ${excerpt.pageNumber} (${excerpt.pageId})`,
+  ];
 }
 
 function formatAuditOwnedSourceLedger(page: EpisodeBeatPlanPage): string {

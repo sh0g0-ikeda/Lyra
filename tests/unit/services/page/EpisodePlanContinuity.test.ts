@@ -5,6 +5,7 @@ import type {
 } from '../../../../src/domain/types/page.js';
 import {
   buildEpisodeBeatPlanCompilerBrief,
+  buildEpisodeBeatPlanSegmentCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
   buildEpisodePlanAuditArtifacts,
   buildEpisodePlanAuditBrief,
@@ -327,6 +328,192 @@ describe('EpisodePlanContinuity', () => {
     expect(brief).toContain(finalBeatMarker);
     expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
   });
+
+  it('明示page見出しの原文をbeat・detail・auditの同一pageへexactに補足する', () => {
+    const context = buildContext();
+    context.pages = [context.pages[8]!, context.pages[14]!];
+    context.episode.storyFullDraft = [
+      'タイトル：灯台への道',
+      '9ページ目：扉を最初に押すが動かない。小石を取り除き、再び扉を押して暗い内部を見てから灯台へ入る。',
+      '15ページ目：装置を十分に充電し、手を離しても点灯が続く。',
+      '「一歩ずつでも、光にたどり着ける」。絵本を閉じて座る。',
+      '本文中の「2ページ目：という本の見出し」はpage delimiterではない。',
+    ].join('\n');
+    const plan = buildBeatPlan();
+    plan.pages = [plan.pages[8]!, plan.pages[14]!];
+    plan.pages[0]!.storyBeats = ['小石を除けば入場可能になる。'];
+    plan.pages[1]!.storyBeats = ['光を確認して座る。'];
+    const outline = {
+      pages: plan.pages.map((page) => ({
+        pageId: page.pageId,
+        pageNumber: page.pageNumber,
+        storyAnchor: `page-${page.pageNumber}`,
+        reservedTransition: `transition-${page.pageNumber}`,
+      })),
+    };
+    const exactPage9 = '9ページ目：扉を最初に押すが動かない。小石を取り除き、再び扉を押して暗い内部を見てから灯台へ入る。';
+    const exactPage15 = [
+      '15ページ目：装置を十分に充電し、手を離しても点灯が続く。',
+      '「一歩ずつでも、光にたどり着ける」。絵本を閉じて座る。',
+      '本文中の「2ページ目：という本の見出し」はpage delimiterではない。',
+    ].join('\n');
+
+    const segment = buildEpisodeBeatPlanSegmentCompilerBrief({
+      context,
+      language: 'ja',
+      outline,
+      targetPages: [context.pages[0]!],
+      completedPages: [],
+    });
+    const segmentLocal = section(segment, '[TARGET PAGE ORIGINAL SOURCE]', '[FUTURE RESERVED PAGES]');
+    expect(segmentLocal).toContain(exactPage9);
+    expect(segmentLocal).not.toContain(exactPage15);
+
+    const detail = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds: new Set([pageId(9)]),
+      completedPages: [],
+    });
+    const detailLocal = section(detail, '[CURRENT CHUNK ORIGINAL SOURCE]', '[CURRENT CHUNK OWNERSHIP]');
+    expect(detailLocal).toContain(exactPage9);
+    expect(detailLocal).not.toContain(exactPage15);
+    expect(detail).toContain('the exact original source excerpt is the source of truth');
+
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = [suggestion.pages[8]!, suggestion.pages[14]!].map((page) => ({
+      ...page,
+      panels: page.panels.slice(0, 1),
+    }));
+    const audit = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+    const page9Local = section(
+      audit,
+      `[PAGE-LOCAL ORIGINAL SOURCE] Page 9 (${pageId(9)})`,
+      `Page 9 (${pageId(9)}) |`,
+    );
+    const page15Local = section(
+      audit,
+      `[PAGE-LOCAL ORIGINAL SOURCE] Page 15 (${pageId(15)})`,
+      `Page 15 (${pageId(15)}) |`,
+    );
+    expect(page9Local).toContain(exactPage9);
+    expect(page9Local).not.toContain(exactPage15);
+    expect(page15Local).toContain(exactPage15);
+    expect(page15Local).not.toContain(exactPage9);
+    expect(audit.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+  });
+
+  it('曖昧なpage見出しでは局所補足を全体OFFにして旧FULL STORY全文を保持する', () => {
+    const variants = [
+      '見出しのない原文。',
+      '1ページ目：開始。\n1ページ目：重複。',
+      '1ページ目：開始。\n3ページ目：未知。',
+      '2ページ目：後半。\n1ページ目：前半。',
+      '1ページ目：一部だけ。',
+    ];
+    for (const storyFullDraft of variants) {
+      const context = buildContext();
+      context.pages = context.pages.slice(0, 2);
+      context.episode.storyFullDraft = storyFullDraft;
+      const plan = buildBeatPlan();
+      plan.pages = plan.pages.slice(0, 2);
+      const sourceBrief = buildEpisodeBeatPlanCompilerBrief(context, 'ja');
+      const detail = buildEpisodeDetailContinuitySupplement({
+        context,
+        plan,
+        currentPageIds: new Set([pageId(1)]),
+        completedPages: [],
+      });
+
+      expect(sourceBrief).toContain(storyFullDraft);
+      expect(detail).not.toContain('[CURRENT CHUNK ORIGINAL SOURCE]');
+    }
+
+    const duplicateContext = buildContext();
+    duplicateContext.pages = duplicateContext.pages.slice(0, 2);
+    duplicateContext.pages[1] = { ...duplicateContext.pages[1]!, pageNumber: 1 };
+    duplicateContext.episode.storyFullDraft = '1ページ目：最初。\n1ページ目：重複。';
+    const duplicatePlan = buildBeatPlan();
+    duplicatePlan.pages = duplicatePlan.pages.slice(0, 2);
+    const duplicateDetail = buildEpisodeDetailContinuitySupplement({
+      context: duplicateContext,
+      plan: duplicatePlan,
+      currentPageIds: new Set([pageId(1)]),
+      completedPages: [],
+    });
+    expect(duplicateDetail).not.toContain('[CURRENT CHUNK ORIGINAL SOURCE]');
+  });
+
+  it('page-local原文はraw CRLFと末尾空白を保持し先頭indent見出しを適格化しない', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 2);
+    const exactPage1 = '1ページ目：開始する。  \r\n次の動作へ進む。\t\r\n';
+    context.episode.storyFullDraft = `前書き\r\n${exactPage1}2ページ目：完了する。 \t`;
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 2);
+    const detail = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds: new Set([pageId(1)]),
+      completedPages: [],
+    });
+    const local = section(detail, '[CURRENT CHUNK ORIGINAL SOURCE]', '[CURRENT CHUNK OWNERSHIP]');
+    expect(local).toContain(exactPage1);
+
+    context.episode.storyFullDraft = '  1ページ目：indentされた開始。\r\n2ページ目：完了。';
+    const indented = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds: new Set([pageId(1)]),
+      completedPages: [],
+    });
+    expect(indented).not.toContain('[CURRENT CHUNK ORIGINAL SOURCE]');
+  });
+
+  it('repairでもpage-local原文を保持しaudit最大budgetでは局所補足をall-or-noneにする', () => {
+    const context = buildContext();
+    context.episode.storyFullDraft = context.pages
+      .map((page) => `${page.pageNumber}ページ目：${`原文-${page.pageNumber}-`.repeat(24)}`)
+      .join('\n');
+    const plan = buildBeatPlan();
+    const suggestion = buildVerboseSuggestion();
+    const currentDraftPages = suggestion.pages.slice(-3);
+    const currentPageIds = new Set(currentDraftPages.map((page) => page.pageId));
+    const repair = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds,
+      completedPages: suggestion.pages.filter((page) => !currentPageIds.has(page.pageId)),
+      currentDraftPages,
+      repairIssues: [{
+        code: 'source_omission',
+        severity: 'error',
+        pageIds: [pageId(PAGE_COUNT)],
+        message: '原文の完了動作がない。',
+        repairInstruction: '原文どおり最後まで描く。',
+      }],
+    });
+    const repairLocal = section(repair, '[CURRENT CHUNK ORIGINAL SOURCE]', '[CURRENT CHUNK OWNERSHIP]');
+    expect(repairLocal).toContain(`${PAGE_COUNT}ページ目：原文-${PAGE_COUNT}-`);
+    expect(repairLocal).not.toContain('1ページ目：原文-1-');
+
+    for (const page of suggestion.pages) {
+      page.panels = page.panels.slice(0, 8);
+      for (const panel of page.panels) {
+        panel.dialogue = [{
+          entityId: null,
+          type: 'narration',
+          position: 'right',
+          text: `完全台詞-${page.pageNumber}-${panel.order}`,
+        }];
+      }
+    }
+    const audit = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+    const localSourceCount = audit.match(/\[PAGE-LOCAL ORIGINAL SOURCE\]/gu)?.length ?? 0;
+    expect([0, PAGE_COUNT]).toContain(localSourceCount);
+    expect(audit).toContain(`p8.d1="完全台詞-${PAGE_COUNT}-8"`);
+    expect(audit.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+  }, 20_000);
 
   it('同じページ内でも重複した story beat を台帳として採用しない', () => {
     const context = buildContext();
@@ -871,4 +1058,12 @@ function pageId(pageNumber: number): string {
 
 function briefContainsPage(brief: string, pageNumber: number): boolean {
   return brief.includes(`Page ${pageNumber} (${pageId(pageNumber)})`);
+}
+
+function section(value: string, startMarker: string, endMarker: string): string {
+  const start = value.indexOf(startMarker);
+  const end = value.indexOf(endMarker, start + startMarker.length);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return value.slice(start, end);
 }
