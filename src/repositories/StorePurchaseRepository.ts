@@ -1,3 +1,4 @@
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { QueryResultRow } from 'pg';
 import type {
   ConsumerPaidPlanCode,
@@ -189,6 +190,7 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
   public constructor(
     private readonly transactionRunner: TransactionRunner,
     private readonly readClient?: DatabaseClient,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   ) {}
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
@@ -212,15 +214,15 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
     const result = await client.query<{
       id: string;
       plan_code: string;
-      account_deletion_started_at: Date | null;
-      account_deleted_at: Date | null;
+      account_deletion_started_at?: Date | null;
+      account_deleted_at?: Date | null;
+      legacy_account_deleted?: boolean;
     }>(
       `
       SELECT
         id,
         plan_code,
-        account_deletion_started_at,
-        account_deleted_at
+        ${storeUserDeletionProjectionSql(this.schemaProfile)}
       FROM users
       WHERE id = $1
       FOR UPDATE
@@ -234,8 +236,9 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
           id: row.id,
           planCode: row.plan_code,
           accountDeleted:
-            row.account_deletion_started_at !== null
-            || row.account_deleted_at !== null,
+            this.schemaProfile === 'legacy_2debe_v1'
+              ? row.legacy_account_deleted === true
+              : row.account_deletion_started_at !== null || row.account_deleted_at !== null,
         };
   }
 
@@ -581,4 +584,11 @@ function mapStorePurchaseRow(row: StorePurchaseRow): StorePurchaseRecord {
     reversedCredits: row.reversed_credits,
     lastObservedAt: row.last_observed_at,
   };
+}
+
+function storeUserDeletionProjectionSql(profile: RepositorySchemaProfile): string {
+  if (profile === 'legacy_2debe_v1') {
+    return "EXISTS (SELECT 1 FROM account_deletion_requests requests WHERE requests.user_id = users.id AND requests.status IN ('processing', 'pending_external_action', 'completed')) AS legacy_account_deleted";
+  }
+  return 'account_deletion_started_at,\n        account_deleted_at';
 }
