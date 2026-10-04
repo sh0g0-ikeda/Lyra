@@ -85,6 +85,14 @@ indexes do not rewrite existing application rows; real lock/load acceptance is
 still required. The earlier production-lineage bridge retains its full write
 freeze, queue drain and forward-only rollback restrictions.
 
+The 2026-10-04 requirement that published-app operations continue makes that
+write-freeze bridge unsuitable for this release. Its successful local fixture
+tests do not authorize its use against production or establish an uninterrupted
+cutover. Representative-lineage inspection and old/new writer acceptance, or a
+separately tested additive compatibility transition if the bridge is needed,
+remain blocking release gates. Keep this distinct from old-client response
+compatibility and fresh staging-schema results.
+
 Before any v2 admission, an intake-disabled image can remain on the compatibility
 baseline only if there are no v2 journal entries and all earlier release gates
 pass. After the first v2 attempt, a rollback image must retain v2 journal-aware

@@ -4,6 +4,36 @@ Source baseline: production code 2debe8c3c22633ed077e7b189ddcfa8b209a00dc.
 The frozen SQL under tests/fixtures/production-lineage-2debe comes verbatim from
 that commit. No live production database has been contacted.
 
+## Current release constraint (2026-10-04)
+
+The user requires the published application to keep its existing operations
+available throughout an additive release. The write-freeze transition below is a
+historical, local-only rehearsal and is **not an accepted deployment plan for this
+release**. Do not invoke its quiescence option or schedule a maintenance outage to
+make the release gate pass.
+
+First establish the production lineage on an authorized isolated representative
+copy. If no bridge is required, rehearse bounded additive migrations and old/new
+API and worker coexistence on that lineage. If this bridge is required, a separate
+compatibility image and additive transition must be designed and tested before
+cutover. New-backend/old-client contract tests and fresh-schema tests alone do not
+prove coexistence. Existing works, image references, ownership, balances, ledger,
+refunds, cancellation and provider callbacks must remain correct. No such
+representative-copy or mixed-writer acceptance has yet passed.
+
+The current repositories do not select a legacy physical-schema adapter. Page
+story metadata uses JSON; export and deletion access use `episode_export_jobs`.
+The old physical story columns can diverge from JSON as soon as old writers
+resume after the one-time copy. The old late-consume/refund and push triggers also
+cannot be combined blindly with new explicit settlement and notification logic.
+Deploying a compatibility image first does not make the existing 046 command
+nonblocking: its quiescence check and ACCESS EXCLUSIVE locks still stop that
+image's writers. Canonical production naming alone does not exempt it from the
+current bridge-required gate. An accepted transition must separately preserve old
+writer admission, one settlement owner, job routing and deletion evidence, with
+old/new execution-code fixtures and representative-copy checks. The frozen SQL
+fixtures used by the historical bridge tests prove schema behavior only.
+
 ## Ordered transition
 
 1. Read-only aggregate preflight identifies the candidate, canonical production,
