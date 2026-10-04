@@ -407,6 +407,32 @@ describe('EpisodePlanContinuity', () => {
   it('完全なpage原文ではgenerated beat台帳だけをdetail・repair・audit判断から除外する', () => {
     const context = buildContext();
     context.pages = [context.pages[0]!, context.pages[8]!, context.pages[14]!];
+    context.entities = [{
+      id: '10000000-0000-4000-8000-000000000001',
+      name: 'ココ',
+      entityType: 'character',
+      freeDescription: '生成された人物要約',
+      promptSupplement: null,
+      structuredFields: {},
+    }];
+    context.scenes = [{
+      id: '20000000-0000-4000-8000-000000000001',
+      order: 1,
+      location: '灯台',
+      time: '夜',
+      atmosphere: '静か',
+      involvedEntityIds: ['10000000-0000-4000-8000-000000000001'],
+      entityStates: [{
+        entityId: '10000000-0000-4000-8000-000000000001',
+        stateId: '30000000-0000-4000-8000-000000000001',
+        costumeNote: '赤いスカーフ',
+        costumeRefId: null,
+        conditionNote: '首から外さない',
+        hairNote: null,
+        expressionDefault: null,
+        extraNote: null,
+      }],
+    }];
     context.episode.storyFullDraft = [
       '1ページ目：帰港する船が灯台の光を航路の目印にして進む。',
       '9ページ目：扉を押すが動かず、小石を取り除き、もう一度押してから中へ入る。',
@@ -493,6 +519,30 @@ describe('EpisodePlanContinuity', () => {
     expect(auditBefore.coverageCatalog.pages.every(
       (page) => page.sources.map((source) => source.ref).join(',') === 'source',
     )).toBe(true);
+    const grounding = auditBefore.coverageCatalog.grounding;
+    expect(grounding?.pages).toHaveLength(3);
+    const pageNineAuthorities = grounding?.pages.find((page) => page.pageId === pageId(9))?.authorities;
+    expect(pageNineAuthorities)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'page_source',
+          kind: 'original_page',
+          text: expect.stringContaining('小石を取り除き、もう一度押してから中へ入る'),
+        }),
+        expect.objectContaining({ ref: 'source_context', kind: 'source_context' }),
+      ]));
+    expect(pageNineAuthorities)
+      .not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ text: expect.stringContaining('改変された生成beat') }),
+      ]));
+    const sourceContext = pageNineAuthorities?.find((authority) => authority.ref === 'source_context')?.text;
+    expect(sourceContext).toContain('[SCENES]');
+    expect(sourceContext).toContain('condition=首から外さない');
+    expect(sourceContext).not.toContain('[AVAILABLE ENTITIES]');
+    expect(sourceContext).not.toContain('生成された人物要約');
+    expect(sourceContext).not.toContain('[CHAPTER]');
+    expect(sourceContext).not.toContain('[EPISODE STORY]');
+    expect(sourceContext).not.toContain('旅の変化を描く');
   });
 
   it('source-owned監査でも内部planが監査対象全ページを所有しない場合は拒否する', () => {

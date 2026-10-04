@@ -1,4 +1,5 @@
 import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
+import { z } from 'zod';
 import type { OpenAIReasoningEffort } from './StructuredOpenAIResponse.js';
 import { STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY, STORY_PANEL_POLICY } from './StoryEditorialPrompts.js';
 import {
@@ -24,6 +25,11 @@ import {
   EpisodePlanAuditCoverageError,
   validateEpisodePlanAuditCoverage,
 } from '../../services/page/EpisodePlanAuditCoverage.js';
+import {
+  EpisodePlanAuditGroundingError,
+  episodePlanAuditIssueGroundingsSchema,
+  validateEpisodePlanAuditIssueGrounding,
+} from './OpenAIEpisodePlanAuditGrounding.js';
 import type {
   CompiledEpisodePlanAudit,
   CompileEpisodePlanAuditInput,
@@ -71,32 +77,82 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
         content: [{ type: 'input_text' as const, text: input.compilerBrief }],
       },
     ];
+    const sourceOwnedPageContext = input.sourceOwnedPageContext === true;
     let requestInput = baseRequestInput;
     let validated: AuditPayload | null = null;
+    let frozenSourceOwnedBody: SourceOwnedAuditPayload | null = null;
+    let frozenLinkMetadata: string | null = null;
     for (let attempt = 1; attempt <= EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS; attempt += 1) {
-      let coverageRetryInstruction: string | null = null;
+      let retryInstruction: string | null = null;
+      const coverageOnlyAttempt = frozenSourceOwnedBody !== null && frozenLinkMetadata !== null;
       try {
-        const candidate = await requestStructuredOpenAIResponse({
-          client: this.client,
-          model: this.model,
-      reasoningEffort: this.reasoningEffort,
-          maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
-          schemaName: 'episode_plan_audit',
-          jsonSchema: buildEpisodePlanAuditJsonSchema(allowedPageIds),
-          responseSchema: episodePlanAuditSchema,
-          errorLabel: 'OpenAI episode plan audit compiler',
-          input: requestInput,
-        });
+        const candidate = coverageOnlyAttempt
+          ? await this.requestCoverageOnlyAudit(
+              allowedPageIds,
+              requestInput,
+              frozenSourceOwnedBody,
+              frozenLinkMetadata,
+              input.language,
+            )
+          : await requestStructuredOpenAIResponse({
+              client: this.client,
+              model: this.model,
+              reasoningEffort: this.reasoningEffort,
+              maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
+              schemaName: 'episode_plan_audit',
+              jsonSchema: buildEpisodePlanAuditJsonSchema(allowedPageIds, sourceOwnedPageContext),
+              responseSchema: sourceOwnedPageContext ? sourceOwnedAuditSchema : episodePlanAuditSchema,
+              errorLabel: 'OpenAI episode plan audit compiler',
+              input: requestInput,
+            });
         const candidateAudit = mapAuditPayload(candidate);
+        if (sourceOwnedPageContext) {
+          try {
+            validateEpisodePlanAuditIssueGrounding({
+              audit: candidateAudit,
+              groundings: readSourceOwnedGroundings(candidate),
+              catalog: input.coverageCatalog.grounding,
+              ...(input.groundingAuthorities === undefined
+                ? {}
+                : { additionalAuthorities: input.groundingAuthorities }),
+            });
+          } catch (error) {
+            if (!(error instanceof EpisodePlanAuditGroundingError)) {
+              throw error;
+            }
+            retryInstruction = error.retryInstruction;
+            frozenSourceOwnedBody = null;
+            frozenLinkMetadata = null;
+            throw new StructuredOpenAIResponseError(
+              'OpenAI episode plan audit compiler returned invalid issue grounding',
+              'invalid_payload',
+              true,
+              null,
+            );
+          }
+        }
         try {
           validateEpisodePlanAuditCoverage(candidateAudit, input.coverageCatalog);
         } catch (error) {
           if (!(error instanceof ConfigurationError)) {
             throw error;
           }
-          coverageRetryInstruction = error instanceof EpisodePlanAuditCoverageError
+          retryInstruction = error instanceof EpisodePlanAuditCoverageError
             ? error.retryInstruction
             : 'Coverage correction for the retry: rebuild source_coverage from exact named refs and contiguous displayed quotes only.';
+          if (
+            sourceOwnedPageContext
+            && !coverageOnlyAttempt
+            && error instanceof EpisodePlanAuditCoverageError
+          ) {
+            const sourceOwnedCandidate = readSourceOwnedPayload(candidate);
+            const linkMetadata = buildCoverageOnlyLinkMetadata(candidateAudit);
+            frozenSourceOwnedBody = linkMetadata === null ? null : sourceOwnedCandidate;
+            frozenLinkMetadata = linkMetadata;
+          } else {
+            frozenSourceOwnedBody = null;
+            frozenLinkMetadata = null;
+          }
           throw new StructuredOpenAIResponseError(
             'OpenAI episode plan audit compiler returned invalid source coverage',
             'invalid_payload',
@@ -116,14 +172,14 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
         }
 
         await input.beforeRetry?.();
-        if (coverageRetryInstruction !== null) {
+        if (retryInstruction !== null) {
           requestInput = [
             ...baseRequestInput,
             {
               role: 'user' as const,
               content: [{
                 type: 'input_text' as const,
-                text: coverageRetryInstruction,
+                text: retryInstruction,
               }],
             },
           ];
@@ -148,6 +204,166 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
       compilerPromptVersion: EPISODE_PLAN_AUDIT_COMPILER_VERSION,
     };
   }
+
+  private async requestCoverageOnlyAudit(
+    allowedPageIds: readonly string[],
+    requestInput: Array<{
+      role: 'system' | 'user';
+      content: Array<{ type: 'input_text'; text: string }>;
+    }>,
+    frozen: SourceOwnedAuditPayload | null,
+    frozenMetadata: string | null,
+    language: CompileEpisodePlanAuditInput['language'],
+  ): Promise<SourceOwnedAuditPayload> {
+    if (frozen === null || frozenMetadata === null) {
+      throw new ConfigurationError('Coverage-only audit retry requires a grounded frozen body');
+    }
+    const compilerBrief = requestInput[1];
+    if (compilerBrief === undefined) {
+      throw new ConfigurationError('Coverage-only audit retry requires the unchanged compiler brief');
+    }
+    const correctionMessages = requestInput.slice(2);
+    const coverage = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: this.model,
+      reasoningEffort: this.reasoningEffort,
+      maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
+      schemaName: 'episode_plan_audit_coverage',
+      jsonSchema: buildEpisodePlanAuditCoverageOnlyJsonSchema(allowedPageIds),
+      responseSchema: coverageOnlyAuditSchema,
+      errorLabel: 'OpenAI episode plan audit coverage correction',
+      input: [
+        {
+          role: 'system',
+          content: [{
+            type: 'input_text',
+            text: buildCoverageOnlySystemPrompt(language),
+          }],
+        },
+        compilerBrief,
+        {
+          role: 'user',
+          content: [{ type: 'input_text', text: frozenMetadata }],
+        },
+        ...correctionMessages,
+      ],
+    });
+    return {
+      ...frozen,
+      source_coverage: coverage.source_coverage,
+    };
+  }
+}
+
+const COVERAGE_ONLY_LINK_METADATA_MAX_CHARS = 12_000;
+const COVERAGE_VISIBLE_REPAIR_FIELDS: ReadonlySet<EpisodePlanAuditPanelRepairField> = new Set([
+  'situationText',
+  'composition',
+  'dialogue',
+  'sfxText',
+  'backgroundNote',
+  'panelNotes',
+  'entities',
+]);
+
+function buildCoverageOnlySystemPrompt(
+  language: CompileEpisodePlanAuditInput['language'],
+): string {
+  return [
+    'Correct source_coverage citations and links only. Return source_coverage only in the required strict JSON object.',
+    'The full audit body, issues, and repairs are already validated and server-held. Do not regenerate, add, remove, or rewrite them.',
+    'Use the unchanged source and compiled draft below for exact contiguous quotes. Never treat planning metadata as visible depiction.',
+    'For status=missing, use only an issue_code/page_id and repair page_id/panel_order combination allowed by FROZEN AUDIT LINK METADATA. Do not invent an unlisted link.',
+    'For status=present, cite exact displayed output evidence and return no issue or repair link.',
+    `The application language is ${describeAppLanguage(language)}.`,
+  ].join(' ');
+}
+
+function buildCoverageOnlyLinkMetadata(audit: EpisodePlanAudit): string | null {
+  const repairPageIds = new Set([
+    ...(audit.pageRepairs ?? []).map((repair) => repair.pageId),
+    ...(audit.panelRepairs ?? []).map((repair) => repair.pageId),
+  ]);
+  const hasUnrepairedError = audit.issues.some((issue) =>
+    issue.severity === 'error'
+    && !issue.pageIds.some((pageId) => repairPageIds.has(pageId)),
+  );
+  if (hasUnrepairedError) {
+    return null;
+  }
+
+  const errorLinks = new Map<string, { code: string; pageId: string }>();
+  for (const issue of audit.issues) {
+    if (issue.severity !== 'error') continue;
+    for (const pageId of issue.pageIds) {
+      const key = `${issue.code}\u0000${pageId}`;
+      errorLinks.set(key, { code: issue.code, pageId });
+    }
+  }
+
+  const repairTargets = new Map<string, {
+    pageId: string;
+    panelOrder: number;
+    fields: Set<EpisodePlanAuditPanelRepairField>;
+  }>();
+  for (const repair of audit.panelRepairs ?? []) {
+    const visibleFields = repair.changedFields.filter((field) =>
+      COVERAGE_VISIBLE_REPAIR_FIELDS.has(field) && repairFieldAddsVisibleContent(repair, field),
+    );
+    if (visibleFields.length === 0) continue;
+    const key = `${repair.pageId}\u0000${repair.panelOrder}`;
+    const target = repairTargets.get(key) ?? {
+      pageId: repair.pageId,
+      panelOrder: repair.panelOrder,
+      fields: new Set<EpisodePlanAuditPanelRepairField>(),
+    };
+    visibleFields.forEach((field) => target.fields.add(field));
+    repairTargets.set(key, target);
+  }
+
+  const lines = [
+    '[FROZEN AUDIT LINK METADATA]',
+    'The server retains the validated body. These identifiers are the complete allowed link set; no issue prose, quotes, repair instructions, or patch values are included.',
+    ...[...errorLinks.values()].map((link, index) =>
+      `error_link[${index + 1}]: issue_code=${link.code} page_id=${JSON.stringify(link.pageId)}`,
+    ),
+    ...[...repairTargets.values()].map((target, index) =>
+      `repair_target[${index + 1}]: page_id=${JSON.stringify(target.pageId)} panel_order=${target.panelOrder} visible_fields=${JSON.stringify([...target.fields])}`,
+    ),
+    '[END FROZEN AUDIT LINK METADATA]',
+  ];
+  const metadata = lines.join('\n');
+  return metadata.length <= COVERAGE_ONLY_LINK_METADATA_MAX_CHARS ? metadata : null;
+}
+
+function repairFieldAddsVisibleContent(
+  repair: EpisodePlanAuditPanelRepair,
+  field: EpisodePlanAuditPanelRepairField,
+): boolean {
+  switch (field) {
+    case 'situationText':
+      return hasText(repair.patch.situationText);
+    case 'composition':
+      return repair.patch.composition !== undefined;
+    case 'dialogue':
+      return (repair.patch.dialogue?.length ?? 0) > 0;
+    case 'sfxText':
+      return hasText(repair.patch.sfxText);
+    case 'backgroundNote':
+      return hasText(repair.patch.backgroundNote);
+    case 'panelNotes':
+      return hasText(repair.patch.panelNotes);
+    case 'entities':
+      return (repair.patch.entities?.length ?? 0) > 0;
+    case 'panelRole':
+    case 'panelSize':
+    case 'dialogueInPanel':
+      return false;
+  }
+}
+
+function hasText(value: string | null | undefined): boolean {
+  return value !== null && value !== undefined && value.trim().length > 0;
 }
 
 function buildSystemPrompt(
@@ -171,6 +387,11 @@ function buildSystemPrompt(
     sourceOwnedPageContext
       ? 'Compare the compiled draft against the exact page-labelled original source and the untruncated counts in TEXT DISTRIBUTION. Validated entity-state transitions supplied in the brief remain binding continuity constraints.'
       : 'Compare the compiled draft against source story, ledger ownership including text_plan, and the untruncated counts in TEXT DISTRIBUTION.',
+    ...(sourceOwnedPageContext ? [
+      'The exact original page source is authoritative. Every compiled field, including purpose, continuity, panel notes, composition notes, and entity metadata, is draft output under review. Never describe generated draft text as an original-source requirement, and never change a source-faithful visible field merely to agree with conflicting generated metadata.',
+      'Before easy dialogue or setup facts, audit explicit completion and end states, the authored functional meaning of props or displayed information, cause-action-result chains, and authored emotion or pose against actual visible panel fields.',
+      'Return one issue_grounding entry for every severity=error issue. Use basis=source with exact named authority and output-field quotes; source omissions may have no output quote. Use basis=deterministic only when the typed DETERMINISTIC FINDINGS section contains the same code and page IDs. issue_grounding is validation metadata and must not add or replace issues or repairs.',
+    ] : []),
     'Check every explicitly authored source dialogue line against COMPLETE DIALOGUE for exact interior wording and the unambiguous speaker or thinker and dialogue type assigned by the source. Apply the same exact-wording check to explicitly assigned narration or caption/display text, which must keep type=narration and entity_id=null. Japanese brackets around a name, title, alias, or cited label are not dialogue unless the source assigns the text as an utterance, private thought, narration, or caption.',
     sourceOwnedPageContext
       ? '[CHAPTER], [CHAPTER ARC], [EPISODE STORY], [EPISODE ARC], page purpose, continuity, and generated summaries are planning context only and are not displayed dialogue, thought, narration, or caption. If compiled display text copies or paraphrases that context without an explicit display-text assignment in [FULL STORY DRAFT - SOURCE DATA], report an error and use an existing dialogue field repair to remove it while preserving explicitly authored display text.'
@@ -205,6 +426,11 @@ function buildSystemPrompt(
 }
 
 type AuditPayload = ReturnType<typeof episodePlanAuditSchema.parse>;
+const sourceOwnedAuditSchema = episodePlanAuditSchema.extend({
+  issue_grounding: episodePlanAuditIssueGroundingsSchema,
+}).strict();
+const coverageOnlyAuditSchema = episodePlanAuditSchema.pick({ source_coverage: true }).strict();
+type SourceOwnedAuditPayload = z.infer<typeof sourceOwnedAuditSchema>;
 
 function mapAuditPayload(payload: AuditPayload): EpisodePlanAudit {
   return {
@@ -523,13 +749,21 @@ const panelRepairPatchJsonSchema = {
 
 function buildEpisodePlanAuditJsonSchema(
   allowedPageIds: readonly string[],
+  sourceOwnedPageContext = false,
 ): Record<string, unknown> {
   const pageIdJsonSchema = { type: 'string', enum: [...allowedPageIds] };
 
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['accepted', 'issues', 'page_repairs', 'panel_repairs', 'source_coverage'],
+    required: [
+      'accepted',
+      'issues',
+      'page_repairs',
+      'panel_repairs',
+      'source_coverage',
+      ...(sourceOwnedPageContext ? ['issue_grounding'] : []),
+    ],
     properties: {
       accepted: { type: 'boolean' },
       issues: {
@@ -689,6 +923,81 @@ function buildEpisodePlanAuditJsonSchema(
           },
         },
       },
+      ...(sourceOwnedPageContext ? {
+        issue_grounding: buildIssueGroundingJsonSchema(pageIdJsonSchema),
+      } : {}),
     },
   };
+}
+
+function buildEpisodePlanAuditCoverageOnlyJsonSchema(
+  allowedPageIds: readonly string[],
+): Record<string, unknown> {
+  const fullSchema = buildEpisodePlanAuditJsonSchema(allowedPageIds);
+  const properties = fullSchema.properties;
+  if (typeof properties !== 'object' || properties === null || Array.isArray(properties)) {
+    throw new ConfigurationError('Episode audit JSON schema is missing properties');
+  }
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['source_coverage'],
+    properties: {
+      source_coverage: (properties as Record<string, unknown>).source_coverage,
+    },
+  };
+}
+
+function buildIssueGroundingJsonSchema(pageIdJsonSchema: Record<string, unknown>): Record<string, unknown> {
+  const sourceEvidence = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['page_id', 'source_ref', 'quote'],
+    properties: {
+      page_id: pageIdJsonSchema,
+      source_ref: { type: 'string', minLength: 1, maxLength: 24 },
+      quote: { type: 'string', minLength: 4, maxLength: 40 },
+    },
+  };
+  const outputEvidence = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['page_id', 'output_ref', 'quote'],
+    properties: {
+      page_id: pageIdJsonSchema,
+      output_ref: { type: 'string', minLength: 1, maxLength: 24 },
+      quote: { type: 'string', minLength: 4, maxLength: 40 },
+    },
+  };
+  return {
+    type: 'array',
+    maxItems: STORY_AI_LIMITS.maxSkeletonPages * 4,
+    items: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['issue_index', 'basis', 'source_evidence', 'output_evidence'],
+      properties: {
+        issue_index: {
+          type: 'integer',
+          minimum: 0,
+          maximum: STORY_AI_LIMITS.maxSkeletonPages * 4 - 1,
+        },
+        basis: { type: 'string', enum: ['source', 'deterministic'] },
+        source_evidence: { type: 'array', maxItems: 8, items: sourceEvidence },
+        output_evidence: { type: 'array', maxItems: 8, items: outputEvidence },
+      },
+    },
+  };
+}
+
+function readSourceOwnedPayload(
+  payload: AuditPayload | SourceOwnedAuditPayload,
+): SourceOwnedAuditPayload {
+  return sourceOwnedAuditSchema.parse(payload);
+}
+
+function readSourceOwnedGroundings(
+  payload: AuditPayload | SourceOwnedAuditPayload,
+): SourceOwnedAuditPayload['issue_grounding'] {
+  return readSourceOwnedPayload(payload).issue_grounding;
 }

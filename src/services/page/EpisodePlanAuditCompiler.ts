@@ -95,6 +95,40 @@ export interface EpisodePlanAuditSourceCoverage {
   checks: EpisodePlanAuditCoverageCheck[];
 }
 
+export type EpisodePlanAuditGroundingAuthorityKind =
+  | 'original_page'
+  | 'source_context'
+  | 'validated_state';
+
+export interface EpisodePlanAuditGroundingAuthority {
+  ref: string;
+  text: string;
+  kind: EpisodePlanAuditGroundingAuthorityKind;
+}
+
+export interface EpisodePlanAuditGroundingPageCatalog {
+  pageId: string;
+  authorities: EpisodePlanAuditGroundingAuthority[];
+  outputs: Array<{
+    ref: string;
+    text: string;
+    panelOrder: number | null;
+  }>;
+}
+
+export interface EpisodePlanAuditGroundingCatalog {
+  pages: EpisodePlanAuditGroundingPageCatalog[];
+  deterministicIssues: Array<{
+    code: EpisodePlanAuditIssueCode;
+    pageIds: string[];
+  }>;
+}
+
+export type EpisodePlanAuditCoverageCatalogWithGrounding = EpisodePlanAuditCoverageCatalog & {
+  /** Trusted service-built authorities. User text never selects or extends this catalog. */
+  grounding?: EpisodePlanAuditGroundingCatalog;
+};
+
 export interface EpisodePlanAudit {
   accepted: boolean;
   issues: EpisodePlanAuditIssue[];
@@ -108,8 +142,10 @@ export interface CompileEpisodePlanAuditInput {
   compilerBrief: string;
   language: AppLanguage;
   pageIds: string[];
-  coverageCatalog?: EpisodePlanAuditCoverageCatalog;
+  coverageCatalog?: EpisodePlanAuditCoverageCatalogWithGrounding;
   sourceOwnedPageContext?: boolean;
+  /** Additional visible, validated authority appended by the service (for example state transitions). */
+  groundingAuthorities?: EpisodePlanAuditGroundingAuthority[];
   beforeRetry?: () => Promise<void>;
 }
 

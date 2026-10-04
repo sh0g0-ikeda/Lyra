@@ -1373,6 +1373,13 @@ export class PageService implements PageServicePort {
       pageIds: context.pages.map((page) => page.pageId),
       coverageCatalog: auditArtifacts.coverageCatalog,
       sourceOwnedPageContext,
+      ...(stateLedger === undefined ? {} : {
+        groundingAuthorities: [{
+          ref: 'validated_state',
+          text: stateLedger,
+          kind: 'validated_state' as const,
+        }],
+      }),
       beforeRetry: async () => {
         await reportEpisodePlanProgress(progressReporter, {
           stage: 'auditing_episode',

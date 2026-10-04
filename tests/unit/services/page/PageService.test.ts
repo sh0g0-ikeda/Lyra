@@ -2139,6 +2139,13 @@ describe('PageService', () => {
             message: 'Page 4 places the response before its trigger.',
             repairInstruction: 'Move the response after the trigger.',
           },
+          {
+            code: 'timeline_discontinuity',
+            severity: 'error',
+            pageIds: ['page-1'],
+            message: 'A state boundary still needs semantic review.',
+            repairInstruction: 'Keep this as a non-field state review result.',
+          },
         ],
         panelRepairs: [
           {
@@ -3143,6 +3150,11 @@ describe('PageService', () => {
     expect(pageCompiler.inputs[0]?.sourceOwnedPageContext).toBe(true);
     expect(auditCompiler.inputs[0]?.sourceOwnedPageContext).toBe(true);
     expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs.every((input) => input.groundingAuthorities?.some(
+      (authority) => authority.ref === 'validated_state'
+        && authority.kind === 'validated_state'
+        && authority.text.includes(stateId),
+    ) === true)).toBe(true);
     context.pages[0]!.panels[0]!.entities = [{
       ...transactionAssignments.updates[0]!.assignments[0]!, stateId: null,
     }];

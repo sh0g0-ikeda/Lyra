@@ -23,7 +23,11 @@ import type {
   EpisodeBeatPlanOutline,
   EpisodeBeatPlanPage,
 } from './EpisodeBeatPlanCompiler.js';
-import type { EpisodePlanAuditIssue } from './EpisodePlanAuditCompiler.js';
+import type {
+  EpisodePlanAuditCoverageCatalogWithGrounding,
+  EpisodePlanAuditGroundingAuthority,
+  EpisodePlanAuditIssue,
+} from './EpisodePlanAuditCompiler.js';
 import type {
   EpisodePlanAuditCoverageCatalog,
   EpisodePlanAuditCoverageCatalogOutput,
@@ -566,7 +570,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
   sourceOwnedPageContext?: boolean;
 }): {
   compilerBrief: string;
-  coverageCatalog: EpisodePlanAuditCoverageCatalog;
+  coverageCatalog: EpisodePlanAuditCoverageCatalogWithGrounding;
 } {
   const pages = [...input.suggestion.pages].sort(compareSuggestionPages);
   const panelCount = pages.reduce((count, page) => count + page.panels.length, 0);
@@ -587,9 +591,8 @@ export function buildEpisodePlanAuditArtifacts(input: {
       localizedPageLedgers.set(page.pageId, formatAuditOwnedSourceLedger(ownedPlan));
     }
   }
-  const deterministicFindingLines = formatDeterministicAuditFindingLines(
-    detectDeterministicContinuityIssues(input.suggestion),
-  );
+  const deterministicIssues = detectDeterministicContinuityIssues(input.suggestion);
+  const deterministicFindingLines = formatDeterministicAuditFindingLines(deterministicIssues);
   const before = sourceOwnedPageContext ? [
     '[AUDIT PURPOSE]',
     'Audit the complete compiled episode before anything is saved.',
@@ -643,6 +646,9 @@ export function buildEpisodePlanAuditArtifacts(input: {
     sourceOwnedPageContext
       ? 'Compare every PAGE-LOCAL ORIGINAL SOURCE block with the immediately following page. That exact excerpt is the complete page ownership contract.'
       : 'When a PAGE-LOCAL ORIGINAL SOURCE block is present, compare that exact excerpt with the immediately following page. The generated ledger allocates page ownership but never shortens, replaces, or overrides explicit original source.',
+    ...(sourceOwnedPageContext ? [
+      'For issue_grounding, page_source means that page\'s exact original excerpt; global_source means the original preface before the first page heading; source_context means the displayed scene and entity-state source fields; validated_state means the separately displayed validated state-transition ledger. Compiled purpose, continuity, panel notes, entity metadata, and other draft fields are output evidence only and never original-source authority.',
+    ] : []),
     'Return source_coverage for every page with one or two highest-risk source facts. Prioritize prerequisites, repeated actions such as again/retry, cause-action-result chains, and final closure actions.',
     'If the source assigns a decision basis, completion boundary, negative or continuing constraint, final viewpoint, or concrete pose that is absent or contradicted in panel fields, reserve a check for it before sampling dialogue or an already-obvious present fact.',
     'source_ref=source ranges only over SOURCE DATA, including FULL STORY DRAFT. Copy a contiguous literal from that range only.',
@@ -726,7 +732,28 @@ export function buildEpisodePlanAuditArtifacts(input: {
   if (brief.length > AUDIT_BRIEF_MAX_CHARS) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
   }
-  const sourceText = buildEpisodeBeatPlanSourceSections(input.context).join('\n');
+  const sourceSections = buildEpisodeBeatPlanSourceSections(input.context);
+  const sourceText = sourceSections.join('\n');
+  const sourceContextText = buildGroundingSourceContext(sourceSections).join('\n');
+  const globalOriginalSource = buildGlobalOriginalSource(input.context);
+  const groundingAuthoritiesByPage = new Map<string, EpisodePlanAuditGroundingAuthority[]>();
+  if (sourceOwnedPageContext) {
+    for (const page of pages) {
+      const pageSource = pageSourceExcerpts?.get(page.pageId);
+      if (pageSource === undefined) {
+        throw new ConfigurationError('Episode audit grounding is missing page source authority');
+      }
+      groundingAuthoritiesByPage.set(page.pageId, [
+        { ref: 'page_source', text: pageSource.text, kind: 'original_page' },
+        ...(globalOriginalSource.length === 0
+          ? []
+          : [{ ref: 'global_source', text: globalOriginalSource, kind: 'original_page' } as const]),
+        ...(sourceContextText.length === 0
+          ? []
+          : [{ ref: 'source_context', text: sourceContextText, kind: 'source_context' } as const]),
+      ]);
+    }
+  }
   return {
     compilerBrief: brief,
     coverageCatalog: {
@@ -746,8 +773,49 @@ export function buildEpisodePlanAuditArtifacts(input: {
           outputs: renderedPage.outputs,
         };
       }),
+      ...(sourceOwnedPageContext ? {
+        grounding: {
+          pages: renderedPages.map((renderedPage) => ({
+            pageId: renderedPage.pageId,
+            authorities: groundingAuthoritiesByPage.get(renderedPage.pageId) ?? [],
+            outputs: renderedPage.outputs,
+          })),
+          deterministicIssues: deterministicIssues.map((issue) => ({
+            code: issue.code,
+            pageIds: [...issue.pageIds],
+          })),
+        },
+      } : {}),
     },
   };
+}
+
+function buildGroundingSourceContext(sections: readonly string[]): string[] {
+  const scenesIndex = sections.indexOf('[SCENES]');
+  if (scenesIndex === -1) {
+    return [];
+  }
+  const availableEntitiesIndex = sections.indexOf('[AVAILABLE ENTITIES]', scenesIndex + 1);
+  const sceneSection = sections.slice(
+    scenesIndex,
+    availableEntitiesIndex === -1 ? sections.length : availableEntitiesIndex,
+  );
+  const hasVisibleScene = sceneSection.slice(1).some((value) => {
+    const trimmed = value.trim();
+    return trimmed.length > 0 && trimmed !== '(none)';
+  });
+  return hasVisibleScene ? sceneSection : [];
+}
+
+function buildGlobalOriginalSource(context: EpisodePagePlanContext): string {
+  const storyFullDraft = context.episode.storyFullDraft;
+  if (typeof storyFullDraft !== 'string') {
+    return '';
+  }
+  PAGE_SOURCE_HEADER_PATTERN.lastIndex = 0;
+  const firstHeader = PAGE_SOURCE_HEADER_PATTERN.exec(storyFullDraft);
+  PAGE_SOURCE_HEADER_PATTERN.lastIndex = 0;
+  return (firstHeader === null ? '' : storyFullDraft.slice(0, firstHeader.index)).trim();
 }
 
 export function buildEpisodePlanAuditCoverageCatalog(input: {

@@ -259,6 +259,42 @@ does not restore the generated beat ledger. Ambiguous mappings retain the legacy
 ledger path. Opt-in validated character-state transition ledgers and their saving
 workflow remain unchanged; this omission applies to generated story-beat context.
 
+In this source-owned mode only, every provider error issue also supplies bounded
+internal grounding metadata. Original-page quotes and actual draft-field quotes
+are distinct. Generated page purpose, continuity, panel notes, chapter/episode
+summaries and entity summaries cannot become original-source authority. Visible,
+typed scene continuity and its entity-state notes, plus validated character-state transitions,
+may ground their applicable continuity issues. Deterministic exceptions must match
+an actual service finding's code and page scope. Optional excerpt omission does
+not authorize quoting hidden source: authority quotes must remain in the displayed
+full source or other typed visible authority. This metadata is discarded before
+the public audit result or persistence; omitted/false source ownership retains the
+legacy response schema and retry behavior.
+
+An invalidly grounded body uses the existing remaining structured-response retry
+for a full audit. Only a valid grounded body and repair scope with an invalid
+coverage sidecar may freeze that body and request a strict coverage-only retry.
+Recombination revalidates grounding, scope and coverage, including missing-fact
+issue/repair links. The coverage-only response cannot change acceptance, issues,
+repairs or grounding. Cancellation checkpoints precede either retry.
+Coverage-only retries use a dedicated system instruction and at most 12,000
+characters of frozen issue-code/page/panel/visible-field linkage metadata, without
+echoing the prior audit's prose, evidence quotes or patch values. If this bounded
+metadata cannot fit, the existing remaining attempt is a full audit retry.
+Before freezing, repairs must cover their error pages and have valid, unique field
+targets under the existing repair contract. Each audit
+pass still has at most two logical structured requests, the existing 20k output
+limit and unchanged transport retries; this is not a two-HTTP-attempt guarantee.
+The source-owned provider acceptance condition is stronger, while semantic
+soft-save, the second audit pass and atomic persistence remain unchanged. Exact
+quotation establishes existence, not whether a proposed repair follows from the
+source, so actual saved-output acceptance remains a separate verification gate.
+Repair completeness is a freeze-eligibility condition only. A valid grounded
+audit may contain patchless semantic issues; validated-state ambiguity and the
+second audit's mixed patchable/residual findings retain their existing Service
+handling. When coverage needs retry but repair completeness is insufficient for
+freezing, the remaining request is a full audit.
+
 The OpenAI episode auditor returns a bounded source-coverage sidecar in the same
 structured response: one entry per page, at most two high-risk facts per entry,
 at most two actual panel-field citations per fact, and exact quotes of 4–40
