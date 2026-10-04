@@ -1,6 +1,8 @@
 import {
   EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL,
   EPISODE_PLAN_SOURCE_REVIEW_MAX_UNITS,
+  EPISODE_PLAN_SOURCE_REVIEW_MAX_EVIDENCE,
+  EPISODE_PLAN_SOURCE_REVIEW_MAX_COUNTER_EVIDENCE,
 } from '../../domain/constants/generation.js';
 import { z } from 'zod';
 import type { OpenAIReasoningEffort } from './StructuredOpenAIResponse.js';
@@ -32,6 +34,7 @@ import {
 import {
   EpisodePlanAuditGroundingError,
   episodePlanAuditIssueGroundingsSchema,
+  episodePlanSourceUnitComparisonSchema,
   validateEpisodePlanAuditIssueGrounding,
   validateEpisodePlanAuditSourceUnitReview,
 } from './OpenAIEpisodePlanAuditGrounding.js';
@@ -76,7 +79,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
         role: 'system' as const,
         content: [{
           type: 'input_text' as const,
-          text: buildSystemPrompt(input.language, sourceOwnedPageContext, sourceReviewCatalog !== undefined),
+          text: buildSystemPrompt(input.language, sourceOwnedPageContext, sourceReviewCatalog !== undefined, sourceReviewCatalog?.evidence !== undefined),
         }],
       },
       {
@@ -119,6 +122,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
                 allowedPageIds,
                 sourceOwnedPageContext,
                 sourceReviewCatalog?.units.length,
+                sourceReviewCatalog?.evidence?.length,
               ),
               responseSchema: sourceReviewCatalog !== undefined
                 ? sourceReviewAuditSchema
@@ -526,6 +530,7 @@ function buildSystemPrompt(
   language: CompileEpisodePlanAuditInput['language'],
   sourceOwnedPageContext: boolean,
   sourceUnitReview: boolean,
+  sourceUnitEvidence: boolean,
 ): string {
   const outputLanguage = describeAppLanguage(language);
   return [
@@ -550,7 +555,16 @@ function buildSystemPrompt(
       'Return one issue_grounding entry for every severity=error issue. Use basis=source with exact named authority and output-field quotes; source omissions may have no output quote. Use basis=deterministic only when the typed DETERMINISTIC FINDINGS section contains the same code and page IDs. issue_grounding is validation metadata and must not add or replace issues or repairs.',
     ] : []),
     ...(sourceUnitReview ? [
-      'Review every clause of every SOURCE UNIT REVIEW entry. Return source_unit_review with exactly one item per ordered uN: null only when that whole unit has no issue, otherwise the zero-based index of an existing grounded error issue caused by that unit.',
+      sourceUnitEvidence
+        ? 'Review every clause of every SOURCE UNIT REVIEW entry. Return source_unit_review with exactly one comparison object per ordered uN. Each comparison has verdict, evidence field IDs, counter_evidence field IDs, and issue (the zero-based existing grounded error index, or null).'
+        : 'Review every clause of every SOURCE UNIT REVIEW entry. Return source_unit_review with exactly one item per ordered uN: null only when that whole unit has no issue, otherwise the zero-based index of an existing grounded error issue caused by that unit.',
+      ...(sourceUnitEvidence ? [
+        'supported means every authored fact/action/result in that unit is actually supported by the cited same-page panel fields. Cite one to four PANEL FIELD EVIDENCE integer IDs. A mention in generated purpose or continuity never proves visible completion.',
+        'conflict means the displayed draft contradicts any authored clause. Cite one or two counter_evidence IDs and link an existing grounded severity=error issue for that exact unit; missing means a required fact is absent and also links an existing grounded error. Return appropriate repairs through the existing repair fields when safe.',
+        'constraint is reserved for a source style/direction or negative/continuing restriction, with no detected violation. context is reserved for headings or non-depiction context only. Never classify an authored action, condition, emotion, explanation, completion, or final viewpoint as context merely because the draft omitted it. A unit containing both a heading and a required action must review the action.',
+        'Compare the positive evidence with any contrary notes in that page before choosing supported. A note that only prohibits entry before a prerequisite cannot justify prohibiting entry after the prerequisite has happened. Review each clause, including same-page endpoints, rather than only the easiest clause.',
+        'Use only the server-owned displayed panel field ID catalog. No invented IDs, no fields from another page for a page unit, and no positive or counter IDs for context. Successful ID validation is bookkeeping, not a substitute for the semantic comparison.',
+      ] : []),
       'A unit boundary is only bookkeeping and may contain several facts. Separately verify an explanation exists and has its authored role or content; an approach or opening reaches any same-page completion required by the source; a continuing result has its explicit prerequisite; surprise or haste does not replace a separately authored joy or later reaction; and showing a target does not replace the required final viewpoint.',
       'If draft notes prohibit, delay, or negate an action required by the original unit, report the conflict through an existing issue and repair. Draft purpose, continuity, notes, summaries, generated ledgers, and SCENES are not original-source authority for source_unit_review.',
     ] : []),
@@ -558,7 +572,9 @@ function buildSystemPrompt(
     sourceOwnedPageContext
       ? '[CHAPTER], [CHAPTER ARC], [EPISODE STORY], [EPISODE ARC], page purpose, continuity, and generated summaries are planning context only and are not displayed dialogue, thought, narration, or caption. If compiled display text copies or paraphrases that context without an explicit display-text assignment in [FULL STORY DRAFT - SOURCE DATA], report an error and use an existing dialogue field repair to remove it while preserving explicitly authored display text.'
       : '[CHAPTER], [CHAPTER ARC], [EPISODE STORY], [EPISODE ARC], outlines, ledgers, page purpose, continuity, and generated summaries are planning context only and are not displayed dialogue, thought, narration, or caption. If compiled display text copies or paraphrases that context without an explicit display-text assignment in [FULL STORY DRAFT - SOURCE DATA], report an error and use an existing dialogue field repair to remove it while preserving explicitly authored display text.',
-    'This displayed-text distinction does not weaken action, chronology, staging, or continuity facts from those sections. Audit every important source action in the body and return its supported issue and repair when needed; the bounded source_coverage sidecar samples at most two high-risk facts per page and does not limit the body audit.',
+    sourceOwnedPageContext
+      ? 'Planning sections and generated purpose/continuity never override original action, chronology, staging, or continuity. Audit every authored original-source action against actual panel fields; the bounded source_coverage samples at most two facts per page and never limits the body audit.'
+      : 'This displayed-text distinction does not weaken action, chronology, staging, or continuity facts from those sections. Audit every important source action in the body and return its supported issue and repair when needed; the bounded source_coverage sidecar samples at most two high-risk facts per page and does not limit the body audit.',
     'If an authored line is missing, shortened, paraphrased, merged, split, or assigned to a different known speaker or type, return an error and an existing dialogue field repair that restores the exact line and assignment. Never invent a speaker where the source is ambiguous.',
     sourceOwnedPageContext
       ? 'For each source action chain, compare its prerequisite, action, immediate result, and stated order with actual panel fields. A metadata mention does not prove that a step happened on the page.'
@@ -592,7 +608,7 @@ const sourceOwnedAuditSchema = episodePlanAuditSchema.extend({
   issue_grounding: episodePlanAuditIssueGroundingsSchema,
 }).strict();
 const sourceReviewAuditSchema = sourceOwnedAuditSchema.extend({
-  source_unit_review: z.array(z.number().int().min(0).nullable())
+  source_unit_review: z.array(z.union([z.number().int().min(0).nullable(), episodePlanSourceUnitComparisonSchema]))
     .max(EPISODE_PLAN_SOURCE_REVIEW_MAX_UNITS),
 }).strict();
 const coverageOnlyAuditSchema = episodePlanAuditSchema.pick({ source_coverage: true }).strict();
@@ -918,6 +934,7 @@ function buildEpisodePlanAuditJsonSchema(
   allowedPageIds: readonly string[],
   sourceOwnedPageContext = false,
   sourceReviewUnitCount?: number,
+  sourceReviewFieldCount?: number,
 ): Record<string, unknown> {
   const pageIdJsonSchema = { type: 'string', enum: [...allowedPageIds] };
 
@@ -1100,11 +1117,20 @@ function buildEpisodePlanAuditJsonSchema(
           type: 'array',
           minItems: sourceReviewUnitCount,
           maxItems: sourceReviewUnitCount,
-          items: {
+          items: sourceReviewFieldCount === undefined ? {
             anyOf: [
               { type: 'integer', minimum: 0, maximum: STORY_AI_LIMITS.maxSkeletonPages * 4 - 1 },
               { type: 'null' },
             ],
+          } : {
+            type: 'object', additionalProperties: false,
+            required: ['verdict', 'evidence', 'counter_evidence', 'issue'],
+            properties: {
+              verdict: { type: 'string', enum: ['supported', 'constraint', 'context', 'missing', 'conflict'] },
+              evidence: { type: 'array', maxItems: EPISODE_PLAN_SOURCE_REVIEW_MAX_EVIDENCE, items: { type: 'integer', minimum: 0, maximum: Math.max(0, sourceReviewFieldCount - 1) } },
+              counter_evidence: { type: 'array', maxItems: EPISODE_PLAN_SOURCE_REVIEW_MAX_COUNTER_EVIDENCE, items: { type: 'integer', minimum: 0, maximum: Math.max(0, sourceReviewFieldCount - 1) } },
+              issue: { anyOf: [{ type: 'integer', minimum: 0, maximum: STORY_AI_LIMITS.maxSkeletonPages * 4 - 1 }, { type: 'null' }] },
+            },
           },
         },
       }),
@@ -1190,6 +1216,6 @@ function readSourceOwnedGroundings(
 
 function readSourceUnitReview(
   payload: AuditPayload | SourceOwnedAuditPayload,
-): readonly (number | null)[] {
+): z.infer<typeof sourceReviewAuditSchema>['source_unit_review'] {
   return sourceReviewAuditSchema.parse(payload).source_unit_review;
 }

@@ -34,6 +34,7 @@ import type {
 } from './EpisodePlanAuditCoverage.js';
 import {
   buildEpisodePlanSourceReviewArtifacts,
+  buildEpisodePlanSourceReviewEvidenceArtifacts,
   type EpisodePlanSourceReviewArtifacts,
   type EpisodePlanSourceReviewSource,
 } from './EpisodePlanSourceReview.js';
@@ -623,7 +624,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
     }
   }
   const deterministicIssues = detectDeterministicContinuityIssues(input.suggestion);
-  const sourceReviewCandidate = sourceOwnedPageContext
+  const sourceReviewUnitsCandidate = sourceOwnedPageContext
     ? buildEpisodePlanSourceReviewForContext(input.context)
     : null;
   const deterministicFindingLines = formatDeterministicAuditFindingLines(deterministicIssues);
@@ -744,6 +745,11 @@ export function buildEpisodePlanAuditArtifacts(input: {
   const remainingAfterLocalizedSources = includeLocalizedSources
     ? baseRemaining - localizedSourceChars
     : baseRemaining;
+  // Reserve the whole field-ID display before allocating optional visual text.
+  // Rebind IDs to the final displayed excerpts below; never review hidden text.
+  const sourceReviewCandidate = sourceReviewUnitsCandidate === null ? null
+    : buildEpisodePlanSourceReviewEvidenceArtifacts(sourceReviewUnitsCandidate.catalog,
+        pages.map((page) => formatAuditPageArtifacts(page, 0, entityLabels, undefined, undefined)));
   const includeSourceReview = sourceReviewCandidate !== null
     && remainingAfterLocalizedSources - sourceReviewCandidate.display.length >= panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
     && remainingAfterLocalizedSources - sourceReviewCandidate.display.length >= minimumPanelSummaryChars;
@@ -767,8 +773,11 @@ export function buildEpisodePlanAuditArtifacts(input: {
       includeLocalizedLedgers ? localizedPageLedgers.get(page.pageId) : undefined,
       includeLocalizedSources ? pageSourceExcerpts?.get(page.pageId) : undefined,
     ));
+  const sourceReview = includeSourceReview
+    ? buildEpisodePlanSourceReviewEvidenceArtifacts(sourceReviewCandidate.catalog, renderedPages)
+    : null;
   const brief = [...before,
-    ...(includeSourceReview ? ['', sourceReviewCandidate.display] : []),
+    ...(sourceReview === null ? [] : ['', sourceReview.display]),
     '', '[COMPILED EPISODE DRAFT]',
     ...renderedPages.flatMap((page) => page.lines), ...after].join('\n');
   if (brief.length > AUDIT_BRIEF_MAX_CHARS) {
@@ -827,7 +836,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
             pageIds: [...issue.pageIds],
           })),
         },
-        ...(includeSourceReview ? { sourceReview: sourceReviewCandidate.catalog } : {}),
+        ...(sourceReview === null ? {} : { sourceReview: sourceReview.catalog }),
       } : {}),
     },
   };

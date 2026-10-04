@@ -92,6 +92,13 @@ export const EPISODE_PAGE_PLAN_COMPILER_VERSION = 'episode_page_plan_v15';
 export const EPISODE_FULL_STORY_DRAFT_MAX_CHARS = 8_000;
 export const EPISODE_PLAN_SOURCE_REVIEW_MAX_UNITS = 256;
 export const EPISODE_PLAN_SOURCE_REVIEW_MAX_DISPLAY_CHARS = 8_000;
+export const EPISODE_PLAN_SOURCE_REVIEW_MAX_FIELDS = 1_024;
+export const EPISODE_PLAN_SOURCE_REVIEW_FIELD_DISPLAY_MAX_CHARS = 40_000;
+export const EPISODE_PLAN_SOURCE_REVIEW_MAX_EVIDENCE = 4;
+export const EPISODE_PLAN_SOURCE_REVIEW_MAX_COUNTER_EVIDENCE = 2;
+// Bounds the comparison sidecar; the complete audit still shares the existing
+// output/reasoning budget and must complete in actual provider verification.
+export const EPISODE_PLAN_SOURCE_REVIEW_RESPONSE_MAX_CHARS = 16_000;
 
 export const EPISODE_BEAT_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_BEAT_PLAN_COMPILER_MAX_TOKENS = 32_000;
@@ -101,7 +108,7 @@ export const EPISODE_BEAT_PLAN_OUTLINE_COMPILER_VERSION = 'episode_beat_outline_
 export const EPISODE_PLAN_AUDIT_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS = 20_000;
 export const EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS = 2;
-export const EPISODE_PLAN_AUDIT_COMPILER_VERSION = 'episode_plan_audit_v24';
+export const EPISODE_PLAN_AUDIT_COMPILER_VERSION = 'episode_plan_audit_v25';
 
 export const PAGE_GENERATION_PLANNER_MAX_TOKENS = 700;
 export const PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS = 1200;

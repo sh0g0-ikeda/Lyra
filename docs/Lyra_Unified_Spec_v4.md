@@ -283,17 +283,31 @@ Empty, ambiguous or oversized input retains the existing contract as a whole;
 partial unit review is never advertised as complete and does not reject long
 episodes.
 
-When enabled, source_unit_review has exactly one disposition per server-owned
-unit: null means no issue was detected for that span; an integer links an existing
-error issue with valid scope and grounding. This neither requires all issues to
-be linked nor makes a repair mandatory. Patchless findings, validated-state
-ambiguity and second-audit semantic soft-save retain their existing handling.
-The review vector stays frozen during quote-only correction and is discarded
-before the public result or persistence. Every clause must be reviewed for
-functional meaning, same-page completion, explicit conditions, specified emotion
-and viewpoint, including conflicts with draft negative notes. All-null output
-is not proof that the model understood every fact; actual semantic review remains
-a separate acceptance gate. No additional call, model, token or save gate is added.
+Native source-unit review additionally binds integer evidence IDs to actual
+same-page displayed panel fields, including short fields that cannot supply a
+four-character quote. Generated purpose and continuity never supply evidence.
+Reserve the complete field-ID display before optional visual excerpts, then bind
+IDs to the final displayed text. At most 1,024 fields, 40,000 field-display
+characters and a 16,000-character worst-case comparison response are permitted.
+Exceeding any bound falls back as a whole; no partial list is advertised.
+
+With this native catalog, source_unit_review has one comparison per unit:
+verdict (supported, constraint, context, missing or conflict), up to four positive
+field IDs, up to two counter-evidence IDs, and an existing grounded error index or
+null. Supported requires actual positive panel evidence; conflict requires
+counter-evidence; missing/conflict link a source-grounded error scoped to that
+unit. Context/constraint classify headings, directions or restrictions rather
+than requiring every unit to depict an action. These classifications are model
+judgments and can still be wrong; they are never accepted as semantic proof.
+Internally supplied legacy catalogs without a field catalog retain their existing
+integer/null vector. This neither requires all issues to be linked nor makes a
+repair mandatory. Patchless findings, validated-state ambiguity and second-audit
+semantic soft-save retain their existing handling. Comparison results stay frozen
+during quote-only correction and are discarded before public output/persistence.
+Every authored clause must be compared for functional meaning, same-page
+completion, explicit conditions, specified emotion and viewpoint, including
+conflicts with negative draft notes. Actual semantic review remains a separate
+acceptance gate. No additional call, model, token budget or save gate is added.
 
 An invalidly grounded body uses the existing remaining structured-response retry
 for a full audit. Only a valid grounded body and repair scope with an invalid

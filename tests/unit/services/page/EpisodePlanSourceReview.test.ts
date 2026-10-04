@@ -5,6 +5,7 @@ import {
 } from '../../../../src/domain/constants/generation.js';
 import {
   buildEpisodePlanSourceReviewArtifacts,
+  buildEpisodePlanSourceReviewEvidenceArtifacts,
   buildEpisodePlanSourceReviewUnits,
   formatEpisodePlanSourceReview,
   type EpisodePlanSourceReviewCatalog,
@@ -79,3 +80,20 @@ function oneUnitCatalog(text: string): EpisodePlanSourceReviewCatalog {
     }],
   };
 }
+
+
+describe('EpisodePlanSourceReviewEvidenceArtifacts', () => {
+  it('短い表示済みfieldも根拠IDに含めmetadataを含めない', () => {
+    const catalog = oneUnitCatalog('中へ入る。');
+    const artifacts = buildEpisodePlanSourceReviewEvidenceArtifacts(catalog, [{ pageId: PAGE_ID, outputs: [{ ref: 'p1.s', panelOrder: 1, text: '入る' }] }]);
+    expect(artifacts?.catalog.evidence).toEqual([{ pageId: PAGE_ID, ref: 'p1.s', panelOrder: 1, text: '入る' }]);
+    expect(artifacts?.display).toContain('0|' + PAGE_ID + '|p1.s');
+    expect(buildEpisodePlanSourceReviewEvidenceArtifacts(catalog, [{ pageId: PAGE_ID, outputs: [{ ref: 'purpose', panelOrder: null, text: '中へ入る。' }] }])).toBeNull();
+  });
+  it('全unit応答予算またはfield上限超過は部分比較を返さず全体fallbackする', () => {
+    const units = buildEpisodePlanSourceReviewUnits([{ scope: 'page', pageId: PAGE_ID, sourceRef: 'page_source', text: 'x.'.repeat(256) }])!;
+    expect(buildEpisodePlanSourceReviewEvidenceArtifacts(units, [])).toBeNull();
+    const outputs = Array.from({ length: 1025 }, (_, index) => ({ ref: 'p1.d' + (index+1), panelOrder: 1, text: '表示文' }));
+    expect(buildEpisodePlanSourceReviewEvidenceArtifacts(oneUnitCatalog('表示文'), [{ pageId: PAGE_ID, outputs }])).toBeNull();
+  });
+});

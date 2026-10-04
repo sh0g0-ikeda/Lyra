@@ -376,7 +376,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v24');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v25');
     expect(requestCount).toBe(1);
   });
 
@@ -1597,3 +1597,47 @@ function readArray(value: unknown): unknown[] {
   }
   return value;
 }
+
+
+describe('OpenAIEpisodePlanAuditCompiler source-field comparisons', () => {
+  function evidenceFixture() {
+    const fixture = buildThirtyCheckSourceOwnedFixture();
+    return { ...fixture, catalog: { ...fixture.catalog, sourceReview: { ...fixture.catalog.sourceReview,
+      evidence: fixture.catalog.grounding.pages.flatMap((page) => page.outputs.map((output) => ({ ...output, pageId: page.pageId }))),
+    } }, payload: { ...fixture.payload, source_unit_review: fixture.pageIds.map((_id, index) => ({ verdict: 'supported', evidence: [index], counter_evidence: [], issue: null })) } };
+  }
+  it('native根拠付きcatalogは全nullを拒否し同頁field比較だけで再試行する', async () => {
+    const fixture = evidenceFixture();
+    const requests: Record<string, unknown>[] = [];
+    const client = { postJson: async (_path: string, payload: Record<string, unknown>) => {
+      requests.push(payload); return { body: { status: 'completed', output_text: JSON.stringify(requests.length === 1 ? { ...fixture.payload, source_unit_review: fixture.pageIds.map(() => null) } : fixture.payload) }, requestId: 'req-evidence-' + requests.length };
+    } } as unknown as OpenAIClient;
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({ compilerBrief: fixture.compilerBrief, language: 'ja', pageIds: fixture.pageIds, coverageCatalog: fixture.catalog, sourceOwnedPageContext: true });
+    expect(requests).toHaveLength(2);
+    const schema = readObject(readObject(readObject(requests[0]?.text).format).schema);
+    const review = readObject(readObject(schema.properties).source_unit_review);
+    expect(readObject(review.items).type).toBe('object');
+    expect(readArray(readObject(review.items).required)).toEqual(['verdict','evidence','counter_evidence','issue']);
+    expect(result.audit.accepted).toBe(true);
+    expect(result.audit).not.toHaveProperty('source_unit_review');
+    const prompt = JSON.stringify(requests[0]?.input);
+    expect(prompt).toContain('Planning sections and generated purpose/continuity never override original');
+    expect(prompt).not.toContain('does not weaken action, chronology, staging, or continuity facts from those sections');
+  });
+  it('引用だけの補正は根拠付き比較と既存bodyを凍結して保持する', async () => {
+    const fixture = evidenceFixture();
+    const first = structuredClone(fixture.payload);
+    first.source_coverage[0]!.checks[0]!.source_quote = '存在しない引用';
+    const requests: Record<string, unknown>[] = [];
+    const client = { postJson: async (_path: string, payload: Record<string, unknown>) => {
+      requests.push(payload); return { body: { status: 'completed', output_text: JSON.stringify(requests.length === 1 ? first : { c0: '原作事実1A' }) }, requestId: 'req-evidence-quote-' + requests.length };
+    } } as unknown as OpenAIClient;
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({ compilerBrief: fixture.compilerBrief, language: 'ja', pageIds: fixture.pageIds, coverageCatalog: fixture.catalog, sourceOwnedPageContext: true });
+    expect(requests).toHaveLength(2);
+    const retrySchema = readObject(readObject(readObject(requests[1]?.text).format).schema);
+    expect(readArray(retrySchema.required)).toEqual(['c0']);
+    expect(readObject(retrySchema.properties)).not.toHaveProperty('source_unit_review');
+    expect(result.audit.accepted).toBe(true);
+    expect(result.audit.sourceCoverage?.[0]?.checks[0]?.sourceQuote).toBe('原作事実1A');
+  });
+});

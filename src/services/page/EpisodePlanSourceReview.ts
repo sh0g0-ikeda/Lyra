@@ -1,6 +1,12 @@
+import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import {
   EPISODE_PLAN_SOURCE_REVIEW_MAX_DISPLAY_CHARS,
   EPISODE_PLAN_SOURCE_REVIEW_MAX_UNITS,
+  EPISODE_PLAN_SOURCE_REVIEW_MAX_FIELDS,
+  EPISODE_PLAN_SOURCE_REVIEW_FIELD_DISPLAY_MAX_CHARS,
+  EPISODE_PLAN_SOURCE_REVIEW_MAX_EVIDENCE,
+  EPISODE_PLAN_SOURCE_REVIEW_MAX_COUNTER_EVIDENCE,
+  EPISODE_PLAN_SOURCE_REVIEW_RESPONSE_MAX_CHARS,
 } from '../../domain/constants/generation.js';
 
 export interface EpisodePlanSourceReviewSource {
@@ -15,8 +21,24 @@ export interface EpisodePlanSourceReviewUnit extends EpisodePlanSourceReviewSour
   end: number;
 }
 
+export interface EpisodePlanSourceReviewEvidence {
+  pageId: string;
+  ref: string;
+  panelOrder: number;
+  text: string;
+}
+
+export interface EpisodePlanSourceUnitComparison {
+  verdict: 'supported' | 'constraint' | 'context' | 'missing' | 'conflict';
+  evidence: number[];
+  counter_evidence: number[];
+  issue: number | null;
+}
+
 export interface EpisodePlanSourceReviewCatalog {
   units: EpisodePlanSourceReviewUnit[];
+  /** Present for native v25 artifacts; IDs index only displayed panel fields. */
+  evidence?: EpisodePlanSourceReviewEvidence[];
 }
 
 export interface EpisodePlanSourceReviewArtifacts {
@@ -96,6 +118,49 @@ export function buildEpisodePlanSourceReviewArtifacts(
   if (catalog === null) return null;
   const display = formatEpisodePlanSourceReview(catalog);
   return display === null ? null : { catalog, display };
+}
+
+/** Adds no story interpretation: IDs bind only to existing displayed panel fields. */
+export function buildEpisodePlanSourceReviewEvidenceArtifacts(
+  catalog: EpisodePlanSourceReviewCatalog,
+  pages: readonly {
+    pageId: string;
+    outputs: readonly { ref: string; text: string; panelOrder: number | null }[];
+  }[],
+): EpisodePlanSourceReviewArtifacts | null {
+  const unitDisplay = formatEpisodePlanSourceReview(catalog);
+  if (unitDisplay === null) return null;
+  const evidence: EpisodePlanSourceReviewEvidence[] = [];
+  for (const page of pages) {
+    const refs = new Set<string>();
+    for (const field of page.outputs) {
+      if (field.panelOrder === null || field.panelOrder < 1
+        || !Number.isInteger(field.panelOrder)
+        || !/^p\d+\.(?:s|b|c|x|n|e|d\d+)$/u.test(field.ref)
+        || field.ref.split('.')[0] !== 'p' + field.panelOrder
+        || field.text.length === 0 || refs.has(field.ref)) return null;
+      refs.add(field.ref);
+      evidence.push({ ...field, pageId: page.pageId, panelOrder: field.panelOrder });
+    }
+  }
+  if (evidence.length > EPISODE_PLAN_SOURCE_REVIEW_MAX_FIELDS) return null;
+  const maxId = EPISODE_PLAN_SOURCE_REVIEW_MAX_FIELDS - 1;
+  const largestItem = JSON.stringify({
+    verdict: 'constraint',
+    evidence: Array.from({ length: EPISODE_PLAN_SOURCE_REVIEW_MAX_EVIDENCE }, () => maxId),
+    counter_evidence: Array.from({ length: EPISODE_PLAN_SOURCE_REVIEW_MAX_COUNTER_EVIDENCE }, () => maxId),
+    issue: STORY_AI_LIMITS.maxSkeletonPages * 4 - 1,
+  });
+  if (2 + catalog.units.length * (largestItem.length + 1)
+    > EPISODE_PLAN_SOURCE_REVIEW_RESPONSE_MAX_CHARS) return null;
+  const fieldDisplay = [
+    '[PANEL FIELD EVIDENCE - DISPLAYED DRAFT ONLY]',
+    'Each integer ID below refers to that exact displayed panel field. Text is in COMPILED EPISODE DRAFT or COMPLETE DIALOGUE. Page purpose/continuity are never panel evidence.',
+    ...evidence.map((field, id) => id + '|' + field.pageId + '|' + field.ref),
+    '[END PANEL FIELD EVIDENCE]',
+  ].join('\n');
+  if (fieldDisplay.length > EPISODE_PLAN_SOURCE_REVIEW_FIELD_DISPLAY_MAX_CHARS) return null;
+  return { catalog: { units: catalog.units, evidence }, display: unitDisplay + '\n' + fieldDisplay };
 }
 
 function findUnitBoundaries(text: string): number[] {

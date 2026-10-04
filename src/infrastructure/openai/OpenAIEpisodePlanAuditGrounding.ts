@@ -1,3 +1,4 @@
+import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { z } from 'zod';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type {
@@ -6,7 +7,19 @@ import type {
   EpisodePlanAuditGroundingCatalog,
   EpisodePlanAuditIssueCode,
 } from '../../services/page/EpisodePlanAuditCompiler.js';
-import type { EpisodePlanSourceReviewCatalog } from '../../services/page/EpisodePlanSourceReview.js';
+import type { EpisodePlanSourceReviewCatalog, EpisodePlanSourceUnitComparison } from '../../services/page/EpisodePlanSourceReview.js';
+import {
+  EPISODE_PLAN_SOURCE_REVIEW_MAX_FIELDS,
+  EPISODE_PLAN_SOURCE_REVIEW_MAX_EVIDENCE,
+  EPISODE_PLAN_SOURCE_REVIEW_MAX_COUNTER_EVIDENCE,
+} from '../../domain/constants/generation.js';
+
+export const episodePlanSourceUnitComparisonSchema = z.object({
+  verdict: z.enum(['supported', 'constraint', 'context', 'missing', 'conflict']),
+  evidence: z.array(z.number().int().min(0).max(EPISODE_PLAN_SOURCE_REVIEW_MAX_FIELDS - 1)).max(EPISODE_PLAN_SOURCE_REVIEW_MAX_EVIDENCE),
+  counter_evidence: z.array(z.number().int().min(0).max(EPISODE_PLAN_SOURCE_REVIEW_MAX_FIELDS - 1)).max(EPISODE_PLAN_SOURCE_REVIEW_MAX_COUNTER_EVIDENCE),
+  issue: z.number().int().min(0).max(STORY_AI_LIMITS.maxSkeletonPages * 4 - 1).nullable(),
+}).strict();
 
 const REF_MAX_CHARS = 24;
 const QUOTE_MAX_CHARS = 40;
@@ -141,7 +154,7 @@ export function validateEpisodePlanAuditIssueGrounding(input: {
 
 export function validateEpisodePlanAuditSourceUnitReview(input: {
   audit: EpisodePlanAudit;
-  review: readonly (number | null)[];
+  review: readonly (number | null | EpisodePlanSourceUnitComparison)[];
   catalog: EpisodePlanSourceReviewCatalog;
   groundings: readonly EpisodePlanAuditIssueGrounding[];
   groundingCatalog: EpisodePlanAuditGroundingCatalog | undefined;
@@ -155,10 +168,23 @@ export function validateEpisodePlanAuditSourceUnitReview(input: {
   const groundingByIssue = new Map(
     input.groundings.map((grounding) => [grounding.issue_index, grounding] as const),
   );
-  for (const [unitIndex, issueIndex] of input.review.entries()) {
+  for (const [unitIndex, value] of input.review.entries()) {
+    const comparison = input.catalog.evidence === undefined ? null
+      : episodePlanSourceUnitComparisonSchema.safeParse(value);
+    if (comparison !== null && !comparison.success) {
+      throw sourceUnitReviewError([], 'comparison must contain a verdict and bounded field IDs');
+    }
+    if (comparison === null && typeof value !== 'number' && value !== null) {
+      throw sourceUnitReviewError([], 'legacy unit review must contain an issue index or null');
+    }
+    const issueIndex = comparison?.success === true ? comparison.data.issue
+      : typeof value === 'number' ? value : null;
     const unit = input.catalog.units[unitIndex];
     if (unit === undefined) {
       throw sourceUnitReviewError([], 'visible catalog omitted a reviewed unit');
+    }
+    if (comparison?.success === true) {
+      validateSourceUnitComparison(comparison.data, unit, input.catalog, input.groundingCatalog);
     }
     if (issueIndex !== null) {
       const issue = input.audit.issues[issueIndex];
@@ -200,6 +226,51 @@ export function validateEpisodePlanAuditSourceUnitReview(input: {
     );
     if (!hasExactUnitEvidence) {
       throw sourceUnitReviewError([issueIndex], 'issue is not grounded in that exact source unit');
+    }
+  }
+}
+
+function validateSourceUnitComparison(
+  comparison: EpisodePlanSourceUnitComparison,
+  unit: EpisodePlanSourceReviewCatalog['units'][number],
+  catalog: EpisodePlanSourceReviewCatalog,
+  groundingCatalog: EpisodePlanAuditGroundingCatalog,
+): void {
+  const errorIndexes = comparison.issue === null ? [] : [comparison.issue];
+  const hasError = comparison.verdict === 'missing' || comparison.verdict === 'conflict';
+  if (hasError !== (comparison.issue !== null)) {
+    throw sourceUnitReviewError(errorIndexes, 'comparison verdict does not match its existing issue');
+  }
+  if (comparison.verdict === 'supported'
+    && (comparison.evidence.length === 0 || comparison.counter_evidence.length > 0)) {
+    throw sourceUnitReviewError(errorIndexes, 'supported requires positive panel evidence only');
+  }
+  if (comparison.verdict === 'conflict' && comparison.counter_evidence.length === 0) {
+    throw sourceUnitReviewError(errorIndexes, 'conflict requires displayed counter evidence');
+  }
+  if (comparison.verdict === 'context'
+    && (comparison.evidence.length > 0 || comparison.counter_evidence.length > 0)) {
+    throw sourceUnitReviewError(errorIndexes, 'context must not claim visible story evidence');
+  }
+  if (comparison.verdict === 'constraint' && comparison.counter_evidence.length > 0) {
+    throw sourceUnitReviewError(errorIndexes, 'contradicted constraint must link an existing error');
+  }
+  const ids = [...comparison.evidence, ...comparison.counter_evidence];
+  if (new Set(ids).size !== ids.length) {
+    throw sourceUnitReviewError(errorIndexes, 'comparison repeats a field ID');
+  }
+  for (const id of ids) {
+    const field = catalog.evidence?.[id];
+    if (field === undefined) throw sourceUnitReviewError(errorIndexes, 'unknown panel field ID');
+    if (unit.scope === 'page' && field.pageId !== unit.pageId) {
+      throw sourceUnitReviewError(errorIndexes, 'evidence is outside the unit page');
+    }
+    const page = groundingCatalog.pages.find((candidate) => candidate.pageId === field.pageId);
+    const displayed = page?.outputs.some((output) => output.ref === field.ref
+      && output.panelOrder === field.panelOrder && output.text === field.text);
+    if (!displayed || !/^p\d+\.(?:s|b|c|x|n|e|d\d+)$/u.test(field.ref)
+      || field.ref.split('.')[0] !== 'p' + field.panelOrder || field.panelOrder < 1) {
+      throw sourceUnitReviewError(errorIndexes, 'evidence does not bind to a visible panel field');
     }
   }
 }
@@ -329,7 +400,7 @@ function sourceUnitReviewError(
     `Episode plan audit source unit review is invalid: ${detail}`,
     [
       `Source unit review correction for the retry: issue_indexes=${JSON.stringify(boundedIndexes)}.`,
-      'Rebuild the full audit and return exactly one null or existing grounded source-error issue index for every displayed uN in order. Do not change unit scope, page, ref, span, or source text.',
+      'Rebuild the full audit and review every displayed uN in order using the requested contract. For PANEL FIELD EVIDENCE, return a verdict, positive/counter field IDs, and an existing grounded source-error issue for each missing/conflicting unit. Otherwise return the legacy index/null. Do not change unit scope, page, ref, span, or source text.',
     ].join(' '),
   );
 }
