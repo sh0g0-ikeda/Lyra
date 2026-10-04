@@ -4,6 +4,11 @@ import { parseEnv } from '../../../src/lib/env.js';
 const originalNodeEnv = process.env.NODE_ENV;
 
 describe('parseEnv', () => {
+  it('persistence profile は未指定なら canonical を使い、未知の profile を拒否する', () => {
+    expect(parseEnv({}).LYRA_PERSISTENCE_PROFILE).toBe('canonical');
+    expect(() => parseEnv({ LYRA_PERSISTENCE_PROFILE: 'legacy_unknown' })).toThrow();
+  });
+
   it('staging runtime と隔離metadataを解釈する', () => {
     const parsed = parseEnv({
       APP_ENV: 'staging',

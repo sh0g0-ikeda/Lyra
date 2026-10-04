@@ -7,6 +7,7 @@ import {
 
 const envSchema = z.object({
   APP_ENV: z.enum(['development', 'test', 'staging', 'production']).optional(),
+  LYRA_PERSISTENCE_PROFILE: z.enum(['canonical', 'legacy_2debe_v1']).default('canonical'),
   STAGING_RESOURCE_ISOLATION_ATTESTED: z
     .string()
     .optional()

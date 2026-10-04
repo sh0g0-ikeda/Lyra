@@ -6,6 +6,7 @@ import {
 
 interface RuntimeGuardConfig {
   APP_ENV?: 'development' | 'test' | 'staging' | 'production';
+  LYRA_PERSISTENCE_PROFILE?: 'canonical' | 'legacy_2debe_v1';
   STAGING_RESOURCE_ISOLATION_ATTESTED?: boolean;
   STAGING_PRODUCTION_RESOURCE_DENYLIST?: string;
   STAGING_SECRET_SOURCE_ID?: string;
@@ -166,6 +167,10 @@ export function assertProductionRuntimeConfig(
   const isStagingRuntime = appEnv === 'staging';
   const isProductionRuntime = nodeEnv === 'production' || appEnv === 'production' || isStagingRuntime;
   const violations: string[] = [];
+
+  if (config.LYRA_PERSISTENCE_PROFILE === 'legacy_2debe_v1') {
+    throw new ConfigurationError('LYRA_PERSISTENCE_PROFILE legacy_2debe_v1 is not enabled');
+  }
 
   if (config.DEV_AUTH_BYPASS && !isDevAuthBypassRuntimeAllowed(appEnv, nodeEnv)) {
     violations.push('DEV_AUTH_BYPASS is only allowed in explicit development or test runtimes');

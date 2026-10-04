@@ -74,6 +74,24 @@ const safeStagingConfig = {
 };
 
 describe('assertProductionRuntimeConfig', () => {
+  it.each([
+    ['development', 'development'],
+    ['test', 'test'],
+    ['staging', 'production'],
+    ['production', 'production'],
+  ] as const)('未完成 legacy persistence profile を %s で常に拒否する', (appEnv, nodeEnv) => {
+    expect(() => {
+      assertProductionRuntimeConfig(
+        {
+          APP_ENV: appEnv,
+          DEV_AUTH_BYPASS: false,
+          LYRA_PERSISTENCE_PROFILE: 'legacy_2debe_v1',
+        },
+        nodeEnv,
+      );
+    }).toThrow(/LYRA_PERSISTENCE_PROFILE legacy_2debe_v1 is not enabled/);
+  });
+
   it('production 以外では未設定の外部サービスを許可する', () => {
     expect(() => {
       assertProductionRuntimeConfig(
