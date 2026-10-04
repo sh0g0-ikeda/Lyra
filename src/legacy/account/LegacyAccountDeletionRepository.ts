@@ -93,6 +93,14 @@ implements LegacyAccountDeletionRepositoryPort {
     input: LegacyAccountDeletionClaimInput,
   ): Promise<LegacyAccountDeletionClaimResult> {
     return this.transactionRunner.transaction(async (client) => {
+      await client.query(
+        'SELECT id FROM users WHERE id = $1::uuid FOR UPDATE',
+        [input.userId],
+      );
+      await client.query(
+        'SELECT user_id FROM account_deletion_requests WHERE user_id = $1::uuid FOR UPDATE',
+        [input.userId],
+      );
       const flight = await this.readFlight(client, input.userId);
       if (hasClaimBlocker(flight, input)) return { kind: 'blocked', flight };
 
@@ -187,6 +195,10 @@ implements LegacyAccountDeletionRepositoryPort {
 
   public async anonymizePersonalData(userId: string, processingToken: string): Promise<boolean> {
     return this.transactionRunner.transaction(async (client) => {
+      await client.query(
+        'SELECT id FROM users WHERE id = $1::uuid FOR UPDATE',
+        [userId],
+      );
       const ownership = await client.query<UpdatedRow>(
         `SELECT true AS updated FROM account_deletion_requests
          WHERE user_id = $1::uuid AND processing_token = $2::uuid AND status = 'processing'

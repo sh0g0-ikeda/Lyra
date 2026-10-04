@@ -11,6 +11,7 @@ import {
   lockMobilePushTokenRegistryForTerminalSettlement,
 } from './PushNotificationOutboxRepository.js';
 import { lockStoryEpisodeAdmission } from './StoryEpisodeAdmissionLock.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 export type { GenerationJob };
 export type { GenerationJobHistoryCursor };
@@ -174,6 +175,13 @@ interface RetryStoryTargetRow extends QueryResultRow {
   params: unknown;
 }
 
+interface RetryAdmissionScopeRow extends QueryResultRow {
+  id: string;
+  user_id: string;
+  organization_id: string | null;
+  status: GenerationJobStatus;
+}
+
 interface GenerationJobHistoryRow extends GenerationJobRow {
   active_rank: number;
 }
@@ -245,11 +253,21 @@ export class PostgresGenerationJobRepository
   ): Promise<GenerationJob> {
     const capacityLimits = input.capacityLimits;
     const storyTargetRequired = isStoryEpisodeGenerationJobType(input.jobType);
-    if (capacityLimits !== undefined || storyTargetRequired || beforeInsert !== undefined) {
-      const transactionRunner = capacityLimits === undefined
-        ? this.requireTransactionRunnerForStoryAdmission()
-        : this.requireTransactionRunnerForCapacity();
+    const legacyPersonalFenceRequired =
+      this.schemaProfile === 'legacy_2debe_v1' && (input.organizationId ?? null) === null;
+    if (capacityLimits !== undefined || storyTargetRequired || beforeInsert !== undefined || legacyPersonalFenceRequired) {
+      const transactionRunner = capacityLimits !== undefined
+        ? this.requireTransactionRunnerForCapacity()
+        : storyTargetRequired || beforeInsert !== undefined
+          ? this.requireTransactionRunnerForStoryAdmission()
+          : this.requireTransactionRunnerForLegacyAdmission();
       return transactionRunner.transaction(async (transactionClient) => {
+        if (this.schemaProfile === 'legacy_2debe_v1') {
+          await assertLegacyPersonalWriteAllowed(transactionClient, {
+            userId: input.userId,
+            organizationId: input.organizationId ?? null,
+          });
+        }
         if (capacityLimits !== undefined) {
           const scope = getGenerationCapacityScope(input.userId, input.organizationId ?? null);
           await this.lockGenerationCapacity(transactionClient, scope);
@@ -1199,10 +1217,23 @@ export class PostgresGenerationJobRepository
     maxRetryCount: number,
     options?: PrepareGenerationJobRetryOptions,
   ): Promise<boolean> {
+    const legacyCandidate = this.schemaProfile === 'legacy_2debe_v1'
+      ? await this.findRetryAdmissionScope(this.client, jobId, false)
+      : null;
+    if (this.schemaProfile === 'legacy_2debe_v1') {
+      if (legacyCandidate === null) return false;
+      if (options !== undefined && !retryScopeMatchesOptions(legacyCandidate, options)) return false;
+    }
     const transactionRunner = options === undefined
       ? this.requireTransactionRunnerForRetry()
       : this.requireTransactionRunnerForCapacity();
     return transactionRunner.transaction(async (transactionClient) => {
+      if (legacyCandidate !== null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, {
+          userId: legacyCandidate.user_id,
+          organizationId: legacyCandidate.organization_id,
+        });
+      }
       if (options !== undefined) {
         const scope = getGenerationCapacityScope(options.userId, options.organizationId ?? null);
         await this.lockGenerationCapacity(transactionClient, scope);
@@ -1219,6 +1250,15 @@ export class PostgresGenerationJobRepository
       );
       if (!retryTargetAvailable) {
         return false;
+      }
+      if (legacyCandidate !== null) {
+        const lockedCandidate = await this.findRetryAdmissionScope(transactionClient, jobId, true);
+        if (lockedCandidate === null || !sameRetryAdmissionScope(legacyCandidate, lockedCandidate)) {
+          return false;
+        }
+        if (options !== undefined && !retryScopeMatchesOptions(lockedCandidate, options)) {
+          return false;
+        }
       }
       return this.prepareRetryWithClient(transactionClient, jobId, maxRetryCount);
     });
@@ -1250,6 +1290,32 @@ export class PostgresGenerationJobRepository
       );
     }
     return this.client;
+  }
+
+  private requireTransactionRunnerForLegacyAdmission(): DatabaseClient & TransactionRunner {
+    if (!isTransactionRunner(this.client)) {
+      throw new ConfigurationError(
+        'Legacy generation admission requires a transaction-capable database client',
+      );
+    }
+    return this.client;
+  }
+
+  private async findRetryAdmissionScope(
+    client: DatabaseClient,
+    jobId: string,
+    lock: boolean,
+  ): Promise<RetryAdmissionScopeRow | null> {
+    const result = await client.query<RetryAdmissionScopeRow>(
+      `
+      SELECT id, user_id, organization_id, status
+      FROM generation_jobs
+      WHERE id = $1::uuid AND status = 'failed'
+      ${lock ? 'FOR UPDATE' : ''}
+      `,
+      [jobId],
+    );
+    return result.rows[0] ?? null;
   }
 
   private async lockStoryTargetForGenerationCreate(
@@ -1667,6 +1733,24 @@ function normalizeCapacityJobTypes(jobTypes: readonly GenerationJobType[] | unde
 
 function getGenerationCapacityScope(userId: string, organizationId: string | null): GenerationCapacityScope {
   return { userId, organizationId };
+}
+
+function retryScopeMatchesOptions(
+  scope: RetryAdmissionScopeRow,
+  options: PrepareGenerationJobRetryOptions,
+): boolean {
+  return scope.user_id === options.userId
+    && scope.organization_id === (options.organizationId ?? null);
+}
+
+function sameRetryAdmissionScope(
+  initial: RetryAdmissionScopeRow,
+  locked: RetryAdmissionScopeRow,
+): boolean {
+  return initial.id === locked.id
+    && initial.user_id === locked.user_id
+    && initial.organization_id === locked.organization_id
+    && locked.status === 'failed';
 }
 
 function formatGenerationCapacityScopeKey(scope: GenerationCapacityScope): string {
