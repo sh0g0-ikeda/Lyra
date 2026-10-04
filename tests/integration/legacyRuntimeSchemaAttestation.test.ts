@@ -28,7 +28,7 @@ describePostgres('旧38 runtime descriptor PostgreSQL boundary', () => {
       await admin.query('DROP SCHEMA ' + schema + ' CASCADE');
     }
     await admin.end();
-  });
+  }, 120_000);
 
   it('旧38をread-only照合する場合にactive jobを理由に拒否せずDDLやrowを変えない', async () => {
     const { pool, database } = await isolatedDatabase();
