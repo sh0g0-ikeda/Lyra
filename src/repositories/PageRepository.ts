@@ -22,12 +22,13 @@ import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
 import { ConfigurationError } from '../domain/errors/index.js';
 import type { PageListCursor } from '../domain/pagination.js';
 import { readStyleReferenceMetadata } from '../domain/types/styleReference.js';
-import type { DatabaseClient } from '../lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import type { RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignment.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
 import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
 import { parseStateReferenceDescriptor } from './EntityStateReferenceRepository.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 export type { PageGenerationContext, PageGenerationStateUpdate };
 export type { PageListCursor } from '../domain/pagination.js';
@@ -200,13 +201,36 @@ export class PostgresPageRepository
   private readonly legacySchemaProfile: boolean;
 
   public constructor(
-    private readonly client: DatabaseClient,
-    mode: PageStoryMetadataStorageMode | RepositorySchemaProfile = 'canonical',
+    private readonly client: DatabaseClient & Partial<TransactionRunner>,
+    private readonly mode: PageStoryMetadataStorageMode | RepositorySchemaProfile = 'canonical',
+    private readonly transactionRunner?: TransactionRunner,
   ) {
     this.storyMetadataStorageMode = mode === 'legacyPhysical' || mode === 'legacy_2debe_v1'
       ? 'legacyPhysical'
       : 'canonical';
     this.legacySchemaProfile = mode === 'legacy_2debe_v1';
+  }
+
+  private async runLegacyPersonalPageWrite<T>(
+    userId: string,
+    organizationId: string | null,
+    work: (client: DatabaseClient) => Promise<T>,
+  ): Promise<T> {
+    if (!this.legacySchemaProfile || organizationId !== null) {
+      return work(this.client);
+    }
+    const runner = this.transactionRunner ?? (
+      typeof this.client.transaction === 'function'
+        ? { transaction: this.client.transaction.bind(this.client) }
+        : undefined
+    );
+    if (runner === undefined) {
+      throw new ConfigurationError('Legacy personal Page writes require transaction support');
+    }
+    return runner.transaction(async (transactionClient) => {
+      await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      return work(transactionClient);
+    });
   }
 
   private episodeStartingEntityStatesSelect(): string {
@@ -1131,7 +1155,8 @@ export class PostgresPageRepository
     input: UpdatePageSettingsInput,
     organizationId: string | null = null,
   ): Promise<PageSummary | null> {
-    await this.client.query(
+    return this.runLegacyPersonalPageWrite(userId, organizationId, async (transactionClient) => {
+      await transactionClient.query(
       `
       UPDATE pages
       SET dialogue_mode = COALESCE($3::text, pages.dialogue_mode),
@@ -1173,9 +1198,14 @@ export class PostgresPageRepository
         ...this.storyMetadataUpdateValues(input),
         organizationId,
       ],
-    );
+      );
 
-    return this.findPageByIdAndUserId(pageId, userId, organizationId);
+      return new PostgresPageRepository(transactionClient, this.mode).findPageByIdAndUserId(
+        pageId,
+        userId,
+        organizationId,
+      );
+    });
   }
 
   public async updateGenerationState(

@@ -147,7 +147,14 @@ describe('PostgresEpisodePlanPersistenceRepository', () => {
 
     await expect(repository.withLockedEpisodePlan(
       { episodeId: 'episode-1', userId: 'user-1', organizationId: null },
-      async (_context, resources) => resources.completeStoryAutofillJob?.('job-1', 'user-1', completedPlan),
+      async (_context, resources) => {
+        await resources.pageRepository.updatePageSettings(
+          'page-1',
+          'user-1',
+          { dialogueMode: 'mixed' },
+        );
+        return resources.completeStoryAutofillJob?.('job-1', 'user-1', completedPlan);
+      },
     )).resolves.toBe(true);
 
     const queries = client.queries.join('\n');

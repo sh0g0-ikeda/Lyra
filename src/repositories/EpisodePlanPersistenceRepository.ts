@@ -51,7 +51,11 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
       await this.lockEpisodeGraph(transactionClient, input);
 
       const transactionRunner = buildTransactionScopedRunner(transactionClient);
-      const pageRepository = new PostgresPageRepository(transactionClient, this.schemaProfile);
+      const pageRepository = new PostgresPageRepository(
+        transactionClient,
+        this.schemaProfile,
+        transactionRunner,
+      );
       const panelRepository = new PostgresPanelRepository(transactionRunner, this.schemaProfile);
       const panelEntityAssignmentService = new PanelEntityAssignmentService(
         new PostgresPanelEntityAssignmentRepository(transactionRunner, this.schemaProfile),
