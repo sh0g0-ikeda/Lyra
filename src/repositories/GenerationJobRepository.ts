@@ -931,7 +931,7 @@ export class PostgresGenerationJobRepository
       SELECT monthly_credits,
              purchased_credits,
              monthly_expires_at,
-             false AS monthly_expired
+             monthly_expires_at IS NOT NULL AND monthly_expires_at <= NOW() AS monthly_expired
       FROM organization_credit_balances
       WHERE organization_id = $1::uuid
       FOR UPDATE
@@ -1052,7 +1052,7 @@ export class PostgresGenerationJobRepository
 
     let monthlyDelta = refund.monthlyDelta;
     let purchasedDelta = refund.purchasedDelta;
-    const monthlyExpired = organizationId === null && lockedBalance.monthly_expired === true;
+    const monthlyExpired = lockedBalance.monthly_expired === true;
     const currentMonthlyCredits = monthlyExpired ? 0 : lockedBalance.monthly_credits;
     if (monthlyExpired && monthlyDelta > 0) {
       purchasedDelta += monthlyDelta;
@@ -1781,11 +1781,16 @@ function calculateCancellationRefund(
     0,
     -Number(row.consumed_purchased_delta ?? '0') - Number(row.refunded_purchased_delta ?? '0'),
   );
-  const amount = Math.min(requestedAmount, remainingMonthly + remainingPurchased);
+  // The old cancellation trigger may refund monthly usage into purchased
+  // credits after expiry. Preserve its settlement before a retry is charged.
+  const unsettledAmount = Math.max(0,
+    Math.abs(Number(row.consumed_amount ?? '0')) - Number(row.refunded_amount ?? '0'));
+  const amount = Math.min(requestedAmount, remainingMonthly + remainingPurchased, unsettledAmount);
   if (amount <= 0) {
     return null;
   }
-  const monthlyDelta = Math.min(remainingMonthly, amount);
+  const monthlyDelta = Number(row.refunded_purchased_delta ?? '0') > 0 && remainingMonthly > 0
+    ? 0 : Math.min(remainingMonthly, amount);
   return {
     amount,
     monthlyDelta,

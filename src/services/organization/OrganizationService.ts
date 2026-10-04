@@ -954,11 +954,17 @@ export class OrganizationService implements OrganizationServicePort {
       if (refundDeltas === null) {
         return balance;
       }
+      const monthlyExpired = balance.monthlyExpiresAt !== null
+        && balance.monthlyExpiresAt.getTime() <= Date.now();
+      const refundMonthlyDelta = monthlyExpired ? 0 : refundDeltas.monthlyDelta;
+      const refundPurchasedDelta = refundDeltas.purchasedDelta
+        + (monthlyExpired ? refundDeltas.monthlyDelta : 0);
       const next = await this.organizationRepository.updateCreditBalance(
         {
           ...balance,
-          monthlyCredits: balance.monthlyCredits + refundDeltas.monthlyDelta,
-          purchasedCredits: balance.purchasedCredits + refundDeltas.purchasedDelta,
+          monthlyCredits: (monthlyExpired ? 0 : balance.monthlyCredits) + refundMonthlyDelta,
+          purchasedCredits: balance.purchasedCredits + refundPurchasedDelta,
+          monthlyExpiresAt: monthlyExpired ? null : balance.monthlyExpiresAt,
         },
         client,
       );
@@ -967,8 +973,8 @@ export class OrganizationService implements OrganizationServicePort {
         organizationId: input.organizationId,
         type: 'refund',
         amount: refundDeltas.amount,
-        monthlyDelta: refundDeltas.monthlyDelta,
-        purchasedDelta: refundDeltas.purchasedDelta,
+        monthlyDelta: refundMonthlyDelta,
+        purchasedDelta: refundPurchasedDelta,
         monthlyAfter: next.monthlyCredits,
         purchasedAfter: next.purchasedCredits,
         description: input.description,
@@ -1002,8 +1008,8 @@ export class OrganizationService implements OrganizationServicePort {
           targetId: input.jobId ?? null,
           metadata: {
             amount: refundDeltas.amount,
-            monthly_delta: refundDeltas.monthlyDelta,
-            purchased_delta: refundDeltas.purchasedDelta,
+            monthly_delta: refundMonthlyDelta,
+            purchased_delta: refundPurchasedDelta,
             monthly_after: next.monthlyCredits,
             purchased_after: next.purchasedCredits,
             stripe_event_id: input.stripeEventId ?? null,
@@ -1054,8 +1060,13 @@ export class OrganizationService implements OrganizationServicePort {
     if (refundableAmount <= 0) {
       return null;
     }
-    const amount = Math.min(requestedAmount, refundableAmount);
-    const monthlyDelta = Math.min(remainingMonthly, amount);
+    // The immutable old late-cancel trigger can move monthly refunds into
+    // purchased credits; a bucket mismatch must not exceed the debit total.
+    const unsettledAmount = Math.max(0, Math.abs(consumed.amount) - refunded.amount);
+    const amount = Math.min(requestedAmount, refundableAmount, unsettledAmount);
+    if (amount <= 0) return null;
+    const monthlyDelta = refunded.purchasedDelta > 0 && remainingMonthly > 0
+      ? 0 : Math.min(remainingMonthly, amount);
     return { amount, monthlyDelta, purchasedDelta: amount - monthlyDelta };
   }
 
