@@ -9,6 +9,10 @@ import type {
 import type { MobilePushPlatform as PushPlatform } from '../domain/constants/mobilePush.js';
 import type { GenerationJobType } from '../domain/types/job.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
 
 const MAX_CLAIM_LIMIT = 100;
 const LEASE_TIMEOUT_MINUTES = 5;
@@ -52,6 +56,7 @@ export class PostgresPushNotificationDeliveryRepository implements PushNotificat
   public constructor(
     private readonly client: DatabaseClient,
     private readonly transactionRunner: TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   ) {}
 
   public async claimPending(limit: number): Promise<PushNotificationDelivery[]> {
@@ -59,7 +64,7 @@ export class PostgresPushNotificationDeliveryRepository implements PushNotificat
 
     return this.transactionRunner.transaction(async (transaction) => {
       const result = await transaction.query<PushNotificationDeliveryRow>(
-        buildClaimQuery(),
+        buildClaimQuery(this.schemaProfile),
         [boundedLimit],
       );
       const deliveries: PushNotificationDelivery[] = [];
@@ -93,6 +98,9 @@ export class PostgresPushNotificationDeliveryRepository implements PushNotificat
   }
 
   public async isDeliveryCurrent(deliveryId: string, leaseToken: string): Promise<boolean> {
+    if (this.schemaProfile === 'legacy_2debe_v1') {
+      return this.isLegacyDeliveryCurrent(deliveryId, leaseToken);
+    }
     const result = await this.client.query(`SELECT deliveries.id
       FROM mobile_push_notification_deliveries deliveries
       JOIN mobile_push_notification_outbox outbox ON outbox.id=deliveries.outbox_id
@@ -108,6 +116,25 @@ export class PostgresPushNotificationDeliveryRepository implements PushNotificat
           WHERE members.organization_id=jobs.organization_id AND members.user_id=jobs.user_id AND members.status='active'))`, [deliveryId, leaseToken]);
     if ((result.rowCount ?? 0) > 0) return true;
     await this.client.query(`UPDATE mobile_push_notification_deliveries SET status='canceled',locked_at=NULL,lease_token=NULL,error_code=NULL,updated_at=NOW()
+      WHERE id=$1::uuid AND lease_token=$2::uuid AND status='processing'`, [deliveryId, leaseToken]);
+    return false;
+  }
+
+  private async isLegacyDeliveryCurrent(deliveryId: string, leaseToken: string): Promise<boolean> {
+    const result = await this.client.query(`SELECT deliveries.id
+      FROM mobile_push_notification_deliveries deliveries
+      JOIN mobile_push_notification_outbox outbox ON outbox.id=deliveries.outbox_id
+      JOIN generation_jobs jobs ON jobs.id=outbox.generation_job_id AND jobs.user_id=outbox.user_id
+      JOIN mobile_push_tokens tokens ON tokens.id=deliveries.push_token_id AND tokens.user_id=outbox.user_id
+      WHERE deliveries.id=$1::uuid AND deliveries.lease_token=$2::uuid AND deliveries.status='processing'
+        AND jobs.cancel_requested_at IS NULL AND jobs.cancelled_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM account_deletion_requests deletion_requests
+          WHERE deletion_requests.user_id=outbox.user_id
+            AND deletion_requests.status IN ('processing', 'pending_external_action', 'completed'))
+        AND (jobs.organization_id IS NULL OR EXISTS (SELECT 1 FROM organization_members members
+          WHERE members.organization_id=jobs.organization_id AND members.user_id=jobs.user_id AND members.status='active'))`, [deliveryId, leaseToken]);
+    if ((result.rowCount ?? 0) > 0) return true;
+    await this.client.query(`UPDATE mobile_push_notification_deliveries SET status='dead',locked_at=NULL,lease_token=NULL,error_code='${INVALID_CONTEXT_ERROR_CODE}',updated_at=NOW()
       WHERE id=$1::uuid AND lease_token=$2::uuid AND status='processing'`, [deliveryId, leaseToken]);
     return false;
   }
@@ -260,7 +287,22 @@ function isTerminalStatus(value: unknown): value is PushNotificationJobStatus {
   return value === 'completed' || value === 'failed';
 }
 
-function buildClaimQuery(): string {
+function buildClaimQuery(schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE): string {
+  const isLegacyProfile = schemaProfile === 'legacy_2debe_v1';
+  const deliveryAuthorization = isLegacyProfile
+    ? `jobs.user_id=outbox.user_id AND jobs.cancel_requested_at IS NULL AND jobs.cancelled_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM account_deletion_requests deletion_requests
+            WHERE deletion_requests.user_id=outbox.user_id
+              AND deletion_requests.status IN ('processing', 'pending_external_action', 'completed'))
+          AND (jobs.organization_id IS NULL OR EXISTS (SELECT 1 FROM organization_members members
+            WHERE members.organization_id=jobs.organization_id AND members.user_id=jobs.user_id AND members.status='active'))`
+    : `jobs.user_id=outbox.user_id AND jobs.organization_id IS NOT DISTINCT FROM outbox.organization_id
+          AND jobs.retry_count=outbox.generation_retry_count AND jobs.status=outbox.terminal_status
+          AND jobs.cancel_requested_at IS NULL AND jobs.cancelled_at IS NULL
+          AND users.account_deletion_started_at IS NULL AND users.account_deleted_at IS NULL
+          AND (jobs.organization_id IS NULL OR EXISTS (SELECT 1 FROM organization_members members
+            WHERE members.organization_id=jobs.organization_id AND members.user_id=jobs.user_id AND members.status='active'))`;
+  const userJoin = isLegacyProfile ? '' : '      INNER JOIN users ON users.id = outbox.user_id';
   return `
     WITH due_deliveries AS (
       SELECT deliveries.* FROM mobile_push_notification_deliveries deliveries
@@ -276,12 +318,7 @@ function buildClaimQuery(): string {
         deliveries.locked_at,
         outbox.id AS outbox_id,
         outbox.terminal_status,
-        (jobs.user_id=outbox.user_id AND jobs.organization_id IS NOT DISTINCT FROM outbox.organization_id
-          AND jobs.retry_count=outbox.generation_retry_count AND jobs.status=outbox.terminal_status
-          AND jobs.cancel_requested_at IS NULL AND jobs.cancelled_at IS NULL
-          AND users.account_deletion_started_at IS NULL AND users.account_deleted_at IS NULL
-          AND (jobs.organization_id IS NULL OR EXISTS (SELECT 1 FROM organization_members members
-            WHERE members.organization_id=jobs.organization_id AND members.user_id=jobs.user_id AND members.status='active')))
+        (${deliveryAuthorization})
           AS delivery_authorized,
         jobs.id AS job_id,
         jobs.user_id,
@@ -334,7 +371,7 @@ function buildClaimQuery(): string {
         ON outbox.id = deliveries.outbox_id
       INNER JOIN generation_jobs AS jobs
         ON jobs.id = outbox.generation_job_id
-      INNER JOIN users ON users.id = outbox.user_id
+${userJoin}
       LEFT JOIN mobile_push_tokens AS tokens
         ON tokens.id = deliveries.push_token_id
         AND tokens.user_id = outbox.user_id
