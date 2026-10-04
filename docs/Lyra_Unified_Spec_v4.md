@@ -531,10 +531,19 @@ Mobile retains standard generation and displays the Web-only notice.
 The production source lineage differs from main. The release preserves its legacy
 HTTP contracts and scheduled-billing, push, export, page planning and editorial
 behavior while retaining candidate deletion/refund/ownership protections. Applied
-001–041 migrations are immutable. The reviewed production bridge requires a full
-write freeze and explicit operator acknowledgement; it fails closed for unknown
-schemas or legacy lifecycle scheduling that is not proof of object deletion.
-After the export relation rename, an old production image is not a safe rollback.
+001–041 migrations are immutable. The existing 046 bridge requires a full
+write freeze, so it is not an eligible first rollout under the uninterrupted
+operation requirement. The first legacy compatibility phase must retain the
+physical schema, old settlement and terminal-push ownership, existing billing
+and deletion workflows, old export relation and old-worker job contracts.
+An explicit, read-only validated persistence profile must be injected before
+HTTP admission, queue consumption or recovery. Unknown or hybrid schemas refuse
+candidate startup while the old runtime remains available. Feature flags alone
+are not proof that existing queries avoid absent columns. New capabilities may
+remain gated; existing published capabilities must continue. Mixed old/new
+writers and rollback with candidate-created records must pass on a representative
+copy before production readiness. The 046 rename is a separate later proposal;
+its old-image rollback restriction must not be applied to this first phase.
 
 The release Mobile navigation has four primary tabs and nested creation steps.
 All editing capabilities and stored values remain available; simple display

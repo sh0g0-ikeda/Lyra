@@ -1,5 +1,23 @@
 # Lyra 本番反映前チェック（2026-10-01）
 
+## 2026-10-04 無停止の必須条件
+
+公開中のアプリで従来操作を継続できることが最優先である。全writer停止を伴う046の手順は、今回の第一段階の反映方法として採用しない。下記の旧bridge調査と停止手順は履歴・別案であり、実行可能な現在の手順と混同しない。
+
+第一段階は旧physical schema・旧job/精算/通知・既存認証/課金/削除/exportを扱う互換imageを目指す。DB migrationは0を最小案とし、SQL例外で自動fallbackせず、候補の起動前にread-onlyで明示profileを検証する。新機能のflag OFFだけでは存在しない列の参照を防げない。API、worker、recovery、transaction-bound Repository factoryまで同じ検証済みprofileを渡す必要がある。
+
+**この全profileとadapterはまだ完成していない。PageRepositoryの限定foundationやfresh stagingの成功だけでは本番へ反映しない。** 実lineageを代表コピーで照合し、old/new API×old/new worker、既存client、残高/ledger、返還、通知、既存pending削除、保存/参照画像、candidate-created recordsを残す旧binary rollbackを通す。現行のcanonical `release:check` はschema047限定で、旧schemaに対する合格を意味しない。
+
+### 第一段階の切替条件と手順案
+
+1. 現在の稼働image・runtime・復元点と代表DBコピーの正確な系統を束縛する。未知hybridは候補を起動させず、旧サービスを維持する。
+2. 旧schema profileの全adapter・起動検証・transaction factory・既存機能ONでの人工/代表DB検証を完了する。旧workerが扱えない新jobは共通queueへ投入しない。
+3. production相当の隔離環境で旧・新を混在させ、通常操作中の保存/生成/失敗返還/通知/課金/削除とold-binary rollbackを確認する。旧client HTTPテストだけで共存合格とはしない。
+4. 人間の本番反映判断後にのみ、readyな候補taskを追加し旧taskの提供を維持する。DBのrename/trigger置換/一回copyや全受付503を前提にしない。
+5. 既存処理を継続したまま段階切替し、5xx・queue age・返還重複・残高不一致・画像欠落を観測する。不合格ならDBを変えず検証済み旧imageへ戻す。
+6. 新機能は互換imageの定着後に個別のadditive設計・job protocol・全worker対応・DB/実機ゲートを通して公開する。新Mobileのquote必須を満たさず完成版として公開しない。
+
+APKは検証専用の署名build 0f21d49を作成済みで、ストア提出はしていない。実機受入と最新APIへの接続確認は未完了。下の「署名build未作成」は2026-10-01時点の履歴であり、現在の実施状況は実装記録と最終manifestを参照する。
 ## 判定と対象
 
 **実機確認だけを残した状態とはまだ判定しない。この文書は反映・ストア提出の許可ではない。**
@@ -76,7 +94,7 @@ PostgreSQL 18.3 の互換試験は実行済みだが、実 DB の履歴・件数
 ## 反映を止める残ゲート
 
 1. 最終 SHA の全体検証、コードレビュー、承認された GitHub 書き込み経路での PR と CI
-2. 実 DB の aggregate lineage／table-size／lock／deletion 不変条件、実件数に近い staging と write-freeze rehearsal
+2. 実 DB の aggregate lineage／table-size／lock／deletion 不変条件、代表 staging の旧新writer共存と無停止切替・旧binary rollback rehearsal
 3. `auth:check-subjects:prod` の読み取り監査。別 subject の既存ユーザーがいれば、両本人の根拠を持つ
    個別に承認された offline 移行を先に用意。email 一致で代用しない
 4. 旧ストア client と新 API の受入、旧 job／export の drain、queue payload と worker image の整合
@@ -96,7 +114,7 @@ PostgreSQL 18.3 の互換試験は実行済みだが、実 DB の履歴・件数
     v2 導入後の rollback は v2 を扱える版に限る。ローカルモデル検証や設定 attestation の成功を、
     実サービスの IAM 制約・復旧・削除の受入完了とみなさない。
 
-## 承認後の段階反映手順
+## 旧046停止手順の履歴（今回の第一段階では不採用）
 
 この節は今実行する指示ではない。反映担当者と観測時間・停止閾値を staging で決めてから使用する。
 
@@ -113,7 +131,7 @@ PostgreSQL 18.3 の互換試験は実行済みだが、実 DB の履歴・件数
 7. 各新機能はその固有ゲート通過後に別判断で公開。現候補 Mobile の quote 必須経路が実環境で使用可能か検証
 8. 5xx、queue age、failed/refund、credit 不一致、画像欠落、秘密入りログを観測。閾値未決定のまま公開判断しない
 
-## rollback
+## 旧046 bridge後のrollbackに関する履歴
 
 - DB の down migration、履歴削除、正常データへの安易な PITR はしない
 - 新受付を止め、全 job／dispatch／export／退会／push を止めるまたは安全に drain
