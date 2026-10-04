@@ -281,6 +281,19 @@ Coverage-only retries use a dedicated system instruction and at most 12,000
 characters of frozen issue-code/page/panel/visible-field linkage metadata, without
 echoing the prior audit's prose, evidence quotes or patch values. If this bounded
 metadata cannot fit, the existing remaining attempt is a full audit retry.
+When the complete coverage structure, page/ref scope, status and repair links
+are valid and every retained citation error is a known-reference exact-quote
+mismatch, the same remaining request may correct only those quote slots. This
+requires no omitted diagnostics and at most the existing eight diagnostics. A
+strict fixed-key object returns only the corresponding 4-40 character quotes;
+page/ref/status/check counts, links and the frozen audit body stay server-owned.
+Source-quote slots remain bound to the same visible, typed source authority. The
+joined result revalidates every grounding and coverage check against the same
+displayed catalog. Missing/extra slots, nonexact or hidden-tail quotes fail;
+unknown refs, structural/link errors and omitted diagnostics retain the existing
+retry branch. This does not add a request or relax model, token, cancellation,
+transport, semantic-review or persistence contracts. A finite content schema does
+not itself prove provider completion within the token budget.
 Before freezing, repairs must cover their error pages and have valid, unique field
 targets under the existing repair contract. Each audit
 pass still has at most two logical structured requests, the existing 20k output

@@ -35,6 +35,19 @@ export interface EpisodePlanAuditCoverageCatalog {
   pages: EpisodePlanAuditCoverageCatalogPage[];
 }
 
+export interface EpisodePlanAuditQuoteCorrectionSlot {
+  key: `c${number}`;
+  pageId: string;
+  checkIndex: number;
+  evidenceIndex: number | null;
+  kind: 'source' | 'output';
+  ref: string;
+}
+
+export interface EpisodePlanAuditQuoteCorrectionPlan {
+  slots: EpisodePlanAuditQuoteCorrectionSlot[];
+}
+
 const MAX_CITATION_DIAGNOSTICS = 8;
 const MAX_CITATION_RETRY_CHARS = 4_000;
 
@@ -53,6 +66,7 @@ export class EpisodePlanAuditCoverageError extends ConfigurationError {
   public constructor(
     message: string,
     public readonly retryInstruction: string,
+    public readonly quoteCorrectionPlan: EpisodePlanAuditQuoteCorrectionPlan | null,
   ) {
     super(message);
     this.name = 'EpisodePlanAuditCoverageError';
@@ -209,8 +223,33 @@ export function validateEpisodePlanAuditCoverage(
     throw new EpisodePlanAuditCoverageError(
       'Episode plan audit coverage contains invalid citations',
       buildCitationRetryInstruction(citationDiagnostics, citationErrorCount),
+      buildQuoteCorrectionPlan(citationDiagnostics, citationErrorCount),
     );
   }
+}
+
+function buildQuoteCorrectionPlan(
+  diagnostics: readonly CitationDiagnostic[],
+  totalCount: number,
+): EpisodePlanAuditQuoteCorrectionPlan | null {
+  if (
+    totalCount === 0
+    || totalCount > MAX_CITATION_DIAGNOSTICS
+    || diagnostics.length !== totalCount
+    || diagnostics.some((diagnostic) => !diagnostic.refKnown || diagnostic.reason !== 'not_exact')
+  ) {
+    return null;
+  }
+  return {
+    slots: diagnostics.map((diagnostic, index) => ({
+      key: `c${index}`,
+      pageId: diagnostic.pageId,
+      checkIndex: diagnostic.checkIndex,
+      evidenceIndex: diagnostic.evidenceIndex,
+      kind: diagnostic.kind,
+      ref: diagnostic.ref,
+    })),
+  };
 }
 
 function buildCitationRetryInstruction(

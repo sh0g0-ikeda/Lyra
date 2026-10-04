@@ -47,7 +47,8 @@ describe('EpisodePlanAuditCoverage', () => {
     }
 
     expect(thrown).toBeInstanceOf(EpisodePlanAuditCoverageError);
-    const feedback = (thrown as EpisodePlanAuditCoverageError).retryInstruction;
+    const coverageError = thrown as EpisodePlanAuditCoverageError;
+    const feedback = coverageError.retryInstruction;
     expect(feedback).toContain(`page_id="${PAGE_ID}"`);
     expect(feedback).toContain('source_ref="story"');
     expect(feedback).toContain('check_index=0');
@@ -55,6 +56,16 @@ describe('EpisodePlanAuditCoverage', () => {
     expect(feedback).not.toContain('光は港へ帰る船の目印');
     expect(feedback).not.toContain('秘密本文');
     expect(feedback.length).toBeLessThan(600);
+    expect(coverageError.quoteCorrectionPlan).toEqual({
+      slots: [{
+        key: 'c0',
+        pageId: PAGE_ID,
+        checkIndex: 0,
+        evidenceIndex: null,
+        kind: 'source',
+        ref: 'story',
+      }],
+    });
   });
 
   it('混合source引用・短文padding・別field参照を一度に診断する', () => {
@@ -85,7 +96,8 @@ describe('EpisodePlanAuditCoverage', () => {
     }
 
     expect(thrown).toBeInstanceOf(EpisodePlanAuditCoverageError);
-    const feedback = (thrown as EpisodePlanAuditCoverageError).retryInstruction;
+    const coverageError = thrown as EpisodePlanAuditCoverageError;
+    const feedback = coverageError.retryInstruction;
     expect(feedback).toContain('citation_errors=3');
     expect(feedback).toContain('source_ref="story"');
     expect(feedback).toContain('output_ref="p1.d1"');
@@ -95,6 +107,17 @@ describe('EpisodePlanAuditCoverage', () => {
     expect(feedback).not.toContain('手をハンドルから離した瞬間');
     expect(feedback).toContain('omitted_diagnostics=0');
     expect(feedback.length).toBeLessThanOrEqual(4_000);
+    expect(coverageError.quoteCorrectionPlan?.slots.map((slot) => ({
+      key: slot.key,
+      kind: slot.kind,
+      ref: slot.ref,
+      checkIndex: slot.checkIndex,
+      evidenceIndex: slot.evidenceIndex,
+    }))).toEqual([
+      { key: 'c0', kind: 'source', ref: 'story', checkIndex: 0, evidenceIndex: null },
+      { key: 'c1', kind: 'output', ref: 'p1.d1', checkIndex: 0, evidenceIndex: 0 },
+      { key: 'c2', kind: 'output', ref: 'p1.s', checkIndex: 1, evidenceIndex: 0 },
+    ]);
   });
 
   it('未知refの任意文字列をechoせずknown=falseとcatalog refだけを返す', () => {
@@ -214,6 +237,54 @@ describe('EpisodePlanAuditCoverage', () => {
     expect(feedback).not.toContain('RAW-UNKNOWN');
     expect(feedback).not.toContain('偽原作引用');
     expect(feedback).not.toContain('偽出力引用');
+    expect((thrown as EpisodePlanAuditCoverageError).quoteCorrectionPlan).toBeNull();
+  });
+
+  it('引用診断が8件を超える場合はquote限定補正へ進めない', () => {
+    const pages = [0, 1].map((pageIndex) => {
+      const pageId = `00000000-0000-4000-8000-${String(pageIndex + 1).padStart(12, '0')}`;
+      return {
+        pageId,
+        sources: [{ ref: 'story', text: `原作${pageIndex}A 原作${pageIndex}B` }],
+        outputs: [
+          { ref: 'p1.s', text: `出力${pageIndex}A`, panelOrder: 1 },
+          { ref: 'p1.n', text: `出力${pageIndex}B`, panelOrder: 1 },
+        ],
+      };
+    });
+    const audit: EpisodePlanAudit = {
+      accepted: true,
+      issues: [],
+      pageRepairs: [],
+      panelRepairs: [],
+      sourceCoverage: pages.map((page) => ({
+        pageId: page.pageId,
+        checks: [0, 1].map((checkIndex) => ({
+          sourceRef: 'story',
+          sourceQuote: `存在しない原作${page.pageId}${checkIndex}`,
+          status: 'present' as const,
+          outputEvidence: [
+            { outputRef: 'p1.s', quote: `存在しない出力A${page.pageId}${checkIndex}` },
+            { outputRef: 'p1.n', quote: `存在しない出力B${page.pageId}${checkIndex}` },
+          ],
+          issueCode: null,
+          repairTarget: null,
+        })),
+      })),
+    };
+
+    let thrown: unknown;
+    try {
+      validateEpisodePlanAuditCoverage(audit, { pages });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(EpisodePlanAuditCoverageError);
+    expect((thrown as EpisodePlanAuditCoverageError).retryInstruction).toContain(
+      'omitted_diagnostics=4',
+    );
+    expect((thrown as EpisodePlanAuditCoverageError).quoteCorrectionPlan).toBeNull();
   });
 
   it('未表示tailはactual output prefixに存在しない引用として拒否する', () => {

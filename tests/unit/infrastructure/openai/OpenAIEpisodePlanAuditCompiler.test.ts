@@ -374,7 +374,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v22');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v23');
     expect(requestCount).toBe(1);
   });
 
@@ -773,21 +773,31 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(readArray(retrySchema.required)).toContain('issue_grounding');
   });
 
-  it('source-owned監査はground済みbodyを不変に保ちcoverage引用だけを専用schemaで再試行する', async () => {
-    const first = buildGroundedSourceOwnedAuditPayload({
-      accepted: false,
-      sourceQuote: '中へ入る',
-      outputQuote: '内部へ入らない',
-      invalidCoverageQuote: true,
+  it('source-owned監査は30check中2引用だけを固定keyで補正しbodyと残り28checkを保持する', async () => {
+    // v23 design: exact-quote failures with known refs are corrected as bounded
+    // strings. The server keeps every issue, repair, link and coverage slot.
+    const fixture = buildThirtyCheckSourceOwnedFixture();
+    const first = structuredClone(fixture.payload);
+    (first.issues as Array<Record<string, unknown>>).push({
+      code: 'unsupported_story_fact',
+      severity: 'warning',
+      page_ids: [fixture.pageIds[0]],
+      message: 'SERVER_PRIVATE_ISSUE_BODY',
+      repair_instruction: 'SERVER_PRIVATE_REPAIR_BODY',
     });
-    const firstPanelRepairs = first.panel_repairs as Array<{
-      patch: { situation_text?: string };
+    const firstCoverage = first.source_coverage as Array<{
+      checks: Array<{ source_quote: string; output_evidence: Array<{ quote: string }> }>;
     }>;
-    firstPanelRepairs[0]!.patch.situation_text = 'SERVER_PRIVATE_PATCH_VALUE';
-    const correctedCoverage = buildSourceCoveragePayload([PAGE_ID]);
-    const correctedChecks = correctedCoverage[0]?.checks as Array<Record<string, unknown>>;
-    correctedChecks[0]!.source_quote = '中へ入る';
-    correctedChecks[0]!.output_evidence = [{ output_ref: 'p1.s', quote: '扉を再び押す' }];
+    firstCoverage[0]!.checks[0]!.source_quote = '原作にない引用A';
+    firstCoverage[14]!.checks[1]!.output_evidence[0]!.quote = '出力にない引用B';
+    const preservedQuotes = firstCoverage.flatMap((page, pageIndex) =>
+      page.checks.flatMap((check, checkIndex) => [
+        ...(pageIndex === 0 && checkIndex === 0 ? [] : [check.source_quote]),
+        ...(pageIndex === 14 && checkIndex === 1
+          ? []
+          : check.output_evidence.map((evidence) => evidence.quote)),
+      ]),
+    );
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -796,64 +806,77 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
           body: {
             status: 'completed',
             output_text: JSON.stringify(
-              requests.length === 1 ? first : { source_coverage: correctedCoverage },
+              requests.length === 1
+                ? first
+                : { c0: '原作事実1A', c1: '画面描写15B' },
             ),
           },
-          requestId: `req-coverage-only-${requests.length}`,
+          requestId: `req-quote-only-${requests.length}`,
         };
       },
     } as unknown as OpenAIClient;
 
     const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
-      compilerBrief: '[PAGE-LOCAL ORIGINAL SOURCE]\n原作では扉を開けて中へ入る。',
+      compilerBrief: fixture.compilerBrief,
       language: 'ja',
-      pageIds: [PAGE_ID],
-      coverageCatalog: buildGroundedCoverageCatalog(),
+      pageIds: fixture.pageIds,
+      coverageCatalog: fixture.catalog,
       sourceOwnedPageContext: true,
     });
 
     expect(requests).toHaveLength(2);
     const retrySchema = readObject(readObject(readObject(requests[1]?.text).format).schema);
-    expect(readArray(retrySchema.required)).toEqual(['source_coverage']);
-    expect(readObject(retrySchema.properties)).not.toHaveProperty('issues');
+    expect(readArray(retrySchema.required)).toEqual(['c0', 'c1']);
+    expect(Object.keys(readObject(retrySchema.properties))).toEqual(['c0', 'c1']);
+    expect(readObject(retrySchema.properties)).not.toHaveProperty('source_coverage');
     const retryInput = requests[1]?.input as Array<{ content: Array<{ text: string }> }>;
-    expect(retryInput[0]?.content[0]?.text).toContain('Return source_coverage only');
-    expect(retryInput[0]?.content[0]?.text).toContain('server-held');
-    expect(retryInput[1]?.content[0]?.text).toContain('原作では扉を開けて中へ入る');
-    const frozenLinkMetadata = retryInput
-      .flatMap((item) => item.content.map((content) => content.text))
-      .find((text) => text.includes('[FROZEN AUDIT LINK METADATA]'));
-    expect(frozenLinkMetadata).toContain('source_omission');
-    expect(frozenLinkMetadata).toContain(PAGE_ID);
-    expect(frozenLinkMetadata).toContain('panel_order=1');
-    expect(frozenLinkMetadata).toContain('situationText');
-    expect(frozenLinkMetadata).not.toContain('原文の完了境界が失われている');
-    expect(frozenLinkMetadata).not.toContain('同じページで完了まで描く');
-    expect(frozenLinkMetadata).not.toContain('SERVER_PRIVATE_PATCH_VALUE');
-    expect(frozenLinkMetadata).not.toContain('内部へ入らない');
-    expect(result.audit.accepted).toBe(false);
-    expect(result.audit.issues).toEqual([expect.objectContaining({ code: 'source_omission' })]);
-    expect(result.audit.panelRepairs).toEqual([
-      expect.objectContaining({
-        pageId: PAGE_ID,
-        panelOrder: 1,
-        changedFields: ['situationText'],
-        patch: expect.objectContaining({ situationText: 'SERVER_PRIVATE_PATCH_VALUE' }),
-      }),
-    ]);
+    expect(retryInput[0]?.content[0]?.text).toContain('Return only the required quote correction keys');
+    expect(retryInput[1]?.content[0]?.text).toContain('原作事実1A');
+    const retryText = JSON.stringify(retryInput);
+    expect(retryText).toContain('diagnostic[1]');
+    expect(retryText).toContain('diagnostic[2]');
+    expect(retryText).not.toContain('原作にない引用A');
+    expect(retryText).not.toContain('出力にない引用B');
+    expect(retryText).not.toContain('SERVER_PRIVATE_ISSUE_BODY');
+    expect(retryText).not.toContain('SERVER_PRIVATE_REPAIR_BODY');
+    expect(retryText).not.toContain('previous_source_coverage');
+    expect(result.audit).toMatchObject({
+      accepted: true,
+      issues: [{
+        code: 'unsupported_story_fact',
+        severity: 'warning',
+        message: 'SERVER_PRIVATE_ISSUE_BODY',
+        repairInstruction: 'SERVER_PRIVATE_REPAIR_BODY',
+      }],
+      pageRepairs: [],
+      panelRepairs: [],
+    });
+    const resultCoverage = result.audit.sourceCoverage ?? [];
+    expect(resultCoverage).toHaveLength(15);
+    expect(resultCoverage.flatMap((page) => page.checks)).toHaveLength(30);
+    expect(resultCoverage[0]?.checks[0]?.sourceQuote).toBe('原作事実1A');
+    expect(resultCoverage[14]?.checks[1]?.outputEvidence[0]?.quote).toBe('画面描写15B');
+    const resultPreservedQuotes = resultCoverage.flatMap((page, pageIndex) =>
+      page.checks.flatMap((check, checkIndex) => [
+        ...(pageIndex === 0 && checkIndex === 0 ? [] : [check.sourceQuote]),
+        ...(pageIndex === 14 && checkIndex === 1
+          ? []
+          : check.outputEvidence.map((evidence) => evidence.quote)),
+      ]),
+    );
+    expect(resultPreservedQuotes).toEqual(preservedQuotes);
   });
 
-  it('coverage専用再試行はsource_coverage以外のfieldを受理しない', async () => {
+  it.each([
+    ['余分key', { c0: '中へ入る', accepted: true }],
+    ['必須key不足', {}],
+  ])('quote限定再試行は%sを受理しない', async (_label, correctionResponse) => {
     const first = buildGroundedSourceOwnedAuditPayload({
       accepted: false,
       sourceQuote: '中へ入る',
       outputQuote: '内部へ入らない',
       invalidCoverageQuote: true,
     });
-    const correctedCoverage = buildSourceCoveragePayload([PAGE_ID]);
-    const correctedChecks = correctedCoverage[0]?.checks as Array<Record<string, unknown>>;
-    correctedChecks[0]!.source_quote = '中へ入る';
-    correctedChecks[0]!.output_evidence = [{ output_ref: 'p1.s', quote: '扉を再び押す' }];
     let requestCount = 0;
     const client = {
       postJson: async () => {
@@ -863,9 +886,9 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
             status: 'completed',
             output_text: JSON.stringify(requestCount === 1
               ? first
-              : { source_coverage: correctedCoverage, accepted: true }),
+              : correctionResponse),
           },
-          requestId: `req-coverage-strict-${requestCount}`,
+          requestId: `req-quote-strict-${requestCount}`,
         };
       },
     } as unknown as OpenAIClient;
@@ -878,6 +901,180 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       sourceOwnedPageContext: true,
     })).rejects.toThrow();
     expect(requestCount).toBe(2);
+  });
+
+  it.each([
+    ['4空白', '    '],
+    ['trim後3文字未満', '   a'],
+  ])('quote限定再試行は%sのknown-source補正を拒否する', async (_label, correctionQuote) => {
+    const first = buildGroundedSourceOwnedAuditPayload({
+      accepted: false,
+      sourceQuote: '中へ入る',
+      outputQuote: '内部へ入らない',
+      invalidCoverageQuote: true,
+    });
+    const catalog = buildGroundedCoverageCatalog();
+    catalog.pages[0]!.sources[0]!.text += `\n${correctionQuote}\n`;
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: {
+            status: 'completed',
+            output_text: JSON.stringify(requestCount === 1 ? first : { c0: correctionQuote }),
+          },
+          requestId: `req-quote-trim-boundary-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: `[PAGE-LOCAL ORIGINAL SOURCE]\n原作では扉を開けて中へ入る。\n${correctionQuote}`,
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog: catalog,
+      sourceOwnedPageContext: true,
+    })).rejects.toThrow('invalid payload');
+    expect(requestCount).toBe(2);
+  });
+
+  it('quote限定補正が既知refの未表示tailを返した場合は再検証で拒否する', async () => {
+    const first = buildGroundedSourceOwnedAuditPayload({
+      accepted: false,
+      sourceQuote: '中へ入る',
+      outputQuote: '内部へ入らない',
+      invalidCoverageQuote: true,
+    });
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: {
+            status: 'completed',
+            output_text: JSON.stringify(requestCount === 1 ? first : { c0: '末尾未表示の原作引用' }),
+          },
+          requestId: `req-quote-hidden-tail-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[PAGE-LOCAL ORIGINAL SOURCE]\n原作では扉を開けて中へ入る。',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog: buildGroundedCoverageCatalog(),
+      sourceOwnedPageContext: true,
+    })).rejects.toThrow('invalid source coverage');
+    expect(requestCount).toBe(2);
+  });
+
+  it('quote限定補正が出力上限で不完全な場合は凍結bodyを返さず失敗する', async () => {
+    const first = buildGroundedSourceOwnedAuditPayload({
+      accepted: false,
+      sourceQuote: '中へ入る',
+      outputQuote: '内部へ入らない',
+      invalidCoverageQuote: true,
+    });
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return requestCount === 1
+          ? {
+              body: { status: 'completed', output_text: JSON.stringify(first) },
+              requestId: 'req-quote-incomplete-1',
+            }
+          : {
+              body: {
+                status: 'incomplete',
+                incomplete_details: { reason: 'max_output_tokens' },
+                output_text: '{"c0":"中へ',
+              },
+              requestId: 'req-quote-incomplete-2',
+            };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[PAGE-LOCAL ORIGINAL SOURCE]\n原作では扉を開けて中へ入る。',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog: buildGroundedCoverageCatalog(),
+      sourceOwnedPageContext: true,
+    })).rejects.toThrow('reached its structured output limit');
+    expect(requestCount).toBe(2);
+  });
+
+  it('quote限定補正の直前に停止された場合は二回目の外部APIを呼ばない', async () => {
+    const first = buildGroundedSourceOwnedAuditPayload({
+      accepted: false,
+      sourceQuote: '中へ入る',
+      outputQuote: '内部へ入らない',
+      invalidCoverageQuote: true,
+    });
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: { status: 'completed', output_text: JSON.stringify(first) },
+          requestId: `req-quote-cancel-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+    const cancellationError = new Error('cancelled before quote correction');
+
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[PAGE-LOCAL ORIGINAL SOURCE]\n原作では扉を開けて中へ入る。',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog: buildGroundedCoverageCatalog(),
+      sourceOwnedPageContext: true,
+      beforeRetry: async () => { throw cancellationError; },
+    })).rejects.toBe(cancellationError);
+    expect(requestCount).toBe(1);
+  });
+
+  it('未知refはquote限定補正にせず既存coverage再試行へ戻す', async () => {
+    const first = buildGroundedSourceOwnedAuditPayload({
+      accepted: false,
+      sourceQuote: '中へ入る',
+      outputQuote: '内部へ入らない',
+    });
+    const firstCoverage = first.source_coverage as Array<{ checks: Array<Record<string, unknown>> }>;
+    firstCoverage[0]!.checks[0]!.source_ref = 'unknown-source';
+    const correctedCoverage = buildSourceCoveragePayload([PAGE_ID]);
+    const correctedChecks = correctedCoverage[0]?.checks as Array<Record<string, unknown>>;
+    correctedChecks[0]!.source_quote = '中へ入る';
+    correctedChecks[0]!.output_evidence = [{ output_ref: 'p1.s', quote: '扉を再び押す' }];
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: {
+            status: 'completed',
+            output_text: JSON.stringify(requests.length === 1
+              ? first
+              : { source_coverage: correctedCoverage }),
+          },
+          requestId: `req-unknown-ref-${requests.length}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[PAGE-LOCAL ORIGINAL SOURCE]\n原作では扉を開けて中へ入る。',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog: buildGroundedCoverageCatalog(),
+      sourceOwnedPageContext: true,
+    });
+
+    const retrySchema = readObject(readObject(readObject(requests[1]?.text).format).schema);
+    expect(readArray(retrySchema.required)).toEqual(['source_coverage']);
   });
 
   it('source-owned監査はrepair scopeが不正なbodyを凍結せず全監査を再試行する', async () => {
@@ -1017,6 +1214,59 @@ function buildCoverageCatalog(pageIds: string[]): {
       sources: [{ ref: 'source', text: `原作事実${index + 1}が存在する` }],
       outputs: [{ ref: 'p1.s', text: `画面描写${index + 1}が存在する`, panelOrder: 1 }],
     })),
+  };
+}
+
+function buildThirtyCheckSourceOwnedFixture() {
+  const pageIds = Array.from({ length: 15 }, (_, index) =>
+    `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+  );
+  const pages = pageIds.map((pageId, index) => {
+    const pageNumber = index + 1;
+    const sourceText = `原作事実${pageNumber}Aが存在する。原作事実${pageNumber}Bが存在する。`;
+    const outputText = `画面描写${pageNumber}Aが存在する。画面描写${pageNumber}Bが存在する。`;
+    return {
+      pageId,
+      sources: [{ ref: 'source', text: sourceText }],
+      outputs: [{ ref: 'p1.s', text: outputText, panelOrder: 1 }],
+      sourceText,
+      outputText,
+    };
+  });
+  return {
+    pageIds,
+    compilerBrief: pages.map((page, index) =>
+      `[PAGE-LOCAL ORIGINAL SOURCE] Page ${index + 1} (${page.pageId})\n${page.sourceText}\n[p1.s] ${page.outputText}`,
+    ).join('\n'),
+    catalog: {
+      pages: pages.map(({ pageId, sources, outputs }) => ({ pageId, sources, outputs })),
+      grounding: {
+        pages: pages.map(({ pageId, sourceText, outputs }) => ({
+          pageId,
+          authorities: [{ ref: 'page_source', text: sourceText, kind: 'original_page' as const }],
+          outputs,
+        })),
+        deterministicIssues: [],
+      },
+    },
+    payload: {
+      accepted: true,
+      issues: [],
+      page_repairs: [],
+      panel_repairs: [],
+      source_coverage: pages.map((page, index) => ({
+        page_id: page.pageId,
+        checks: ['A', 'B'].map((suffix) => ({
+          source_ref: 'source',
+          source_quote: `原作事実${index + 1}${suffix}`,
+          status: 'present',
+          output_evidence: [{ output_ref: 'p1.s', quote: `画面描写${index + 1}${suffix}` }],
+          issue_code: null,
+          repair_target: null,
+        })),
+      })),
+      issue_grounding: [],
+    },
   };
 }
 

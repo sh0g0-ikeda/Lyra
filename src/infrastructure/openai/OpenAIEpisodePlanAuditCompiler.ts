@@ -24,6 +24,7 @@ import {
   EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
   EpisodePlanAuditCoverageError,
   validateEpisodePlanAuditCoverage,
+  type EpisodePlanAuditQuoteCorrectionPlan,
 } from '../../services/page/EpisodePlanAuditCoverage.js';
 import {
   EpisodePlanAuditGroundingError,
@@ -82,11 +83,20 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
     let validated: AuditPayload | null = null;
     let frozenSourceOwnedBody: SourceOwnedAuditPayload | null = null;
     let frozenLinkMetadata: string | null = null;
+    let frozenQuoteCorrectionPlan: EpisodePlanAuditQuoteCorrectionPlan | null = null;
     for (let attempt = 1; attempt <= EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS; attempt += 1) {
       let retryInstruction: string | null = null;
       const coverageOnlyAttempt = frozenSourceOwnedBody !== null && frozenLinkMetadata !== null;
+      const quoteOnlyAttempt = frozenSourceOwnedBody !== null && frozenQuoteCorrectionPlan !== null;
       try {
-        const candidate = coverageOnlyAttempt
+        const candidate = quoteOnlyAttempt
+          ? await this.requestQuoteCorrectionAudit(
+              requestInput,
+              frozenSourceOwnedBody,
+              frozenQuoteCorrectionPlan,
+              input.language,
+            )
+          : coverageOnlyAttempt
           ? await this.requestCoverageOnlyAudit(
               allowedPageIds,
               requestInput,
@@ -123,6 +133,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
             retryInstruction = error.retryInstruction;
             frozenSourceOwnedBody = null;
             frozenLinkMetadata = null;
+            frozenQuoteCorrectionPlan = null;
             throw new StructuredOpenAIResponseError(
               'OpenAI episode plan audit compiler returned invalid issue grounding',
               'invalid_payload',
@@ -143,15 +154,24 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
           if (
             sourceOwnedPageContext
             && !coverageOnlyAttempt
+            && !quoteOnlyAttempt
             && error instanceof EpisodePlanAuditCoverageError
           ) {
             const sourceOwnedCandidate = readSourceOwnedPayload(candidate);
             const linkMetadata = buildCoverageOnlyLinkMetadata(candidateAudit);
-            frozenSourceOwnedBody = linkMetadata === null ? null : sourceOwnedCandidate;
-            frozenLinkMetadata = linkMetadata;
+            if (linkMetadata !== null && error.quoteCorrectionPlan !== null) {
+              frozenSourceOwnedBody = sourceOwnedCandidate;
+              frozenQuoteCorrectionPlan = error.quoteCorrectionPlan;
+              frozenLinkMetadata = null;
+            } else {
+              frozenSourceOwnedBody = linkMetadata === null ? null : sourceOwnedCandidate;
+              frozenLinkMetadata = linkMetadata;
+              frozenQuoteCorrectionPlan = null;
+            }
           } else {
             frozenSourceOwnedBody = null;
             frozenLinkMetadata = null;
+            frozenQuoteCorrectionPlan = null;
           }
           throw new StructuredOpenAIResponseError(
             'OpenAI episode plan audit compiler returned invalid source coverage',
@@ -203,6 +223,47 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
       compilerModel: this.model,
       compilerPromptVersion: EPISODE_PLAN_AUDIT_COMPILER_VERSION,
     };
+  }
+
+  private async requestQuoteCorrectionAudit(
+    requestInput: Array<{
+      role: 'system' | 'user';
+      content: Array<{ type: 'input_text'; text: string }>;
+    }>,
+    frozen: SourceOwnedAuditPayload | null,
+    plan: EpisodePlanAuditQuoteCorrectionPlan | null,
+    language: CompileEpisodePlanAuditInput['language'],
+  ): Promise<SourceOwnedAuditPayload> {
+    if (frozen === null || plan === null || plan.slots.length === 0) {
+      throw new ConfigurationError('Quote correction audit retry requires a grounded frozen body');
+    }
+    const compilerBrief = requestInput[1];
+    if (compilerBrief === undefined) {
+      throw new ConfigurationError('Quote correction audit retry requires the unchanged compiler brief');
+    }
+    const correctionMessages = requestInput.slice(2);
+    const correction = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: this.model,
+      reasoningEffort: this.reasoningEffort,
+      maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
+      schemaName: 'episode_plan_audit_quote_correction',
+      jsonSchema: buildEpisodePlanAuditQuoteCorrectionJsonSchema(plan),
+      responseSchema: buildEpisodePlanAuditQuoteCorrectionResponseSchema(plan),
+      errorLabel: 'OpenAI episode plan audit quote correction',
+      input: [
+        {
+          role: 'system',
+          content: [{
+            type: 'input_text',
+            text: buildQuoteCorrectionSystemPrompt(language),
+          }],
+        },
+        compilerBrief,
+        ...correctionMessages,
+      ],
+    });
+    return applyQuoteCorrections(frozen, plan, correction);
   }
 
   private async requestCoverageOnlyAudit(
@@ -265,6 +326,76 @@ const COVERAGE_VISIBLE_REPAIR_FIELDS: ReadonlySet<EpisodePlanAuditPanelRepairFie
   'panelNotes',
   'entities',
 ]);
+
+function buildQuoteCorrectionSystemPrompt(
+  language: CompileEpisodePlanAuditInput['language'],
+): string {
+  return [
+    'Return only the required quote correction keys in the strict JSON object.',
+    'Each cN key corresponds to diagnostic[N+1] in the bounded correction metadata.',
+    'Copy one exact contiguous 4 to 40 character quote from that diagnostic\'s already-known named source or output ref in the unchanged input.',
+    'Do not return page IDs, refs, statuses, links, issues, repairs, prose, or any prior invalid quote.',
+    `The application language is ${describeAppLanguage(language)}.`,
+  ].join(' ');
+}
+
+function buildEpisodePlanAuditQuoteCorrectionJsonSchema(
+  plan: EpisodePlanAuditQuoteCorrectionPlan,
+): Record<string, unknown> {
+  const required = plan.slots.map((slot) => slot.key);
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required,
+    properties: Object.fromEntries(required.map((key) => [key, {
+      type: 'string',
+      minLength: 4,
+      maxLength: EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
+    }])),
+  };
+}
+
+function buildEpisodePlanAuditQuoteCorrectionResponseSchema(
+  plan: EpisodePlanAuditQuoteCorrectionPlan,
+): z.ZodType<Record<string, string>> {
+  const shape: Record<string, z.ZodString> = {};
+  for (const slot of plan.slots) {
+    shape[slot.key] = z.string().trim().min(4).max(EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS);
+  }
+  return z.object(shape).strict();
+}
+
+function applyQuoteCorrections(
+  frozen: SourceOwnedAuditPayload,
+  plan: EpisodePlanAuditQuoteCorrectionPlan,
+  correction: Record<string, string>,
+): SourceOwnedAuditPayload {
+  const corrected = structuredClone(frozen);
+  for (const slot of plan.slots) {
+    const page = corrected.source_coverage.find((candidate) => candidate.page_id === slot.pageId);
+    const check = page?.checks[slot.checkIndex];
+    const quote = correction[slot.key];
+    if (check === undefined || quote === undefined) {
+      throw new ConfigurationError('Quote correction no longer matches the frozen coverage slot');
+    }
+    if (slot.kind === 'source') {
+      if (slot.evidenceIndex !== null || check.source_ref !== slot.ref) {
+        throw new ConfigurationError('Quote correction source slot no longer matches the frozen ref');
+      }
+      check.source_quote = quote;
+      continue;
+    }
+    if (slot.evidenceIndex === null) {
+      throw new ConfigurationError('Quote correction output slot omitted its frozen evidence index');
+    }
+    const evidence = check.output_evidence[slot.evidenceIndex];
+    if (evidence === undefined || evidence.output_ref !== slot.ref) {
+      throw new ConfigurationError('Quote correction output slot no longer matches the frozen ref');
+    }
+    evidence.quote = quote;
+  }
+  return corrected;
+}
 
 function buildCoverageOnlySystemPrompt(
   language: CompileEpisodePlanAuditInput['language'],
