@@ -6,6 +6,10 @@ import { PostgresPageRepository } from './PageRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './PanelEntityAssignmentRepository.js';
 import { PostgresPanelRepository } from './PanelRepository.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from './EpisodeStoryAutofillExecutionRepository.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
 import type {
   EpisodePlanPersistenceInput,
   EpisodePlanPersistencePort,
@@ -20,9 +24,14 @@ interface LockedEpisodeRow extends QueryResultRow {
 /**
  * Owns the commit boundary for a compiled episode plan. Every input used by
  * the context fingerprint is locked before it is read again and persisted.
+ * Transaction-scoped repositories retain the caller's schema profile so legacy
+ * physical schemas never receive canonical planning or notification queries.
  */
 export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPersistencePort {
-  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
+  public constructor(
+    private readonly client: DatabaseClient & TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async withLockedEpisodePlan<T>(
     input: EpisodePlanPersistenceInput,
@@ -35,13 +44,13 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
       await this.lockEpisodeGraph(transactionClient, input);
 
       const transactionRunner = buildTransactionScopedRunner(transactionClient);
-      const pageRepository = new PostgresPageRepository(transactionClient);
+      const pageRepository = new PostgresPageRepository(transactionClient, this.schemaProfile);
       const panelRepository = new PostgresPanelRepository(transactionRunner);
       const panelEntityAssignmentService = new PanelEntityAssignmentService(
         new PostgresPanelEntityAssignmentRepository(transactionRunner),
       );
       const storyAutofillExecutionRepository =
-        new PostgresEpisodeStoryAutofillExecutionRepository(transactionRunner);
+        new PostgresEpisodeStoryAutofillExecutionRepository(transactionRunner, this.schemaProfile);
       const context = await pageRepository.findEpisodePlanningContextByIdAndUserId(
         input.episodeId,
         input.userId,

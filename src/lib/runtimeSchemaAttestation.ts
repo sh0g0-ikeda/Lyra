@@ -53,12 +53,44 @@ export const CANONICAL_RUNTIME_MIGRATIONS = [
 
 export interface RuntimeSchemaCatalog {
   migrationFilenames: string[];
-  relations: Array<{ name: string; kind: string }>;
+  relations: Array<{
+    name: string;
+    kind: string;
+    rowSecurity?: boolean;
+    forceRowSecurity?: boolean;
+  }>;
   namespaceArtifacts: Array<{ kind: string; name: string }>;
-  columns: Array<{ relation: string; name: string; type: string; nullable: boolean }>;
+  columns: Array<{
+    relation: string;
+    name: string;
+    type: string;
+    nullable: boolean;
+    defaultExpressionSha256?: string | null;
+    identityGeneration?: string | null;
+    generatedExpressionSha256?: string | null;
+  }>;
   constraints: Array<{ relation: string; name: string; type: string; validated: boolean; definitionSha256: string }>;
   indexes: Array<{ relation: string; name: string; unique: boolean; valid: boolean; definitionSha256: string }>;
   triggers: Array<{ relation: string; name: string; functionName: string; enabled: string; definitionSha256: string }>;
+  functions?: Array<{
+    name: string;
+    identityArguments: string;
+    returnType: string;
+    language: string;
+    securityDefiner: boolean;
+    settings: string[];
+    bodySha256: string;
+    kind?: 'function' | 'procedure';
+    volatility?: 'immutable' | 'stable' | 'volatile';
+    strict?: boolean;
+    parallel?: 'safe' | 'restricted' | 'unsafe';
+    leakproof?: boolean;
+  }>;
+}
+
+export interface ReadRuntimeSchemaCatalogOptions {
+  includeFunctionBodies?: boolean;
+  includeLegacyAttributes?: boolean;
 }
 
 export type RuntimeSchemaDescriptor = 'empty_fresh' | 'canonical_046_pending_047' | 'canonical_fresh_v1' | 'unsupported';
@@ -192,26 +224,38 @@ export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSch
     : { kind: 'unsupported', failures };
 }
 
-export async function readRuntimeSchemaCatalog(database: TransactionRunner): Promise<RuntimeSchemaCatalog> {
+export async function readRuntimeSchemaCatalog(
+  database: TransactionRunner,
+  options: ReadRuntimeSchemaCatalogOptions = {},
+): Promise<RuntimeSchemaCatalog> {
   return database.transaction(async (client) => {
     await client.query('SET TRANSACTION READ ONLY');
-    const relations = await client.query<{ name: string; kind: string }>(`
-      SELECT relation.relname AS name, relation.relkind AS kind
+    const legacyRelationSelect = options.includeLegacyAttributes
+      ? ', relation.relrowsecurity AS "rowSecurity", relation.relforcerowsecurity AS "forceRowSecurity"'
+      : '';
+    const relations = await client.query<RuntimeSchemaCatalog['relations'][number]>(`
+      SELECT relation.relname AS name, relation.relkind AS kind${legacyRelationSelect}
       FROM pg_class relation
       INNER JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
       WHERE namespace.nspname = CURRENT_SCHEMA()
         AND relation.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
       ORDER BY relation.relname
     `);
-    const columns = await client.query<{
-      relation: string;
-      name: string;
-      type: string;
-      nullable: boolean;
-    }>(`
+    const legacyColumnSelect = options.includeLegacyAttributes
+      ? `,
+        CASE WHEN column_default IS NULL THEN NULL
+          ELSE encode(sha256(convert_to(column_default, 'UTF8')), 'hex')
+        END AS "defaultExpressionSha256",
+        CASE WHEN is_identity = 'YES' THEN identity_generation ELSE NULL END AS "identityGeneration",
+        CASE WHEN is_generated = 'ALWAYS' THEN
+          encode(sha256(convert_to(COALESCE(generation_expression, ''), 'UTF8')), 'hex')
+          ELSE NULL
+        END AS "generatedExpressionSha256"`
+      : '';
+    const columns = await client.query<RuntimeSchemaCatalog['columns'][number]>(`
       SELECT table_name AS relation, column_name AS name,
         CASE WHEN data_type = 'ARRAY' THEN udt_name ELSE data_type END AS type,
-        is_nullable = 'YES' AS nullable
+        is_nullable = 'YES' AS nullable${legacyColumnSelect}
       FROM information_schema.columns
       WHERE table_schema = CURRENT_SCHEMA()
       ORDER BY table_name, ordinal_position
@@ -299,12 +343,47 @@ export async function readRuntimeSchemaCatalog(database: TransactionRunner): Pro
       ) artifact
       ORDER BY artifact.kind, artifact.name
     `);
+    const legacyFunctionSelect = options.includeLegacyAttributes
+      ? `,
+          CASE procedure.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END AS kind,
+          CASE procedure.provolatile
+            WHEN 'i' THEN 'immutable' WHEN 's' THEN 'stable' ELSE 'volatile'
+          END AS volatility,
+          procedure.proisstrict AS strict,
+          CASE procedure.proparallel
+            WHEN 's' THEN 'safe' WHEN 'r' THEN 'restricted' ELSE 'unsafe'
+          END AS parallel,
+          procedure.proleakproof AS leakproof`
+      : '';
+    const functions = options.includeFunctionBodies
+      ? await client.query<NonNullable<RuntimeSchemaCatalog['functions']>[number]>(`
+        SELECT procedure.proname AS name,
+          pg_get_function_identity_arguments(procedure.oid) AS "identityArguments",
+          COALESCE(pg_get_function_result(procedure.oid), 'procedure') AS "returnType",
+          language.lanname AS language,
+          procedure.prosecdef AS "securityDefiner",
+          COALESCE(procedure.proconfig, ARRAY[]::text[]) AS settings,
+          encode(sha256(convert_to(replace(procedure.prosrc, E'\\r\\n', E'\\n'), 'UTF8')), 'hex') AS "bodySha256"${legacyFunctionSelect}
+        FROM pg_proc procedure
+        INNER JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
+        INNER JOIN pg_language language ON language.oid = procedure.prolang
+        WHERE namespace.nspname = CURRENT_SCHEMA()
+          AND procedure.prokind IN ('f', 'p')
+          AND NOT EXISTS (
+            SELECT 1 FROM pg_depend dependency
+            WHERE dependency.classid = 'pg_proc'::regclass
+              AND dependency.objid = procedure.oid
+              AND dependency.deptype = 'e'
+          )
+        ORDER BY procedure.proname, pg_get_function_identity_arguments(procedure.oid)
+      `)
+      : undefined;
     const relationNames = new Set(relations.rows.map(({ name }) => name));
     const migrations = relationNames.has('schema_migrations')
       ? await client.query<{ filename: string }>('SELECT filename FROM schema_migrations ORDER BY filename')
       : { rows: [] };
 
-    return {
+    const catalog: RuntimeSchemaCatalog = {
       migrationFilenames: migrations.rows.map(({ filename }) => filename),
       relations: relations.rows,
       namespaceArtifacts: namespaceArtifacts.rows,
@@ -313,6 +392,7 @@ export async function readRuntimeSchemaCatalog(database: TransactionRunner): Pro
       indexes: indexes.rows,
       triggers: triggers.rows,
     };
+    return functions === undefined ? catalog : { ...catalog, functions: functions.rows };
   });
 }
 

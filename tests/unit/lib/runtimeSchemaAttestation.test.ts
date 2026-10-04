@@ -101,6 +101,62 @@ describe('runtime schema attestation', () => {
     expect(queries.join('\n')).not.toMatch(/generation_jobs\s+WHERE|COUNT\(|INSERT|UPDATE|DELETE|ALTER|CREATE/u);
     expect(queries.join('\n')).toContain("dependency.classid = 'pg_proc'::regclass");
     expect(queries.join('\n')).toContain("dependency.classid = 'pg_type'::regclass");
+    expect(queries.join('\n')).not.toContain('pg_get_function_result');
+    expect(queries.join('\n')).not.toContain('relation.relrowsecurity');
+    expect(queries.join('\n')).not.toContain('column_default');
+    expect(queries.join('\n')).not.toContain('procedure.provolatile');
+  });
+
+  it('関数本文を要求した場合はcurrent schemaの非extension function/procedureを意味的に取得する', async () => {
+    const catalog = canonicalCatalog();
+    const functions = [{
+      name: 'legacy_refund',
+      identityArguments: 'job_id uuid',
+      returnType: 'trigger',
+      language: 'plpgsql',
+      securityDefiner: false,
+      settings: ['search_path=public'],
+      bodySha256: 'a'.repeat(64),
+    }];
+    const queries: string[] = [];
+    const database = catalogDatabase([catalog], [], [functions], queries);
+
+    await expect(readRuntimeSchemaCatalog(database, { includeFunctionBodies: true })).resolves.toEqual({
+      ...catalog,
+      functions,
+    });
+
+    const functionQuery = queries.find((query) => query.includes('pg_get_function_result'));
+    expect(functionQuery).toContain("procedure.prokind IN ('f', 'p')");
+    expect(functionQuery).toContain("dependency.classid = 'pg_proc'::regclass");
+    expect(functionQuery).toContain("replace(procedure.prosrc, E'\\r\\n', E'\\n')");
+  });
+
+  it('legacy属性を要求した場合だけcolumn default・function execution・relation RLSを取得する', async () => {
+    const catalog = canonicalCatalog();
+    Object.assign(catalog.relations[0]!, { rowSecurity: false, forceRowSecurity: false });
+    Object.assign(catalog.columns[0]!, {
+      defaultExpressionSha256: 'b'.repeat(64),
+      identityGeneration: null,
+      generatedExpressionSha256: null,
+    });
+    const functions = [{
+      name: 'legacy_refund', identityArguments: '', returnType: 'trigger', language: 'plpgsql',
+      securityDefiner: false, settings: [], bodySha256: 'a'.repeat(64),
+      kind: 'function', volatility: 'volatile', strict: false, parallel: 'unsafe', leakproof: false,
+    }];
+    const queries: string[] = [];
+    const database = catalogDatabase([catalog], [], [functions], queries);
+
+    const result = await readRuntimeSchemaCatalog(database, {
+      includeFunctionBodies: true,
+      includeLegacyAttributes: true,
+    });
+
+    expect(result).toEqual({ ...catalog, functions });
+    expect(queries.join('\n')).toContain('relation.relrowsecurity');
+    expect(queries.join('\n')).toContain('column_default');
+    expect(queries.join('\n')).toContain('procedure.provolatile');
   });
 
   it('query failureを秘密値なしの安定したConfigurationErrorにする', async () => {
@@ -306,19 +362,29 @@ function removeTrigger(catalog: RuntimeSchemaCatalog, name: string): void {
   catalog.triggers = catalog.triggers.filter((item) => item.name !== name);
 }
 
-function queryCatalogFixture<T extends QueryResultRow>(sql: string, catalog: RuntimeSchemaCatalog): QueryResult<T> {
+function queryCatalogFixture<T extends QueryResultRow>(
+  sql: string,
+  catalog: RuntimeSchemaCatalog,
+  functions: QueryResultRow[] = [],
+): QueryResult<T> {
   if (/SET TRANSACTION READ ONLY/u.test(sql)) return queryResult<T>([]);
   if (/FROM pg_class/u.test(sql)) return queryResult<T>(catalog.relations);
   if (/FROM information_schema\.columns/u.test(sql)) return queryResult<T>(catalog.columns);
   if (/FROM pg_constraint/u.test(sql)) return queryResult<T>(catalog.constraints);
   if (/FROM pg_index/u.test(sql)) return queryResult<T>(catalog.indexes);
   if (/FROM pg_trigger/u.test(sql)) return queryResult<T>(catalog.triggers);
+  if (/pg_get_function_result/u.test(sql)) return queryResult<T>(functions);
   if (/FROM pg_proc procedure/u.test(sql)) return queryResult<T>(catalog.namespaceArtifacts);
   if (/SELECT filename FROM schema_migrations/u.test(sql)) return queryResult<T>(catalog.migrationFilenames.map((filename) => ({ filename })));
   throw new Error(`Unexpected catalog query: ${sql}`);
 }
 
-function catalogDatabase(catalogs: RuntimeSchemaCatalog[], order: string[] = []): TransactionRunner {
+function catalogDatabase(
+  catalogs: RuntimeSchemaCatalog[],
+  order: string[] = [],
+  functionsByCatalog: QueryResultRow[][] = [],
+  queries: string[] = [],
+): TransactionRunner {
   let index = 0;
   return {
     transaction: async <T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> => {
@@ -326,8 +392,10 @@ function catalogDatabase(catalogs: RuntimeSchemaCatalog[], order: string[] = [])
       const catalog = catalogs[index++];
       if (catalog === undefined) throw new Error('No catalog fixture');
       return work({
-        query: async <R extends QueryResultRow>(sql: string): Promise<QueryResult<R>> =>
-          queryCatalogFixture<R>(sql, catalog),
+        query: async <R extends QueryResultRow>(sql: string): Promise<QueryResult<R>> => {
+          queries.push(sql);
+          return queryCatalogFixture<R>(sql, catalog, functionsByCatalog[index - 1]);
+        },
       });
     },
   };
