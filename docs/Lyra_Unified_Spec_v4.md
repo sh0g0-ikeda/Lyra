@@ -201,6 +201,20 @@ packs sized by estimated structured-output cost; it must not use a fixed three-p
 split. A page is never split between packs, and a pack may contain the full episode
 when it fits the safe output budget.
 
+For a complete original-page mapping without character-state opt-in, bounded
+original-source requirement extraction replaces the existing beat-plan pack calls.
+It preserves source-unit locators, authored quotes, ordered prerequisite/result
+obligations and page completion boundaries. Global meaning ownership remains
+global; extraction pack assignment does not make it a page-visible event. Detail
+output allocates page-owned requirements to panels before writing panel fields.
+Placement validation checks structural coverage and prerequisite order, not semantic
+fidelity. Normal and repair detail calls retain the same complete requirements.
+Unsupported mappings or capacity take the complete legacy path before any paid
+call; a paid extraction failure does not start an additional legacy compiler call.
+Requirements and placements are internal and are stripped before public saving.
+Existing opt-in character-state compilation, cancellation, atomic save, prices,
+HTTP contracts and the semantic soft-save policy remain unchanged.
+
 Episode detail provider output declares a non-null entity assignment array for
 every panel. An explicit empty array means no character is visible in that panel;
 fallback must not repopulate it. Omitted assignments in legacy/internal suggestions

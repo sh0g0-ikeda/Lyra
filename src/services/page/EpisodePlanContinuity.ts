@@ -23,6 +23,10 @@ import type {
   EpisodeBeatPlanOutline,
   EpisodeBeatPlanPage,
 } from './EpisodeBeatPlanCompiler.js';
+import {
+  formatEpisodeSourceRequirementsForDetail,
+  type EpisodeSourceRequirements,
+} from './EpisodeSourceRequirements.js';
 import type {
   EpisodePlanAuditCoverageCatalogWithGrounding,
   EpisodePlanAuditGroundingAuthority,
@@ -457,6 +461,7 @@ export function buildEpisodeDetailContinuitySupplement(input: {
   currentDraftPages?: EpisodePagePlanPageSuggestion[];
   repairIssues?: EpisodePlanAuditIssue[];
   sourceOwnedPageContext?: boolean;
+  sourceRequirements?: EpisodeSourceRequirements;
 }): string {
   const orderedPlan = [...input.plan.pages].sort(compareBeatPlanPages);
   const currentPages = orderedPlan.filter((page) => input.currentPageIds.has(page.pageId));
@@ -545,10 +550,15 @@ export function buildEpisodeDetailContinuitySupplement(input: {
   if (sourceOwnedPageContext) {
     return [
       ...currentSourceSection,
+      ...(input.sourceRequirements === undefined
+        ? []
+        : ['', formatEpisodeSourceRequirementsForDetail(input.sourceRequirements, input.currentPageIds)]),
       ...completedPagesSection,
       '',
       '[CONTINUITY RULES]',
       'Use CURRENT CHUNK ORIGINAL SOURCE as the complete page ownership contract for these pages.',
+      'SOURCE REQUIREMENTS preserve original obligations for panel allocation; the original excerpts remain authoritative over extraction.',
+      'page_purpose, continuity_note, and all editable panel fields are derived draft output, never original-source authority.',
       'Preserve every authored prerequisite, action, immediate result, repeated or retry action, completion boundary, decision basis, negative or continuing constraint, final viewpoint, and explicit display line in the matching original page excerpt.',
       'Do not move facts from any other page into the current chunk.',
       'Do not repeat dialogue, discoveries, actions, reactions, or visual situations from ALREADY COMPILED PAGES.',

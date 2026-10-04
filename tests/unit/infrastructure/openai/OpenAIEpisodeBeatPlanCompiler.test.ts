@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEpisodeBeatPlanCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
 import { EpisodeBeatPlanOutputLimitError } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
+import {
+  EPISODE_SOURCE_REQUIREMENT_LIMITS,
+  prepareEpisodeSourceRequirementExtraction,
+} from '../../../../src/services/page/EpisodeSourceRequirements.js';
 
 describe('OpenAIEpisodeBeatPlanCompiler', () => {
   it('全話のページ所有権と入出状態を strict JSON で作る', async () => {
@@ -249,5 +253,124 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         language: 'ja',
       }),
     ).rejects.toBeInstanceOf(EpisodeBeatPlanOutputLimitError);
+  });
+
+  it('原文requirement extractorはsource spanだけを受け取り複合requirementへ復元する', async () => {
+    const pageId = '11111111-1111-4111-8111-111111111111';
+    const extraction = prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: '1ページ目：扉が開く前は内部へ入らず、扉を押すが動かないため、小石を除き、再び押して中へ入る。',
+      pages: [{ pageId, pageNumber: 1 }],
+    })!;
+    const unit = extraction.units[0]!;
+    const locator = (text: string): string => {
+      const start = unit.text.indexOf(text);
+      return `${start}:${start + text.length}`;
+    };
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: { output_text: JSON.stringify({ requirements: [{
+            i: 1, u: 1, o: 1,
+            e: [locator('扉を押す'), locator('小石を除き'), locator('再び押して')],
+            r: [locator('動かない'), null, locator('中へ入る')],
+            a: [], c: [locator('扉が開く前は内部へ入らず'), null, null],
+            z: [false, false, true], x: [], q: [],
+          }] }) },
+          requestId: 'req-source-requirements',
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({
+      extraction,
+      language: 'ja',
+    });
+
+    expect(result.requirements.requirements[0]).toMatchObject({
+      requirementId: 'p1-u1-r1',
+      scope: 'page',
+      events: ['扉を押す', '小石を除き', '再び押して'],
+      results: ['動かない', '中へ入る'],
+      requiredByEnd: true,
+      obligations: [
+        { event: '扉を押す', result: '動かない', conditionalUntil: '扉が開く前は内部へ入らず', requiredByEnd: false },
+        { event: '小石を除き', result: null, conditionalUntil: null, requiredByEnd: false },
+        { event: '再び押して', result: '中へ入る', conditionalUntil: null, requiredByEnd: true },
+      ],
+    });
+    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v1');
+    const requestInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
+    expect(requestInput[0]?.content[0]?.text).toContain('extraction only');
+    expect(requestInput[1]?.content[0]?.text).toContain(unit.text);
+    expect(requestInput[1]?.content[0]?.text).not.toContain('generated-note-sentinel');
+    expect(requests[0]?.max_output_tokens).toBe(32_000);
+  });
+
+  it('global source unitはpack担当pageのeventへ変換せずglobal contextとして復元する', async () => {
+    const pageId = '11111111-1111-4111-8111-111111111111';
+    const extraction = prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: '全頁同じ衣装。\n1ページ目：開始する。',
+      pages: [{ pageId, pageNumber: 1 }],
+    })!;
+    const globalOrdinal = extraction.units.findIndex((unit) =>
+      unit.scope === 'global' && unit.text.includes('全頁同じ衣装')) + 1;
+    const pageOrdinal = extraction.units.findIndex((unit) =>
+      unit.scope === 'page' && unit.text.includes('開始する')) + 1;
+    const globalText = extraction.units[globalOrdinal - 1]!.text;
+    const pageText = extraction.units[pageOrdinal - 1]!.text;
+    const locator = (source: string, text: string): string => {
+      const start = source.indexOf(text);
+      return `${start}:${start + text.length}`;
+    };
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return { body: { output_text: JSON.stringify({ requirements: [{
+          i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
+          x: [`1:${locator(globalText, '全頁同じ衣装')}`], q: [],
+        }, {
+          i: 2, u: pageOrdinal, o: 1, e: [locator(pageText, '開始する')], r: [null],
+          a: [], c: [null], z: [true], x: [], q: [],
+        }] }) }, requestId: 'req-global-source' };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({
+      extraction, language: 'ja',
+    });
+
+    expect(result.requirements.requirements[0]).toMatchObject({
+      scope: 'global', pageId: null, pageNumber: null, events: [], context: '全頁同じ衣装',
+    });
+    expect(result.requirements.requirements[1]).toMatchObject({
+      scope: 'page', pageId, pageNumber: 1, events: ['開始する'],
+    });
+    const input = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
+    expect(input[0]?.content[0]?.text).toContain('do not turn them into page-owned visible events');
+    expect(input[1]?.content[0]?.text).toContain('scope=global');
+  });
+
+  it('source requirement schemaの最大field payloadは408 bytes/recordのpreflight上限内に収まる', () => {
+    const maximumRecord = {
+      i: 512, u: 256, o: 10_000,
+      e: ['9999:9999', '9999:9999', '9999:9999', '9999:9999', '9999:9999'],
+      r: ['9999:9999', '9999:9999', '9999:9999', '9999:9999', '9999:9999'],
+      a: [512, 512, 512, 512],
+      c: ['9999:9999', '9999:9999', '9999:9999', '9999:9999', '9999:9999'],
+      z: [true, true, true, true, true],
+      x: ['1:9999:9999', '2:9999:9999', '3:9999:9999', '4:9999:9999', '5:9999:9999'],
+      q: ['9999:9999', '9999:9999', '9999:9999', '9999:9999'],
+    };
+    const maximumPackPayload = {
+      requirements: Array.from({ length: 55 }, () => maximumRecord),
+    };
+
+    expect(Buffer.byteLength(JSON.stringify(maximumRecord), 'utf8'))
+      .toBeLessThanOrEqual(EPISODE_SOURCE_REQUIREMENT_LIMITS.maxProviderBytesPerRequirement);
+    expect(Buffer.byteLength(JSON.stringify(maximumPackPayload), 'utf8'))
+      .toBeLessThanOrEqual(EPISODE_SOURCE_REQUIREMENT_LIMITS.maxProviderOutputBytes);
   });
 });

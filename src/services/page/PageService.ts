@@ -48,11 +48,20 @@ import type { EpisodeStateTransitionCompilerPort } from './EpisodeStateTransitio
 import {
   EpisodeBeatPlanOutputLimitError,
   type CompiledEpisodeBeatPlan,
+  type CompiledEpisodeSourceRequirements,
   type EpisodeBeatPlanCompilerPort,
   type EpisodeBeatPlanOutline,
   type EpisodeBeatPlanOutlineCompilerPort,
   type EpisodeBeatPlanPage,
 } from './EpisodeBeatPlanCompiler.js';
+import {
+  buildAuditCompatibilityPlanFromSourceRequirements,
+  buildEpisodeSourceRequirementExtractionPacks,
+  prepareEpisodeSourceRequirementExtraction,
+  validateEpisodeSourceRequirements,
+  type EpisodeSourceRequirementExtraction,
+  type EpisodeSourceRequirements,
+} from './EpisodeSourceRequirements.js';
 import type {
   EpisodePlanPersistencePort,
   EpisodePlanPersistenceResources,
@@ -78,7 +87,6 @@ import {
   buildEpisodePlanAuditArtifacts,
   detectDeterministicContinuityIssues,
   fingerprintEpisodePlanningContext,
-  hasCompletePageSourceMapping,
   mergeEpisodePlanAuditIssues,
   validateEpisodeBeatPlanCoverage,
   validateEpisodeBeatPlanOutlineCoverage,
@@ -785,11 +793,43 @@ export class PageService implements PageServicePort {
       currentChunk: null,
       totalChunks: null,
     });
-    const compiledBeatPlan = await this.compileEpisodeBeatPlanWithCapacity(
-      context,
-      language,
-      progressReporter,
-    );
+    const sourceRequirementExtraction = stateOptions === undefined &&
+        this.episodeBeatPlanCompiler.compileSourceRequirements !== undefined
+      ? prepareEpisodeSourceRequirementExtraction({
+          storyFullDraft: context.episode.storyFullDraft ?? '',
+          pages: context.pages.map((page) => ({ pageId: page.pageId, pageNumber: page.pageNumber })),
+        })
+      : null;
+    const legacyBeatPacks = packEpisodeBeatPlanLedgerPages(context.pages);
+    const sourceRequirementPacks = sourceRequirementExtraction === null
+      ? null
+      : buildEpisodeSourceRequirementExtractionPacks(
+          sourceRequirementExtraction,
+          legacyBeatPacks.map((pack) => pack.map((page) => ({
+            pageId: page.pageId,
+            pageNumber: page.pageNumber,
+          }))),
+        );
+    const compiledSourceRequirements = sourceRequirementPacks === null
+      ? null
+      : await this.compileEpisodeSourceRequirements(
+          sourceRequirementExtraction!,
+          sourceRequirementPacks,
+          language,
+          executionControl,
+        );
+    const sourceOwnedPageContext = compiledSourceRequirements !== null;
+    const compiledBeatPlan = compiledSourceRequirements === null
+      ? await this.compileEpisodeBeatPlanWithCapacity(context, language, progressReporter)
+      : {
+          plan: buildAuditCompatibilityPlanFromSourceRequirements(
+            context.pages.map((page) => ({ pageId: page.pageId, pageNumber: page.pageNumber })),
+            compiledSourceRequirements.requirements,
+          ),
+          compilerProvider: compiledSourceRequirements.compilerProvider,
+          compilerModel: compiledSourceRequirements.compilerModel,
+          compilerPromptVersion: compiledSourceRequirements.compilerPromptVersion,
+        } satisfies CompiledEpisodeBeatPlan;
     validateEpisodeBeatPlanCoverage(context, compiledBeatPlan.plan);
 
     const stateTransitions = stateOptions === undefined
@@ -809,7 +849,8 @@ export class PageService implements PageServicePort {
       : formatEpisodeStateTransitionLedger(stateTransitions);
     // Resolve this once from the complete episode context. Chunk contexts do not
     // contain every source header and must never decide this trusted prompt mode.
-    const sourceOwnedPageContext = hasCompletePageSourceMapping(context);
+    // Source ownership is enabled only after complete preflight and validated
+    // extraction. Character-state opt-in intentionally retains the legacy ledger.
     const beforeDetailPlanRetry = executionControl === undefined
       ? undefined
       : () => executionControl.checkpoint();
@@ -839,9 +880,13 @@ export class PageService implements PageServicePort {
           currentPageIds: new Set(pages.map((page) => page.pageId)),
           completedPages: compiledChunks.flatMap((result) => result.suggestion.pages),
           sourceOwnedPageContext,
+          ...(compiledSourceRequirements === null
+            ? {}
+            : { sourceRequirements: compiledSourceRequirements.requirements }),
         }), stateLedger),
         beforeDetailPlanRetry,
         sourceOwnedPageContext,
+        compiledSourceRequirements?.requirements,
       );
       if (!compiled.compilerUsed) {
         return compiled;
@@ -925,9 +970,13 @@ export class PageService implements PageServicePort {
           currentDraftPages,
           repairIssues: chunkIssues,
           sourceOwnedPageContext,
+          ...(compiledSourceRequirements === null
+            ? {}
+            : { sourceRequirements: compiledSourceRequirements.requirements }),
         }), stateLedger),
         beforeDetailPlanRetry,
         sourceOwnedPageContext,
+        compiledSourceRequirements?.requirements,
       );
       if (!repaired.compilerUsed) {
         return repaired;
@@ -972,6 +1021,36 @@ export class PageService implements PageServicePort {
     }
 
     return { ...combined, stateTransitions };
+  }
+
+  private async compileEpisodeSourceRequirements(
+    completeExtraction: EpisodeSourceRequirementExtraction,
+    packs: readonly EpisodeSourceRequirementExtraction[],
+    language: AppLanguage,
+    executionControl?: EpisodePagePlanExecutionControl,
+  ): Promise<CompiledEpisodeSourceRequirements> {
+    const compile = this.episodeBeatPlanCompiler?.compileSourceRequirements;
+    if (compile === undefined) {
+      throw new ConfigurationError('Episode source requirement compiler is not configured');
+    }
+    const compiled: CompiledEpisodeSourceRequirements[] = [];
+    for (const extraction of packs) {
+      await executionControl?.checkpoint();
+      compiled.push(await compile.call(this.episodeBeatPlanCompiler, { extraction, language }));
+    }
+    const requirements = validateEpisodeSourceRequirements(completeExtraction, {
+      requirements: compiled.flatMap((result) => result.requirements.requirements),
+    });
+    const first = compiled[0];
+    if (first === undefined) {
+      throw new ConfigurationError('Episode source requirement compiler returned no packs');
+    }
+    return {
+      requirements,
+      compilerProvider: 'openai',
+      compilerModel: mergeCompilerMetadata(compiled.map((result) => result.compilerModel)) ?? first.compilerModel,
+      compilerPromptVersion: mergeCompilerMetadata(compiled.map((result) => result.compilerPromptVersion)) ?? first.compilerPromptVersion,
+    };
   }
 
   private async compileEpisodeBeatPlanWithCapacity(
@@ -1455,6 +1534,7 @@ export class PageService implements PageServicePort {
     continuitySupplement?: string,
     beforeRetry?: () => Promise<void>,
     sourceOwnedPageContext = false,
+    sourceRequirements?: EpisodeSourceRequirements,
   ): Promise<EpisodePlanExecutionResult> {
     const baseCompilerBrief = buildEpisodePlanCompilerBrief(context, language);
     const compilerBrief = continuitySupplement === undefined
@@ -1467,6 +1547,10 @@ export class PageService implements PageServicePort {
         compilerBrief,
         language,
         ...(sourceOwnedPageContext ? { sourceOwnedPageContext: true } : {}),
+        ...(sourceRequirements === undefined ? {} : { sourceRequirements }),
+        ...(sourceRequirements === undefined
+          ? {}
+          : { sourceRequirementPlacementPageIds: context.pages.map((page) => page.pageId) }),
         ...(beforeRetry === undefined ? {} : { beforeRetry }),
       });
       return {

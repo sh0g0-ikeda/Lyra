@@ -1,5 +1,9 @@
 import type { AppLanguage } from '../../domain/types/language.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import type {
+  EpisodeSourceRequirementExtraction,
+  EpisodeSourceRequirements,
+} from './EpisodeSourceRequirements.js';
 
 export interface EpisodeBeatPlanPage {
   pageId: string;
@@ -40,6 +44,18 @@ export interface CompiledEpisodeBeatPlan {
   compilerPromptVersion: string;
 }
 
+export interface CompileEpisodeSourceRequirementsInput {
+  extraction: EpisodeSourceRequirementExtraction;
+  language: AppLanguage;
+}
+
+export interface CompiledEpisodeSourceRequirements {
+  requirements: EpisodeSourceRequirements;
+  compilerProvider: 'openai';
+  compilerModel: string;
+  compilerPromptVersion: string;
+}
+
 export interface CompileEpisodeBeatPlanOutlineInput {
   compilerBrief: string;
   language: AppLanguage;
@@ -65,6 +81,9 @@ export class EpisodeBeatPlanOutputLimitError extends ConfigurationError {
 
 export interface EpisodeBeatPlanCompilerPort {
   compileBeatPlan(input: CompileEpisodeBeatPlanInput): Promise<CompiledEpisodeBeatPlan>;
+  compileSourceRequirements?(
+    input: CompileEpisodeSourceRequirementsInput,
+  ): Promise<CompiledEpisodeSourceRequirements>;
 }
 
 export interface EpisodeBeatPlanOutlineCompilerPort {

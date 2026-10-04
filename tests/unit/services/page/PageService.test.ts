@@ -26,8 +26,10 @@ import {
   EpisodeBeatPlanOutputLimitError,
   type CompiledEpisodeBeatPlan,
   type CompiledEpisodeBeatPlanOutline,
+  type CompiledEpisodeSourceRequirements,
   type CompileEpisodeBeatPlanInput,
   type CompileEpisodeBeatPlanOutlineInput,
+  type CompileEpisodeSourceRequirementsInput,
   type EpisodeBeatPlanCompilerPort,
 } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
 import type {
@@ -424,6 +426,7 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
   public outlineInputs: CompileEpisodeBeatPlanOutlineInput[] = [];
   public pagesToReturn: CompiledEpisodeBeatPlan['plan']['pages'] | null = null;
   public outputLimitAbovePageCount: number | null = null;
+  public sourceRequirementInputs: CompileEpisodeSourceRequirementsInput[] = [];
 
   public async compileBeatPlan(
     input: CompileEpisodeBeatPlanInput,
@@ -475,6 +478,40 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
       compilerProvider: 'openai',
       compilerModel: 'gpt-5',
       compilerPromptVersion: 'episode_beat_outline_v1',
+    };
+  }
+
+  public async compileSourceRequirements(
+    input: CompileEpisodeSourceRequirementsInput,
+  ): Promise<CompiledEpisodeSourceRequirements> {
+    this.sourceRequirementInputs.push(input);
+    const firstPage = input.extraction.pages[0]!;
+    const ordersByPage = new Map<string, number>();
+    return {
+      requirements: {
+        requirements: input.extraction.units
+          .filter((unit) => unit.text.trim().length > 0)
+          .map((unit, index) => {
+            const pageId = unit.pageId ?? firstPage.pageId;
+            const pageNumber = unit.pageNumber ?? firstPage.pageNumber;
+            const order = (ordersByPage.get(pageId) ?? 0) + 1;
+            ordersByPage.set(pageId, order);
+            return {
+              requirementId: `req-${input.extraction.pages[0]!.pageNumber}-${index + 1}`,
+              scope: unit.scope,
+              pageId: unit.scope === 'global' ? null : pageId,
+              pageNumber: unit.scope === 'global' ? null : pageNumber,
+              sourceUnitIds: [unit.unitId],
+              order: unit.scope === 'global' ? Number(unit.unitId.replace('global-u', '')) : order,
+              events: [unit.text.trim()], results: [], afterRequirementIds: [],
+              conditionalUntil: null, requiredByEnd: true, context: null, emotion: null,
+              function: null, camera: null, framing: null, quotedText: [],
+            };
+          }),
+      },
+      compilerProvider: 'openai',
+      compilerModel: 'gpt-5',
+      compilerPromptVersion: 'episode_source_requirements_v1',
     };
   }
 }
@@ -1846,6 +1883,7 @@ describe('PageService', () => {
       .join('\n');
     pageRepository.episodePlanningContext = context;
     const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const beatCompiler = new FakeEpisodeBeatPlanCompiler();
     const auditCompiler = new FakeEpisodePlanAuditCompiler();
     auditCompiler.audits = [
       {
@@ -1867,7 +1905,7 @@ describe('PageService', () => {
       new FakePageAutofillCompiler(),
       episodeCompiler,
       undefined,
-      new FakeEpisodeBeatPlanCompiler(),
+      beatCompiler,
       auditCompiler,
       true,
     );
@@ -1875,6 +1913,13 @@ describe('PageService', () => {
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
     expect(result.compilerUsed).toBe(true);
+    expect(beatCompiler.inputs).toHaveLength(0);
+    expect(beatCompiler.sourceRequirementInputs.length).toBeGreaterThan(0);
+    expect(beatCompiler.sourceRequirementInputs.every((input) =>
+      input.extraction.compilerBrief.includes('[ORIGINAL SOURCE UNITS - ONLY AUTHORITY]') &&
+      !input.extraction.compilerBrief.includes('continuity_note') &&
+      !input.extraction.compilerBrief.includes('handoff')
+    )).toBe(true);
     expect(episodeCompiler.inputs).toHaveLength(3);
     expect(episodeCompiler.inputs.every((input) => input.sourceOwnedPageContext === true)).toBe(true);
     expect(episodeCompiler.inputs[2]?.compilerBrief).toContain('[REPAIR REQUIRED]');
@@ -1882,6 +1927,12 @@ describe('PageService', () => {
     expect(episodeCompiler.inputs.every(
       (input) => !input.compilerBrief.includes('[GLOBAL EPISODE LEDGER]'),
     )).toBe(true);
+    expect(episodeCompiler.inputs.every((input) =>
+      input.compilerBrief.includes('[SOURCE REQUIREMENTS - ORIGINAL ONLY]') &&
+      input.sourceRequirements !== undefined
+    )).toBe(true);
+    expect(episodeCompiler.inputs[2]?.sourceRequirements)
+      .toEqual(episodeCompiler.inputs[0]?.sourceRequirements);
     expect(auditCompiler.inputs).toHaveLength(2);
     expect(auditCompiler.inputs.every((input) => input.sourceOwnedPageContext === true)).toBe(true);
     expect(auditCompiler.inputs.every(
@@ -1889,6 +1940,33 @@ describe('PageService', () => {
         (page) => page.sources.map((source) => source.ref).join(',') === 'source',
       ) === true,
     )).toBe(true);
+  });
+
+  it('source requirement extraction前のcheckpointでcancelされた場合はproviderと保存を開始しない', async () => {
+    const pageRepository = new FakePageRepository();
+    const context = buildEpisodePlanningContext();
+    context.episode.storyFullDraft = '1ページ目：扉を開けて中へ入る。';
+    pageRepository.episodePlanningContext = context;
+    const beatCompiler = new FakeEpisodeBeatPlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      new FakeEpisodePagePlanCompiler(),
+      undefined,
+      beatCompiler,
+      new FakeEpisodePlanAuditCompiler(),
+      true,
+    );
+    const cancellation = new Error('cancel before paid extraction');
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => { throw cancellation; }, beginCommit: async () => undefined },
+    )).rejects.toBe(cancellation);
+    expect(beatCompiler.sourceRequirementInputs).toHaveLength(0);
+    expect(pageRepository.updatedInputs).toHaveLength(0);
   });
 
   it('inline repair 無効時は修復後にwarningだけが残っても保存する', async () => {
@@ -3147,8 +3225,8 @@ describe('PageService', () => {
     expect(retryCheckpointCount).toBe(1);
     expect(pageCompiler.inputs[0]?.compilerBrief).toContain(stateId);
     expect(auditCompiler.inputs[0]?.compilerBrief).toContain(stateId);
-    expect(pageCompiler.inputs[0]?.sourceOwnedPageContext).toBe(true);
-    expect(auditCompiler.inputs[0]?.sourceOwnedPageContext).toBe(true);
+    expect(pageCompiler.inputs[0]?.sourceOwnedPageContext).toBeUndefined();
+    expect(auditCompiler.inputs[0]?.sourceOwnedPageContext).toBe(false);
     expect(auditCompiler.inputs).toHaveLength(2);
     expect(auditCompiler.inputs.every((input) => input.groundingAuthorities?.some(
       (authority) => authority.ref === 'validated_state'
