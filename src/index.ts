@@ -39,13 +39,13 @@ async function main(): Promise<void> {
   const fencedStateReferenceRuntime = createFencedStateReferenceRuntime(env, db);
 
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
-  const generationJobCancellationControl = new PostgresGenerationJobRepository(db);
+  const generationJobCancellationControl = new PostgresGenerationJobRepository(db, env.LYRA_PERSISTENCE_PROFILE);
 
   try {
     const creditService = new CreditService(new PostgresCreditRepository(db, db));
     const recoveredCount = await new PageGenerationRecoveryService(
       new PostgresPageGenerationRecoveryRepository(db),
-      new PostgresPageGenerationExecutionRepository(db),
+      new PostgresPageGenerationExecutionRepository(db, env.LYRA_PERSISTENCE_PROFILE),
       creditService,
       undefined,
       undefined,
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
   try {
     const recoveredCount = await new EntityGenerationRecoveryService(
       new PostgresEntityGenerationRecoveryRepository(db),
-      new PostgresEntityGenerationExecutionRepository(db),
+      new PostgresEntityGenerationExecutionRepository(db, env.LYRA_PERSISTENCE_PROFILE),
       new CreditService(new PostgresCreditRepository(db, db)),
       undefined,
       undefined,

@@ -106,7 +106,7 @@ class GenerationWorkerRecoveryRunner {
       }
       const recoveredPageCount = await new PageGenerationRecoveryService(
         new PostgresPageGenerationRecoveryRepository(db),
-        new PostgresPageGenerationExecutionRepository(db),
+        new PostgresPageGenerationExecutionRepository(db, env.LYRA_PERSISTENCE_PROFILE),
         creditService,
         PAGE_GENERATION_STALE_AFTER_MS,
         GENERATION_RECOVERY_BATCH_LIMIT,
@@ -114,7 +114,7 @@ class GenerationWorkerRecoveryRunner {
       ).recoverAllStaleJobs();
       const recoveredEntityCount = await new EntityGenerationRecoveryService(
         new PostgresEntityGenerationRecoveryRepository(db),
-        new PostgresEntityGenerationExecutionRepository(db),
+        new PostgresEntityGenerationExecutionRepository(db, env.LYRA_PERSISTENCE_PROFILE),
         creditService,
         ENTITY_GENERATION_STALE_AFTER_MS,
         GENERATION_RECOVERY_BATCH_LIMIT,

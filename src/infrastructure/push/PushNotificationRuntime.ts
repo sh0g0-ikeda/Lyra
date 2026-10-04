@@ -2,6 +2,10 @@ import { ConfigurationError } from '../../domain/errors/index.js';
 import { AesGcmPushTokenCipher } from '../crypto/AesGcmPushTokenCipher.js';
 import type { DatabaseClient, TransactionRunner } from '../../lib/db.js';
 import { PostgresPushNotificationDeliveryRepository } from '../../repositories/PushNotificationDeliveryRepository.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from '../../repositories/RepositorySchemaProfile.js';
 import { PushNotificationDeliveryService } from '../../services/notification/PushNotificationDeliveryService.js';
 import {
   ApnsPushProvider,
@@ -19,6 +23,7 @@ const DEFAULT_PROVIDER_TIMEOUT_MS = 10_000;
 const DEFAULT_DELIVERY_INTERVAL_MS = 30_000;
 
 export interface PushNotificationEnvironment {
+  LYRA_PERSISTENCE_PROFILE?: RepositorySchemaProfile;
   PUSH_NOTIFICATIONS_ENABLED: boolean;
   PUSH_TOKEN_ENCRYPTION_KEY_BASE64?: string;
   PUSH_TOKEN_HASH_KEY_BASE64?: string;
@@ -159,7 +164,11 @@ export function createPushNotificationDeliveryRuntime(
   );
   return {
     deliveryService: new PushNotificationDeliveryService(
-      new PostgresPushNotificationDeliveryRepository(database, database),
+      new PostgresPushNotificationDeliveryRepository(
+        database,
+        database,
+        environment.LYRA_PERSISTENCE_PROFILE ?? CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+      ),
       cipher,
       new PlatformNativePushProvider(apns, fcm),
     ),

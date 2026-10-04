@@ -2,6 +2,10 @@ import type { DatabaseClient, TransactionRunner } from '../../lib/db.js';
 import type { Env } from '../../lib/env.js';
 import { PostgresCreditRepository } from '../../repositories/CreditRepository.js';
 import { PostgresStorePurchaseRepository } from '../../repositories/StorePurchaseRepository.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from '../../repositories/RepositorySchemaProfile.js';
 import { MobileStorePurchaseService } from '../../services/billing/MobileStorePurchaseService.js';
 import { AppStoreServerClient } from '../apple/AppStoreServerClient.js';
 import { GooglePlayDeveloperClient } from '../google/GooglePlayDeveloperClient.js';
@@ -17,6 +21,7 @@ export function createMobileStoreBillingIntegration(
   env: Env,
   database: DatabaseClient & TransactionRunner,
   isProduction: boolean,
+  schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
 ): MobileStoreBillingIntegration | null {
   const config = createMobileStoreBillingConfig(env, isProduction);
   if (config === null) {
@@ -26,6 +31,7 @@ export function createMobileStoreBillingIntegration(
   const storePurchaseRepository = new PostgresStorePurchaseRepository(
     database,
     database,
+    schemaProfile,
   );
   const creditRepository = new PostgresCreditRepository(database, database);
   const appleVerifier = new AppStoreServerClient(config.apple);

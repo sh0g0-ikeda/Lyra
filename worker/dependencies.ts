@@ -182,6 +182,7 @@ export function resolveWorkerDependencies(
   overrides: WorkerDependencyOverrides = {},
 ): WorkerDependencies {
   assertProductionRuntimeConfig(env);
+  const persistenceProfile = env.LYRA_PERSISTENCE_PROFILE;
   const episodeExportWorkerService = overrides.episodeExportWorkerService ?? resolveConfiguredExportWorker();
 
   if (overrides.pageGenerationWorkerService !== undefined || overrides.episodeExportWorkerService !== undefined || overrides.quotedImportWorkerService !== undefined) {
@@ -248,9 +249,9 @@ export function resolveWorkerDependencies(
   const promptBuilder =
     overrides.promptBuilder ??
     new PromptBuilder(
-      new PostgresPageRepository(db),
+      new PostgresPageRepository(db, persistenceProfile),
       new PostgresPanelRepository(db),
-      new PostgresEntityRepository(db),
+      new PostgresEntityRepository(db, persistenceProfile),
       new PostgresCompositionGalleryRepository(db),
     );
   const pagePromptCompiler =
@@ -263,13 +264,13 @@ export function resolveWorkerDependencies(
     overrides.pageImageRenderer ?? resolvePageImageRenderer();
   const pageImageStorage =
     overrides.pageImageStorage ?? resolvePageImageStorage();
-  const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
-  const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
+  const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db, persistenceProfile);
+  const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db, persistenceProfile);
   const episodeStoryAutofillExecutionRepository =
-    new PostgresEpisodeStoryAutofillExecutionRepository(db);
+    new PostgresEpisodeStoryAutofillExecutionRepository(db, persistenceProfile);
   const episodePageSkeletonExecutionRepository =
-    new PostgresEpisodePageSkeletonExecutionRepository(db);
-  const generationJobCancellationControl = new PostgresGenerationJobRepository(db);
+    new PostgresEpisodePageSkeletonExecutionRepository(db, persistenceProfile);
+  const generationJobCancellationControl = new PostgresGenerationJobRepository(db, persistenceProfile);
   const entityReferencePromptBuilder =
     overrides.entityReferencePromptBuilder ?? new EntityReferencePromptBuilder();
   const entityReferencePromptCompiler =
@@ -282,7 +283,7 @@ export function resolveWorkerDependencies(
   const pageService =
     overrides.pageService ??
     new PageService(
-      new PostgresPageRepository(db),
+      new PostgresPageRepository(db, persistenceProfile),
       new PostgresPanelRepository(db),
       new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db)),
       undefined,
@@ -295,13 +296,13 @@ export function resolveWorkerDependencies(
         adaptivePackingEnabled: env.EPISODE_PAGE_PLAN_ADAPTIVE_PACKING_ENABLED,
         inlineRepairEnabled: env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
       },
-      new PostgresEpisodePlanPersistenceRepository(db),
+      new PostgresEpisodePlanPersistenceRepository(db, persistenceProfile),
       overrides.episodeStateTransitionCompiler ?? resolveEpisodeStateTransitionCompiler(),
     );
   const pageSkeletonService =
     overrides.pageSkeletonService ??
     new PageSkeletonService(
-      new PostgresStoryRepository(db, db),
+      new PostgresStoryRepository(db, db, persistenceProfile),
       overrides.storyAiClient ?? resolveStoryAiClient(),
     );
 
@@ -341,7 +342,7 @@ export function resolveWorkerDependencies(
     ),
     entityGenerationWorkerService: new EntityGenerationWorkerService(
       entityGenerationExecutionRepository,
-      new PostgresEntityRepository(db),
+      new PostgresEntityRepository(db, persistenceProfile),
       entityReferencePromptBuilder,
       entityReferencePromptCompiler,
       entityReferenceGenerator,
@@ -387,8 +388,8 @@ function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuild
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
   if (localAssetConfig !== null) {
     return new PageGenerationInputImageBuilder(
-      new PostgresPageRepository(db),
-      new PostgresEntityRepository(db),
+      new PostgresPageRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+      new PostgresEntityRepository(db, env.LYRA_PERSISTENCE_PROFILE),
       new LocalFileStoredImageLoader(localAssetConfig),
       new LayoutGuideImageRenderer(),
     );
@@ -399,8 +400,8 @@ function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuild
   }
 
   return new PageGenerationInputImageBuilder(
-    new PostgresPageRepository(db),
-    new PostgresEntityRepository(db),
+    new PostgresPageRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+    new PostgresEntityRepository(db, env.LYRA_PERSISTENCE_PROFILE),
     new S3StoredImageLoader(createPageImageStorageClient(env.AWS_REGION), env.S3_BUCKET_IMAGES),
     new LayoutGuideImageRenderer(),
   );

@@ -852,6 +852,7 @@ function resolveDependencies(
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
   const fencedStateReferenceRuntime = dependencies.fencedStateReferenceRuntime ?? createFencedStateReferenceRuntime(env, db);
+  const persistenceProfile = env.LYRA_PERSISTENCE_PROFILE;
   const creditRepository = new PostgresCreditRepository(db, db);
   const aiContentReportService =
     dependencies.aiContentReportService ?? new AiContentReportService(new StructuredLogAiContentReportSink());
@@ -927,7 +928,7 @@ function resolveDependencies(
   const compositionGalleryService =
     dependencies.compositionGalleryService ??
     new CompositionGalleryService(new PostgresCompositionGalleryRepository(db));
-  const entityRepository = new PostgresEntityRepository(db);
+  const entityRepository = new PostgresEntityRepository(db, persistenceProfile);
   const entityStateReferenceRepository = new PostgresEntityStateReferenceRepository(db);
   const entityGenerationQueue =
     dependencies.entityGenerationQueue ??
@@ -936,7 +937,7 @@ function resolveDependencies(
       : generationQueue !== null
         ? new SqsEntityGenerationQueueAdapter(generationQueue)
         : new UnconfiguredEntityGenerationQueue());
-  const billingRepository = new PostgresBillingRepository(db, db);
+  const billingRepository = new PostgresBillingRepository(db, db, persistenceProfile);
   if (
     (dependencies.mobileStorePurchaseService === undefined) !==
     (dependencies.googlePubSubPushVerifier === undefined)
@@ -951,6 +952,7 @@ function resolveDependencies(
           env,
           db,
           process.env.NODE_ENV === 'production' || env.APP_ENV === 'production',
+          persistenceProfile,
         )
       : null;
   const mobileStorePurchaseService =
@@ -968,8 +970,8 @@ function resolveDependencies(
       organizationInvitationEmailService,
       new InvitationUrlBuilder(env.APP_PUBLIC_URL),
     );
-  const pageRepository = new PostgresPageRepository(db);
-  const generationJobRepository = new PostgresGenerationJobRepository(db);
+  const pageRepository = new PostgresPageRepository(db, persistenceProfile);
+  const generationJobRepository = new PostgresGenerationJobRepository(db, persistenceProfile);
   const episodeStoryAutofillQueue =
     dependencies.episodeStoryAutofillQueue ??
     (inlineWorkerDependencies !== null
@@ -1023,7 +1025,7 @@ function resolveDependencies(
                 jobTypes: EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
               },
             ));
-  const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
+  const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db, persistenceProfile);
   const entityGenerationRecoveryService =
     dependencies.entityGenerationRecoveryService ??
     new EntityGenerationRecoveryService(
@@ -1035,7 +1037,7 @@ function resolveDependencies(
       organizationService,
       generationJobRepository,
     );
-  const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
+  const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db, persistenceProfile);
   const pageGenerationRecoveryService =
     dependencies.pageGenerationRecoveryService ??
     new PageGenerationRecoveryService(
@@ -1188,7 +1190,10 @@ function resolveDependencies(
     pageRepository, resolveStoredPageImageLoader(), new SharpPageThumbnailRenderer(),
   );
   const pageQueryService =
-    dependencies.pageQueryService ?? new PageQueryService(pageRepository, new PostgresStoryRepository(db));
+    dependencies.pageQueryService ?? new PageQueryService(
+      pageRepository,
+      new PostgresStoryRepository(db, db, persistenceProfile),
+    );
   const panelEntityAssignmentService =
     dependencies.panelEntityAssignmentService ??
     new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db));
@@ -1210,7 +1215,7 @@ function resolveDependencies(
         adaptivePackingEnabled: env.EPISODE_PAGE_PLAN_ADAPTIVE_PACKING_ENABLED,
         inlineRepairEnabled: env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
       },
-      new PostgresEpisodePlanPersistenceRepository(db),
+      new PostgresEpisodePlanPersistenceRepository(db, persistenceProfile),
     );
   const jobService =
     dependencies.jobService ??
@@ -1227,15 +1232,18 @@ function resolveDependencies(
   const storyCollaborationService =
     dependencies.storyCollaborationService ??
     new StoryCollaborationService(
-      new PostgresStoryRepository(db),
+      new PostgresStoryRepository(db, db, persistenceProfile),
       storyAiClient,
       storyEpisodeImprovementPlanner,
     );
   const pageSkeletonService =
     dependencies.pageSkeletonService ??
-    new PageSkeletonService(new PostgresStoryRepository(db, db), storyAiClient);
+    new PageSkeletonService(new PostgresStoryRepository(db, db, persistenceProfile), storyAiClient);
   const storyService =
-    dependencies.storyService ?? new StoryService(new PostgresStoryRepository(db, db), entityRepository);
+    dependencies.storyService ?? new StoryService(
+      new PostgresStoryRepository(db, db, persistenceProfile),
+      entityRepository,
+    );
   const panelService =
     dependencies.panelService ??
     new PanelService(
@@ -1256,7 +1264,11 @@ function resolveDependencies(
     dependencies.sceneService ?? new SceneService(new PostgresSceneRepository(db), entityRepository);
   const userProvisioningService =
     dependencies.userProvisioningService ??
-    new TransactionalUserProvisioningService(db, env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET);
+    new TransactionalUserProvisioningService(
+      db,
+      env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET,
+      persistenceProfile,
+    );
   const rateLimitStore = dependencies.rateLimitStore ?? resolveRateLimitStore();
 
   return {
