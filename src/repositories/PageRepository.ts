@@ -23,6 +23,7 @@ import { ConfigurationError } from '../domain/errors/index.js';
 import type { PageListCursor } from '../domain/pagination.js';
 import { readStyleReferenceMetadata } from '../domain/types/styleReference.js';
 import type { DatabaseClient } from '../lib/db.js';
+import type { RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignment.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
 import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
@@ -195,10 +196,50 @@ export type PageStoryMetadataStorageMode = 'canonical' | 'legacyPhysical';
 export class PostgresPageRepository
   implements PageRepository, PageListPaginationRepository
 {
+  private readonly storyMetadataStorageMode: PageStoryMetadataStorageMode;
+  private readonly legacySchemaProfile: boolean;
+
   public constructor(
     private readonly client: DatabaseClient,
-    private readonly storyMetadataStorageMode: PageStoryMetadataStorageMode = 'canonical',
-  ) {}
+    mode: PageStoryMetadataStorageMode | RepositorySchemaProfile = 'canonical',
+  ) {
+    this.storyMetadataStorageMode = mode === 'legacyPhysical' || mode === 'legacy_2debe_v1'
+      ? 'legacyPhysical'
+      : 'canonical';
+    this.legacySchemaProfile = mode === 'legacy_2debe_v1';
+  }
+
+  private episodeStartingEntityStatesSelect(): string {
+    return this.legacySchemaProfile
+      ? `'[]'::jsonb AS starting_entity_states`
+      : 'episodes.starting_entity_states';
+  }
+
+  private stateLibrarySelect(): string {
+    if (this.legacySchemaProfile) {
+      return `'[]'::jsonb AS state_library`;
+    }
+    return `(
+                SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                  'state_id', entity_states.id,
+                  'entity_id', entity_states.entity_id,
+                  'name', entity_states.name,
+                  'description', entity_states.description,
+                  'revision', COALESCE(entity_states.updated_at, entity_states.created_at),
+                  'base_ref_id', reference_sets.primary_ref_id,
+                  'base_ref_updated_at', reference_sets.updated_at,
+                  'base_image_present', EXISTS (
+                    SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(reference_sets.reference_images) = 'array' THEN reference_sets.reference_images ELSE '[]'::jsonb END) AS base_image(value)
+                    WHERE base_image.value->>'ref_id' = reference_sets.primary_ref_id AND NULLIF(base_image.value->>'s3_key', '') IS NOT NULL
+                  ),
+                  'reference_image', ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })}
+                ) ORDER BY entity_states.created_at ASC, entity_states.id ASC), '[]'::jsonb)
+                FROM entity_states
+                INNER JOIN entities ON entities.id = entity_states.entity_id
+                LEFT JOIN reference_sets ON reference_sets.entity_id = entities.id
+                WHERE entities.work_id = chapters.work_id
+              ) AS state_library`;
+  }
 
   private storyMetadataSelectColumns(): string {
     return this.storyMetadataStorageMode === 'legacyPhysical'
@@ -886,32 +927,8 @@ export class PostgresPageRepository
              episodes.climax,
              episodes.ending_hook,
              episodes.estimated_pages,
-             episodes.starting_entity_states,
-             (
-               SELECT COALESCE(jsonb_agg(jsonb_build_object(
-                 'state_id', entity_states.id,
-                 'entity_id', entity_states.entity_id,
-                 'name', entity_states.name,
-                 'description', entity_states.description,
-                 'revision', COALESCE(entity_states.updated_at, entity_states.created_at),
-                 'base_ref_id', reference_sets.primary_ref_id,
-                 'base_ref_updated_at', reference_sets.updated_at,
-                 'base_image_present', EXISTS (
-                   SELECT 1
-                   FROM jsonb_array_elements(
-                     CASE WHEN jsonb_typeof(reference_sets.reference_images) = 'array'
-                       THEN reference_sets.reference_images ELSE '[]'::jsonb END
-                   ) AS base_image(value)
-                   WHERE base_image.value->>'ref_id' = reference_sets.primary_ref_id
-                     AND NULLIF(base_image.value->>'s3_key', '') IS NOT NULL
-                 ),
-                 'reference_image', ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })}
-               ) ORDER BY entity_states.created_at ASC, entity_states.id ASC), '[]'::jsonb)
-               FROM entity_states
-               INNER JOIN entities ON entities.id = entity_states.entity_id
-               LEFT JOIN reference_sets ON reference_sets.entity_id = entities.id
-               WHERE entities.work_id = chapters.work_id
-             ) AS state_library,
+              ${this.episodeStartingEntityStatesSelect()},
+              ${this.stateLibrarySelect()},
              (
                SELECT COALESCE(
                  jsonb_agg(

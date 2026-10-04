@@ -19,6 +19,10 @@ import { ConfigurationError } from '../domain/errors/index.js';
 import type { EntityListCursor } from '../domain/pagination.js';
 import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
 
 // All entity/reference writes advance the revision used by editor CAS and state freshness.
 const nextEntityRevisionSql = (table: 'entities' | 'reference_sets'): string =>
@@ -183,7 +187,10 @@ export class PostgresEntityRepository
     EntityReferenceRepository,
     EntityListPaginationRepository
 {
-  public constructor(private readonly client: DatabaseClient & Partial<TransactionRunner>) {}
+  public constructor(
+    private readonly client: DatabaseClient & Partial<TransactionRunner>,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async create(input: CreateEntityInput): Promise<Entity> {
     const result = await this.client.query<EntityRow>(
@@ -536,6 +543,13 @@ export class PostgresEntityRepository
     const requestedAssignments = Array.from(new Map(
       assignments.map((assignment) => [referenceAssignmentKey(assignment), assignment]),
     ).values());
+    const legacyStateSelect = this.schemaProfile === 'legacy_2debe_v1'
+      ? `NULL::text AS state_name,
+              NULL::text AS state_description,
+              NULL::jsonb AS state_reference_image`
+      : `entity_states.name AS state_name,
+              entity_states.description AS state_description,
+              ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })} AS state_reference_image`;
     const result = await this.client.query<QueryResultRow & ResolvedReferenceImageRow>(
       `
       WITH requested(entity_id, state_id) AS (
@@ -546,9 +560,7 @@ export class PostgresEntityRepository
              entities.user_id AS owner_user_id,
              requested.state_id AS requested_state_id,
              entity_states.id AS resolved_state_id,
-             entity_states.name AS state_name,
-             entity_states.description AS state_description,
-             ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })} AS state_reference_image,
+              ${legacyStateSelect},
              reference_sets.reference_images,
              reference_sets.primary_ref_id
       FROM requested

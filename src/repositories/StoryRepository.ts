@@ -40,6 +40,10 @@ import {
   lockStoryEpisodeAdmission,
   lockStoryEpisodeAdmissions,
 } from './StoryEpisodeAdmissionLock.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
 
 // CAS revisions must advance even inside one transaction or when clocks move backwards.
 type StoryRevisionTable = 'works' | 'chapters' | 'episodes';
@@ -326,6 +330,7 @@ export class PostgresStoryRepository
   public constructor(
     private readonly client: DatabaseClient,
     private readonly transactionRunner?: TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   ) {}
 
   public async findWorksByUserId(userId: string, organizationId: string | null = null): Promise<Work[]> {
@@ -1113,6 +1118,9 @@ export class PostgresStoryRepository
     organizationId: string | null = null,
   ): Promise<Episode | null> {
     const startingEntityStates = input.startingEntityStates;
+    if (this.schemaProfile === 'legacy_2debe_v1' && startingEntityStates !== undefined) {
+      throw new ConfigurationError('startingEntityStates is not supported by legacy_2debe_v1 persistence');
+    }
     if (startingEntityStates !== undefined) {
       const transactionRunner = this.requireTransactionRunnerForEpisodeStartingStates();
       return transactionRunner.transaction(async (transactionClient) => {
@@ -1191,10 +1199,10 @@ export class PostgresStoryRepository
             estimated_pages = COALESCE($20, episodes.estimated_pages),
             entities_involved = CASE WHEN $21::boolean THEN $22 ELSE episodes.entities_involved END,
             status = COALESCE($23, episodes.status),
-            starting_entity_states = CASE
+             ${this.schemaProfile === 'legacy_2debe_v1' ? '' : `starting_entity_states = CASE
               WHEN $24::boolean THEN $25::jsonb
               ELSE episodes.starting_entity_states
-            END,
+             END,`}
             edit_history = (
               SELECT COALESCE(jsonb_agg(history_entry.value ORDER BY history_entry.ordinality), '[]'::jsonb)
               FROM (
@@ -1213,8 +1221,7 @@ export class PostgresStoryRepository
                       'climax', episodes.climax,
                       'ending_hook', episodes.ending_hook,
                       'estimated_pages', episodes.estimated_pages,
-                      'entities_involved', episodes.entities_involved,
-                      'starting_entity_states', episodes.starting_entity_states,
+                       'entities_involved', episodes.entities_involved${this.schemaProfile === 'legacy_2debe_v1' ? '' : ",\n                       'starting_entity_states', episodes.starting_entity_states"},
                       'status', episodes.status,
                       'updated_at', episodes.updated_at
                     )
