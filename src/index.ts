@@ -20,21 +20,23 @@ import { db } from './lib/db.js';
 import { env } from './lib/env.js';
 import { runPendingMigrations } from './lib/migrations.js';
 import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
+import { prepareCanonicalRuntimeSchema } from './lib/runtimeSchemaAttestation.js';
 import { sanitizePersistedErrorMessage } from './lib/errorSanitizer.js';
 import { createFencedStateReferenceRuntime } from './infrastructure/state/FencedStateReferenceRuntime.js';
 
 async function main(): Promise<void> {
   assertProductionRuntimeConfig(env);
-  const fencedStateReferenceRuntime = createFencedStateReferenceRuntime(env, db);
-
-  if (env.AUTO_RUN_MIGRATIONS) {
-    const appliedMigrations = await runPendingMigrations(db);
-    if (appliedMigrations.length > 0) {
-      console.warn(`[migrations] applied ${appliedMigrations.join(', ')}`);
-    }
-  } else {
+  const schema = await prepareCanonicalRuntimeSchema({
+    database: db,
+    autoRunMigrations: env.AUTO_RUN_MIGRATIONS,
+    runMigrations: async () => runPendingMigrations(db),
+  });
+  if (schema.appliedMigrations.length > 0) {
+    console.warn(`[migrations] applied ${schema.appliedMigrations.join(', ')}`);
+  } else if (!env.AUTO_RUN_MIGRATIONS) {
     console.warn('[migrations] startup migration auto-run is disabled');
   }
+  const fencedStateReferenceRuntime = createFencedStateReferenceRuntime(env, db);
 
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
   const generationJobCancellationControl = new PostgresGenerationJobRepository(db);

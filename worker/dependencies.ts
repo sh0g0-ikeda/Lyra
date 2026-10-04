@@ -85,6 +85,7 @@ import { LocalPreviewEntityReferenceGenerator } from '../src/infrastructure/loca
 import { resolveLocalAssetConfig } from '../src/infrastructure/local/LocalAssetFiles.js';
 import { env } from '../src/lib/env.js';
 import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
+import { attestCanonicalRuntimeSchema } from '../src/lib/runtimeSchemaAttestation.js';
 import {
   PageGenerationInputImageBuilder,
   type PageGenerationInputImageBuilderPort,
@@ -167,6 +168,14 @@ export interface WorkerDependencyOverrides {
   entityGenerationWorkerService?: EntityGenerationWorkerPort;
   episodeStoryAutofillWorkerService?: EpisodeStoryAutofillWorkerPort;
   episodePageSkeletonWorkerService?: EpisodePageSkeletonWorkerPort;
+}
+
+export async function resolveAttestedWorkerDependencies(
+  overrides: WorkerDependencyOverrides = {},
+): Promise<WorkerDependencies> {
+  assertProductionRuntimeConfig(env);
+  await attestCanonicalRuntimeSchema(db);
+  return resolveWorkerDependencies(overrides);
 }
 
 export function resolveWorkerDependencies(

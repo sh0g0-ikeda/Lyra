@@ -8,6 +8,7 @@ import { env } from '../src/lib/env.js';
 import { closeDatabasePool, db } from '../src/lib/db.js';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
+import { attestCanonicalRuntimeSchema } from '../src/lib/runtimeSchemaAttestation.js';
 import {
   GENERATION_RECOVERY_BATCH_LIMIT,
   ENTITY_GENERATION_STALE_AFTER_MS,
@@ -38,6 +39,7 @@ async function main(): Promise<void> {
   if (env.SQS_QUEUE_URL_GENERATION === undefined) {
     throw new ConfigurationError('SQS_QUEUE_URL_GENERATION is required for generation worker polling');
   }
+  await attestCanonicalRuntimeSchema(db);
 
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
   const recoveryRunner = new GenerationWorkerRecoveryRunner(organizationService);

@@ -1,7 +1,7 @@
 import { parseEpisodeExportQueueMessage } from '../src/domain/episodeExportQueueMessage.js';
 import { z } from 'zod';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
-import { resolveWorkerDependencies, type WorkerDependencies } from './dependencies.js';
+import { resolveAttestedWorkerDependencies, type WorkerDependencies } from './dependencies.js';
 export type { WorkerDependencies } from './dependencies.js';
 
 const MAX_QUEUE_JOB_TYPE_LENGTH = 64;
@@ -42,8 +42,9 @@ export interface WorkerBatchResult {
 
 export async function handleGenerationQueue(
   event: WorkerQueueEvent,
-  dependencies: WorkerDependencies = resolveWorkerDependencies(),
+  dependencies?: WorkerDependencies,
 ): Promise<WorkerBatchResult> {
+  const resolvedDependencies = dependencies ?? await resolveAttestedWorkerDependencies();
   const results: WorkerRecordResult[] = [];
   const batchItemFailures: WorkerBatchItemFailure[] = [];
 
@@ -79,25 +80,25 @@ export async function handleGenerationQueue(
     }
 
     try {
-      if (parsedMessage.job_type === 'episode_export' && dependencies.episodeExportWorkerService === undefined) {
+      if (parsedMessage.job_type === 'episode_export' && resolvedDependencies.episodeExportWorkerService === undefined) {
         addBatchItemFailure(batchItemFailures, record.messageId);
         results.push({ messageId: record.messageId ?? null, jobId: parsedMessage.job_id, status: 'retry', reason: 'Episode export runtime is unavailable' });
         continue;
       }
-      if (parsedMessage.job_type === 'entity_import_analysis' && dependencies.quotedImportWorkerService === undefined) {
+      if (parsedMessage.job_type === 'entity_import_analysis' && resolvedDependencies.quotedImportWorkerService === undefined) {
         throw new Error('Quoted import worker is not configured');
       }
       const result = parsedMessage.job_type === 'episode_export'
-        ? await dependencies.episodeExportWorkerService!.processJob(parsedMessage.job_id)
+        ? await resolvedDependencies.episodeExportWorkerService!.processJob(parsedMessage.job_id)
         : parsedMessage.job_type === 'entity_import_analysis'
-        ? await dependencies.quotedImportWorkerService!.processJob(parsedMessage.job_id)
+        ? await resolvedDependencies.quotedImportWorkerService!.processJob(parsedMessage.job_id)
         : parsedMessage.job_type === 'page_generate'
-        ? await dependencies.pageGenerationWorkerService.processJob(parsedMessage.job_id)
+        ? await resolvedDependencies.pageGenerationWorkerService.processJob(parsedMessage.job_id)
         : parsedMessage.job_type === 'entity_generate'
-          ? await dependencies.entityGenerationWorkerService.processJob(parsedMessage.job_id)
+          ? await resolvedDependencies.entityGenerationWorkerService.processJob(parsedMessage.job_id)
           : parsedMessage.job_type === 'episode_story_autofill'
-            ? await dependencies.episodeStoryAutofillWorkerService.processJob(parsedMessage.job_id)
-            : await dependencies.episodePageSkeletonWorkerService.processJob(parsedMessage.job_id);
+            ? await resolvedDependencies.episodeStoryAutofillWorkerService.processJob(parsedMessage.job_id)
+            : await resolvedDependencies.episodePageSkeletonWorkerService.processJob(parsedMessage.job_id);
       if (result.status === 'retry') {
         addBatchItemFailure(batchItemFailures, record.messageId);
         results.push({
