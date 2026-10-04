@@ -6,6 +6,7 @@ import type {
   EpisodePlanAuditGroundingCatalog,
   EpisodePlanAuditIssueCode,
 } from '../../services/page/EpisodePlanAuditCompiler.js';
+import type { EpisodePlanSourceReviewCatalog } from '../../services/page/EpisodePlanSourceReview.js';
 
 const REF_MAX_CHARS = 24;
 const QUOTE_MAX_CHARS = 40;
@@ -121,6 +122,7 @@ export function validateEpisodePlanAuditIssueGrounding(input: {
       }
       if (
         authority.kind !== 'original_page'
+        && authority.kind !== 'original_global'
         && !CONTEXT_AUTHORITY_CODES.has(issue.code)
       ) {
         throw groundingError([issueIndex], 'context authority cannot ground this issue code');
@@ -135,6 +137,88 @@ export function validateEpisodePlanAuditIssueGrounding(input: {
       throw groundingError([issueIndex], 'a source contradiction requires exact output evidence');
     }
   }
+}
+
+export function validateEpisodePlanAuditSourceUnitReview(input: {
+  audit: EpisodePlanAudit;
+  review: readonly (number | null)[];
+  catalog: EpisodePlanSourceReviewCatalog;
+  groundings: readonly EpisodePlanAuditIssueGrounding[];
+  groundingCatalog: EpisodePlanAuditGroundingCatalog | undefined;
+}): void {
+  if (input.review.length !== input.catalog.units.length) {
+    throw sourceUnitReviewError([], 'length does not match its visible catalog');
+  }
+  if (input.groundingCatalog === undefined) {
+    throw sourceUnitReviewError([], 'trusted grounding catalog is missing');
+  }
+  const groundingByIssue = new Map(
+    input.groundings.map((grounding) => [grounding.issue_index, grounding] as const),
+  );
+  for (const [unitIndex, issueIndex] of input.review.entries()) {
+    const unit = input.catalog.units[unitIndex];
+    if (unit === undefined) {
+      throw sourceUnitReviewError([], 'visible catalog omitted a reviewed unit');
+    }
+    if (issueIndex !== null) {
+      const issue = input.audit.issues[issueIndex];
+      const grounding = groundingByIssue.get(issueIndex);
+      if (issue?.severity !== 'error' || grounding?.basis !== 'source') {
+        throw sourceUnitReviewError([issueIndex], 'referenced an unknown or non-source error issue');
+      }
+      if (unit.scope === 'page' && (unit.pageId === null || !issue.pageIds.includes(unit.pageId))) {
+        throw sourceUnitReviewError([issueIndex], 'linked an issue outside the unit page');
+      }
+    }
+    const expectedKind = unit.scope === 'page' ? 'original_page' : 'original_global';
+    const unitAuthorities = input.groundingCatalog.pages.flatMap((page) => {
+      if (unit.scope === 'page' && page.pageId !== unit.pageId) return [];
+      return page.authorities
+        .filter((authority) => authority.ref === unit.sourceRef && authority.kind === expectedKind)
+        .map((authority) => ({ pageId: page.pageId, authority }));
+    });
+    const exactUnitAuthorities = unitAuthorities.filter(({ authority }) =>
+      unit.start >= 0
+      && unit.end > unit.start
+      && unit.end <= authority.text.length
+      && authority.text.slice(unit.start, unit.end) === unit.text,
+    );
+    if (exactUnitAuthorities.length === 0) {
+      throw sourceUnitReviewError(issueIndex === null ? [] : [issueIndex], 'unit is not an exact span of its typed original authority');
+    }
+    if (issueIndex === null) continue;
+    const issue = input.audit.issues[issueIndex];
+    const grounding = groundingByIssue.get(issueIndex);
+    if (issue === undefined || grounding === undefined) continue;
+    const hasExactUnitEvidence = grounding.source_evidence.some((evidence) =>
+      evidence.source_ref === unit.sourceRef
+      && (unit.scope === 'global' || evidence.page_id === unit.pageId)
+      && exactUnitAuthorities.some(({ pageId, authority }) =>
+        pageId === evidence.page_id
+        && quoteOverlapsSpan(authority.text, evidence.quote, unit.start, unit.end),
+      ),
+    );
+    if (!hasExactUnitEvidence) {
+      throw sourceUnitReviewError([issueIndex], 'issue is not grounded in that exact source unit');
+    }
+  }
+}
+
+function quoteOverlapsSpan(
+  authorityText: string,
+  quote: string,
+  unitStart: number,
+  unitEnd: number,
+): boolean {
+  let searchFrom = 0;
+  while (searchFrom <= authorityText.length - quote.length) {
+    const quoteStart = authorityText.indexOf(quote, searchFrom);
+    if (quoteStart === -1) return false;
+    const quoteEnd = quoteStart + quote.length;
+    if (quoteStart < unitEnd && quoteEnd > unitStart) return true;
+    searchFrom = quoteStart + 1;
+  }
+  return false;
 }
 
 function validateOutputEvidence(
@@ -232,6 +316,20 @@ function groundingError(issueIndexes: readonly number[], detail: string): Episod
       `Grounding correction for the retry: issue_errors=${issueIndexes.length || 1};`,
       `issue_indexes=${JSON.stringify(boundedIndexes)}.`,
       'Rebuild the full audit. Ground each source-dependent error in exact named original or typed visible authority text and exact draft fields. Compiled purpose, continuity, panel notes, and entity metadata are never original-source authority.',
+    ].join(' '),
+  );
+}
+
+function sourceUnitReviewError(
+  issueIndexes: readonly number[],
+  detail: string,
+): EpisodePlanAuditGroundingError {
+  const boundedIndexes = [...new Set(issueIndexes)].slice(0, 8);
+  return new EpisodePlanAuditGroundingError(
+    `Episode plan audit source unit review is invalid: ${detail}`,
+    [
+      `Source unit review correction for the retry: issue_indexes=${JSON.stringify(boundedIndexes)}.`,
+      'Rebuild the full audit and return exactly one null or existing grounded source-error issue index for every displayed uN in order. Do not change unit scope, page, ref, span, or source text.',
     ].join(' '),
   );
 }

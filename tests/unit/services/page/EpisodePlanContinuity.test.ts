@@ -10,6 +10,7 @@ import {
   buildEpisodePlanAuditArtifacts,
   buildEpisodePlanAuditBrief,
   buildEpisodePlanAuditCoverageCatalog,
+  buildEpisodePlanSourceReviewForContext,
   detectDeterministicContinuityIssues,
   hasCompletePageSourceMapping,
   validateEpisodeBeatPlanCoverage,
@@ -543,6 +544,15 @@ describe('EpisodePlanContinuity', () => {
     expect(sourceContext).not.toContain('[CHAPTER]');
     expect(sourceContext).not.toContain('[EPISODE STORY]');
     expect(sourceContext).not.toContain('旅の変化を描く');
+    expect(auditBefore.compilerBrief).toContain('[SOURCE UNIT REVIEW - COMPLETE ORIGINAL SOURCE]');
+    expect(auditBefore.coverageCatalog.sourceReview?.units).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        scope: 'page',
+        pageId: pageId(9),
+        sourceRef: 'page_source',
+        text: expect.stringContaining('小石を取り除き、もう一度押してから中へ入る'),
+      }),
+    ]));
   });
 
   it('source-owned監査でも内部planが監査対象全ページを所有しない場合は拒否する', () => {
@@ -599,6 +609,82 @@ describe('EpisodePlanContinuity', () => {
     expect(audit.compilerBrief).toContain('[GLOBAL EPISODE LEDGER]');
     expect(audit.coverageCatalog.pages[0]?.sources.map((source) => source.ref))
       .toEqual(['source', 'ledger']);
+    expect(audit.coverageCatalog.sourceReview).toBeUndefined();
+  });
+
+  it('110page原文でreview表示予算を超える場合は部分unitを返さず全体fallbackする', () => {
+    const context = buildContext();
+    const pageTemplate = context.pages[0]!;
+    context.pages = Array.from({ length: 110 }, (_, index) => ({
+      ...pageTemplate,
+      pageId: pageId(index + 1),
+      pageNumber: index + 1,
+    }));
+    context.episode.storyFullDraft = context.pages.map((page) =>
+      `${page.pageNumber}ページ目：原文の全節を確認する。`,
+    ).join('\r\n');
+
+    expect(hasCompletePageSourceMapping(context)).toBe(true);
+    expect(buildEpisodePlanSourceReviewForContext(context)).toBeNull();
+  });
+
+  it('unit review追加が予算に入らない境界でも既存page-local原文を先に保持する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    context.episode.storyFullDraft = `1ページ目：${'短い事実。'.repeat(20)}`;
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1).map((page) => ({
+      ...page,
+      panels: [{
+        ...page.panels[0]!,
+        dialogue: [{ entityId: null, text: '短い台詞', type: 'narration', position: 'top' }],
+      }],
+    }));
+    const baseline = buildEpisodePlanAuditArtifacts({
+      context, plan, suggestion, language: 'ja', sourceOwnedPageContext: true,
+    });
+    const reviewStart = baseline.compilerBrief.indexOf('[SOURCE UNIT REVIEW - COMPLETE ORIGINAL SOURCE]');
+    const reviewEnd = baseline.compilerBrief.indexOf('[END SOURCE UNIT REVIEW]')
+      + '[END SOURCE UNIT REVIEW]'.length;
+    expect(reviewStart).toBeGreaterThanOrEqual(0);
+    const reviewLength = reviewEnd - reviewStart;
+    const growth = MAX_CONTINUITY_BRIEF_CHARS - baseline.compilerBrief.length
+      + reviewLength - 50;
+    suggestion.pages[0]!.panels[0]!.dialogue![0]!.text += '長'.repeat(growth);
+
+    const constrained = buildEpisodePlanAuditArtifacts({
+      context, plan, suggestion, language: 'ja', sourceOwnedPageContext: true,
+    });
+    expect(constrained.coverageCatalog.sourceReview).toBeUndefined();
+    expect(constrained.compilerBrief).toContain('[PAGE-LOCAL ORIGINAL SOURCE] Page 1');
+    expect(constrained.compilerBrief).toContain(context.episode.storyFullDraft);
+  });
+
+  it('page見出し前の原文をtrimせずoriginal_global unitとauthorityへ保持する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    context.episode.storyFullDraft = '  序文。\r\n1ページ目：扉を開ける。  ';
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1).map((page) => ({
+      ...page, panels: page.panels.slice(0, 1),
+    }));
+
+    const artifacts = buildEpisodePlanAuditArtifacts({
+      context, plan, suggestion, language: 'ja', sourceOwnedPageContext: true,
+    });
+    expect(artifacts.coverageCatalog.sourceReview?.units[0]).toMatchObject({
+      scope: 'global', pageId: null, sourceRef: 'global_source', start: 0, text: '  序文。\r\n',
+    });
+    expect(artifacts.coverageCatalog.sourceReview?.units[1]).toMatchObject({
+      scope: 'page', pageId: pageId(1), sourceRef: 'page_source', start: 0,
+    });
+    expect(artifacts.coverageCatalog.grounding?.pages[0]?.authorities).toContainEqual({
+      ref: 'global_source', text: '  序文。\r\n', kind: 'original_global',
+    });
   });
 
   it('曖昧なpage見出しでは局所補足を全体OFFにして旧FULL STORY全文を保持する', () => {

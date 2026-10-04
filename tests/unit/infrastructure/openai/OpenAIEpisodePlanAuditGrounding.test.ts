@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   validateEpisodePlanAuditIssueGrounding,
+  validateEpisodePlanAuditSourceUnitReview,
 } from '../../../../src/infrastructure/openai/OpenAIEpisodePlanAuditGrounding.js';
 import type {
   EpisodePlanAudit,
@@ -221,6 +222,135 @@ describe('OpenAIEpisodePlanAuditGrounding', () => {
       catalog: buildCatalog(),
     })).toThrow('repair changed the same field more than once');
   });
+
+  it('全null source unit reviewの受理はschema・link整合だけで意味品質の証明ではない', () => {
+    expect(() => validateEpisodePlanAuditSourceUnitReview({
+      audit: { accepted: true, issues: [], pageRepairs: [], panelRepairs: [] },
+      review: [null],
+      catalog: buildSourceReviewCatalog(PAGE_ID),
+      groundings: [],
+      groundingCatalog: buildCatalog(),
+    })).not.toThrow();
+  });
+
+  it('page unitは同じpageの既存grounded errorへだけlinkできる', () => {
+    expect(() => validateEpisodePlanAuditSourceUnitReview({
+      audit: buildAudit('source_omission'),
+      review: [0],
+      catalog: buildSourceReviewCatalog(PAGE_ID),
+      groundings: buildSourceOmissionGrounding(),
+      groundingCatalog: buildCatalog(),
+    })).not.toThrow();
+  });
+
+  it('4文字未満unitでもauthority上の境界跨ぎexact quoteがspanへ重なる場合はlinkできる', () => {
+    const audit = buildAudit('source_omission');
+    const authorityText = '前。笑う。次へ進む。';
+    const groundings = buildSourceOmissionGrounding();
+    groundings[0]!.source_evidence[0]!.quote = '。笑う。';
+    const groundingCatalog = buildCatalog();
+    groundingCatalog.pages[0]!.authorities[0]!.text = authorityText;
+
+    expect(() => validateEpisodePlanAuditSourceUnitReview({
+      audit,
+      review: [0],
+      catalog: {
+        units: [{
+          scope: 'page', pageId: PAGE_ID, sourceRef: 'page_source',
+          start: 2, end: 5, text: '笑う。',
+        }],
+      },
+      groundings,
+      groundingCatalog,
+    })).not.toThrow();
+  });
+
+  it('同じexact quoteの複数出現中にunitと重なる出現があればlinkできる', () => {
+    const authorityText = '合図する。別の節。合図する。';
+    const groundings = buildSourceOmissionGrounding();
+    groundings[0]!.source_evidence[0]!.quote = '合図する';
+    const groundingCatalog = buildCatalog();
+    groundingCatalog.pages[0]!.authorities[0]!.text = authorityText;
+
+    expect(() => validateEpisodePlanAuditSourceUnitReview({
+      audit: buildAudit('source_omission'),
+      review: [0],
+      catalog: {
+        units: [{
+          scope: 'page', pageId: PAGE_ID, sourceRef: 'page_source',
+          start: 9, end: 14, text: '合図する。',
+        }],
+      },
+      groundings,
+      groundingCatalog,
+    })).not.toThrow();
+  });
+
+  it('exact quoteが同じauthorityの遠い別unitにしかない場合はlinkを拒否する', () => {
+    const authorityText = '遠い引用。別の節。';
+    const groundings = buildSourceOmissionGrounding();
+    groundings[0]!.source_evidence[0]!.quote = '遠い引用';
+    const groundingCatalog = buildCatalog();
+    groundingCatalog.pages[0]!.authorities[0]!.text = authorityText;
+
+    expect(() => validateEpisodePlanAuditSourceUnitReview({
+      audit: buildAudit('source_omission'),
+      review: [0],
+      catalog: {
+        units: [{
+          scope: 'page', pageId: PAGE_ID, sourceRef: 'page_source',
+          start: 5, end: 9, text: '別の節。',
+        }],
+      },
+      groundings,
+      groundingCatalog,
+    })).toThrow('not grounded in that exact source unit');
+  });
+
+  it('page unitをoriginal_global authorityへ交換して検証できない', () => {
+    const groundingCatalog = buildCatalog();
+    groundingCatalog.pages[0]!.authorities[0]!.kind = 'original_global';
+    expect(() => validateEpisodePlanAuditSourceUnitReview({
+      audit: buildAudit('source_omission'),
+      review: [0],
+      catalog: buildSourceReviewCatalog(PAGE_ID),
+      groundings: buildSourceOmissionGrounding(),
+      groundingCatalog,
+    })).toThrow('not an exact span of its typed original authority');
+  });
+
+  it.each([
+    ['missing', []],
+    ['extra', [null, null]],
+  ])('source unit reviewの%s vectorを拒否する', (_label, review) => {
+    expect(() => validateEpisodePlanAuditSourceUnitReview({
+      audit: { accepted: true, issues: [], pageRepairs: [], panelRepairs: [] },
+      review,
+      catalog: buildSourceReviewCatalog(PAGE_ID),
+      groundings: [],
+      groundingCatalog: buildCatalog(),
+    })).toThrow('length does not match');
+  });
+
+  it('source unit reviewのunknown issue indexを拒否する', () => {
+    expect(() => validateEpisodePlanAuditSourceUnitReview({
+      audit: buildAudit('source_omission'),
+      review: [9],
+      catalog: buildSourceReviewCatalog(PAGE_ID),
+      groundings: buildSourceOmissionGrounding(),
+      groundingCatalog: buildCatalog(),
+    })).toThrow('unknown or non-source error issue');
+  });
+
+  it('source unit reviewを別page issueへlinkできない', () => {
+    expect(() => validateEpisodePlanAuditSourceUnitReview({
+      audit: buildAudit('source_omission'),
+      review: [0],
+      catalog: buildSourceReviewCatalog(PAGE_TWO_ID),
+      groundings: buildSourceOmissionGrounding(),
+      groundingCatalog: buildCatalog(),
+    })).toThrow('outside the unit page');
+  });
 });
 
 function buildSourceOmissionGrounding() {
@@ -279,5 +409,12 @@ function buildCatalog(): EpisodePlanAuditGroundingCatalog {
       ],
     }],
     deterministicIssues: [],
+  };
+}
+
+function buildSourceReviewCatalog(pageId: string) {
+  const text = '矢印に沿って狭い岩の隙間を通り、出口へ進む。';
+  return {
+    units: [{ scope: 'page' as const, pageId, sourceRef: 'page_source' as const, start: 0, end: text.length, text }],
   };
 }

@@ -1,4 +1,7 @@
-import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
+import {
+  EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL,
+  EPISODE_PLAN_SOURCE_REVIEW_MAX_UNITS,
+} from '../../domain/constants/generation.js';
 import { z } from 'zod';
 import type { OpenAIReasoningEffort } from './StructuredOpenAIResponse.js';
 import { STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY, STORY_PANEL_POLICY } from './StoryEditorialPrompts.js';
@@ -30,6 +33,7 @@ import {
   EpisodePlanAuditGroundingError,
   episodePlanAuditIssueGroundingsSchema,
   validateEpisodePlanAuditIssueGrounding,
+  validateEpisodePlanAuditSourceUnitReview,
 } from './OpenAIEpisodePlanAuditGrounding.js';
 import type {
   CompiledEpisodePlanAudit,
@@ -65,12 +69,14 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
       throw new ConfigurationError('OpenAI episode plan audit requires a coverage catalog');
     }
 
+    const sourceOwnedPageContext = input.sourceOwnedPageContext === true;
+    const sourceReviewCatalog = sourceOwnedPageContext ? input.coverageCatalog.sourceReview : undefined;
     const baseRequestInput = [
       {
         role: 'system' as const,
         content: [{
           type: 'input_text' as const,
-          text: buildSystemPrompt(input.language, input.sourceOwnedPageContext === true),
+          text: buildSystemPrompt(input.language, sourceOwnedPageContext, sourceReviewCatalog !== undefined),
         }],
       },
       {
@@ -78,7 +84,6 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
         content: [{ type: 'input_text' as const, text: input.compilerBrief }],
       },
     ];
-    const sourceOwnedPageContext = input.sourceOwnedPageContext === true;
     let requestInput = baseRequestInput;
     let validated: AuditPayload | null = null;
     let frozenSourceOwnedBody: SourceOwnedAuditPayload | null = null;
@@ -110,8 +115,16 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
               reasoningEffort: this.reasoningEffort,
               maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
               schemaName: 'episode_plan_audit',
-              jsonSchema: buildEpisodePlanAuditJsonSchema(allowedPageIds, sourceOwnedPageContext),
-              responseSchema: sourceOwnedPageContext ? sourceOwnedAuditSchema : episodePlanAuditSchema,
+              jsonSchema: buildEpisodePlanAuditJsonSchema(
+                allowedPageIds,
+                sourceOwnedPageContext,
+                sourceReviewCatalog?.units.length,
+              ),
+              responseSchema: sourceReviewCatalog !== undefined
+                ? sourceReviewAuditSchema
+                : sourceOwnedPageContext
+                  ? sourceOwnedAuditSchema
+                  : episodePlanAuditSchema,
               errorLabel: 'OpenAI episode plan audit compiler',
               input: requestInput,
             });
@@ -120,12 +133,21 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
           try {
             validateEpisodePlanAuditIssueGrounding({
               audit: candidateAudit,
-              groundings: readSourceOwnedGroundings(candidate),
+              groundings: readSourceOwnedGroundings(candidate, sourceReviewCatalog !== undefined),
               catalog: input.coverageCatalog.grounding,
               ...(input.groundingAuthorities === undefined
                 ? {}
                 : { additionalAuthorities: input.groundingAuthorities }),
             });
+            if (sourceReviewCatalog !== undefined) {
+              validateEpisodePlanAuditSourceUnitReview({
+                audit: candidateAudit,
+                review: readSourceUnitReview(candidate),
+                catalog: sourceReviewCatalog,
+                groundings: readSourceOwnedGroundings(candidate, true),
+                groundingCatalog: input.coverageCatalog.grounding,
+              });
+            }
           } catch (error) {
             if (!(error instanceof EpisodePlanAuditGroundingError)) {
               throw error;
@@ -157,7 +179,10 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
             && !quoteOnlyAttempt
             && error instanceof EpisodePlanAuditCoverageError
           ) {
-            const sourceOwnedCandidate = readSourceOwnedPayload(candidate);
+            const sourceOwnedCandidate = readSourceOwnedPayload(
+              candidate,
+              sourceReviewCatalog !== undefined,
+            );
             const linkMetadata = buildCoverageOnlyLinkMetadata(candidateAudit);
             if (linkMetadata !== null && error.quoteCorrectionPlan !== null) {
               frozenSourceOwnedBody = sourceOwnedCandidate;
@@ -500,6 +525,7 @@ function hasText(value: string | null | undefined): boolean {
 function buildSystemPrompt(
   language: CompileEpisodePlanAuditInput['language'],
   sourceOwnedPageContext: boolean,
+  sourceUnitReview: boolean,
 ): string {
   const outputLanguage = describeAppLanguage(language);
   return [
@@ -522,6 +548,11 @@ function buildSystemPrompt(
       'The exact original page source is authoritative. Every compiled field, including purpose, continuity, panel notes, composition notes, and entity metadata, is draft output under review. Never describe generated draft text as an original-source requirement, and never change a source-faithful visible field merely to agree with conflicting generated metadata.',
       'Before easy dialogue or setup facts, audit explicit completion and end states, the authored functional meaning of props or displayed information, cause-action-result chains, and authored emotion or pose against actual visible panel fields.',
       'Return one issue_grounding entry for every severity=error issue. Use basis=source with exact named authority and output-field quotes; source omissions may have no output quote. Use basis=deterministic only when the typed DETERMINISTIC FINDINGS section contains the same code and page IDs. issue_grounding is validation metadata and must not add or replace issues or repairs.',
+    ] : []),
+    ...(sourceUnitReview ? [
+      'Review every clause of every SOURCE UNIT REVIEW entry. Return source_unit_review with exactly one item per ordered uN: null only when that whole unit has no issue, otherwise the zero-based index of an existing grounded error issue caused by that unit.',
+      'A unit boundary is only bookkeeping and may contain several facts. Separately verify an explanation exists and has its authored role or content; an approach or opening reaches any same-page completion required by the source; a continuing result has its explicit prerequisite; surprise or haste does not replace a separately authored joy or later reaction; and showing a target does not replace the required final viewpoint.',
+      'If draft notes prohibit, delay, or negate an action required by the original unit, report the conflict through an existing issue and repair. Draft purpose, continuity, notes, summaries, generated ledgers, and SCENES are not original-source authority for source_unit_review.',
     ] : []),
     'Check every explicitly authored source dialogue line against COMPLETE DIALOGUE for exact interior wording and the unambiguous speaker or thinker and dialogue type assigned by the source. Apply the same exact-wording check to explicitly assigned narration or caption/display text, which must keep type=narration and entity_id=null. Japanese brackets around a name, title, alias, or cited label are not dialogue unless the source assigns the text as an utterance, private thought, narration, or caption.',
     sourceOwnedPageContext
@@ -560,8 +591,13 @@ type AuditPayload = ReturnType<typeof episodePlanAuditSchema.parse>;
 const sourceOwnedAuditSchema = episodePlanAuditSchema.extend({
   issue_grounding: episodePlanAuditIssueGroundingsSchema,
 }).strict();
+const sourceReviewAuditSchema = sourceOwnedAuditSchema.extend({
+  source_unit_review: z.array(z.number().int().min(0).nullable())
+    .max(EPISODE_PLAN_SOURCE_REVIEW_MAX_UNITS),
+}).strict();
 const coverageOnlyAuditSchema = episodePlanAuditSchema.pick({ source_coverage: true }).strict();
-type SourceOwnedAuditPayload = z.infer<typeof sourceOwnedAuditSchema>;
+type SourceOwnedAuditPayload = z.infer<typeof sourceOwnedAuditSchema>
+  | z.infer<typeof sourceReviewAuditSchema>;
 
 function mapAuditPayload(payload: AuditPayload): EpisodePlanAudit {
   return {
@@ -881,6 +917,7 @@ const panelRepairPatchJsonSchema = {
 function buildEpisodePlanAuditJsonSchema(
   allowedPageIds: readonly string[],
   sourceOwnedPageContext = false,
+  sourceReviewUnitCount?: number,
 ): Record<string, unknown> {
   const pageIdJsonSchema = { type: 'string', enum: [...allowedPageIds] };
 
@@ -894,6 +931,7 @@ function buildEpisodePlanAuditJsonSchema(
       'panel_repairs',
       'source_coverage',
       ...(sourceOwnedPageContext ? ['issue_grounding'] : []),
+      ...(sourceReviewUnitCount === undefined ? [] : ['source_unit_review']),
     ],
     properties: {
       accepted: { type: 'boolean' },
@@ -1057,6 +1095,19 @@ function buildEpisodePlanAuditJsonSchema(
       ...(sourceOwnedPageContext ? {
         issue_grounding: buildIssueGroundingJsonSchema(pageIdJsonSchema),
       } : {}),
+      ...(sourceReviewUnitCount === undefined ? {} : {
+        source_unit_review: {
+          type: 'array',
+          minItems: sourceReviewUnitCount,
+          maxItems: sourceReviewUnitCount,
+          items: {
+            anyOf: [
+              { type: 'integer', minimum: 0, maximum: STORY_AI_LIMITS.maxSkeletonPages * 4 - 1 },
+              { type: 'null' },
+            ],
+          },
+        },
+      }),
     },
   };
 }
@@ -1123,12 +1174,22 @@ function buildIssueGroundingJsonSchema(pageIdJsonSchema: Record<string, unknown>
 
 function readSourceOwnedPayload(
   payload: AuditPayload | SourceOwnedAuditPayload,
+  sourceReview: boolean,
 ): SourceOwnedAuditPayload {
-  return sourceOwnedAuditSchema.parse(payload);
+  return sourceReview
+    ? sourceReviewAuditSchema.parse(payload)
+    : sourceOwnedAuditSchema.parse(payload);
 }
 
 function readSourceOwnedGroundings(
   payload: AuditPayload | SourceOwnedAuditPayload,
-): SourceOwnedAuditPayload['issue_grounding'] {
-  return readSourceOwnedPayload(payload).issue_grounding;
+  sourceReview: boolean,
+): z.infer<typeof episodePlanAuditIssueGroundingsSchema> {
+  return readSourceOwnedPayload(payload, sourceReview).issue_grounding;
+}
+
+function readSourceUnitReview(
+  payload: AuditPayload | SourceOwnedAuditPayload,
+): readonly (number | null)[] {
+  return sourceReviewAuditSchema.parse(payload).source_unit_review;
 }

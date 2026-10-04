@@ -4,6 +4,7 @@ import type {
   PageDialogueMode,
 } from '../../domain/types/page.js';
 import type { EpisodePlanAuditCoverageCatalog } from './EpisodePlanAuditCoverage.js';
+import type { EpisodePlanSourceReviewCatalog } from './EpisodePlanSourceReview.js';
 
 export type EpisodePlanAuditIssueCode =
   | 'duplicate_dialogue'
@@ -97,6 +98,7 @@ export interface EpisodePlanAuditSourceCoverage {
 
 export type EpisodePlanAuditGroundingAuthorityKind =
   | 'original_page'
+  | 'original_global'
   | 'source_context'
   | 'validated_state';
 
@@ -127,6 +129,8 @@ export interface EpisodePlanAuditGroundingCatalog {
 export type EpisodePlanAuditCoverageCatalogWithGrounding = EpisodePlanAuditCoverageCatalog & {
   /** Trusted service-built authorities. User text never selects or extends this catalog. */
   grounding?: EpisodePlanAuditGroundingCatalog;
+  /** Provider-only exact original-source review units; never persisted or returned publicly. */
+  sourceReview?: EpisodePlanSourceReviewCatalog;
 };
 
 export interface EpisodePlanAudit {

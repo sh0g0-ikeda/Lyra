@@ -32,6 +32,11 @@ import type {
   EpisodePlanAuditCoverageCatalog,
   EpisodePlanAuditCoverageCatalogOutput,
 } from './EpisodePlanAuditCoverage.js';
+import {
+  buildEpisodePlanSourceReviewArtifacts,
+  type EpisodePlanSourceReviewArtifacts,
+  type EpisodePlanSourceReviewSource,
+} from './EpisodePlanSourceReview.js';
 
 const STORY_BEAT_DUPLICATE_MIN_NORMALIZED_CHARS = 8;
 const DIALOGUE_DUPLICATE_MIN_NORMALIZED_CHARS = 6;
@@ -68,6 +73,7 @@ const PAGE_SOURCE_HEADER_PATTERN = /^(?:Page[ \t]+(\d+)|(\d+)[ \t]*ページ目)
 interface PageSourceExcerpt {
   pageId: string;
   pageNumber: number;
+  start: number;
   text: string;
 }
 
@@ -303,6 +309,7 @@ function buildPageSourceExcerpts(
     excerpts.set(expectedPage.pageId, {
       pageId: expectedPage.pageId,
       pageNumber,
+      start,
       text: storyFullDraft.slice(start, end),
     });
   }
@@ -313,6 +320,30 @@ export function hasCompletePageSourceMapping(
   context: EpisodePagePlanContext,
 ): boolean {
   return buildPageSourceExcerpts(context) !== null;
+}
+
+export function buildEpisodePlanSourceReviewForContext(
+  context: EpisodePagePlanContext,
+): EpisodePlanSourceReviewArtifacts | null {
+  const excerpts = buildPageSourceExcerpts(context);
+  if (excerpts === null) return null;
+  const storyFullDraft = context.episode.storyFullDraft;
+  if (typeof storyFullDraft !== 'string') return null;
+  const orderedPages = [...context.pages].sort(compareContextPages);
+  const firstPage = excerpts.get(orderedPages[0]?.pageId ?? '');
+  if (firstPage === undefined) return null;
+  const firstPageStart = firstPage.start;
+  const sources: EpisodePlanSourceReviewSource[] = [];
+  const globalSource = storyFullDraft.slice(0, firstPageStart);
+  if (globalSource.length > 0) {
+    sources.push({ scope: 'global', pageId: null, sourceRef: 'global_source', text: globalSource });
+  }
+  for (const page of orderedPages) {
+    const excerpt = excerpts.get(page.pageId);
+    if (excerpt === undefined) return null;
+    sources.push({ scope: 'page', pageId: page.pageId, sourceRef: 'page_source', text: excerpt.text });
+  }
+  return buildEpisodePlanSourceReviewArtifacts(sources);
 }
 
 function formatOwnedOriginalSourceSection(
@@ -592,6 +623,9 @@ export function buildEpisodePlanAuditArtifacts(input: {
     }
   }
   const deterministicIssues = detectDeterministicContinuityIssues(input.suggestion);
+  const sourceReviewCandidate = sourceOwnedPageContext
+    ? buildEpisodePlanSourceReviewForContext(input.context)
+    : null;
   const deterministicFindingLines = formatDeterministicAuditFindingLines(deterministicIssues);
   const before = sourceOwnedPageContext ? [
     '[AUDIT PURPOSE]',
@@ -710,13 +744,19 @@ export function buildEpisodePlanAuditArtifacts(input: {
   const remainingAfterLocalizedSources = includeLocalizedSources
     ? baseRemaining - localizedSourceChars
     : baseRemaining;
-  const remainingWithLocalizedLedgers = remainingAfterLocalizedSources - localizedLedgerChars;
+  const includeSourceReview = sourceReviewCandidate !== null
+    && remainingAfterLocalizedSources - sourceReviewCandidate.display.length >= panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
+    && remainingAfterLocalizedSources - sourceReviewCandidate.display.length >= minimumPanelSummaryChars;
+  const remainingAfterSourceReview = includeSourceReview
+    ? remainingAfterLocalizedSources - sourceReviewCandidate.display.length
+    : remainingAfterLocalizedSources;
+  const remainingWithLocalizedLedgers = remainingAfterSourceReview - localizedLedgerChars;
   const includeLocalizedLedgers = !sourceOwnedPageContext &&
     remainingWithLocalizedLedgers >= panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
     && remainingWithLocalizedLedgers >= minimumPanelSummaryChars;
   const remaining = includeLocalizedLedgers
     ? remainingWithLocalizedLedgers
-    : remainingAfterLocalizedSources;
+    : remainingAfterSourceReview;
   const optionalPanelChars = panelCount === 0
     ? 0
     : Math.floor((remaining - minimumPanelSummaryChars) / panelCount);
@@ -727,7 +767,9 @@ export function buildEpisodePlanAuditArtifacts(input: {
       includeLocalizedLedgers ? localizedPageLedgers.get(page.pageId) : undefined,
       includeLocalizedSources ? pageSourceExcerpts?.get(page.pageId) : undefined,
     ));
-  const brief = [...before, '', '[COMPILED EPISODE DRAFT]',
+  const brief = [...before,
+    ...(includeSourceReview ? ['', sourceReviewCandidate.display] : []),
+    '', '[COMPILED EPISODE DRAFT]',
     ...renderedPages.flatMap((page) => page.lines), ...after].join('\n');
   if (brief.length > AUDIT_BRIEF_MAX_CHARS) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
@@ -747,7 +789,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
         { ref: 'page_source', text: pageSource.text, kind: 'original_page' },
         ...(globalOriginalSource.length === 0
           ? []
-          : [{ ref: 'global_source', text: globalOriginalSource, kind: 'original_page' } as const]),
+          : [{ ref: 'global_source', text: globalOriginalSource, kind: 'original_global' } as const]),
         ...(sourceContextText.length === 0
           ? []
           : [{ ref: 'source_context', text: sourceContextText, kind: 'source_context' } as const]),
@@ -785,6 +827,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
             pageIds: [...issue.pageIds],
           })),
         },
+        ...(includeSourceReview ? { sourceReview: sourceReviewCandidate.catalog } : {}),
       } : {}),
     },
   };
@@ -815,7 +858,7 @@ function buildGlobalOriginalSource(context: EpisodePagePlanContext): string {
   PAGE_SOURCE_HEADER_PATTERN.lastIndex = 0;
   const firstHeader = PAGE_SOURCE_HEADER_PATTERN.exec(storyFullDraft);
   PAGE_SOURCE_HEADER_PATTERN.lastIndex = 0;
-  return (firstHeader === null ? '' : storyFullDraft.slice(0, firstHeader.index)).trim();
+  return firstHeader === null ? '' : storyFullDraft.slice(0, firstHeader.index);
 }
 
 export function buildEpisodePlanAuditCoverageCatalog(input: {

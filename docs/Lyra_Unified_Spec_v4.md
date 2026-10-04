@@ -271,6 +271,30 @@ full source or other typed visible authority. This metadata is discarded before
 the public audit result or persistence; omitted/false source ownership retains the
 legacy response schema and retry behavior.
 
+For complete source ownership, an optional provider-only source-unit review
+contract enumerates lossless spans of typed original global preface and page
+source. Generated plans, purposes, notes, summaries and scene/state context never
+produce these units. Offsets bind each span to its exact visible source string;
+sentence boundaries organize review and do not claim to isolate every fact. All
+units and their displayed catalog are produced together. Enable the entire list
+only when it has at most 256 units, its additional display fits 8,000 characters,
+and full source, complete dialogue and minimum panel evidence remain reserved.
+Empty, ambiguous or oversized input retains the existing contract as a whole;
+partial unit review is never advertised as complete and does not reject long
+episodes.
+
+When enabled, source_unit_review has exactly one disposition per server-owned
+unit: null means no issue was detected for that span; an integer links an existing
+error issue with valid scope and grounding. This neither requires all issues to
+be linked nor makes a repair mandatory. Patchless findings, validated-state
+ambiguity and second-audit semantic soft-save retain their existing handling.
+The review vector stays frozen during quote-only correction and is discarded
+before the public result or persistence. Every clause must be reviewed for
+functional meaning, same-page completion, explicit conditions, specified emotion
+and viewpoint, including conflicts with draft negative notes. All-null output
+is not proof that the model understood every fact; actual semantic review remains
+a separate acceptance gate. No additional call, model, token or save gate is added.
+
 An invalidly grounded body uses the existing remaining structured-response retry
 for a full audit. Only a valid grounded body and repair scope with an invalid
 coverage sidecar may freeze that body and request a strict coverage-only retry.

@@ -159,6 +159,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
 
     const rootProperties = readObject(text.format.schema.properties);
     expect(readArray(text.format.schema.required)).toContain('source_coverage');
+    expect(readArray(text.format.schema.required)).not.toContain('source_unit_review');
+    expect(rootProperties).not.toHaveProperty('source_unit_review');
     const sourceCoverage = readObject(rootProperties.source_coverage);
     expect(sourceCoverage.minItems).toBe(2);
     expect(sourceCoverage.maxItems).toBe(2);
@@ -374,7 +376,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v23');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v24');
     expect(requestCount).toBe(1);
   });
 
@@ -851,6 +853,11 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       pageRepairs: [],
       panelRepairs: [],
     });
+    expect(result.audit).not.toHaveProperty('sourceUnitReview');
+    const firstSchema = readObject(readObject(readObject(requests[0]?.text).format).schema);
+    expect(readArray(firstSchema.required)).toContain('source_unit_review');
+    const firstInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
+    expect(firstInput[0]?.content[0]?.text).toContain('Review every clause of every SOURCE UNIT REVIEW entry');
     const resultCoverage = result.audit.sourceCoverage ?? [];
     expect(resultCoverage).toHaveLength(15);
     expect(resultCoverage.flatMap((page) => page.checks)).toHaveLength(30);
@@ -1168,6 +1175,9 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       source_ref: 'validated_state',
       quote: 'state_id=raincoat',
     }];
+    payload.source_unit_review = [null];
+    const coverageCatalog = buildGroundedCoverageCatalog();
+    coverageCatalog.sourceReview = buildSingleSourceReviewCatalog();
     let requestCount = 0;
     const client = {
       postJson: async () => {
@@ -1183,7 +1193,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       compilerBrief: '[IMMUTABLE CHARACTER STATE BOUNDARIES]\nstate_id=raincoat',
       language: 'ja',
       pageIds: [PAGE_ID],
-      coverageCatalog: buildGroundedCoverageCatalog(),
+      coverageCatalog,
       groundingAuthorities: [{
         ref: 'validated_state',
         text: 'entity_id=coco | state_id=raincoat',
@@ -1198,6 +1208,45 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     ]);
     expect(result.audit.panelRepairs).toEqual([]);
     expect(requestCount).toBe(1);
+  });
+
+  it('source unit vector欠落時はbodyを凍結せず同じfull監査schemaで再試行する', async () => {
+    const first = buildGroundedSourceOwnedAuditPayload({ accepted: true });
+    const second = { ...first, source_unit_review: [null] };
+    const coverageCatalog = buildGroundedCoverageCatalog();
+    coverageCatalog.sourceReview = buildSingleSourceReviewCatalog();
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: {
+            status: 'completed',
+            output_text: JSON.stringify(requests.length === 1 ? first : second),
+          },
+          requestId: `req-source-unit-full-retry-${requests.length}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[SOURCE UNIT REVIEW - COMPLETE ORIGINAL SOURCE]\nu0|scope=page',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog,
+      sourceOwnedPageContext: true,
+    });
+
+    expect(result.audit.accepted).toBe(true);
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      const schema = readObject(readObject(readObject(request.text).format).schema);
+      expect(readArray(schema.required)).toEqual(expect.arrayContaining([
+        'issues', 'issue_grounding', 'source_unit_review',
+      ]));
+      const reviewSchema = readObject(readObject(schema.properties).source_unit_review);
+      expect(reviewSchema).toMatchObject({ minItems: 1, maxItems: 1 });
+    }
   });
 });
 
@@ -1248,6 +1297,16 @@ function buildThirtyCheckSourceOwnedFixture() {
         })),
         deterministicIssues: [],
       },
+      sourceReview: {
+        units: pages.map(({ pageId, sourceText }) => ({
+          scope: 'page' as const,
+          pageId,
+          sourceRef: 'page_source' as const,
+          start: 0,
+          end: sourceText.length,
+          text: sourceText,
+        })),
+      },
     },
     payload: {
       accepted: true,
@@ -1266,6 +1325,7 @@ function buildThirtyCheckSourceOwnedFixture() {
         })),
       })),
       issue_grounding: [],
+      source_unit_review: pages.map(() => null),
     },
   };
 }
@@ -1279,6 +1339,7 @@ function buildGroundedCoverageCatalog(): ReturnType<typeof buildCoverageCatalog>
     }>;
     deterministicIssues: [];
   };
+  sourceReview?: ReturnType<typeof buildSingleSourceReviewCatalog>;
 } {
   return {
     pages: [{
@@ -1298,6 +1359,20 @@ function buildGroundedCoverageCatalog(): ReturnType<typeof buildCoverageCatalog>
       }],
       deterministicIssues: [],
     },
+  };
+}
+
+function buildSingleSourceReviewCatalog() {
+  const text = '原作では扉を開けて中へ入る。出口へ進む。';
+  return {
+    units: [{
+      scope: 'page' as const,
+      pageId: PAGE_ID,
+      sourceRef: 'page_source' as const,
+      start: 0,
+      end: text.length,
+      text,
+    }],
   };
 }
 
