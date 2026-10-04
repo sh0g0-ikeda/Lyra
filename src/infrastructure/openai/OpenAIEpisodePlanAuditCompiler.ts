@@ -938,7 +938,7 @@ function buildEpisodePlanAuditJsonSchema(
 ): Record<string, unknown> {
   const pageIdJsonSchema = { type: 'string', enum: [...allowedPageIds] };
 
-  return {
+  const schema: Record<string, unknown> = {
     type: 'object',
     additionalProperties: false,
     required: [
@@ -1059,6 +1059,7 @@ function buildEpisodePlanAuditJsonSchema(
                     type: 'string',
                     minLength: 1,
                     maxLength: EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
+                    ...(sourceOwnedPageContext ? { enum: ['source'] } : {}),
                   },
                   source_quote: {
                     type: 'string',
@@ -1136,12 +1137,28 @@ function buildEpisodePlanAuditJsonSchema(
       }),
     },
   };
+  if (sourceOwnedPageContext && sourceReviewUnitCount !== undefined && sourceReviewFieldCount !== undefined) {
+    // Emit the comparison before the issue set and decision. Evidence IDs still
+    // require semantic review; their existence alone never proves entailment.
+    const order = ['source_unit_review', 'issues', 'issue_grounding', 'page_repairs', 'panel_repairs', 'source_coverage', 'accepted'];
+    const properties = schema.properties as Record<string, unknown>;
+    const orderedProperties: Record<string, unknown> = {};
+    for (const key of order) {
+      if (properties[key] === undefined) {
+        throw new ConfigurationError('Native source comparison schema is missing a required field');
+      }
+      orderedProperties[key] = properties[key];
+    }
+    schema.required = order;
+    schema.properties = orderedProperties;
+  }
+  return schema;
 }
 
 function buildEpisodePlanAuditCoverageOnlyJsonSchema(
   allowedPageIds: readonly string[],
 ): Record<string, unknown> {
-  const fullSchema = buildEpisodePlanAuditJsonSchema(allowedPageIds);
+  const fullSchema = buildEpisodePlanAuditJsonSchema(allowedPageIds, true);
   const properties = fullSchema.properties;
   if (typeof properties !== 'object' || properties === null || Array.isArray(properties)) {
     throw new ConfigurationError('Episode audit JSON schema is missing properties');

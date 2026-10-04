@@ -551,7 +551,13 @@ operation requirement. The first legacy compatibility phase must retain the
 physical schema, old settlement and terminal-push ownership, existing billing
 and deletion workflows, old export relation and old-worker job contracts.
 An explicit, read-only validated persistence profile must be injected before
-HTTP admission, queue consumption or recovery. Unknown or hybrid schemas refuse
+HTTP admission, queue consumption or recovery. Candidate startup attests the
+required canonical migration, relation, column and definition signatures in a
+bounded read-only transaction before starting writers. Automatic migration is
+limited to a verified empty schema or known canonical lineage; namespace sequence,
+enum, domain or application-function leftovers are not an empty schema. These
+required signatures do not attest every possible hybrid schema or trigger-function
+body and do not establish legacy production readiness. Unknown or hybrid schemas refuse
 candidate startup while the old runtime remains available. Feature flags alone
 are not proof that existing queries avoid absent columns. New capabilities may
 remain gated; existing published capabilities must continue. Mixed old/new

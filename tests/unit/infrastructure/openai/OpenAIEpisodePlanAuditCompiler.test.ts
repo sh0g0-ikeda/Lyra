@@ -161,6 +161,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(readArray(text.format.schema.required)).toContain('source_coverage');
     expect(readArray(text.format.schema.required)).not.toContain('source_unit_review');
     expect(rootProperties).not.toHaveProperty('source_unit_review');
+    expect(Object.keys(rootProperties)).toEqual(['accepted', 'issues', 'page_repairs', 'panel_repairs', 'source_coverage']);
     const sourceCoverage = readObject(rootProperties.source_coverage);
     expect(sourceCoverage.minItems).toBe(2);
     expect(sourceCoverage.maxItems).toBe(2);
@@ -376,7 +377,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v25');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v26');
     expect(requestCount).toBe(1);
   });
 
@@ -1082,6 +1083,9 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
 
     const retrySchema = readObject(readObject(readObject(requests[1]?.text).format).schema);
     expect(readArray(retrySchema.required)).toEqual(['source_coverage']);
+    const coverageSchema = readObject(readObject(retrySchema.properties).source_coverage);
+    const checksSchema = readObject(readObject(readObject(coverageSchema.items).properties).checks);
+    expect(readObject(readObject(readObject(checksSchema.items).properties).source_ref).enum).toEqual(['source']);
   });
 
   it('source-owned監査はrepair scopeが不正なbodyを凍結せず全監査を再試行する', async () => {
@@ -1606,6 +1610,39 @@ describe('OpenAIEpisodePlanAuditCompiler source-field comparisons', () => {
       evidence: fixture.catalog.grounding.pages.flatMap((page) => page.outputs.map((output) => ({ ...output, pageId: page.pageId }))),
     } }, payload: { ...fixture.payload, source_unit_review: fixture.pageIds.map((_id, index) => ({ verdict: 'supported', evidence: [index], counter_evidence: [], issue: null })) } };
   }
+
+  // v26 design: source-owned coverage has one declared source authority. Native
+  // comparisons are emitted before issues and the final decision; source-unowned
+  // and numeric legacy catalogs keep their established schema order. This is a
+  // provider protocol hypothesis, not proof of semantic entailment.
+  it('native比較は根拠と問題を先に出力してから最終判定を出す', async () => {
+    const fixture = evidenceFixture();
+    const requests: Record<string, unknown>[] = [];
+    const client = { postJson: async (_path: string, payload: Record<string, unknown>) => {
+      requests.push(payload);
+      return { body: { status: 'completed', output_text: JSON.stringify(fixture.payload) }, requestId: 'req-v26-order' };
+    } } as unknown as OpenAIClient;
+    await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({ compilerBrief: fixture.compilerBrief, language: 'ja', pageIds: fixture.pageIds, coverageCatalog: fixture.catalog, sourceOwnedPageContext: true });
+    const schema = readObject(readObject(readObject(requests[0]?.text).format).schema);
+    const order = ['source_unit_review', 'issues', 'issue_grounding', 'page_repairs', 'panel_repairs', 'source_coverage', 'accepted'];
+    expect(Object.keys(readObject(schema.properties))).toEqual(order);
+    expect(schema.required).toEqual(order);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.max_output_tokens).toBe(20_000);
+  });
+  it('source-owned coverageは宣言済みsourceのみをschemaで許可する', async () => {
+    const fixture = evidenceFixture();
+    const requests: Record<string, unknown>[] = [];
+    const client = { postJson: async (_path: string, payload: Record<string, unknown>) => {
+      requests.push(payload);
+      return { body: { status: 'completed', output_text: JSON.stringify(fixture.payload) }, requestId: 'req-v26-ref' };
+    } } as unknown as OpenAIClient;
+    await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({ compilerBrief: fixture.compilerBrief, language: 'ja', pageIds: fixture.pageIds, coverageCatalog: fixture.catalog, sourceOwnedPageContext: true });
+    const schema = readObject(readObject(readObject(requests[0]?.text).format).schema);
+    const coverage = readObject(readObject(schema.properties).source_coverage);
+    const checks = readObject(readObject(readObject(coverage.items).properties).checks);
+    expect(readObject(readObject(readObject(checks.items).properties).source_ref).enum).toEqual(['source']);
+  });
   it('native根拠付きcatalogは全nullを拒否し同頁field比較だけで再試行する', async () => {
     const fixture = evidenceFixture();
     const requests: Record<string, unknown>[] = [];
