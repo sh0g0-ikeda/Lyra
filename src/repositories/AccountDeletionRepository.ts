@@ -1,9 +1,13 @@
 import type { QueryResultRow } from 'pg';
 import { MOBILE_PUSH_TOKEN_REGISTRY_LOCK_KEY } from '../domain/constants/mobilePush.js';
-import { ConflictError } from '../domain/errors/index.js';
+import { ConfigurationError, ConflictError } from '../domain/errors/index.js';
 import type { StorePurchaseStore } from '../domain/storePurchase.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { UNRESOLVED_STATE_REFERENCE_COPY_SQL } from './StateReferenceCopyHistory.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
 
 export interface AccountDeletionOrganization {
   id: string;
@@ -99,7 +103,10 @@ export interface AccountDeletionRepository {
 }
 
 export interface AccountDeletionIdentityLookupRepository {
-  hasBlockedIdentityKey(identityKey: string): Promise<boolean>;
+  hasBlockedIdentity(input: {
+    identityId: string;
+    identityKey: string | null;
+  }): Promise<boolean>;
 }
 
 interface RequestRow extends QueryResultRow {
@@ -147,6 +154,7 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
   public constructor(
     private readonly client: DatabaseClient,
     private readonly transactionRunner: TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   ) {}
 
   public async getFlight(userId: string): Promise<AccountDeletionFlight> {
@@ -157,7 +165,26 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
     return this.readRequest(this.client, userId);
   }
 
-  public async hasBlockedIdentityKey(identityKey: string): Promise<boolean> {
+  public async hasBlockedIdentity(input: {
+    identityId: string;
+    identityKey: string | null;
+  }): Promise<boolean> {
+    if (this.schemaProfile === 'legacy_2debe_v1') {
+      const result = await this.client.query(
+        `
+        SELECT 1
+        FROM account_deletion_requests
+        WHERE identity_id = $1
+          AND status IN ('processing', 'pending_external_action', 'completed')
+        LIMIT 1
+        `,
+        [input.identityId],
+      );
+      return (result.rowCount ?? 0) > 0;
+    }
+    if (input.identityKey === null) {
+      throw new ConfigurationError('Account deletion identity key is required');
+    }
     const result = await this.client.query(
       `
       SELECT 1
@@ -166,9 +193,17 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
         AND status IN ('processing', 'pending_external_action', 'completed')
       LIMIT 1
       `,
-      [identityKey],
+      [input.identityKey],
     );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  /** Compatibility for internal callers that already hold a canonical key. */
+  public async hasBlockedIdentityKey(identityKey: string): Promise<boolean> {
+    if (this.schemaProfile === 'legacy_2debe_v1') {
+      throw new ConfigurationError('Canonical account deletion identity lookup is unavailable');
+    }
+    return this.hasBlockedIdentity({ identityId: '', identityKey });
   }
 
   public async recordBlocked(userId: string, blockerCodes: string[]): Promise<void> {

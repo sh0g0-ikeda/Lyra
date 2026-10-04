@@ -5,15 +5,15 @@ import { AccountDeletionIdentityGuard } from '../../../../src/services/account/A
 
 class FakeLookup implements AccountDeletionIdentityLookupRepository {
   public blockedKey = '';
-  public keys: string[] = [];
-  public async hasBlockedIdentityKey(identityKey: string): Promise<boolean> {
-    this.keys.push(identityKey);
-    return identityKey === this.blockedKey;
+  public inputs: Array<{ identityId: string; identityKey: string | null }> = [];
+  public async hasBlockedIdentity(input: { identityId: string; identityKey: string | null }): Promise<boolean> {
+    this.inputs.push(input);
+    return input.identityKey === this.blockedKey || (input.identityKey === null && input.identityId === 'deleted-cognito-sub');
   }
 }
 
 describe('AccountDeletionIdentityGuard', () => {
-  it('raw identityをDBへ渡さず用途別HMAC keyで照合する', async () => {
+  it('canonical secretから用途別HMAC keyを生成してlookupへ渡す', async () => {
     const lookup = new FakeLookup();
     const secret = 'account-deletion-secret-with-32-bytes';
     lookup.blockedKey = createAccountDeletionIdentityKey(
@@ -22,10 +22,20 @@ describe('AccountDeletionIdentityGuard', () => {
     );
     const guard = new AccountDeletionIdentityGuard(lookup, secret);
 
-    await expect(guard.isBlockedIdentity('deleted-cognito-sub')).resolves.toBe(
-      true,
-    );
-    expect(lookup.keys).toEqual([lookup.blockedKey]);
-    expect(lookup.keys).not.toContain('deleted-cognito-sub');
+    expect(await guard.isBlockedIdentity('deleted-cognito-sub')).toBe(true);
+    expect(lookup.inputs).toEqual([{
+      identityId: 'deleted-cognito-sub',
+      identityKey: lookup.blockedKey,
+    }]);
+  });
+
+  it('secret未設定のlegacy lookupへraw identityとnull keyを渡す', async () => {
+    const lookup = new FakeLookup();
+    const guard = new AccountDeletionIdentityGuard(lookup);
+    expect(await guard.isBlockedIdentity('deleted-cognito-sub')).toBe(true);
+    expect(lookup.inputs).toEqual([{
+      identityId: 'deleted-cognito-sub',
+      identityKey: null,
+    }]);
   });
 });

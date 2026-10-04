@@ -1,6 +1,10 @@
 import type { QueryResultRow } from 'pg';
 import type { AuthenticatedUser } from '../domain/types/user.js';
 import type { DatabaseClient } from '../lib/db.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
 
 interface UserRow extends QueryResultRow {
   id: string;
@@ -18,7 +22,10 @@ export interface UserRepository {
 }
 
 export class PostgresUserRepository implements UserRepository {
-  public constructor(private readonly client: DatabaseClient) {}
+  public constructor(
+    private readonly client: DatabaseClient,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async findBySupabaseId(supabaseId: string): Promise<AuthenticatedUser | null> {
     const result = await this.client.query<UserRow>(
@@ -26,7 +33,7 @@ export class PostgresUserRepository implements UserRepository {
       SELECT id, supabase_id, email, display_name, plan_code
       FROM users
       WHERE supabase_id = $1
-        AND account_deletion_started_at IS NULL
+        AND ${activeAccountSql(this.schemaProfile)}
       `,
       [supabaseId],
     );
@@ -40,7 +47,7 @@ export class PostgresUserRepository implements UserRepository {
       SELECT id, supabase_id, email, display_name, plan_code
       FROM users
       WHERE lower(email) = lower($1)
-        AND account_deletion_started_at IS NULL
+        AND ${activeAccountSql(this.schemaProfile)}
       `,
       [email],
     );
@@ -70,7 +77,7 @@ export class PostgresUserRepository implements UserRepository {
       SET email = $2,
           updated_at = NOW()
       WHERE supabase_id = $1
-        AND account_deletion_started_at IS NULL
+        AND ${activeAccountSql(this.schemaProfile)}
       RETURNING id, supabase_id, email, display_name, plan_code
       `,
       [supabaseId, email],
@@ -79,6 +86,16 @@ export class PostgresUserRepository implements UserRepository {
     return mapUserRow(result.rows[0]);
   }
 
+}
+
+function activeAccountSql(profile: RepositorySchemaProfile): string {
+  return profile === 'legacy_2debe_v1'
+    ? `NOT EXISTS (
+          SELECT 1 FROM account_deletion_requests deletion_request
+          WHERE deletion_request.user_id = users.id
+            AND deletion_request.status IN ('processing', 'pending_external_action', 'completed')
+        )`
+    : 'account_deletion_started_at IS NULL';
 }
 
 export function isUniqueViolation(error: unknown): boolean {

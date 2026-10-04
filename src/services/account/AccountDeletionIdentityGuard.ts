@@ -10,13 +10,16 @@ export class AccountDeletionIdentityGuard
 implements AccountDeletionIdentityGuardPort {
   public constructor(
     private readonly repository: AccountDeletionIdentityLookupRepository,
-    private readonly identityKeySecret: string,
+    private readonly identityKeySecret?: string,
   ) {}
 
   public async isBlockedIdentity(identityId: string): Promise<boolean> {
-    return this.repository.hasBlockedIdentityKey(
-      createAccountDeletionIdentityKey(this.identityKeySecret, identityId),
-    );
+    return this.repository.hasBlockedIdentity({
+      identityId,
+      identityKey: this.identityKeySecret === undefined
+        ? null
+        : createAccountDeletionIdentityKey(this.identityKeySecret, identityId),
+    });
   }
 }
 

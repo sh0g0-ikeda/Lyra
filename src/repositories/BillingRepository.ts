@@ -8,6 +8,10 @@ import type {
   SubscriptionRecord,
 } from '../domain/types/billing.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
 
 interface BillingUserProfileRow extends QueryResultRow {
   id: string;
@@ -16,6 +20,7 @@ interface BillingUserProfileRow extends QueryResultRow {
   plan_code: string;
   account_deletion_started_at: Date | null;
   account_deleted_at: Date | null;
+  legacy_account_deleted?: boolean;
 }
 
 interface StripeCustomerIdRow extends QueryResultRow {
@@ -89,6 +94,7 @@ export class PostgresBillingRepository implements BillingRepository {
   public constructor(
     private readonly client: DatabaseClient,
     private readonly transactionRunner: TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   ) {}
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
@@ -107,8 +113,7 @@ export class PostgresBillingRepository implements BillingRepository {
         email,
         stripe_customer_id,
         plan_code,
-        account_deletion_started_at,
-        account_deleted_at
+        ${billingDeletionProjectionSql(this.schemaProfile)}
       FROM users
       WHERE id = $1
       ${forUpdate ? 'FOR UPDATE' : ''}
@@ -131,8 +136,7 @@ export class PostgresBillingRepository implements BillingRepository {
         email,
         stripe_customer_id,
         plan_code,
-        account_deletion_started_at,
-        account_deleted_at
+        ${billingDeletionProjectionSql(this.schemaProfile)}
       FROM users
       WHERE stripe_customer_id = $1
       ${forUpdate ? 'FOR UPDATE' : ''}
@@ -154,8 +158,7 @@ export class PostgresBillingRepository implements BillingRepository {
       SET stripe_customer_id = COALESCE(stripe_customer_id, $2),
           updated_at = NOW()
       WHERE id = $1
-        AND account_deletion_started_at IS NULL
-        AND account_deleted_at IS NULL
+        AND ${activeBillingAccountSql(this.schemaProfile)}
       RETURNING stripe_customer_id
       `,
       [userId, stripeCustomerId],
@@ -171,8 +174,7 @@ export class PostgresBillingRepository implements BillingRepository {
       SET plan_code = $2,
           updated_at = NOW()
       WHERE id = $1
-        AND account_deletion_started_at IS NULL
-        AND account_deleted_at IS NULL
+        AND ${activeBillingAccountSql(this.schemaProfile)}
       `,
       [userId, planCode],
     );
@@ -449,12 +451,35 @@ function mapBillingUserProfileRow(row: BillingUserProfileRow): BillingUserProfil
     stripeCustomerId: row.stripe_customer_id,
     planCode: row.plan_code as BillingUserProfile['planCode'],
     ...(
-      row.account_deletion_started_at == null
+      row.legacy_account_deleted !== true
+      && row.account_deletion_started_at == null
       && row.account_deleted_at == null
         ? {}
         : { accountDeleted: true }
     ),
   };
+}
+
+function billingDeletionProjectionSql(profile: RepositorySchemaProfile): string {
+  return profile === 'legacy_2debe_v1'
+    ? `NULL::timestamptz AS account_deletion_started_at,
+        NULL::timestamptz AS account_deleted_at,
+        EXISTS (
+          SELECT 1 FROM account_deletion_requests deletion_request
+          WHERE deletion_request.user_id = users.id
+            AND deletion_request.status IN ('processing', 'pending_external_action', 'completed')
+        ) AS legacy_account_deleted`
+    : 'account_deletion_started_at,\n        account_deleted_at';
+}
+
+function activeBillingAccountSql(profile: RepositorySchemaProfile): string {
+  return profile === 'legacy_2debe_v1'
+    ? `NOT EXISTS (
+          SELECT 1 FROM account_deletion_requests deletion_request
+          WHERE deletion_request.user_id = users.id
+            AND deletion_request.status IN ('processing', 'pending_external_action', 'completed')
+        )`
+    : 'account_deletion_started_at IS NULL AND account_deleted_at IS NULL';
 }
 
 function mapSubscriptionRow(row: SubscriptionRow): ActiveSubscriptionRecord {
