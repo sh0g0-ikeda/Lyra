@@ -25,6 +25,11 @@ import type {
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
 import type { PageStatus } from '../domain/types/page.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 export type { CreatePanelInput, Panel, UpdatePanelInput };
 
@@ -114,7 +119,26 @@ interface PanelRow extends QueryResultRow {
 }
 
 export class PostgresPanelRepository implements PanelRepository {
-  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
+  public constructor(
+    private readonly client: DatabaseClient & TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
+
+  private async runLegacyWrite<T>(
+    userId: string,
+    organizationId: string | null,
+    operation: (client: DatabaseClient) => Promise<T>,
+  ): Promise<T> {
+    if (this.schemaProfile !== 'legacy_2debe_v1') {
+      return operation(this.client);
+    }
+    return this.client.transaction(async (transactionClient) => {
+      if (organizationId === null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      }
+      return operation(transactionClient);
+    });
+  }
 
   public async findPageContextByIdAndUserId(
     pageId: string,
@@ -210,7 +234,8 @@ export class PostgresPanelRepository implements PanelRepository {
     organizationId: string | null = null,
   ): Promise<Panel | null> {
     try {
-      const result = await this.client.query<PanelRow>(
+      return await this.runLegacyWrite(userId, organizationId, async (client) => {
+        const result = await client.query<PanelRow>(
         `
         INSERT INTO panels (
           page_id,
@@ -275,8 +300,9 @@ export class PostgresPanelRepository implements PanelRepository {
         ],
       );
 
-      const row = result.rows[0];
-      return row === undefined ? null : mapPanelRow(row);
+        const row = result.rows[0];
+        return row === undefined ? null : mapPanelRow(row);
+      });
     } catch (error) {
       throw mapOrderConflict(error);
     }
@@ -325,7 +351,8 @@ export class PostgresPanelRepository implements PanelRepository {
     organizationId: string | null = null,
   ): Promise<Panel | null> {
     try {
-      const result = await this.client.query<PanelRow>(
+      return await this.runLegacyWrite(userId, organizationId, async (client) => {
+        const result = await client.query<PanelRow>(
         `
         UPDATE panels
         SET "order" = COALESCE($3, panels."order"),
@@ -385,8 +412,9 @@ export class PostgresPanelRepository implements PanelRepository {
         ],
       );
 
-      const row = result.rows[0];
-      return row === undefined ? null : mapPanelRow(row);
+        const row = result.rows[0];
+        return row === undefined ? null : mapPanelRow(row);
+      });
     } catch (error) {
       throw mapOrderConflict(error);
     }
@@ -394,6 +422,9 @@ export class PostgresPanelRepository implements PanelRepository {
 
   public async deletePanel(panelId: string, userId: string, organizationId: string | null = null): Promise<boolean> {
     return this.client.transaction(async (transactionClient) => {
+      if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      }
       await transactionClient.query(
         `
         UPDATE panel_frames
@@ -465,7 +496,8 @@ export class PostgresPanelRepository implements PanelRepository {
     deletedOrder: number,
     organizationId: string | null = null,
   ): Promise<void> {
-    await this.client.query(
+    await this.runLegacyWrite(userId, organizationId, async (client) => {
+      await client.query(
       `
       UPDATE panels
       SET "order" = panels."order" - 1,
@@ -493,7 +525,8 @@ export class PostgresPanelRepository implements PanelRepository {
         AND panels."order" > $3
       `,
       [pageId, userId, deletedOrder, organizationId],
-    );
+      );
+    });
   }
 
   public async reorderPanels(
@@ -507,6 +540,9 @@ export class PostgresPanelRepository implements PanelRepository {
     }
 
     return this.client.transaction(async (transactionClient) => {
+      if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      }
       await transactionClient.query(
         `
         WITH requested_order AS (

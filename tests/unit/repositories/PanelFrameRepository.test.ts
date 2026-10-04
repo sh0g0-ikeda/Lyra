@@ -5,6 +5,7 @@ import { PostgresPanelFrameRepository } from '../../../src/repositories/PanelFra
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
+  public transactionCount = 0;
   public values: readonly unknown[] | undefined;
   public valuesList: Array<readonly unknown[] | undefined> = [];
 
@@ -26,11 +27,24 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   }
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
     return work(this);
   }
 }
 
 describe('PostgresPanelFrameRepository', () => {
+  it('legacy personal置換はusers→request→frame mutationを既存1 transactionで実行する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPanelFrameRepository(client, 'legacy_2debe_v1');
+
+    await repository.replaceFramesByPageIdAndUserId('page-1', 'user-1', []);
+
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries[0]).toContain('FROM users');
+    expect(client.queries[1]).toContain('account_deletion_requests');
+    expect(client.queries[2]).toContain('DELETE FROM panel_frames');
+  });
+
   it('user_idでページ所有者を絞ってPanelFrameを取得する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPanelFrameRepository(client);
@@ -93,6 +107,8 @@ describe('PostgresPanelFrameRepository', () => {
       'user-1',
       null,
     ]);
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries.join('\n')).not.toContain('account_deletion_requests');
   });
 
   it('テンプレート適用時にlayout_configを更新する', async () => {

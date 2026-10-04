@@ -16,6 +16,7 @@ import type {
   EpisodePlanPersistenceResources,
 } from '../services/page/EpisodePlanPersistence.js';
 import { PanelEntityAssignmentService } from '../services/page/PanelEntityAssignmentService.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 interface LockedEpisodeRow extends QueryResultRow {
   episode_id: string;
@@ -41,13 +42,19 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
     ) => Promise<T>,
   ): Promise<T> {
     return this.client.transaction(async (transactionClient) => {
+      if (this.schemaProfile === 'legacy_2debe_v1' && input.organizationId === null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, {
+          userId: input.userId,
+          organizationId: input.organizationId,
+        });
+      }
       await this.lockEpisodeGraph(transactionClient, input);
 
       const transactionRunner = buildTransactionScopedRunner(transactionClient);
       const pageRepository = new PostgresPageRepository(transactionClient, this.schemaProfile);
-      const panelRepository = new PostgresPanelRepository(transactionRunner);
+      const panelRepository = new PostgresPanelRepository(transactionRunner, this.schemaProfile);
       const panelEntityAssignmentService = new PanelEntityAssignmentService(
-        new PostgresPanelEntityAssignmentRepository(transactionRunner),
+        new PostgresPanelEntityAssignmentRepository(transactionRunner, this.schemaProfile),
       );
       const storyAutofillExecutionRepository =
         new PostgresEpisodeStoryAutofillExecutionRepository(transactionRunner, this.schemaProfile);

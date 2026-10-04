@@ -9,6 +9,11 @@ import type {
 import { ValidationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import type { PageStatus } from '../domain/types/page.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 export type { PanelFrame, UpsertPanelFrameInput };
 
@@ -63,7 +68,10 @@ interface PanelFrameRow extends QueryResultRow {
 }
 
 export class PostgresPanelFrameRepository implements PanelFrameRepository {
-  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
+  public constructor(
+    private readonly client: DatabaseClient & TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async findPageContextByIdAndUserId(
     pageId: string,
@@ -197,6 +205,9 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
     organizationId: string | null = null,
   ): Promise<PanelFrame[]> {
     return this.client.transaction(async (transactionClient) => {
+      if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      }
       await transactionClient.query(
         `
         DELETE FROM panel_frames

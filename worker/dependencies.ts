@@ -250,7 +250,7 @@ export function resolveWorkerDependencies(
     overrides.promptBuilder ??
     new PromptBuilder(
       new PostgresPageRepository(db, persistenceProfile),
-      new PostgresPanelRepository(db),
+      new PostgresPanelRepository(db, persistenceProfile),
       new PostgresEntityRepository(db, persistenceProfile),
       new PostgresCompositionGalleryRepository(db),
     );
@@ -284,8 +284,8 @@ export function resolveWorkerDependencies(
     overrides.pageService ??
     new PageService(
       new PostgresPageRepository(db, persistenceProfile),
-      new PostgresPanelRepository(db),
-      new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db)),
+      new PostgresPanelRepository(db, persistenceProfile),
+      new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db, persistenceProfile)),
       undefined,
       overrides.episodePagePlanCompiler ?? resolveEpisodePagePlanCompiler(),
       undefined,

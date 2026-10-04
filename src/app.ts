@@ -1135,8 +1135,8 @@ function resolveDependencies(
   const entityReferenceImageExportService =
     dependencies.entityReferenceImageExportService ??
     new EntityReferenceImageExportService(entityRepository, resolveStoredPageImageLoader(), generationJobRepository);
-  const panelRepository = new PostgresPanelRepository(db);
-  const panelFrameRepository = new PostgresPanelFrameRepository(db);
+  const panelRepository = new PostgresPanelRepository(db, persistenceProfile);
+  const panelFrameRepository = new PostgresPanelFrameRepository(db, persistenceProfile);
   const balloonRepository = new PostgresBalloonRepository(db);
   const balloonService =
     dependencies.balloonService ??
@@ -1196,7 +1196,7 @@ function resolveDependencies(
     );
   const panelEntityAssignmentService =
     dependencies.panelEntityAssignmentService ??
-    new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db));
+    new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db, persistenceProfile));
   const storyEpisodeImprovementPlanner =
     dependencies.storyEpisodeImprovementPlanner ?? resolveStoryEpisodeImprovementPlanner();
   const pageService =
@@ -1256,7 +1256,7 @@ function resolveDependencies(
     dependencies.panelFrameService ?? new PanelFrameService(panelFrameRepository);
   const pageLayoutService =
     dependencies.pageLayoutService ??
-    new PageLayoutService(new PostgresPageLayoutRepository(db));
+    new PageLayoutService(new PostgresPageLayoutRepository(db, persistenceProfile));
   const pagePanelStructureService =
     dependencies.pagePanelStructureService ??
     new PagePanelStructureService(new PostgresPagePanelStructureRepository(db));

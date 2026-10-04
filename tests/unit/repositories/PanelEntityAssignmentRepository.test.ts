@@ -6,6 +6,7 @@ import { PostgresPanelEntityAssignmentRepository } from '../../../src/repositori
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
+  public transactionCount = 0;
   public returnedEntities: unknown = panelRow().entities;
   public values: readonly unknown[] | undefined;
 
@@ -26,11 +27,24 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   }
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
     return work(this);
   }
 }
 
 describe('PostgresPanelEntityAssignmentRepository', () => {
+  it('legacy personal通常更新はusers→request→assignment mutationを1 transactionで実行する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPanelEntityAssignmentRepository(client, 'legacy_2debe_v1');
+
+    await repository.updatePanelEntityAssignments('panel-1', 'user-1', []);
+
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries[0]).toContain('FROM users');
+    expect(client.queries[1]).toContain('account_deletion_requests');
+    expect(client.queries[2]).toContain('UPDATE panels');
+  });
+
   it('user_idでPanel所有者を絞ってcontextを取得する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPanelEntityAssignmentRepository(client);
@@ -115,6 +129,8 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
       null,
     ]);
     expect(assignments?.[0]).toMatchObject({ entityId: 'entity-1', stateId: 'state-1' });
+    expect(client.transactionCount).toBe(0);
+    expect(client.queries.join('\n')).not.toContain('account_deletion_requests');
   });
 
   it('従来更新は契約外の保存済みentryを従来どおり読み飛ばす', async () => {
@@ -158,6 +174,30 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
     expect(client.valuesByKind.get('panel-update')).toEqual([
       'panel-1',
       JSON.stringify(replacement.map(toAssignmentJson)),
+    ]);
+  });
+
+  it('legacy personal条件付き保存はusers→request→Page→Panel→Entity→stateを既存1 transactionでlockする', async () => {
+    const client = new ConditionalQueryClient();
+    const repository = new PostgresPanelEntityAssignmentRepository(client, 'legacy_2debe_v1');
+
+    const result = await repository.replacePanelEntityAssignmentsConditionally(
+      'panel-1',
+      'user-1',
+      [conditionalAssignment()],
+      [conditionalAssignment()],
+    );
+
+    expect(result.status).toBe('saved');
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries.map(queryKind)).toEqual([
+      'user-lock',
+      'request-lock',
+      'page-lock',
+      'panel-lock',
+      'entity-lock',
+      'state-lock',
+      'panel-update',
     ]);
   });
 
@@ -237,6 +277,10 @@ class ConditionalQueryClient implements DatabaseClient, TransactionRunner {
     this.valuesByKind.set(kind, values);
     const rows = kind === 'page-lock'
       ? [{ page_id: 'page-1', work_id: 'work-1', page_status: this.pageStatus }]
+      : kind === 'user-lock'
+        ? [{ id: 'user-1' }]
+        : kind === 'request-lock'
+          ? []
       : kind === 'panel-lock'
         ? [{ entities: this.storedAssignments.map(toAssignmentJson), dialogue: this.dialogue }]
         : kind === 'entity-lock'
@@ -262,6 +306,8 @@ class ConditionalQueryClient implements DatabaseClient, TransactionRunner {
 }
 
 function queryKind(text: string): string {
+  if (text.includes('FROM users')) return 'user-lock';
+  if (text.includes('account_deletion_requests')) return 'request-lock';
   if (text.includes('FOR UPDATE OF pages')) return 'page-lock';
   if (text.includes('FOR UPDATE') && text.includes('FROM panels')) return 'panel-lock';
   if (text.includes('FOR KEY SHARE') && text.includes('FROM entities')) return 'entity-lock';

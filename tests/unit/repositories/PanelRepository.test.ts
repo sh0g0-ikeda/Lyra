@@ -5,6 +5,7 @@ import { PostgresPanelRepository } from '../../../src/repositories/PanelReposito
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
+  public transactionCount = 0;
   public values: readonly unknown[] | undefined;
   public valuesList: Array<readonly unknown[] | undefined> = [];
 
@@ -36,11 +37,41 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   }
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
     return work(this);
   }
 }
 
 describe('PostgresPanelRepository', () => {
+  it('legacy personal更新はusers→request→mutationを1 transactionで実行する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPanelRepository(client, 'legacy_2debe_v1');
+
+    await repository.updatePanel('panel-1', 'user-1', { situationText: 'updated' });
+
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries[0]).toContain('FROM users');
+    expect(client.queries[1]).toContain('account_deletion_requests');
+    expect(client.queries[2]).toContain('UPDATE panels');
+  });
+
+  it('legacy personalのcreate/compact/delete/reorderも各1 transactionの先頭でfenceする', async () => {
+    const operations = [
+      async (repository: PostgresPanelRepository) => repository.createPanel('page-1', 'user-1', { order: 2 }),
+      async (repository: PostgresPanelRepository) => repository.compactPanelOrdersAfterDelete('page-1', 'user-1', 1),
+      async (repository: PostgresPanelRepository) => repository.deletePanel('panel-1', 'user-1'),
+      async (repository: PostgresPanelRepository) => repository.reorderPanels('page-1', 'user-1', ['panel-1']),
+    ];
+
+    for (const operation of operations) {
+      const client = new QueryCapturingClient();
+      await operation(new PostgresPanelRepository(client, 'legacy_2debe_v1'));
+      expect(client.transactionCount).toBe(1);
+      expect(client.queries[0]).toContain('FROM users');
+      expect(client.queries[1]).toContain('account_deletion_requests');
+    }
+  });
+
   it('user_idでページ所有者を絞ってPanel一覧を取得する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPanelRepository(client);
@@ -120,6 +151,8 @@ describe('PostgresPanelRepository', () => {
       'Large reaction panel',
       null,
     ]);
+    expect(client.transactionCount).toBe(0);
+    expect(client.queries.join('\n')).not.toContain('account_deletion_requests');
   });
 
   it('Panel更新時にJSONB列を保存する', async () => {

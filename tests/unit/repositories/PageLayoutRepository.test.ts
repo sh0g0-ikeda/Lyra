@@ -6,6 +6,7 @@ import { PostgresPageLayoutRepository } from '../../../src/repositories/PageLayo
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
+  public transactionCount = 0;
   public valuesList: Array<readonly unknown[] | undefined> = [];
   private panelListCalls = 0;
 
@@ -15,6 +16,14 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.valuesList.push(values);
+
+    if (text.includes('FROM users')) {
+      return rows<T>([{ id: 'user-1' }]);
+    }
+
+    if (text.includes('account_deletion_requests')) {
+      return rows<T>([]);
+    }
 
     if (text.includes('FOR UPDATE OF pages')) {
       return rows<T>([{ page_id: 'page-1', page_status: 'editing' }]);
@@ -45,11 +54,29 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   }
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
     return work(this);
   }
 }
 
 describe('PostgresPageLayoutRepository', () => {
+  it('legacy personal layoutはusers→request→page lockを既存1 transactionで実行する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresPageLayoutRepository(client, 'legacy_2debe_v1');
+
+    await expect(repository.applyTemplateAndSyncPanels('user-1', 'page-1', {
+      templateId: 'top_wide_3',
+      targetPanelCount: 3,
+      frameDefinitions: frameDefinitions(3),
+      allowPanelTruncation: false,
+    })).rejects.toBeInstanceOf(ConflictError);
+
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries[0]).toContain('FROM users');
+    expect(client.queries[1]).toContain('account_deletion_requests');
+    expect(client.queries[2]).toContain('FOR UPDATE OF pages');
+  });
+
   it('縮小テンプレートは確認なしではパネルを削除しない', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPageLayoutRepository(client);
@@ -86,6 +113,8 @@ describe('PostgresPageLayoutRepository', () => {
     });
     expect(result.frames).toHaveLength(3);
     expect(result.frames.map((frame) => frame.panelId)).toEqual(['panel-1', 'panel-2', 'panel-3']);
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries.join('\n')).not.toContain('account_deletion_requests');
 
     const deleteFramesIndex = client.queries.findIndex((query) => query.includes('DELETE FROM panel_frames'));
     const deletePanelsIndex = client.queries.findIndex((query) => query.includes('DELETE FROM panels'));

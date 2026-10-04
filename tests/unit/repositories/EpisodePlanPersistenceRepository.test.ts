@@ -7,11 +7,13 @@ import { PostgresEpisodePlanPersistenceRepository } from '../../../src/repositor
 
 class LockCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
+  public transactionCount = 0;
   public values: Array<readonly unknown[] | undefined> = [];
 
   public constructor(private readonly authorizeEpisode: boolean) {}
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
     return work(this);
   }
 
@@ -46,7 +48,11 @@ class ProfileCapturingClient extends LockCapturingClient {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.values.push(values);
-    const rows = text.includes('FOR UPDATE OF works, chapters, episodes')
+    const rows = text.includes('FROM users')
+      ? [{ id: 'user-1' }]
+      : text.includes('account_deletion_requests')
+        ? []
+        : text.includes('FOR UPDATE OF works, chapters, episodes')
       ? [{ episode_id: 'episode-1' }]
       : text.includes('SELECT episodes.id AS episode_id')
         ? [{
@@ -145,6 +151,10 @@ describe('PostgresEpisodePlanPersistenceRepository', () => {
     )).resolves.toBe(true);
 
     const queries = client.queries.join('\n');
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries[0]).toContain('FROM users');
+    expect(client.queries[1]).toContain('account_deletion_requests');
+    expect(client.queries[2]).toContain('FOR UPDATE OF works, chapters, episodes');
     expect(queries).toContain("'[]'::jsonb AS starting_entity_states");
     expect(queries).not.toContain('episodes.starting_entity_states');
     expect(queries).not.toContain('INSERT INTO mobile_push_notification_outbox');
@@ -160,6 +170,8 @@ describe('PostgresEpisodePlanPersistenceRepository', () => {
     )).resolves.toBe(true);
 
     const queries = client.queries.join('\n');
+    expect(client.transactionCount).toBe(1);
+    expect(queries).not.toContain('account_deletion_requests');
     expect(queries).toContain('episodes.starting_entity_states');
     expect(queries).toContain('INSERT INTO mobile_push_notification_outbox');
   });
