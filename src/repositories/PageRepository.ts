@@ -108,6 +108,9 @@ interface PromptContextRow extends QueryResultRow {
   episode_purpose: string | null;
   scene_summaries: unknown;
   layout_config: unknown;
+  story_source_scene_ids?: unknown;
+  story_page_purpose?: unknown;
+  story_continuity_note?: unknown;
   dialogue_mode: string;
   page_dialogue_toggle: boolean;
 }
@@ -168,6 +171,9 @@ interface PageSummaryRow extends QueryResultRow {
   episode_id: string;
   page_number: number;
   layout_config: unknown;
+  story_source_scene_ids?: unknown;
+  story_page_purpose?: unknown;
+  story_continuity_note?: unknown;
   dialogue_mode: string;
   page_dialogue_toggle: boolean;
   generation_mode: string | null;
@@ -184,10 +190,82 @@ interface UpdateRow extends QueryResultRow {
   id: string;
 }
 
+export type PageStoryMetadataStorageMode = 'canonical' | 'legacyPhysical';
+
 export class PostgresPageRepository
   implements PageRepository, PageListPaginationRepository
 {
-  public constructor(private readonly client: DatabaseClient) {}
+  public constructor(
+    private readonly client: DatabaseClient,
+    private readonly storyMetadataStorageMode: PageStoryMetadataStorageMode = 'canonical',
+  ) {}
+
+  private storyMetadataSelectColumns(): string {
+    return this.storyMetadataStorageMode === 'legacyPhysical'
+      ? `,
+             pages.story_source_scene_ids,
+             pages.story_page_purpose,
+             pages.story_continuity_note,
+`
+      : `,
+`;
+  }
+
+  private readStorySourceSceneIds(
+    row: Pick<PageSummaryRow, 'story_source_scene_ids'>,
+    layoutConfig: Record<string, unknown>,
+  ): string[] {
+    return this.storyMetadataStorageMode === 'legacyPhysical'
+      ? toStringArray(row.story_source_scene_ids)
+      : readStorySourceSceneIds(layoutConfig);
+  }
+
+  private readStoryPagePurpose(
+    row: Pick<PageSummaryRow | PromptContextRow, 'story_page_purpose'>,
+    layoutConfig: Record<string, unknown>,
+  ): string | null {
+    return this.storyMetadataStorageMode === 'legacyPhysical'
+      ? normalizeNullableText(readNullableString(row.story_page_purpose))
+      : readStoryPagePurpose(layoutConfig);
+  }
+
+  private readStoryContinuityNote(
+    row: Pick<PageSummaryRow | PromptContextRow, 'story_continuity_note'>,
+    layoutConfig: Record<string, unknown>,
+  ): string | null {
+    return this.storyMetadataStorageMode === 'legacyPhysical'
+      ? normalizeNullableText(readNullableString(row.story_continuity_note))
+      : readStoryContinuityNote(layoutConfig);
+  }
+
+  private storyMetadataUpdateClause(): string {
+    return this.storyMetadataStorageMode === 'legacyPhysical'
+      ? `
+          story_source_scene_ids = CASE WHEN $7::boolean THEN $8::uuid[] ELSE pages.story_source_scene_ids END,
+          story_page_purpose = CASE WHEN $9::boolean THEN $10::text ELSE pages.story_page_purpose END,
+          story_continuity_note = CASE WHEN $11::boolean THEN $12::text ELSE pages.story_continuity_note END,
+`
+      : '';
+  }
+
+  private storyMetadataUpdateValues(input: UpdatePageSettingsInput): readonly unknown[] {
+    if (this.storyMetadataStorageMode !== 'legacyPhysical') {
+      return [];
+    }
+
+    return [
+      input.storySourceSceneIds !== undefined,
+      input.storySourceSceneIds ?? null,
+      input.storyPagePurpose !== undefined,
+      input.storyPagePurpose ?? null,
+      input.storyContinuityNote !== undefined,
+      input.storyContinuityNote ?? null,
+    ];
+  }
+
+  private updatePageSettingsOrganizationParameterIndex(): 7 | 13 {
+    return this.storyMetadataStorageMode === 'legacyPhysical' ? 13 : 7;
+  }
 
   public async findPagesByEpisodeIdAndUserId(
     episodeId: string,
@@ -199,8 +277,7 @@ export class PostgresPageRepository
       SELECT pages.id,
              pages.episode_id,
              pages.page_number,
-             pages.layout_config,
-             pages.dialogue_mode,
+             pages.layout_config${this.storyMetadataSelectColumns()}             pages.dialogue_mode,
              pages.page_dialogue_toggle,
              pages.generation_mode,
              pages.generated_image,
@@ -245,9 +322,9 @@ export class PostgresPageRepository
         episodeId: row.episode_id,
         pageNumber: row.page_number,
         layoutConfig,
-        storySourceSceneIds: readStorySourceSceneIds(layoutConfig),
-        storyPagePurpose: readStoryPagePurpose(layoutConfig),
-        storyContinuityNote: readStoryContinuityNote(layoutConfig),
+        storySourceSceneIds: this.readStorySourceSceneIds(row, layoutConfig),
+        storyPagePurpose: this.readStoryPagePurpose(row, layoutConfig),
+        storyContinuityNote: this.readStoryContinuityNote(row, layoutConfig),
         dialogueMode: toPageDialogueMode(row.dialogue_mode),
         pageDialogueToggle: row.page_dialogue_toggle,
         generationMode: toPageGenerationMode(row.generation_mode),
@@ -281,8 +358,7 @@ export class PostgresPageRepository
       SELECT pages.id,
              pages.episode_id,
              pages.page_number,
-             pages.layout_config,
-             pages.dialogue_mode,
+             pages.layout_config${this.storyMetadataSelectColumns()}             pages.dialogue_mode,
              pages.page_dialogue_toggle,
              pages.generation_mode,
              pages.generated_image,
@@ -346,9 +422,9 @@ export class PostgresPageRepository
         episodeId: row.episode_id,
         pageNumber: row.page_number,
         layoutConfig,
-        storySourceSceneIds: readStorySourceSceneIds(layoutConfig),
-        storyPagePurpose: readStoryPagePurpose(layoutConfig),
-        storyContinuityNote: readStoryContinuityNote(layoutConfig),
+        storySourceSceneIds: this.readStorySourceSceneIds(row, layoutConfig),
+        storyPagePurpose: this.readStoryPagePurpose(row, layoutConfig),
+        storyContinuityNote: this.readStoryContinuityNote(row, layoutConfig),
         dialogueMode: toPageDialogueMode(row.dialogue_mode),
         pageDialogueToggle: row.page_dialogue_toggle,
         generationMode: toPageGenerationMode(row.generation_mode),
@@ -384,8 +460,7 @@ export class PostgresPageRepository
       SELECT pages.id,
              pages.episode_id,
              pages.page_number,
-             pages.layout_config,
-             pages.dialogue_mode,
+             pages.layout_config${this.storyMetadataSelectColumns()}             pages.dialogue_mode,
              pages.page_dialogue_toggle,
              pages.generation_mode,
              pages.generated_image,
@@ -433,9 +508,9 @@ export class PostgresPageRepository
           episodeId: row.episode_id,
           pageNumber: row.page_number,
           layoutConfig,
-          storySourceSceneIds: readStorySourceSceneIds(layoutConfig),
-          storyPagePurpose: readStoryPagePurpose(layoutConfig),
-          storyContinuityNote: readStoryContinuityNote(layoutConfig),
+          storySourceSceneIds: this.readStorySourceSceneIds(row, layoutConfig),
+          storyPagePurpose: this.readStoryPagePurpose(row, layoutConfig),
+          storyContinuityNote: this.readStoryContinuityNote(row, layoutConfig),
           dialogueMode: toPageDialogueMode(row.dialogue_mode),
           pageDialogueToggle: row.page_dialogue_toggle,
           generationMode: toPageGenerationMode(row.generation_mode),
@@ -568,8 +643,7 @@ export class PostgresPageRepository
                FROM scenes
                WHERE scenes.episode_id = episodes.id
              ) AS scene_summaries,
-             pages.layout_config,
-             pages.dialogue_mode,
+             pages.layout_config${this.storyMetadataSelectColumns()}             pages.dialogue_mode,
              pages.page_dialogue_toggle
       FROM pages
       INNER JOIN episodes ON episodes.id = pages.episode_id
@@ -606,8 +680,8 @@ export class PostgresPageRepository
           pageNumber: row.page_number,
           episodePurpose: normalizeNullableText(row.episode_purpose),
           sceneSummaries: toStringArray(row.scene_summaries),
-          storyPagePurpose: readStoryPagePurpose(layoutConfig),
-          storyContinuityNote: readStoryContinuityNote(layoutConfig),
+          storyPagePurpose: this.readStoryPagePurpose(row, layoutConfig),
+          storyContinuityNote: this.readStoryContinuityNote(row, layoutConfig),
           layoutConfig,
           styleReference: readStyleReferenceMetadata(layoutConfig.style_reference),
           dialogueMode: toPageDialogueMode(row.dialogue_mode),
@@ -1048,7 +1122,7 @@ export class PostgresPageRepository
           layout_config = CASE
             WHEN $5::boolean = false THEN pages.layout_config
             ELSE $6::jsonb
-          END,
+          END,${this.storyMetadataUpdateClause()}
           updated_at = NOW()
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -1056,10 +1130,10 @@ export class PostgresPageRepository
       WHERE pages.id = $1
         AND pages.episode_id = episodes.id
         AND (
-          ($7::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          ($${this.updatePageSettingsOrganizationParameterIndex()}::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
           OR (
-            $7::uuid IS NOT NULL
-            AND works.organization_id = $7::uuid
+            $${this.updatePageSettingsOrganizationParameterIndex()}::uuid IS NOT NULL
+            AND works.organization_id = $${this.updatePageSettingsOrganizationParameterIndex()}::uuid
             AND EXISTS (
               SELECT 1
               FROM organization_members
@@ -1076,7 +1150,10 @@ export class PostgresPageRepository
         input.dialogueMode ?? null,
         input.pageDialogueToggle ?? null,
         input.layoutConfig !== undefined,
-        input.layoutConfig === undefined ? null : JSON.stringify(input.layoutConfig),
+        input.layoutConfig === undefined
+          ? null
+          : JSON.stringify(input.layoutConfig),
+        ...this.storyMetadataUpdateValues(input),
         organizationId,
       ],
     );
