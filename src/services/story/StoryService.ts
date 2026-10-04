@@ -139,7 +139,7 @@ export class StoryService implements StoryServicePort {
   ): Promise<Chapter> {
     await this.ensureWorkOwnedByUser(userId, workId, organizationId);
     await this.ensureEntitiesBelongToWork(userId, workId, input.entitiesInvolved, organizationId);
-    return this.storyRepository.createChapter(workId, input);
+    return this.storyRepository.createChapter(workId, input, userId, organizationId);
   }
 
   public async listChapters(userId: string, workId: string, organizationId: string | null = null): Promise<Chapter[]> {
@@ -202,7 +202,7 @@ export class StoryService implements StoryServicePort {
   ): Promise<Episode> {
     const chapter = await this.ensureChapterOwnedByUser(userId, chapterId, organizationId);
     await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved, organizationId);
-    return this.storyRepository.createEpisode(chapterId, input);
+    return this.storyRepository.createEpisode(chapterId, input, userId, organizationId);
   }
 
   public async listEpisodes(userId: string, chapterId: string, organizationId: string | null = null): Promise<Episode[]> {

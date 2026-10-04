@@ -75,7 +75,7 @@ export class SceneService implements SceneServicePort {
     }
 
     await this.ensureEntitiesBelongToWork(userId, episodeContext.workId, input.involvedEntityIds, organizationId);
-    return this.sceneRepository.createScene(episodeId, input);
+    return this.sceneRepository.createScene(episodeId, input, userId, organizationId);
   }
 
   public async listScenes(
@@ -137,7 +137,7 @@ export class SceneService implements SceneServicePort {
     }
     await this.ensureSceneMatchesEntityWork(userId, entity.workId, input.sceneId, organizationId);
 
-    return this.sceneRepository.createEntityState(entityId, input);
+    return this.sceneRepository.createEntityState(entityId, input, userId, organizationId);
   }
 
   public async listEntityStates(

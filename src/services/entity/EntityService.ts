@@ -93,7 +93,7 @@ export class EntityService implements EntityServicePort {
       speechProfile: normalizeSpeechProfile(input.entityType, input.speechProfile),
     };
 
-    return this.entityRepository.create(createInput);
+    return this.entityRepository.create(createInput, organizationId);
   }
 
   public async listEntities(userId: string, workId: string, organizationId: string | null = null): Promise<Entity[]> {

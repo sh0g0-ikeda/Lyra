@@ -1,10 +1,11 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { DatabaseClient } from '../../../src/lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresSceneRepository } from '../../../src/repositories/SceneRepository.js';
 
-class QueryCapturingClient implements DatabaseClient {
+class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
+  public transactionCount = 0;
 
   public constructor(private readonly row: Record<string, unknown>) {}
 
@@ -21,6 +22,11 @@ class QueryCapturingClient implements DatabaseClient {
       fields: [],
       rows: [this.row] as T[],
     };
+  }
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
+    return work(this);
   }
 }
 
@@ -60,6 +66,26 @@ describe('PostgresSceneRepository', () => {
     expect(client.queries[0]).toContain('entities.user_id = $3');
     expect(client.queries[0]).toContain('name = CASE WHEN $6::boolean THEN $7 ELSE entity_states.name END');
     expect(client.queries[0]).toContain('updated_at = NOW()');
+    expect(client.queries.join('\n')).not.toContain('account_deletion_requests');
+    expect(client.transactionCount).toBe(0);
+  });
+
+  it('legacy personal Scene更新はusers→request→graph→mutationを1 transactionで実行する', async () => {
+    const client = new QueryCapturingClient(sceneRow());
+    const repository = new PostgresSceneRepository(client, 'legacy_2debe_v1');
+
+    const updated = await repository.updateScene(
+      '44444444-4444-4444-8444-444444444444',
+      '22222222-2222-4222-8222-222222222222',
+      { location: '更新後' },
+    );
+
+    expect(updated?.location).toBe('廃墟の広場');
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries[0]).toContain('FROM users');
+    expect(client.queries[1]).toContain('account_deletion_requests');
+    expect(client.queries[2]).toContain('FOR UPDATE OF works, chapters, episodes, scenes');
+    expect(client.queries[3]).toContain('UPDATE scenes');
   });
 
   it('Sceneのorder重複の場合にVALIDATION_ERRORになる', async () => {

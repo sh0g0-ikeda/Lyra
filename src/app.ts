@@ -1261,7 +1261,7 @@ function resolveDependencies(
     dependencies.pagePanelStructureService ??
     new PagePanelStructureService(new PostgresPagePanelStructureRepository(db));
   const sceneService =
-    dependencies.sceneService ?? new SceneService(new PostgresSceneRepository(db), entityRepository);
+    dependencies.sceneService ?? new SceneService(new PostgresSceneRepository(db, persistenceProfile), entityRepository);
   const userProvisioningService =
     dependencies.userProvisioningService ??
     new TransactionalUserProvisioningService(

@@ -15,7 +15,7 @@ import type {
   EntityReferenceSet,
   EntityReferenceSetStatus,
 } from '../domain/types/entityReference.js';
-import { ConfigurationError } from '../domain/errors/index.js';
+import { ConfigurationError, NotFoundError } from '../domain/errors/index.js';
 import type { EntityListCursor } from '../domain/pagination.js';
 import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
@@ -23,6 +23,7 @@ import {
   CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   type RepositorySchemaProfile,
 } from './RepositorySchemaProfile.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 // All entity/reference writes advance the revision used by editor CAS and state freshness.
 const nextEntityRevisionSql = (table: 'entities' | 'reference_sets'): string =>
@@ -59,7 +60,7 @@ export interface EntityResolvedReferenceImage extends ImageProvenance {
 }
 
 export interface EntityRepository {
-  create(input: CreateEntityInput): Promise<Entity>;
+  create(input: CreateEntityInput, organizationId?: string | null): Promise<Entity>;
   findByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Entity | null>;
   findByWorkIdAndUserId(workId: string, userId: string, organizationId?: string | null): Promise<Entity[]>;
   countByIdsAndWorkIdAndUserId(
@@ -190,10 +191,54 @@ export class PostgresEntityRepository
   public constructor(
     private readonly client: DatabaseClient & Partial<TransactionRunner>,
     private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+    private readonly transactionRunner?: TransactionRunner,
   ) {}
 
-  public async create(input: CreateEntityInput): Promise<Entity> {
-    const result = await this.client.query<EntityRow>(
+  private async runLegacyPersonalWrite<T>(
+    userId: string,
+    organizationId: string | null,
+    operation: (client: DatabaseClient) => Promise<T>,
+  ): Promise<T> {
+    if (this.schemaProfile !== 'legacy_2debe_v1' || organizationId !== null) {
+      return operation(this.client);
+    }
+    const runner = this.transactionRunner ?? this.client;
+    if (typeof runner.transaction !== 'function') {
+      throw new ConfigurationError('Legacy personal entity writes require transaction support');
+    }
+    return runner.transaction(async (client) => {
+      await assertLegacyPersonalWriteAllowed(client, { userId, organizationId });
+      return operation(client);
+    });
+  }
+
+  public async create(input: CreateEntityInput, organizationId: string | null = null): Promise<Entity> {
+    return this.runLegacyPersonalWrite(input.userId, organizationId, async (client) => {
+      const scopedInsert = this.schemaProfile === 'legacy_2debe_v1'
+        ? `SELECT $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, 'draft'
+           FROM works
+           WHERE works.id = $1
+             AND (
+               ($9::uuid IS NULL AND works.organization_id IS NULL AND works.user_id = $2)
+               OR ($9::uuid IS NOT NULL AND works.organization_id = $9::uuid AND EXISTS (
+                 SELECT 1 FROM organization_members
+                 WHERE organization_members.organization_id = works.organization_id
+                   AND organization_members.user_id = $2 AND organization_members.status = 'active'
+               ))
+             )`
+        : `VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, 'draft')`;
+      const values: readonly unknown[] = [
+        input.workId,
+        input.userId,
+        input.entityType,
+        input.name,
+        input.freeDescription,
+        input.promptSupplement,
+        JSON.stringify(input.structuredFields),
+        JSON.stringify(input.speechProfile),
+        ...(this.schemaProfile === 'legacy_2debe_v1' ? [organizationId] : []),
+      ];
+      const result = await client.query<EntityRow>(
       `
       WITH inserted_entity AS (
         INSERT INTO entities (
@@ -207,7 +252,7 @@ export class PostgresEntityRepository
           speech_profile,
           status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, 'draft')
+        ${scopedInsert}
         RETURNING *
       ),
       inserted_reference_set AS (
@@ -218,19 +263,14 @@ export class PostgresEntityRepository
       SELECT *
       FROM inserted_entity
       `,
-      [
-        input.workId,
-        input.userId,
-        input.entityType,
-        input.name,
-        input.freeDescription,
-        input.promptSupplement,
-        JSON.stringify(input.structuredFields),
-        JSON.stringify(input.speechProfile),
-      ],
+      values,
     );
 
+    if (this.schemaProfile === 'legacy_2debe_v1' && result.rows[0] === undefined) {
+      throw new NotFoundError('Work not found');
+    }
     return mapEntityRow(result.rows[0]);
+    });
   }
 
   public async findByIdAndUserId(
@@ -612,12 +652,19 @@ export class PostgresEntityRepository
     primaryRefId: string;
     promptSupplement?: string | null;
   }): Promise<EntityReferenceSet | null> {
-    const runner = this.client.transaction?.bind(this.client);
+    const runner = this.transactionRunner?.transaction.bind(this.transactionRunner)
+      ?? this.client.transaction?.bind(this.client);
     if (runner === undefined) {
       throw new Error('EntityRepository requires transaction support to save references');
     }
 
     return runner(async (transactionClient) => {
+      if (this.schemaProfile === 'legacy_2debe_v1') {
+        await assertLegacyPersonalWriteAllowed(transactionClient, {
+          userId: input.userId,
+          organizationId: input.organizationId ?? null,
+        });
+      }
       const current = await transactionClient.query<EntityReferenceSetRow>(
         `
         SELECT reference_sets.entity_id,
@@ -754,12 +801,19 @@ export class PostgresEntityRepository
     organizationId?: string | null;
     refId: string;
   }): Promise<EntityReferenceSet | null> {
-    const runner = this.client.transaction?.bind(this.client);
+    const runner = this.transactionRunner?.transaction.bind(this.transactionRunner)
+      ?? this.client.transaction?.bind(this.client);
     if (runner === undefined) {
       throw new Error('EntityRepository requires transaction support to delete references');
     }
 
     return runner(async (transactionClient) => {
+      if (this.schemaProfile === 'legacy_2debe_v1') {
+        await assertLegacyPersonalWriteAllowed(transactionClient, {
+          userId: input.userId,
+          organizationId: input.organizationId ?? null,
+        });
+      }
       const current = await transactionClient.query<EntityReferenceSetRow>(
         `
         SELECT reference_sets.entity_id,
@@ -921,7 +975,8 @@ export class PostgresEntityRepository
     input: UpdateEntityInput,
     organizationId: string | null = null,
   ): Promise<Entity | null> {
-    const result = await this.client.query<EntityRow>(
+    return this.runLegacyPersonalWrite(userId, organizationId, async (client) => {
+      const result = await client.query<EntityRow>(
       `
       UPDATE entities
       SET entity_type = COALESCE($3, entity_type),
@@ -972,11 +1027,13 @@ export class PostgresEntityRepository
       ],
     );
 
-    return result.rows[0] === undefined ? null : mapEntityRow(result.rows[0]);
+      return result.rows[0] === undefined ? null : mapEntityRow(result.rows[0]);
+    });
   }
 
   public async delete(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
-    const result = await this.client.query(
+    return this.runLegacyPersonalWrite(userId, organizationId, async (client) => {
+      const result = await client.query(
       `
       DELETE FROM entities
       WHERE id = $1
@@ -1003,7 +1060,8 @@ export class PostgresEntityRepository
       [id, userId, organizationId],
     );
 
-    return (result.rowCount ?? 0) > 0;
+      return (result.rowCount ?? 0) > 0;
+    });
   }
 }
 

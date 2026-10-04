@@ -27,6 +27,7 @@ import type {
 import {
   ConfigurationError,
   ConflictError,
+  NotFoundError,
   ValidationError,
 } from '../domain/errors/index.js';
 import type { WorkListCursor } from '../domain/pagination.js';
@@ -44,6 +45,7 @@ import {
   CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   type RepositorySchemaProfile,
 } from './RepositorySchemaProfile.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 // CAS revisions must advance even inside one transaction or when clocks move backwards.
 type StoryRevisionTable = 'works' | 'chapters' | 'episodes';
@@ -69,13 +71,13 @@ export interface StoryRepository {
   createWork(userId: string, input: CreateWorkInput): Promise<Work>;
   findWorkByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Work | null>;
   updateWork(id: string, userId: string, input: UpdateWorkInput, organizationId?: string | null): Promise<Work | null>;
-  createChapter(workId: string, input: CreateChapterInput): Promise<Chapter>;
+  createChapter(workId: string, input: CreateChapterInput, userId?: string, organizationId?: string | null): Promise<Chapter>;
   findChaptersByWorkIdAndUserId(workId: string, userId: string, organizationId?: string | null): Promise<Chapter[]>;
   findChapterByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Chapter | null>;
   updateChapter(id: string, userId: string, input: UpdateChapterInput, organizationId?: string | null): Promise<Chapter | null>;
   deleteChapter(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
   moveChapter(id: string, userId: string, direction: StoryItemMoveDirection, organizationId?: string | null): Promise<Chapter | null>;
-  createEpisode(chapterId: string, input: CreateEpisodeInput): Promise<Episode>;
+  createEpisode(chapterId: string, input: CreateEpisodeInput, userId?: string, organizationId?: string | null): Promise<Episode>;
   findEpisodesByChapterIdAndUserId(chapterId: string, userId: string, organizationId?: string | null): Promise<Episode[]>;
   findEpisodeByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Episode | null>;
   validateEpisodeStartingEntityStates?(
@@ -333,6 +335,35 @@ export class PostgresStoryRepository
     private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   ) {}
 
+  private async runLegacyPersonalGraphWrite<T>(
+    userId: string,
+    organizationId: string | null,
+    work: (client: DatabaseClient) => Promise<T>,
+  ): Promise<T> {
+    if (this.schemaProfile !== 'legacy_2debe_v1' || organizationId !== null) {
+      return work(this.client);
+    }
+    if (this.transactionRunner === undefined) {
+      throw new ConfigurationError('Legacy personal story writes require transaction support');
+    }
+    return this.transactionRunner.transaction(async (client) => {
+      await assertLegacyPersonalWriteAllowed(client, { userId, organizationId });
+      return work(client);
+    });
+  }
+
+  private async runLegacyGraphTransaction<T>(
+    userId: string,
+    organizationId: string | null,
+    work: (client: DatabaseClient) => Promise<T>,
+    transactionRunner: TransactionRunner | undefined = this.transactionRunner,
+  ): Promise<T> {
+    if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
+      return this.runLegacyPersonalGraphWrite(userId, organizationId, work);
+    }
+    return runInTransaction(this.client, transactionRunner, work);
+  }
+
   public async findWorksByUserId(userId: string, organizationId: string | null = null): Promise<Work[]> {
     const result = await this.client.query<WorkRow>(
       `
@@ -442,7 +473,17 @@ export class PostgresStoryRepository
   }
 
   public async createWork(userId: string, input: CreateWorkInput): Promise<Work> {
-    const result = await this.client.query<WorkRow>(
+    return this.runLegacyPersonalGraphWrite(userId, input.organizationId ?? null, async (client) => {
+      const valueSql = this.schemaProfile === 'legacy_2debe_v1'
+        ? `SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+           WHERE $2::uuid IS NULL OR EXISTS (
+             SELECT 1 FROM organization_members
+             WHERE organization_members.organization_id = $2::uuid
+               AND organization_members.user_id = $1::uuid
+               AND organization_members.status = 'active'
+           )`
+        : 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)';
+      const result = await client.query<WorkRow>(
       `
       INSERT INTO works (
         user_id,
@@ -456,7 +497,7 @@ export class PostgresStoryRepository
         ending_point,
         overall_flow
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ${valueSql}
       RETURNING *
       `,
       [
@@ -473,7 +514,11 @@ export class PostgresStoryRepository
       ],
     );
 
-    return mapWorkRow(result.rows[0]);
+      if (this.schemaProfile === 'legacy_2debe_v1' && result.rows[0] === undefined) {
+        throw new NotFoundError('Organization membership not found');
+      }
+      return mapWorkRow(result.rows[0]);
+    });
   }
 
   public async findWorkByIdAndUserId(
@@ -513,7 +558,8 @@ export class PostgresStoryRepository
     input: UpdateWorkInput,
     organizationId: string | null = null,
   ): Promise<Work | null> {
-    const result = await this.client.query<WorkRow>(
+    return this.runLegacyPersonalGraphWrite(userId, organizationId, async (client) => {
+      const result = await client.query<WorkRow>(
       `
       UPDATE works
       SET title = COALESCE($3, title),
@@ -594,12 +640,50 @@ export class PostgresStoryRepository
       ],
     );
 
-    return result.rows[0] === undefined ? null : mapWorkRow(result.rows[0]);
+      return result.rows[0] === undefined ? null : mapWorkRow(result.rows[0]);
+    });
   }
 
-  public async createChapter(workId: string, input: CreateChapterInput): Promise<Chapter> {
-    try {
-      const result = await this.client.query<ChapterRow>(
+  public async createChapter(
+    workId: string,
+    input: CreateChapterInput,
+    userId?: string,
+    organizationId: string | null = null,
+  ): Promise<Chapter> {
+    if (this.schemaProfile === 'legacy_2debe_v1' && userId === undefined) {
+      throw new ConfigurationError('Legacy chapter creation requires an authenticated actor');
+    }
+    const actorUserId = userId ?? '';
+    return this.runLegacyPersonalGraphWrite(actorUserId, organizationId, async (client) => {
+      try {
+        const legacyScope = this.schemaProfile === 'legacy_2debe_v1'
+          ? `WHERE EXISTS (
+              SELECT 1 FROM works
+              WHERE works.id = $1
+                AND (($11::uuid IS NULL AND works.user_id = $10 AND works.organization_id IS NULL)
+                  OR ($11::uuid IS NOT NULL AND works.organization_id = $11::uuid
+                    AND EXISTS (SELECT 1 FROM organization_members
+                      WHERE organization_members.organization_id = works.organization_id
+                        AND organization_members.user_id = $10
+                        AND organization_members.status = 'active')))
+            )`
+          : '';
+        const valueSql = this.schemaProfile === 'legacy_2debe_v1'
+          ? 'SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9'
+          : 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)';
+        const values: readonly unknown[] = [
+          workId,
+          input.order,
+          normalizeNullableText(input.title),
+          normalizeNullableText(input.purpose),
+          normalizeNullableText(input.startingState),
+          normalizeNullableText(input.endingState),
+          normalizeNullableText(input.emotionCurve),
+          input.entitiesInvolved,
+          input.keyBeats,
+          ...(this.schemaProfile === 'legacy_2debe_v1' ? [actorUserId, organizationId] : []),
+        ];
+        const result = await client.query<ChapterRow>(
         `
         INSERT INTO chapters (
           work_id,
@@ -612,26 +696,19 @@ export class PostgresStoryRepository
           entities_involved,
           key_beats
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ${valueSql}
+        ${legacyScope}
         RETURNING *
         `,
-        [
-          workId,
-          input.order,
-          normalizeNullableText(input.title),
-          normalizeNullableText(input.purpose),
-          normalizeNullableText(input.startingState),
-          normalizeNullableText(input.endingState),
-          normalizeNullableText(input.emotionCurve),
-          input.entitiesInvolved,
-          input.keyBeats,
-        ],
+        values,
       );
 
+      if (result.rows[0] === undefined) throw new NotFoundError('Work not found');
       return mapChapterRow(result.rows[0]);
     } catch (error) {
       throw mapOrderConflict(error, 'Chapter order must be unique within the work');
     }
+    });
   }
 
   public async findChaptersByWorkIdAndUserId(
@@ -705,8 +782,9 @@ export class PostgresStoryRepository
     input: UpdateChapterInput,
     organizationId: string | null = null,
   ): Promise<Chapter | null> {
-    try {
-      const result = await this.client.query<ChapterRow>(
+    return this.runLegacyPersonalGraphWrite(userId, organizationId, async (client) => {
+      try {
+        const result = await client.query<ChapterRow>(
         `
         UPDATE chapters
         SET "order" = COALESCE($3, chapters."order"),
@@ -793,11 +871,12 @@ export class PostgresStoryRepository
     } catch (error) {
       throw mapOrderConflict(error, 'Chapter order must be unique within the work');
     }
+    });
   }
 
   public async deleteChapter(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
     const transactionRunner = this.requireTransactionRunnerForStoryDeletion();
-    return transactionRunner.transaction(async (transactionClient) => {
+    return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const authorized = await transactionClient.query<AuthorizedChapterIdRow>(
         `
         SELECT chapters.id AS authorized_chapter_id
@@ -867,7 +946,7 @@ export class PostgresStoryRepository
         [id, userId, organizationId],
       );
       return (deleted.rowCount ?? 0) > 0;
-    });
+    }, transactionRunner);
   }
 
   public async moveChapter(
@@ -876,7 +955,7 @@ export class PostgresStoryRepository
     direction: StoryItemMoveDirection,
     organizationId: string | null = null,
   ): Promise<Chapter | null> {
-    return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
+    return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const currentResult = await transactionClient.query<ChapterRow>(
         `
         SELECT chapters.*
@@ -938,8 +1017,18 @@ export class PostgresStoryRepository
     });
   }
 
-  public async createEpisode(chapterId: string, input: CreateEpisodeInput): Promise<Episode> {
-    const normalizedStoryInput = normalizeEpisodeStoryInput({
+  public async createEpisode(
+    chapterId: string,
+    input: CreateEpisodeInput,
+    userId?: string,
+    organizationId: string | null = null,
+  ): Promise<Episode> {
+    if (this.schemaProfile === 'legacy_2debe_v1' && userId === undefined) {
+      throw new ConfigurationError('Legacy episode creation requires an authenticated actor');
+    }
+    const actorUserId = userId ?? '';
+    return this.runLegacyPersonalGraphWrite(actorUserId, organizationId, async (client) => {
+      const normalizedStoryInput = normalizeEpisodeStoryInput({
       storyInputMode: input.storyInputMode,
       purpose: input.purpose,
       introduction: input.introduction,
@@ -949,8 +1038,39 @@ export class PostgresStoryRepository
       storyFullDraft: input.storyFullDraft,
     });
 
-    try {
-      const result = await this.client.query<EpisodeRow>(
+      try {
+        const legacyScope = this.schemaProfile === 'legacy_2debe_v1'
+          ? `WHERE EXISTS (
+              SELECT 1 FROM chapters
+              INNER JOIN works ON works.id = chapters.work_id
+              WHERE chapters.id = $1
+                AND (($14::uuid IS NULL AND works.user_id = $13 AND works.organization_id IS NULL)
+                  OR ($14::uuid IS NOT NULL AND works.organization_id = $14::uuid
+                    AND EXISTS (SELECT 1 FROM organization_members
+                      WHERE organization_members.organization_id = works.organization_id
+                        AND organization_members.user_id = $13
+                        AND organization_members.status = 'active')))
+            )`
+          : '';
+        const valueSql = this.schemaProfile === 'legacy_2debe_v1'
+          ? 'SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12'
+          : 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)';
+        const values: readonly unknown[] = [
+          chapterId,
+          input.order,
+          normalizeNullableText(input.title),
+          normalizedStoryInput.purpose,
+          normalizedStoryInput.storyInputMode,
+          normalizedStoryInput.storyFullDraft,
+          normalizedStoryInput.normalizedIntroduction,
+          normalizedStoryInput.normalizedMiddle,
+          normalizedStoryInput.normalizedClimax,
+          normalizedStoryInput.normalizedEndingHook,
+          input.estimatedPages,
+          input.entitiesInvolved,
+          ...(this.schemaProfile === 'legacy_2debe_v1' ? [actorUserId, organizationId] : []),
+        ];
+        const result = await client.query<EpisodeRow>(
         `
         INSERT INTO episodes (
           chapter_id,
@@ -966,29 +1086,19 @@ export class PostgresStoryRepository
           estimated_pages,
           entities_involved
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ${valueSql}
+        ${legacyScope}
         RETURNING *
         `,
-        [
-          chapterId,
-          input.order,
-          normalizeNullableText(input.title),
-          normalizedStoryInput.purpose,
-          normalizedStoryInput.storyInputMode,
-          normalizedStoryInput.storyFullDraft,
-          normalizedStoryInput.normalizedIntroduction,
-          normalizedStoryInput.normalizedMiddle,
-          normalizedStoryInput.normalizedClimax,
-          normalizedStoryInput.normalizedEndingHook,
-          input.estimatedPages,
-          input.entitiesInvolved,
-        ],
+        values,
       );
 
+      if (result.rows[0] === undefined) throw new NotFoundError('Chapter not found');
       return mapEpisodeRow(result.rows[0]);
     } catch (error) {
       throw mapOrderConflict(error, 'Episode order must be unique within the chapter');
     }
+    });
   }
 
   public async findEpisodesByChapterIdAndUserId(
@@ -1030,7 +1140,16 @@ export class PostgresStoryRepository
     userId: string,
     organizationId: string | null = null,
   ): Promise<Episode | null> {
-    const result = await this.client.query<EpisodeRow>(
+    return this.findEpisodeByIdAndUserIdWithClient(this.client, id, userId, organizationId);
+  }
+
+  private async findEpisodeByIdAndUserIdWithClient(
+    client: DatabaseClient,
+    id: string,
+    userId: string,
+    organizationId: string | null,
+  ): Promise<Episode | null> {
+    const result = await client.query<EpisodeRow>(
       `
       SELECT episodes.*
       FROM episodes
@@ -1120,6 +1239,18 @@ export class PostgresStoryRepository
     const startingEntityStates = input.startingEntityStates;
     if (this.schemaProfile === 'legacy_2debe_v1' && startingEntityStates !== undefined) {
       throw new ConfigurationError('startingEntityStates is not supported by legacy_2debe_v1 persistence');
+    }
+    if (this.schemaProfile === 'legacy_2debe_v1') {
+      return this.runLegacyPersonalGraphWrite(userId, organizationId, async (client) => {
+        const currentEpisode = await this.findEpisodeByIdAndUserIdWithClient(
+          client,
+          id,
+          userId,
+          organizationId,
+        );
+        if (currentEpisode === null) return null;
+        return this.updateEpisodeWithClient(client, currentEpisode, id, userId, input, organizationId);
+      });
     }
     if (startingEntityStates !== undefined) {
       const transactionRunner = this.requireTransactionRunnerForEpisodeStartingStates();
@@ -1302,7 +1433,7 @@ export class PostgresStoryRepository
 
   public async deleteEpisode(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
     const transactionRunner = this.requireTransactionRunnerForStoryDeletion();
-    return transactionRunner.transaction(async (transactionClient) => {
+    return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const initialTarget = await this.findAuthorizedEpisodeForDeletion(
         transactionClient,
         id,
@@ -1363,7 +1494,7 @@ export class PostgresStoryRepository
         [id, userId, organizationId],
       );
       return (deleted.rowCount ?? 0) > 0;
-    });
+    }, transactionRunner);
   }
 
   private requireTransactionRunnerForStoryDeletion(): TransactionRunner {
@@ -1656,7 +1787,7 @@ export class PostgresStoryRepository
     organizationId: string | null = null,
     crossChapter = false,
   ): Promise<Episode | null> {
-    return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
+    return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const currentResult = await transactionClient.query<EpisodeMoveRow>(
         `
         SELECT episodes.*,
