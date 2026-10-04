@@ -1,3 +1,4 @@
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 ﻿import type { QueryResultRow } from 'pg';
 import type { PageStatus } from '../domain/types/page.js';
 import { toImageProvenanceRecord, type ImageProvenance } from '../domain/generation/ImageAccessPolicy.js';
@@ -94,7 +95,10 @@ interface PageUpdateRow extends QueryResultRow {
 }
 
 export class PostgresPageGenerationExecutionRepository implements PageGenerationExecutionRepository {
-  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
+  public constructor(
+    private readonly client: DatabaseClient & TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async claimQueuedPageGenerationJob(jobId: string): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
@@ -294,6 +298,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         transactionClient,
         completedJob,
         'completed',
+        this.schemaProfile,
       );
 
       return true;
@@ -390,6 +395,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         transactionClient,
         failedJob,
         'failed',
+        this.schemaProfile,
       );
 
       return true;

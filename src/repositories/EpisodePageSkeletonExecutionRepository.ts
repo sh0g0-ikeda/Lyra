@@ -1,3 +1,4 @@
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { QueryResultRow } from 'pg';
 import type { PageSkeletonPersistResult } from '../domain/types/storyAi.js';
 import type { EpisodePagePlanApplyResult } from '../domain/types/page.js';
@@ -64,7 +65,10 @@ interface GenerationJobRow extends QueryResultRow {
 export class PostgresEpisodePageSkeletonExecutionRepository
   implements EpisodePageSkeletonExecutionRepository
 {
-  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
+  public constructor(
+    private readonly client: DatabaseClient & TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async claimQueuedEpisodePageSkeletonJob(jobId: string): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
@@ -176,6 +180,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
         transactionClient,
         completedJob,
         'completed',
+        this.schemaProfile,
       );
       return true;
     });
@@ -226,6 +231,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
         transactionClient,
         failedJob,
         'failed',
+        this.schemaProfile,
       );
       return true;
     });

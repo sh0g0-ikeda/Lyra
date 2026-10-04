@@ -1,3 +1,4 @@
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { QueryResultRow } from 'pg';
 import { toImageProvenanceRecord, type ImageProvenance } from '../domain/generation/ImageAccessPolicy.js';
 import type { GenerationJob } from '../domain/types/job.js';
@@ -81,7 +82,10 @@ interface GenerationJobRow extends QueryResultRow {
 }
 
 export class PostgresEntityGenerationExecutionRepository implements EntityGenerationExecutionRepository {
-  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
+  public constructor(
+    private readonly client: DatabaseClient & TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async claimQueuedEntityGenerationJob(jobId: string): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
@@ -175,6 +179,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
         transactionClient,
         completedJob,
         'completed',
+        this.schemaProfile,
       );
       return true;
     });
@@ -227,6 +232,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
         transactionClient,
         failedJob,
         'failed',
+        this.schemaProfile,
       );
       return true;
     });

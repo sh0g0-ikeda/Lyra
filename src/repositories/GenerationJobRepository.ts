@@ -1,3 +1,4 @@
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { QueryResultRow } from 'pg';
 import type { GenerationJob, GenerationJobType, GenerationJobStatus, GenerationJobCreditSettlement } from '../domain/types/job.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
@@ -228,7 +229,10 @@ export class PostgresGenerationJobRepository
 {
   private static readonly advisoryLockNamespace = 81_527;
 
-  public constructor(private readonly client: DatabaseClient & Partial<TransactionRunner>) {}
+  public constructor(
+    private readonly client: DatabaseClient & Partial<TransactionRunner>,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     return this.createWithAdmission(input);
@@ -1184,6 +1188,7 @@ export class PostgresGenerationJobRepository
         transactionClient,
         failedJob,
         'failed',
+        this.schemaProfile,
       );
       return true;
     });
@@ -1475,6 +1480,34 @@ export class PostgresGenerationJobRepository
     jobId: string,
     maxRetryCount: number,
   ): Promise<boolean> {
+    if (this.schemaProfile === 'legacy_2debe_v1') {
+      // Old outboxes are unique per job, not per retry generation. Preserve the
+      // existing notification and its lease instead of applying canonical
+      // delivery invalidation to absent columns or unsupported statuses.
+      const result = await client.query<PreparedRetryRow>(
+        `
+        UPDATE generation_jobs
+        SET status = 'queued',
+            retry_count = retry_count + 1,
+            started_at = NULL,
+            completed_at = NULL,
+            error_message = NULL,
+            openai_request_id = NULL,
+            sqs_message_id = NULL,
+            cancel_requested_at = NULL,
+            cancel_requested_by = NULL,
+            cancelled_at = NULL,
+            commit_started_at = NULL
+        WHERE id = $1
+          AND status = 'failed'
+          AND NOT (params ? 'quote_id')
+          AND retry_count < $2
+        RETURNING id, retry_count
+        `,
+        [jobId, maxRetryCount],
+      );
+      return (result.rowCount ?? 0) > 0;
+    }
     const result = await client.query<PreparedRetryRow>(
       `
       WITH retried_job AS (
