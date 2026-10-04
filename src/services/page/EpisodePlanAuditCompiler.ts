@@ -109,6 +109,7 @@ export interface CompileEpisodePlanAuditInput {
   language: AppLanguage;
   pageIds: string[];
   coverageCatalog?: EpisodePlanAuditCoverageCatalog;
+  sourceOwnedPageContext?: boolean;
   beforeRetry?: () => Promise<void>;
 }
 

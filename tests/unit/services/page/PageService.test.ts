@@ -1838,6 +1838,59 @@ describe('PageService', () => {
     expect(auditCompiler.inputs).toHaveLength(2);
   });
 
+  it('完全なpage原文対応をfull contextで一度判定しnormal・repair・auditへtrusted flagを渡す', async () => {
+    const pageRepository = new FakePageRepository();
+    const context = buildMultiPageEpisodePlanningContext(4);
+    context.episode.storyFullDraft = context.pages
+      .map((page) => `${page.pageNumber}ページ目：原文動作-${page.pageNumber}を最後まで行う。`)
+      .join('\n');
+    pageRepository.episodePlanningContext = context;
+    const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    auditCompiler.audits = [
+      {
+        accepted: false,
+        issues: [{
+          code: 'source_omission',
+          severity: 'error',
+          pageIds: ['page-1'],
+          message: '原文動作が不足している。',
+          repairInstruction: '原文どおり最後まで描く。',
+        }],
+      },
+      { accepted: true, issues: [] },
+    ];
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(episodeCompiler.inputs).toHaveLength(3);
+    expect(episodeCompiler.inputs.every((input) => input.sourceOwnedPageContext === true)).toBe(true);
+    expect(episodeCompiler.inputs[2]?.compilerBrief).toContain('[REPAIR REQUIRED]');
+    expect(episodeCompiler.inputs[2]?.compilerBrief).toContain('1ページ目：原文動作-1を最後まで行う。');
+    expect(episodeCompiler.inputs.every(
+      (input) => !input.compilerBrief.includes('[GLOBAL EPISODE LEDGER]'),
+    )).toBe(true);
+    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs.every((input) => input.sourceOwnedPageContext === true)).toBe(true);
+    expect(auditCompiler.inputs.every(
+      (input) => input.coverageCatalog?.pages.every(
+        (page) => page.sources.map((source) => source.ref).join(',') === 'source',
+      ) === true,
+    )).toBe(true);
+  });
+
   it('inline repair 無効時は修復後にwarningだけが残っても保存する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
@@ -3014,6 +3067,7 @@ describe('PageService', () => {
   it('状態反映v1は監査後に確定状態を割り当てて原子的保存へ渡す', async () => {
     const stateId = '22222222-2222-4222-8222-222222222222';
     const context = buildEpisodePlanningContext();
+    context.episode.storyFullDraft = '1ページ目：負傷状態を保ったまま前へ進む。';
     context.episode.startingEntityStates = [];
     // Explicit v1 overwrite may replace a prior manual state, unlike legacy requests.
     const legacyCompiled = await new FakeEpisodePagePlanCompiler().compilePlan({ compilerBrief: '', language: 'ja' });
@@ -3086,6 +3140,8 @@ describe('PageService', () => {
     expect(retryCheckpointCount).toBe(1);
     expect(pageCompiler.inputs[0]?.compilerBrief).toContain(stateId);
     expect(auditCompiler.inputs[0]?.compilerBrief).toContain(stateId);
+    expect(pageCompiler.inputs[0]?.sourceOwnedPageContext).toBe(true);
+    expect(auditCompiler.inputs[0]?.sourceOwnedPageContext).toBe(true);
     expect(auditCompiler.inputs).toHaveLength(2);
     context.pages[0]!.panels[0]!.entities = [{
       ...transactionAssignments.updates[0]!.assignments[0]!, stateId: null,

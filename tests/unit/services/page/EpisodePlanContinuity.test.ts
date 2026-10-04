@@ -11,6 +11,7 @@ import {
   buildEpisodePlanAuditBrief,
   buildEpisodePlanAuditCoverageCatalog,
   detectDeterministicContinuityIssues,
+  hasCompletePageSourceMapping,
   validateEpisodeBeatPlanCoverage,
 } from '../../../../src/services/page/EpisodePlanContinuity.js';
 import type { EpisodeBeatPlan } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
@@ -401,6 +402,153 @@ describe('EpisodePlanContinuity', () => {
     expect(page15Local).toContain(exactPage15);
     expect(page15Local).not.toContain(exactPage9);
     expect(audit.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+  });
+
+  it('完全なpage原文ではgenerated beat台帳だけをdetail・repair・audit判断から除外する', () => {
+    const context = buildContext();
+    context.pages = [context.pages[0]!, context.pages[8]!, context.pages[14]!];
+    context.episode.storyFullDraft = [
+      '1ページ目：帰港する船が灯台の光を航路の目印にして進む。',
+      '9ページ目：扉を押すが動かず、小石を取り除き、もう一度押してから中へ入る。',
+      '15ページ目：装置を十分に充電し、手を離しても灯りが続く。絵本を閉じて座る。',
+    ].join('\n');
+    const plan = buildBeatPlan();
+    plan.pages = [plan.pages[0]!, plan.pages[8]!, plan.pages[14]!];
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = [suggestion.pages[0]!, suggestion.pages[8]!, suggestion.pages[14]!]
+      .map((page) => ({ ...page, panels: page.panels.slice(0, 1) }));
+    const currentPageIds = new Set(context.pages.map((page) => page.pageId));
+
+    expect(hasCompletePageSourceMapping(context)).toBe(true);
+    const detailBefore = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds,
+      completedPages: [],
+      sourceOwnedPageContext: true,
+    });
+    const repairBefore = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds,
+      completedPages: [],
+      currentDraftPages: suggestion.pages,
+      repairIssues: [{
+        code: 'source_omission',
+        severity: 'error',
+        pageIds: [pageId(9)],
+        message: '再度押して入る動作がない。',
+        repairInstruction: '原文順に戻す。',
+      }],
+      sourceOwnedPageContext: true,
+    });
+    const auditBefore = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    });
+
+    for (const page of plan.pages) {
+      page.storyBeats = [`改変された生成beat-${page.pageNumber}`];
+      page.entryState = `改変entry-${page.pageNumber}`;
+      page.exitState = `改変exit-${page.pageNumber}`;
+      page.newInformation = [`改変情報-${page.pageNumber}`];
+      page.dialogueIntent = `改変会話-${page.pageNumber}`;
+      page.handoff = `改変handoff-${page.pageNumber}`;
+      page.textPlan = {
+        requiredTextBeats: [`改変text-${page.pageNumber}`],
+        visualOnlyBeats: [`改変visual-${page.pageNumber}`],
+        densityReason: `改変density-${page.pageNumber}`,
+      };
+    }
+
+    const detailAfter = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds,
+      completedPages: [],
+      sourceOwnedPageContext: true,
+    });
+    const auditAfter = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    });
+
+    expect(detailAfter).toBe(detailBefore);
+    expect(auditAfter).toEqual(auditBefore);
+    for (const value of [detailBefore, repairBefore, auditBefore.compilerBrief]) {
+      expect(value).toContain('帰港する船が灯台の光を航路の目印にして進む');
+      expect(value).toContain('小石を取り除き、もう一度押してから中へ入る');
+      expect(value).toContain('十分に充電し、手を離しても灯りが続く。絵本を閉じて座る');
+      expect(value).not.toContain('[GLOBAL EPISODE LEDGER]');
+      expect(value).not.toContain('[CURRENT CHUNK OWNERSHIP]');
+      expect(value).not.toContain('[FUTURE RESERVED BEATS]');
+    }
+    expect(repairBefore).toContain('[CURRENT CHUNK DRAFT TO REPAIR]');
+    expect(auditBefore.coverageCatalog.pages.every(
+      (page) => page.sources.map((source) => source.ref).join(',') === 'source',
+    )).toBe(true);
+  });
+
+  it('source-owned監査でも内部planが監査対象全ページを所有しない場合は拒否する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 2);
+    context.episode.storyFullDraft = '1ページ目：開始する。\n2ページ目：完了する。';
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 2).map((page) => ({
+      ...page,
+      panels: page.panels.slice(0, 1),
+    }));
+
+    expect(() => buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    })).toThrow('Episode audit is missing page ownership');
+  });
+
+  it('page原文対応が曖昧な場合はtrusted modeをOFFにしてlegacy台帳を維持する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 2);
+    context.episode.storyFullDraft = '1ページ目：一部だけ。';
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 2);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 2).map((page) => ({
+      ...page,
+      panels: page.panels.slice(0, 1),
+    }));
+
+    expect(hasCompletePageSourceMapping(context)).toBe(false);
+    const detail = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds: new Set([pageId(1)]),
+      completedPages: [],
+      sourceOwnedPageContext: false,
+    });
+    const audit = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: false,
+    });
+
+    expect(detail).toContain('[GLOBAL EPISODE LEDGER]');
+    expect(detail).toContain('[CURRENT CHUNK OWNERSHIP]');
+    expect(audit.compilerBrief).toContain('[GLOBAL EPISODE LEDGER]');
+    expect(audit.coverageCatalog.pages[0]?.sources.map((source) => source.ref))
+      .toEqual(['source', 'ledger']);
   });
 
   it('曖昧なpage見出しでは局所補足を全体OFFにして旧FULL STORY全文を保持する', () => {

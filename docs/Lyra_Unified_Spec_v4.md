@@ -248,6 +248,17 @@ budget after full source, complete dialogue and minimum panel evidence have been
 reserved; otherwise the supplement is omitted. This changes provider context,
 not persisted story fields, API contracts or the semantic soft-save policy.
 
+For that complete original-page mapping, detail and audit judgments omit the
+generated beat ledger, its text plan and entry/exit/handoff constraints. The
+original source, page identity and frame capacity, allowed scenes/entities,
+and actual compiled or repair-draft panels with their purpose/continuity remain.
+Service-derived internal ownership selects this mode; user text markers do not.
+The audit citation catalog contains only visible source references in this mode,
+never a hidden generated beat ledger. Omitting optional local excerpts for budget
+does not restore the generated beat ledger. Ambiguous mappings retain the legacy
+ledger path. Opt-in validated character-state transition ledgers and their saving
+workflow remain unchanged; this omission applies to generated story-beat context.
+
 The OpenAI episode auditor returns a bounded source-coverage sidecar in the same
 structured response: one entry per page, at most two high-risk facts per entry,
 at most two actual panel-field citations per fact, and exact quotes of 4–40

@@ -78,6 +78,7 @@ import {
   buildEpisodePlanAuditArtifacts,
   detectDeterministicContinuityIssues,
   fingerprintEpisodePlanningContext,
+  hasCompletePageSourceMapping,
   mergeEpisodePlanAuditIssues,
   validateEpisodeBeatPlanCoverage,
   validateEpisodeBeatPlanOutlineCoverage,
@@ -806,6 +807,9 @@ export class PageService implements PageServicePort {
     const stateLedger = stateTransitions === undefined
       ? undefined
       : formatEpisodeStateTransitionLedger(stateTransitions);
+    // Resolve this once from the complete episode context. Chunk contexts do not
+    // contain every source header and must never decide this trusted prompt mode.
+    const sourceOwnedPageContext = hasCompletePageSourceMapping(context);
     const beforeDetailPlanRetry = executionControl === undefined
       ? undefined
       : () => executionControl.checkpoint();
@@ -834,8 +838,10 @@ export class PageService implements PageServicePort {
           plan: compiledBeatPlan.plan,
           currentPageIds: new Set(pages.map((page) => page.pageId)),
           completedPages: compiledChunks.flatMap((result) => result.suggestion.pages),
+          sourceOwnedPageContext,
         }), stateLedger),
         beforeDetailPlanRetry,
+        sourceOwnedPageContext,
       );
       if (!compiled.compilerUsed) {
         return compiled;
@@ -858,6 +864,7 @@ export class PageService implements PageServicePort {
         language,
         progressReporter,
         stateLedger,
+        sourceOwnedPageContext,
       );
       return { ...reviewed, stateTransitions };
     }
@@ -871,6 +878,7 @@ export class PageService implements PageServicePort {
       1,
       2,
       stateLedger,
+      sourceOwnedPageContext,
     );
     let blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
     if (blockingIssues.length === 0) {
@@ -916,8 +924,10 @@ export class PageService implements PageServicePort {
           ),
           currentDraftPages,
           repairIssues: chunkIssues,
+          sourceOwnedPageContext,
         }), stateLedger),
         beforeDetailPlanRetry,
+        sourceOwnedPageContext,
       );
       if (!repaired.compilerUsed) {
         return repaired;
@@ -940,6 +950,7 @@ export class PageService implements PageServicePort {
       2,
       2,
       stateLedger,
+      sourceOwnedPageContext,
     );
     blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
     if (blockingIssues.length > 0) {
@@ -1124,6 +1135,7 @@ export class PageService implements PageServicePort {
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
     stateLedger?: string,
+    sourceOwnedPageContext = false,
   ): Promise<EpisodePlanExecutionResult> {
     const firstAudit = await this.auditEpisodePlanWithContinuityV3(
       context,
@@ -1134,12 +1146,14 @@ export class PageService implements PageServicePort {
       1,
       2,
       stateLedger,
+      sourceOwnedPageContext,
     );
     logEpisodePlanAuditSummary(context.episodeId, 1, firstAudit);
     if (!hasBlockingEpisodePlanAuditIssues(firstAudit.issues)) {
       if (stateLedger !== undefined) {
         const secondAudit = await this.auditEpisodePlanWithContinuityV3(
           context, plan, combined.suggestion, language, progressReporter, 2, 2, stateLedger,
+          sourceOwnedPageContext,
         );
         logEpisodePlanAuditSummary(context.episodeId, 2, secondAudit);
         if (!secondAudit.accepted || hasBlockingEpisodePlanAuditIssues(secondAudit.issues)) {
@@ -1192,6 +1206,7 @@ export class PageService implements PageServicePort {
         2,
         2,
         stateLedger,
+        sourceOwnedPageContext,
       );
     } catch (error) {
       if (!(error instanceof ConfigurationError)) {
@@ -1329,6 +1344,7 @@ export class PageService implements PageServicePort {
     auditPass: number,
     totalAuditPasses: number,
     stateLedger?: string,
+    sourceOwnedPageContext = false,
   ): Promise<EpisodePlanAudit> {
     console.info('episode_page_plan_continuity_v3_audit_started', {
       episodeId: context.episodeId,
@@ -1346,6 +1362,7 @@ export class PageService implements PageServicePort {
       plan,
       suggestion,
       language,
+      sourceOwnedPageContext,
     });
     const compiledAudit = await this.episodePlanAuditCompiler!.auditPlan({
       compilerBrief: appendEpisodeStateLedger(
@@ -1355,6 +1372,7 @@ export class PageService implements PageServicePort {
       language,
       pageIds: context.pages.map((page) => page.pageId),
       coverageCatalog: auditArtifacts.coverageCatalog,
+      sourceOwnedPageContext,
       beforeRetry: async () => {
         await reportEpisodePlanProgress(progressReporter, {
           stage: 'auditing_episode',
@@ -1429,6 +1447,7 @@ export class PageService implements PageServicePort {
     language: AppLanguage,
     continuitySupplement?: string,
     beforeRetry?: () => Promise<void>,
+    sourceOwnedPageContext = false,
   ): Promise<EpisodePlanExecutionResult> {
     const baseCompilerBrief = buildEpisodePlanCompilerBrief(context, language);
     const compilerBrief = continuitySupplement === undefined
@@ -1440,6 +1459,7 @@ export class PageService implements PageServicePort {
       const compiled = await this.episodePagePlanCompiler!.compilePlan({
         compilerBrief,
         language,
+        ...(sourceOwnedPageContext ? { sourceOwnedPageContext: true } : {}),
         ...(beforeRetry === undefined ? {} : { beforeRetry }),
       });
       return {

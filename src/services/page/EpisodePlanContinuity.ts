@@ -305,6 +305,12 @@ function buildPageSourceExcerpts(
   return excerpts.size === orderedPages.length ? excerpts : null;
 }
 
+export function hasCompletePageSourceMapping(
+  context: EpisodePagePlanContext,
+): boolean {
+  return buildPageSourceExcerpts(context) !== null;
+}
+
 function formatOwnedOriginalSourceSection(
   title: string,
   pages: ReadonlyArray<{ pageId: string; pageNumber: number }>,
@@ -414,6 +420,7 @@ export function buildEpisodeDetailContinuitySupplement(input: {
   completedPages: EpisodePagePlanPageSuggestion[];
   currentDraftPages?: EpisodePagePlanPageSuggestion[];
   repairIssues?: EpisodePlanAuditIssue[];
+  sourceOwnedPageContext?: boolean;
 }): string {
   const orderedPlan = [...input.plan.pages].sort(compareBeatPlanPages);
   const currentPages = orderedPlan.filter((page) => input.currentPageIds.has(page.pageId));
@@ -444,10 +451,18 @@ export function buildEpisodeDetailContinuitySupplement(input: {
   const futurePages = orderedPlan.filter(
     (page) => !input.currentPageIds.has(page.pageId) && !completedPageIds.has(page.pageId),
   );
+  const pageSourceExcerpts = buildPageSourceExcerpts(input.context);
+  const sourceOwnedPageContext = input.sourceOwnedPageContext === true;
+  if (sourceOwnedPageContext && pageSourceExcerpts === null) {
+    throw new ConfigurationError('Source-owned page context requires a complete original source mapping');
+  }
+  const currentSourcePages = sourceOwnedPageContext
+    ? input.context.pages.filter((page) => input.currentPageIds.has(page.pageId))
+    : currentPages;
   const currentSourceSection = formatOwnedOriginalSourceSection(
     'CURRENT CHUNK ORIGINAL SOURCE',
-    currentPages,
-    buildPageSourceExcerpts(input.context),
+    currentSourcePages,
+    pageSourceExcerpts,
   );
   const repairSection =
     input.repairIssues === undefined || input.repairIssues.length === 0
@@ -475,6 +490,37 @@ export function buildEpisodeDetailContinuitySupplement(input: {
             .map((page) => formatRepairDraftPage(page, currentDraftPanelBudget, entityLabels)),
         ];
 
+  const completedPagesSection = [
+    '',
+    '[ALREADY COMPILED PAGES]',
+    ...(input.completedPages.length > 0
+      ? [...input.completedPages]
+          .sort(compareSuggestionPages)
+          .map((page) => formatCompiledPageSummary(
+            page,
+            completedPanelBudget,
+            entityLabels,
+            sourceOwnedPageContext,
+          ))
+      : ['(none)']),
+    ...currentDraftSection,
+  ];
+
+  if (sourceOwnedPageContext) {
+    return [
+      ...currentSourceSection,
+      ...completedPagesSection,
+      '',
+      '[CONTINUITY RULES]',
+      'Use CURRENT CHUNK ORIGINAL SOURCE as the complete page ownership contract for these pages.',
+      'Preserve every authored prerequisite, action, immediate result, repeated or retry action, completion boundary, decision basis, negative or continuing constraint, final viewpoint, and explicit display line in the matching original page excerpt.',
+      'Do not move facts from any other page into the current chunk.',
+      'Do not repeat dialogue, discoveries, actions, reactions, or visual situations from ALREADY COMPILED PAGES.',
+      'During repair, preserve every unaffected panel and field from CURRENT CHUNK DRAFT TO REPAIR.',
+      ...repairSection,
+    ].join('\n');
+  }
+
   return [
     '',
     '[GLOBAL EPISODE LEDGER]',
@@ -483,14 +529,7 @@ export function buildEpisodeDetailContinuitySupplement(input: {
     '',
     '[CURRENT CHUNK OWNERSHIP]',
     ...currentPages.map(formatOwnedBeatPlanPage),
-    '',
-    '[ALREADY COMPILED PAGES]',
-    ...(input.completedPages.length > 0
-      ? [...input.completedPages]
-          .sort(compareSuggestionPages)
-          .map((page) => formatCompiledPageSummary(page, completedPanelBudget, entityLabels))
-      : ['(none)']),
-    ...currentDraftSection,
+    ...completedPagesSection,
     '',
     '[FUTURE RESERVED BEATS]',
     ...(futurePages.length > 0
@@ -524,6 +563,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
   plan: EpisodeBeatPlan;
   suggestion: EpisodePagePlanSuggestion;
   language: AppLanguage;
+  sourceOwnedPageContext?: boolean;
 }): {
   compilerBrief: string;
   coverageCatalog: EpisodePlanAuditCoverageCatalog;
@@ -531,6 +571,11 @@ export function buildEpisodePlanAuditArtifacts(input: {
   const pages = [...input.suggestion.pages].sort(compareSuggestionPages);
   const panelCount = pages.reduce((count, page) => count + page.panels.length, 0);
   const entityLabels = buildEntityLabelLookup(input.context);
+  const sourceOwnedPageContext = input.sourceOwnedPageContext === true;
+  const pageSourceExcerpts = buildPageSourceExcerpts(input.context);
+  if (sourceOwnedPageContext && pageSourceExcerpts === null) {
+    throw new ConfigurationError('Source-owned page context requires a complete original source mapping');
+  }
   const planByPageId = new Map(input.plan.pages.map((page) => [page.pageId, page] as const));
   const localizedPageLedgers = new Map<string, string>();
   for (const page of pages) {
@@ -538,13 +583,23 @@ export function buildEpisodePlanAuditArtifacts(input: {
     if (ownedPlan === undefined) {
       throw new ConfigurationError('Episode audit is missing page ownership');
     }
-    localizedPageLedgers.set(page.pageId, formatAuditOwnedSourceLedger(ownedPlan));
+    if (!sourceOwnedPageContext) {
+      localizedPageLedgers.set(page.pageId, formatAuditOwnedSourceLedger(ownedPlan));
+    }
   }
-  const pageSourceExcerpts = buildPageSourceExcerpts(input.context);
   const deterministicFindingLines = formatDeterministicAuditFindingLines(
     detectDeterministicContinuityIssues(input.suggestion),
   );
-  const before = [
+  const before = sourceOwnedPageContext ? [
+    '[AUDIT PURPOSE]',
+    'Audit the complete compiled episode before anything is saved.',
+    `Output language: ${input.language === 'en' ? 'English' : 'Japanese'}`,
+    '',
+    ...buildEpisodeBeatPlanSourceSections(input.context),
+    '',
+    '[ALL PAGES]',
+    ...formatEpisodeBeatPlanPageReferences(input.context.pages),
+  ] : [
     '[AUDIT PURPOSE]',
     'Audit the complete compiled episode before anything is saved.',
     `Output language: ${input.language === 'en' ? 'English' : 'Japanese'}`,
@@ -557,7 +612,9 @@ export function buildEpisodePlanAuditArtifacts(input: {
   const after = [
     '',
     '[TEXT DISTRIBUTION]',
-    'Counts include every dialogue entry. Compare with text_plan and saved frame area; uneven counts alone are not a defect.',
+    sourceOwnedPageContext
+      ? 'Counts include every dialogue entry. Compare with the original source and saved frame area; uneven counts alone are not a defect.'
+      : 'Counts include every dialogue entry. Compare with text_plan and saved frame area; uneven counts alone are not a defect.',
     ...formatTextDistribution(input.suggestion, input.context),
     '',
     '[COMPLETE DIALOGUE]',
@@ -580,16 +637,24 @@ export function buildEpisodePlanAuditArtifacts(input: {
     ...deterministicFindingLines,
     '',
     '[AUDIT CONTRACT]',
-    'Check the entire draft against the source and ledger, not each page in isolation.',
-    'When a PAGE-LOCAL ORIGINAL SOURCE block is present, compare that exact excerpt with the immediately following page. The generated ledger allocates page ownership but never shortens, replaces, or overrides explicit original source.',
+    sourceOwnedPageContext
+      ? 'Check the entire draft against the original source, not each page in isolation.'
+      : 'Check the entire draft against the source and ledger, not each page in isolation.',
+    sourceOwnedPageContext
+      ? 'Compare every PAGE-LOCAL ORIGINAL SOURCE block with the immediately following page. That exact excerpt is the complete page ownership contract.'
+      : 'When a PAGE-LOCAL ORIGINAL SOURCE block is present, compare that exact excerpt with the immediately following page. The generated ledger allocates page ownership but never shortens, replaces, or overrides explicit original source.',
     'Return source_coverage for every page with one or two highest-risk source facts. Prioritize prerequisites, repeated actions such as again/retry, cause-action-result chains, and final closure actions.',
     'If the source assigns a decision basis, completion boundary, negative or continuing constraint, final viewpoint, or concrete pose that is absent or contradicted in panel fields, reserve a check for it before sampling dialogue or an already-obvious present fact.',
     'source_ref=source ranges only over SOURCE DATA, including FULL STORY DRAFT. Copy a contiguous literal from that range only.',
-    'source_ref=ledger ranges only over that page\'s GLOBAL EPISODE LEDGER row. Never cite COMPILED EPISODE DRAFT as a source.',
+    ...(sourceOwnedPageContext
+      ? ['Never cite COMPILED EPISODE DRAFT, page purpose, or continuity metadata as a source.']
+      : ['source_ref=ledger ranges only over that page\'s GLOBAL EPISODE LEDGER row. Never cite COMPILED EPISODE DRAFT as a source.']),
     'Copy each source_quote and output quote as one contiguous 4 to 40 character substring exactly as displayed under its named ref. Never summarize, paraphrase, translate, concatenate separated spans, or invent an ellipsis.',
     'Positive source example: if source_ref=source contains "灯台の光が船を導く", quote "光が船を導く". Negative examples are "光は船の目印" and "灯台の光...導く".',
     'Positive output example: if output_ref=p1.s contains "枝の先で地図の端を寄せる", quote "地図の端を寄せる". Negative examples are "枝の先で地図を寄せる" and "地図の端を...寄せる".',
-    'Use output_ref=p{panel_order}.s/.b/.c/.x/.n/.e/.d{dialogue_index}: s=situation, b=background, c=composition, x=custom composition, n=notes, e=entities, and dN=the Nth COMPLETE DIALOGUE line. Page purpose, continuity, entry/exit, handoff, and ledger text are never output evidence.',
+    sourceOwnedPageContext
+      ? 'Use output_ref=p{panel_order}.s/.b/.c/.x/.n/.e/.d{dialogue_index}: s=situation, b=background, c=composition, x=custom composition, n=notes, e=entities, and dN=the Nth COMPLETE DIALOGUE line. Page purpose, continuity, and other metadata are never output evidence.'
+      : 'Use output_ref=p{panel_order}.s/.b/.c/.x/.n/.e/.d{dialogue_index}: s=situation, b=background, c=composition, x=custom composition, n=notes, e=entities, and dN=the Nth COMPLETE DIALOGUE line. Page purpose, continuity, entry/exit, handoff, and ledger text are never output evidence.',
     'A trailing … outside a closing JSON quote marks a shortened visual field and is not citable output text; quote only the literal inside the JSON string. Literal ... inside the JSON string remains actual field text.',
     'A displayed field shorter than 4 characters remains actual panel content and is marked not citable. Do not pad it with brackets or punctuation, and do not report the fact missing merely because that field cannot supply a 4-character quote.',
     'For status=present, cite one or two exact output quotes of 4 to 40 characters. For status=missing, cite no output, return source_omission or ongoing_action_dropped, and link an actual same-page panel repair that restores visible content.',
@@ -599,7 +664,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
   ];
   // Reserve exact dialogue and source/ownership first. Visual excerpts may be
   // compacted, but losing speakers or the end of a conversation is not safe.
-  const localizedLedgerChars = Array.from(localizedPageLedgers.values()).reduce(
+  const localizedLedgerChars = sourceOwnedPageContext ? 0 : Array.from(localizedPageLedgers.values()).reduce(
     (total, ledger) => total + ledger.length + 1,
     0,
   );
@@ -640,7 +705,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
     ? baseRemaining - localizedSourceChars
     : baseRemaining;
   const remainingWithLocalizedLedgers = remainingAfterLocalizedSources - localizedLedgerChars;
-  const includeLocalizedLedgers =
+  const includeLocalizedLedgers = !sourceOwnedPageContext &&
     remainingWithLocalizedLedgers >= panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
     && remainingWithLocalizedLedgers >= minimumPanelSummaryChars;
   const remaining = includeLocalizedLedgers
@@ -672,10 +737,12 @@ export function buildEpisodePlanAuditArtifacts(input: {
         }
         return {
           pageId: renderedPage.pageId,
-          sources: [
-            { ref: 'source', text: sourceText },
-            { ref: 'ledger', text: formatBeatPlanPage(ownedPlan, LEDGER_FIELD_MAX_CHARS) },
-          ],
+          sources: sourceOwnedPageContext
+            ? [{ ref: 'source', text: sourceText }]
+            : [
+                { ref: 'source', text: sourceText },
+                { ref: 'ledger', text: formatBeatPlanPage(ownedPlan, LEDGER_FIELD_MAX_CHARS) },
+              ],
           outputs: renderedPage.outputs,
         };
       }),
@@ -934,6 +1001,7 @@ function formatCompiledPageSummary(
   page: EpisodePagePlanPageSuggestion,
   panelBudget: number,
   entityLabels: ReadonlyMap<string, string>,
+  includeContinuity = false,
 ): string {
   const panelSummary = [...page.panels]
     .sort((left, right) => left.order - right.order)
@@ -952,7 +1020,9 @@ function formatCompiledPageSummary(
     })
     .join(' || ');
   const header = truncatePromptText(
-    `Page ${page.pageNumber} (${page.pageId}): purpose=${page.pagePurpose ?? 'none'}`,
+    includeContinuity
+      ? `Page ${page.pageNumber} (${page.pageId}): purpose=${page.pagePurpose ?? 'none'} | continuity=${page.continuityNote ?? 'none'}`
+      : `Page ${page.pageNumber} (${page.pageId}): purpose=${page.pagePurpose ?? 'none'}`,
     PAGE_HEADER_MAX_CHARS,
   );
   return `${header} | ${panelSummary}`;
