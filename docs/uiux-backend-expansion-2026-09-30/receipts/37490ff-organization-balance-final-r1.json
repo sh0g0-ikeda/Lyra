@@ -1,0 +1,152 @@
+{
+  "sourceCommit": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
+  "observedAt": "2026-10-05T14:09:30.845Z",
+  "productionReady": false,
+  "localRequiredGatesCompleted": true,
+  "productionChanged": false,
+  "web": {
+    "file": "37490ff-frontend-r3-receipt.json",
+    "sha256": "85aaeb6dc9b1d3d9cdb14fcda6c14f6a3b20817f8c741bf64258cc1665d4b7d0",
+    "tests": 83,
+    "typecheck": true,
+    "lintWarnings": 0,
+    "build": true
+  },
+  "webSmoke": {
+    "file": "37490ff-web-smoke-r1-receipt.json",
+    "sha256": "50ceec262f9464ee38b5963ddebfbfd832c7ce76a7e5f4864cc2eb17fbced246"
+  },
+  "offModePersonal": {
+    "file": "37490ff-organization-off-terminal-r1-receipt.json",
+    "sha256": "8defe32c12b2abd5503555b7100e4f3870211ea8cfb9f8a89eddc0014a47c9b4",
+    "tests": 1
+  },
+  "unchangedModules": {
+    "file": "37490ff-unchanged-modules-r2.json",
+    "sha256": "e8382286a40094e8c3f462c22bf83a7eca294a7a1619360f3f9f49c20d4dac76",
+    "executedSourceCommit": "d02535c2567540634b9c9c280405cae1c70fbfde",
+    "backendNodeTests": 3545,
+    "backendBunTests": 3545,
+    "mobileTests": 1042,
+    "retested": false
+  },
+  "tdd": {
+    "red": {
+      "file": "organization-balance-precommit-r4-red-receipt.json",
+      "sha256": "3264ba87089dfc9d5f7f2fff6976ba886c8da6a1c6f2b5b9571f8b2313e6cc61"
+    },
+    "green": {
+      "file": "organization-balance-precommit-r5-green-receipt.json",
+      "sha256": "f5b4c188f01f0383b0595c31e2cfcab115b24722b9f3d439a4b600d5e5170b04"
+    },
+    "priorImplementationRed": "organization-balance-precommit-r2-red-receipt.json",
+    "finalTestAdjustments": "OFF guards and removal of assumptions about ordinary billing scope-remount reads; assertions for delayed response unchanged"
+  },
+  "runtimeHelper": {
+    "file": "37490ff-runtime-helper-tests-r1-receipt.json",
+    "sha256": "42ffe6eb6451b5a623138cfc2a8c7c0632dfe85e5bee7d896230f35b95151ed7",
+    "tests": 16
+  },
+  "artifact": {
+    "file": "stage-oci-validation-overlay-37490ff-r3-receipt.json",
+    "sha256": "9528edd716f2513185bae7d2d7eab8452af282f3a96cbd8efdfe0a2095767010",
+    "imageDigest": "sha256:30570be3c364fc74d31c5f8d11033c0563c4b4c349ca229b1e4badf07efd5244",
+    "compiledBackendFiles": 429,
+    "webFiles": 28,
+    "secretsIncluded": false
+  },
+  "stagingDeployment": {
+    "status": "blocked",
+    "file": "37490ff-publish-blocked-r1.json",
+    "sha256": "8bcb97b91fdf4d79cd8f0556c0d6751d4b6bfeb5ae064375efec5998d618f29e",
+    "latestCandidateDeployed": false,
+    "deployedSource": "c3431926b5d2222aa50b6bf225066042d3f6be46"
+  },
+  "currentStagingReadonly": {
+    "runtime": {
+      "file": "oci-runtime-image-c343192-r2-status-2026-10-05T14-02-34-871Z.json",
+      "sha256": "891262816cfb662f1a1a4cf0bba08abf20f28e0e54bc12d0d3df8c6631343f75"
+    },
+    "qa": {
+      "file": "37490ff-current-stage-readonly-qa-r1.json",
+      "sha256": "57c7df9aec335bb18d95b296a65205be7abe9b5d664e4599eca847d3648c4c9d"
+    },
+    "latestCandidateAcceptancePassed": false
+  },
+  "originalProtection": {
+    "checkedAt": "2026-10-05T14:09:29.834Z",
+    "baselineHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "currentHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "baselinePaths": 28,
+    "changedBaselinePaths": [],
+    "unrelatedAdditionalPath": "store-assets/google-play",
+    "discardedChanges": false
+  },
+  "review": {
+    "agent": "/root/release_local_completion_review",
+    "role": "harness_sol",
+    "designAndStaticReview": "approved",
+    "independentTestExecution": false,
+    "reason": "npm unavailable in reviewer shell; parent runner evidence retained",
+    "terraFallback": "existing agent followup failed with agent thread limit; parent owned bounded edits"
+  },
+  "apk": {
+    "source": "472c50813b42d0fdd3cb0333d78f0ef034829227",
+    "mobileAndPackagesTreeIdentical": true,
+    "hashVerified": true,
+    "physicalDeviceVerified": false
+  },
+  "failedAttempts": [
+    "r1 RED: org3 failures were real, personal numeric sidebar/scope-option assertions were harness errors",
+    "r3 GREEN: initial/remount personal request count assumption failed before releasing held response",
+    "r4 GREEN: post-org-revisit personal endpoint read is existing unconditional billing-query remount behavior; pre-revisit cross-scope assertions passed",
+    "runtime prepare rejected quoted Japanese Git paths until core.quotepath=false; no cloud request",
+    "current-stage status first lacked operation-file and stopped before cloud calls",
+    "CUA body PageDown was unsupported; no data change"
+  ],
+  "unresolved": [
+    {
+      "id": "new-staging-publish",
+      "status": "automatic-approval-review-rejected",
+      "required": "explicit approval of the 37490ff payload to the existing named private ECR"
+    },
+    {
+      "id": "legacyDB",
+      "status": "design-and-compatibility-blocked",
+      "required": "first-phase design must preserve old workflows; old deletion owner split OR later durable protocol/schema needs explicit decision and mixed-writer/rollback proof",
+      "sources": [
+        "src/lib/runtimeGuards.ts:171",
+        "src/app.ts:862",
+        "src/infrastructure/account/AccountDeletionRuntime.ts:17",
+        "src/legacy/account/LegacyAccountDeletionRepository.ts:139",
+        "src/legacy/account/LegacyAccountDeletionRepository.ts:258",
+        "src/legacy/account/LegacyAccountDeletionRepository.ts:320"
+      ]
+    },
+    {
+      "id": "M2",
+      "status": "previous-auto-review-refusal-retained",
+      "required": "approved representative production data copy/restore; no bypass performed"
+    },
+    {
+      "id": "P9",
+      "status": "known-quality-failure-and-previous-provider-refusal-retained",
+      "required": "original long-story provider acceptance; gated coverage candidate is not a semantic-quality proof"
+    },
+    {
+      "id": "external-and-device",
+      "status": "unverified",
+      "required": "Google/linking/billing/store/old and new physical APK/S3 lifecycle acceptance; disabled gates do not imply these passed"
+    },
+    {
+      "id": "operations",
+      "status": "unverified",
+      "required": "shutdown/cleanup and one-week fixed-cost/expiry proof; no new IAM installer bypass"
+    },
+    {
+      "id": "public-PR",
+      "status": "previous-auto-review-refusal-retained",
+      "required": "local review packet only; public GitHub unchanged"
+    }
+  ]
+}
