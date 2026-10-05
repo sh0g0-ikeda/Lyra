@@ -15,7 +15,7 @@ Endpoint count: 151
 | `/api/admin/organizations/:organizationId/contract` | PATCH | Operator | Strict JSON | `adminOrganizationContractResponseSchema` | Complete collection | `src/routes/adminOrganizations.ts` |
 | `/api/admin/organizations/:organizationId/credits/grants` | POST | Operator | Strict JSON | `organizationCreditBalanceResponseSchema` | Complete collection | `src/routes/adminOrganizations.ts` |
 | `/api/ai-content-reports` | POST | Authenticated | Strict JSON | `aiContentReportResponseSchema` | Complete collection | `src/routes/aiContentReports.ts` |
-| `/api/auth/capabilities` | GET | Authenticated | Strict JSON | `googleAuthCapabilitiesSchema` | Complete collection | `src/routes/googleIdentityLinks.ts` |
+| `/api/auth/capabilities` | GET | Authenticated | Strict JSON | `googleAuthCapabilitiesSchema`, `googleAuthCapabilitiesV2Schema` | Complete collection | `src/routes/googleIdentityLinks.ts` |
 | `/api/auth/identity-links/google/:id` | GET | Authenticated | Strict JSON | `googleLinkStatusSchema` | Complete collection | `src/routes/googleIdentityLinks.ts` |
 | `/api/auth/identity-links/google/callback` | GET | Authenticated | Redirect | Single-use state-bound callback; fixed return URI with opaque receipt ID only | Complete collection | `src/routes/googleIdentityLinks.ts` |
 | `/api/auth/identity-links/google/start` | POST | Authenticated | Strict JSON | `googleLinkStartSchema` | Complete collection | `src/routes/googleIdentityLinks.ts` |

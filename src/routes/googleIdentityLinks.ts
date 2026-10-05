@@ -1,21 +1,36 @@
 import { Hono, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
-import { ValidationError } from '../domain/errors/index.js';
+import { AppError, ValidationError } from '../domain/errors/index.js';
 import type { GoogleIdentityLinkServicePort } from '../services/auth/GoogleIdentityLinkService.js';
 import type { AppEnv } from '../types/app.js';
-import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema } from '../../packages/api-contract/src/mobileApiSchemas.js';
+import { googleAuthCapabilitiesSchema, googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 export function createGoogleIdentityLinkRoutes(dependencies: {
     service: GoogleIdentityLinkServicePort;
     signInEnabled: boolean;
+    iosEnabled?: boolean;
     authMiddleware: MiddlewareHandler<AppEnv>;
     rateLimitMiddleware: MiddlewareHandler<AppEnv>;
     publicRateLimitMiddleware: MiddlewareHandler<AppEnv>;
 }): Hono<AppEnv> {
     const app = new Hono<AppEnv>();
     app.use('*', async (c, next) => { c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer'); await next(); });
-    app.get('/capabilities', dependencies.publicRateLimitMiddleware, (c) => c.json(assertMobileResponseContract(googleAuthCapabilitiesSchema, { google_sign_in: dependencies.signInEnabled && dependencies.service.enabled, google_linking: dependencies.service.enabled, google_ios: false })));
+    app.get('/capabilities', dependencies.publicRateLimitMiddleware, (c) => {
+        const versions = c.req.queries('version') ?? [];
+        const googleSignIn = dependencies.signInEnabled && dependencies.service.enabled;
+        const googleLinking = dependencies.service.enabled;
+        if (versions.length === 0)
+            return c.json(assertMobileResponseContract(googleAuthCapabilitiesSchema, { google_sign_in: googleSignIn, google_linking: googleLinking, google_ios: false }));
+        if (versions.length !== 1 || versions[0] !== '2')
+            throw new AppError('UNSUPPORTED_CAPABILITY_VERSION', 'Unsupported authentication capability version', 400);
+        return c.json(assertMobileResponseContract(googleAuthCapabilitiesV2Schema, {
+            version: 2,
+            google_sign_in: googleSignIn,
+            google_linking: googleLinking,
+            google_ios: dependencies.iosEnabled === true && googleSignIn && googleLinking,
+        }));
+    });
     app.get('/identity-links/google/callback', dependencies.publicRateLimitMiddleware, async (c) => {
         const state = c.req.query('state');
         if (!state)

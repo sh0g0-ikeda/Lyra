@@ -4,6 +4,16 @@ import { parseEnv } from '../../../src/lib/env.js';
 const originalNodeEnv = process.env.NODE_ENV;
 
 describe('parseEnv', () => {
+  it('Google iOS設定は明示しない場合にOFFとなり公開設定だけを解釈する', () => {
+    const defaults = parseEnv({});
+    expect(defaults.GOOGLE_IOS_ENABLED).toBe(false);
+    expect(defaults.GOOGLE_IOS_POLICY_REVIEWED).toBe(false);
+    expect(defaults.GOOGLE_IOS_COGNITO_CLIENT_ID).toBeUndefined();
+    const enabled = parseEnv({ GOOGLE_IOS_ENABLED: 'true', GOOGLE_IOS_POLICY_REVIEWED: 'true', GOOGLE_IOS_COGNITO_CLIENT_ID: 'ios-client' });
+    expect(enabled.GOOGLE_IOS_ENABLED).toBe(true);
+    expect(enabled.GOOGLE_IOS_POLICY_REVIEWED).toBe(true);
+    expect(enabled.GOOGLE_IOS_COGNITO_CLIENT_ID).toBe('ios-client');
+  });
   it('persistence profile は未指定なら canonical を使い、未知の profile を拒否する', () => {
     expect(parseEnv({}).LYRA_PERSISTENCE_PROFILE).toBe('canonical');
     expect(() => parseEnv({ LYRA_PERSISTENCE_PROFILE: 'legacy_unknown' })).toThrow();

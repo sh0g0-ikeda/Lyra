@@ -1,13 +1,13 @@
 import { z } from 'zod';
-import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema } from '../../../../packages/api-contract/src/mobileApiSchemas.js';
-export { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema };
-export type GoogleAuthCapabilities = z.infer<typeof googleAuthCapabilitiesSchema>;
+import { googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema } from '../../../../packages/api-contract/src/mobileApiSchemas.js';
+export { googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema };
+export type GoogleAuthCapabilities = z.infer<typeof googleAuthCapabilitiesV2Schema>;
 export type GoogleLinkStart = z.infer<typeof googleLinkStartSchema>;
 export type GoogleLinkStatus = z.infer<typeof googleLinkStatusSchema>;
 export const googleWebReturnPath = '/auth/identity-link';
 export function googleAllowedOnWeb(capabilities: GoogleAuthCapabilities | undefined, capability: 'google_sign_in' | 'google_linking', platform: string, maxTouchPoints: number): boolean {
   const ios = /iPad|iPhone|iPod/u.test(platform) || (/Mac/u.test(platform) && maxTouchPoints > 1);
-  return !ios && capabilities?.[capability] === true;
+  return capabilities?.[capability] === true && (!ios || capabilities.google_ios);
 }
 export function validateGoogleAuthorizationUrl(raw: string): string {
   const url = new URL(raw);

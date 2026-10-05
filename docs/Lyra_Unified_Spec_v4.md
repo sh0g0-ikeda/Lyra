@@ -69,6 +69,16 @@ never changes that subject solely because an email matches. New user and signup
 credit grant share one transaction. Google linking has a separate, recent native
 authentication proof and dedicated Google OAuth challenge; ambiguous provider
 results are reconciled by reads, never by blindly repeating the link mutation.
+The unversioned authentication capability response retains the older clients'
+literal `google_ios:false` contract. An explicit `?version=2` response adds
+`version:2` and a boolean iOS capability; unknown or duplicate versions are
+rejected. New clients accept only the validated v2 response and hide Google on
+unconfirmed configuration. iOS activation requires a reviewed login policy and
+a dedicated allowed Cognito app client/provider policy. It defaults to OFF.
+Mobile identity-link returns use a fixed environment-specific scheme:
+`lyra-mobile://auth/identity-link` for production and
+`lyra-mobile-staging://auth/identity-link` for isolated staging. A client
+cannot choose the return URL, and a browser return never proves linking success.
 
 ## 5. Persistence and tenancy
 

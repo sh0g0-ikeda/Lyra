@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, NotFoundError } from '../../domain/errors/index.js';
-import { createGoogleLinkMaterial, decryptGoogleLinkMaterial, encryptGoogleLinkMaterial, googleLinkAuthorizationUrl, googleLinkHash, secureHashEquals, GOOGLE_LINK_NATIVE_RETURN_URI, GOOGLE_LINK_RECENT_AUTH_SECONDS, GOOGLE_LINK_TTL_MS } from '../../domain/auth/GoogleLinkProtocol.js';
+import { createGoogleLinkMaterial, decryptGoogleLinkMaterial, encryptGoogleLinkMaterial, googleLinkAuthorizationUrl, googleLinkHash, secureHashEquals, GOOGLE_LINK_RECENT_AUTH_SECONDS, GOOGLE_LINK_TTL_MS } from '../../domain/auth/GoogleLinkProtocol.js';
 import type { GoogleLinkChallenge, GoogleLinkReceipt, GoogleLinkStartResponse, VerifiedCognitoIdentity } from '../../domain/types/googleIdentityLink.js';
 import type { AuthenticatedUser } from '../../domain/types/user.js';
 import type { GoogleIdentityLinkRepository } from '../../repositories/GoogleIdentityLinkRepository.js';
@@ -8,6 +8,7 @@ export interface GoogleLinkConfig {
     clientId: string;
     redirectUri: string;
     webReturnUri: string;
+    nativeReturnUri: string;
     encryptionSecret: string;
 }
 export interface NativeCognitoIdentity {
@@ -159,7 +160,7 @@ export class GoogleIdentityLinkService implements GoogleIdentityLinkServicePort 
                 ? googleLinkAuthorizationUrl({ clientId: config.clientId, redirectUri: config.redirectUri, material: decryptGoogleLinkMaterial(row.exchangeMaterial, config.encryptionSecret, row.id) }) : null };
     }
     private returnUri(row: GoogleLinkChallenge, config: GoogleLinkConfig): string {
-        const url = new URL(row.platform === 'mobile' ? GOOGLE_LINK_NATIVE_RETURN_URI : config.webReturnUri);
+        const url = new URL(row.platform === 'mobile' ? config.nativeReturnUri : config.webReturnUri);
         url.searchParams.set('challenge_id', row.id);
         return url.toString();
     }

@@ -1,4 +1,4 @@
-import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStatus } from './googleIdentityLink';
+import { googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStatus } from './googleIdentityLink';
 import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
 import { pageImageDeliveryPath, entityReferenceImageDeliveryPath, entityReferenceCandidateDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
 import type {
@@ -84,7 +84,7 @@ export class LyraApiClient {
   }
 
   public async getGoogleAuthCapabilities(): Promise<GoogleAuthCapabilities> {
-    return googleAuthCapabilitiesSchema.parse(await this.request('/api/auth/capabilities'));
+    return googleAuthCapabilitiesV2Schema.parse(await this.request('/api/auth/capabilities?version=2'));
   }
 
   public async startGoogleIdentityLink(body: { platform: 'mobile' | 'web'; request_key: string }): Promise<GoogleLinkStart> {

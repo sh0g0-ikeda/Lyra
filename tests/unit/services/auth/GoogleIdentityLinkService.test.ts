@@ -6,7 +6,7 @@ const user = { id: '11111111-1111-4111-8111-111111111111', supabaseId: 'native-s
 const now = new Date('2026-10-01T13:00:00Z');
 const proof: VerifiedCognitoIdentity = { subject: user.supabaseId, username: 'native-user', email: user.email, authTime: now.getTime() / 1000, tokenFingerprint: 'token-hash' };
 const key = '22222222-2222-4222-8222-222222222222';
-function fixture(enabled = true) {
+function fixture(enabled = true, nativeReturnUri = 'lyra-mobile://auth/identity-link') {
     const rows = new Map<string, GoogleLinkChallenge>();
     const reserveIdentity = vi.fn<GoogleIdentityLinkRepository['reserveIdentity']>(async (id, hash) => { const row = rows.get(id)!; row.providerSubjectHash = hash; row.exchangeMaterial = null; });
     const repo: GoogleIdentityLinkRepository = {
@@ -23,10 +23,18 @@ function fixture(enabled = true) {
     const native = { subject: proof.subject, email: user.email, enabled: true, status: 'CONFIRMED', googleSubjects: [] as string[] };
     const gateway = { getNativeIdentity: vi.fn(async () => native), linkGoogleIdentity: vi.fn(async () => { }), exchangeCode: vi.fn(async () => ({ subject: 'google-sub', email: user.email })) };
     let clock = now;
-    const service = new GoogleIdentityLinkService({ repository: repo, gateway, config: enabled ? { clientId: 'dedicated-link-client', redirectUri: 'https://api.example.com/api/auth/identity-links/google/callback', webReturnUri: 'https://app.example.com/auth/identity-link', encryptionSecret: 's'.repeat(40) } : null, now: () => clock });
+    const service = new GoogleIdentityLinkService({ repository: repo, gateway, config: enabled ? { clientId: 'dedicated-link-client', redirectUri: 'https://api.example.com/api/auth/identity-links/google/callback', webReturnUri: 'https://app.example.com/auth/identity-link', nativeReturnUri, encryptionSecret: 's'.repeat(40) } : null, now: () => clock });
     return { service, repo, reserveIdentity, gateway, native, rows, setClock: (d: Date) => { clock = d; } };
 }
 describe('GoogleIdentityLinkService', () => {
+    it('検証APKで連携を取り消した場合に公開アプリではなく検証アプリへ戻る', async () => {
+        const f = fixture(true, 'lyra-mobile-staging://auth/identity-link');
+        const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key });
+        const state = new URL(started.authorization_url!).searchParams.get('state')!;
+        expect(await f.service.callback({ state, error: 'access_denied' })).toBe('lyra-mobile-staging://auth/identity-link?challenge_id=' + started.challenge_id);
+        expect(f.gateway.exchangeCode).not.toHaveBeenCalled();
+        expect(f.gateway.linkGoogleIdentity).not.toHaveBeenCalled();
+    });
     it('disabled mode never queries private data or providers', async () => { const f = fixture(false); await expect(f.service.start(user, proof, { platform: 'mobile', request_key: key })).rejects.toMatchObject({ code: 'GOOGLE_LINK_DISABLED' }); expect(f.repo.findRequest).not.toHaveBeenCalled(); expect(f.gateway.getNativeIdentity).not.toHaveBeenCalled(); });
     it('requires a recent verified native proof matching the current account', async () => { for (const p of [null, { ...proof, authTime: proof.authTime - 301 }, { ...proof, authTime: proof.authTime + 61 }, { ...proof, subject: 'another' }]) {
         const f = fixture();

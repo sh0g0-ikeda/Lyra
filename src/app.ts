@@ -468,6 +468,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   app.route('/api/auth', createGoogleIdentityLinkRoutes({
     service: resolvedDependencies.googleIdentityLinkService,
     signInEnabled: env.GOOGLE_SIGN_IN_ENABLED,
+    iosEnabled: env.GOOGLE_IOS_ENABLED,
     authMiddleware, rateLimitMiddleware, publicRateLimitMiddleware: publicReadRateLimitMiddleware,
   }));
   if (localAssetConfig !== null) {

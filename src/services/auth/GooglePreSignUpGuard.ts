@@ -19,7 +19,14 @@ export async function guardGooglePreSignUp<T extends PreSignUpEvent>(event: T, l
     const email = event.request.userAttributes.email;
     if (typeof email !== 'string' || email.length > 320 || !email.includes('@'))
         throw new UnauthorizedError('Provider identity is unavailable');
-    if (await lookup.hasNativeUserWithEmail(event.userPoolId, email))
+    let hasNativeCollision: boolean;
+    try {
+        hasNativeCollision = await lookup.hasNativeUserWithEmail(event.userPoolId, email);
+    } catch {
+        // Cognito exposes trigger errors in Hosted UI; do not expose SDK diagnostics.
+        throw new UnauthorizedError('Provider identity is unavailable');
+    }
+    if (hasNativeCollision)
         throw new AccountLinkRequiredError();
     return event;
 }

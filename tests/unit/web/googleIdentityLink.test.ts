@@ -69,7 +69,7 @@ describe('Web Google linking',()=>{
  it('retains the previous receipt when explicit restart cannot persist its new key',async()=>{
   const s=setup();await s.flow.start();s.ports.storage.setItem=()=>{throw new Error('storage blocked');};await expect(s.flow.restart()).rejects.toThrow('storage blocked');expect(s.flow.snapshot.status?.status).toBe('linked');expect(s.flow.snapshot.challengeId).toBe(challenge);expect(s.fresh.startGoogleIdentityLink).toHaveBeenCalledTimes(1);
  });
- it('fails closed for unavailable capability and all iOS browsers',()=>{
-  const caps={google_sign_in:true,google_linking:true,google_ios:false as const}; expect(googleAllowedOnWeb(caps,'google_sign_in','iPhone',0)).toBe(false); expect(googleAllowedOnWeb(caps,'google_sign_in','MacIntel',5)).toBe(false); expect(googleAllowedOnWeb(undefined,'google_sign_in','Linux',0)).toBe(false); expect(googleAllowedOnWeb(caps,'google_linking','Linux',0)).toBe(true);
+ it('v2のreview済みgateだけでiOSを許可し他platformは各機能flagに従う',()=>{
+  const off={version:2 as const,google_sign_in:true,google_linking:true,google_ios:false}; const on={...off,google_ios:true}; expect(googleAllowedOnWeb(off,'google_sign_in','iPhone',0)).toBe(false); expect(googleAllowedOnWeb(on,'google_sign_in','MacIntel',5)).toBe(true); expect(googleAllowedOnWeb(undefined,'google_sign_in','Linux',0)).toBe(false); expect(googleAllowedOnWeb(off,'google_linking','Linux',0)).toBe(true);
  });
 });

@@ -7,7 +7,7 @@ async function setup(context:BrowserContext,page:Page,enabled:boolean,authentica
  await page.addInitScript(({original,authenticated})=>{localStorage.setItem('lyra:web:ui-language','en');if(authenticated && !sessionStorage.getItem('lyra:web:cognito-session'))sessionStorage.setItem('lyra:web:cognito-session',JSON.stringify({accessToken:'original-access',idToken:original,refreshToken:null,expiresAt:Date.now()+3600000}));},{original,authenticated});
  await context.route('**/api/**',async route=>{
   const path=new URL(route.request().url()).pathname;
-  const body=path==='/api/auth/capabilities'?{google_sign_in:enabled,google_linking:enabled,google_ios:false}:path==='/api/me'?{user:{id:owner,email:'fixture@example.test'},capabilities:{web_image_delivery:false}}:path==='/api/works'?{works:[]}:path==='/api/billing/balance'?{monthly_credits:0,purchased_credits:0,total_credits:0,plan_code:'free',subscription_plans:[]}:path==='/api/compositions'?{compositions:[]}:{};
+  const body=path==='/api/auth/capabilities'?{version:2,google_sign_in:enabled,google_linking:enabled,google_ios:false}:path==='/api/me'?{user:{id:owner,email:'fixture@example.test'},capabilities:{web_image_delivery:false}}:path==='/api/works'?{works:[]}:path==='/api/billing/balance'?{monthly_credits:0,purchased_credits:0,total_credits:0,plan_code:'free',subscription_plans:[]}:path==='/api/compositions'?{compositions:[]}:{};
   await route.fulfill({json:body});
  });
  await context.route('https://cognito.fixture.invalid/**',route=>route.fulfill({contentType:'text/html',body:'<p>Mock native sign-in</p>'}));
@@ -15,7 +15,7 @@ async function setup(context:BrowserContext,page:Page,enabled:boolean,authentica
 }
 test('disabled capability preserves email login and hides Google; iOS stays withheld',async({context,page})=>{
  await setup(context,page,false);await page.goto('/');await expect(page.getByRole('button',{name:'Sign in or create an account'})).toBeVisible();await expect(page.getByRole('button',{name:'Continue with Google'})).toHaveCount(0);
- await context.route('**/api/auth/capabilities',route=>route.fulfill({json:{google_sign_in:true,google_linking:true,google_ios:false}}));
+ await context.route('**/api/auth/capabilities?version=2',route=>route.fulfill({json:{version:2,google_sign_in:true,google_linking:true,google_ios:false}}));
  await page.addInitScript(()=>Object.defineProperty(navigator,'platform',{get:()=> 'iPhone'}));await page.reload();await expect(page.getByRole('button',{name:'Continue with Google'})).toHaveCount(0);await expect(page.getByRole('button',{name:'Sign in or create an account'})).toBeVisible();
 });
 test('normal Google CTA uses existing Cognito PKCE',async({context,page})=>{
