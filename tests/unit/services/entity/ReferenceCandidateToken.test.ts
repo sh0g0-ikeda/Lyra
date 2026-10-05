@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bindDraftReferenceCandidateToken,
+  createDraftReferenceCandidateToken,
   createReferenceCandidateToken,
   createStateReferenceCandidateToken,
+  parseDraftReferenceCandidateToken,
   parseReferenceCandidateToken,
   parseStateReferenceCandidateToken,
 } from '../../../../src/services/entity/ReferenceCandidateToken.js';
@@ -55,5 +58,56 @@ describe('ReferenceCandidateToken', () => {
     expect(() => parseStateReferenceCandidateToken(token, {
       userId: 'user-1', organizationId: null, entityId: 'entity-1', stateId: 'state-1',
     }, { ...options, now: () => 1_800_000_001_000 })).toThrow();
+  });
+
+  it('新規entity候補はuserとorganizationとentity typeへ束縛し、既存token形式では読めない', () => {
+    const token = createDraftReferenceCandidateToken({
+      userId: 'user-1', organizationId: 'org-1', entityType: 'character',
+      s3Key: 'tmp/user-1/entities/imports/draft.png',
+    }, options);
+
+    expect(parseDraftReferenceCandidateToken(token, {
+      userId: 'user-1', organizationId: 'org-1',
+    }, options)).toEqual({
+      entityType: 'character',
+      s3Key: 'tmp/user-1/entities/imports/draft.png',
+      expiresAt: 1_800_086_400_000,
+    });
+    for (const changed of [
+      { userId: 'user-2' },
+      { organizationId: 'org-2' },
+      { organizationId: null },
+    ]) {
+      expect(() => parseDraftReferenceCandidateToken(token, {
+        userId: 'user-1', organizationId: 'org-1', ...changed,
+      }, options)).toThrow();
+    }
+    expect(() => parseReferenceCandidateToken(token, {
+      userId: 'user-1', entityId: 'entity-1',
+    }, options)).toThrow();
+  });
+
+  it('新規entity候補を同じscopeとtypeのentityへbindし、期限を延長しない', () => {
+    const token = createDraftReferenceCandidateToken({
+      userId: 'user-1', organizationId: null, entityType: 'character',
+      s3Key: 'tmp/user-1/entities/imports/draft.webp',
+    }, { ...options, ttlSeconds: 30 });
+
+    const bound = bindDraftReferenceCandidateToken(token, {
+      userId: 'user-1', organizationId: null, entityId: 'entity-1', entityType: 'character',
+    }, options);
+    expect(bound.s3Key).toBe('tmp/user-1/entities/imports/draft.webp');
+    expect(parseReferenceCandidateToken(bound.candidateToken, {
+      userId: 'user-1', entityId: 'entity-1',
+    }, { ...options, now: () => 1_800_000_029_999 })).toBe(bound.s3Key);
+    expect(() => parseReferenceCandidateToken(bound.candidateToken, {
+      userId: 'user-1', entityId: 'entity-1',
+    }, { ...options, now: () => 1_800_000_030_000 })).toThrow();
+    expect(() => parseReferenceCandidateToken(bound.candidateToken, {
+      userId: 'user-1', entityId: 'entity-2',
+    }, options)).toThrow();
+    expect(() => bindDraftReferenceCandidateToken(token, {
+      userId: 'user-1', organizationId: null, entityId: 'entity-1', entityType: 'object',
+    }, options)).toThrow();
   });
 });

@@ -9,10 +9,21 @@ import { buildPushNavigationPayload } from '../../../src/domain/pushNotification
 import { generationJobHistoryResponseSchema, generationJobResponseSchema } from '../../../packages/api-contract/src/mobileApiSchemas.js';
 import { generationJobResponseSchema as generatedMobileJobSchema } from '../../../apps/mobile/src/domain/apiSchemas.js';
 import { generationJobSchema as productionJobSchema, generationJobsResponseSchema as productionJobsSchema } from '../../fixtures/production-mobile-2debe8c/jobSchemas.js';
+import { env } from '../../../src/lib/env.js';
+import {
+  parseDraftReferenceCandidateToken,
+  parseReferenceCandidateToken,
+} from '../../../src/services/entity/ReferenceCandidateToken.js';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const now = new Date('2026-10-01T00:00:00.000Z');
 const legacyTypes = ['page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton'] as const;
+const referenceTokenOptions = {
+  secret: env.REFERENCE_CANDIDATE_TOKEN_SECRET
+    ?? env.SUPABASE_JWT_SECRET
+    ?? env.STRIPE_WEBHOOK_SECRET
+    ?? 'development-reference-candidate-token-secret',
+};
 function job(jobType: GenerationJob['jobType'], index = 1): GenerationJob {
   return {
     id: `22222222-2222-4222-8222-${String(index).padStart(12, '0')}`, userId, organizationId: null,
@@ -100,6 +111,83 @@ describe('negotiated generation job contract', () => {
       expect(generationJobResponseSchema.parse(await response.json()).job_type).toBe('entity_import_analysis');
     }
     expect(service.cancelJob).toHaveBeenCalledWith(userId, current.id, null);
+  });
+  it('entity未指定import jobはpersonal draft tokenを返す', async () => {
+    const current = {
+      ...job('entity_import_analysis'),
+      params: { entity_type: 'character' },
+      result: {
+        import_analysis: {
+          suggested_fields: { art_style: 'anime' },
+          prompt_supplement: 'anime heroine',
+          tmp_image_s3_key: `tmp/${userId}/entities/imports/source.png`,
+        },
+      },
+    };
+    const { app } = setup([current]);
+
+    const response = await app.request(`/jobs/${current.id}?job_contract=v2`);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { result: { tmp_image_token: string } };
+    expect(parseDraftReferenceCandidateToken(body.result.tmp_image_token, {
+      userId,
+      organizationId: null,
+    }, referenceTokenOptions)).toMatchObject({
+      entityType: 'character',
+      s3Key: `tmp/${userId}/entities/imports/source.png`,
+    });
+  });
+  it('organization import jobは同じorganizationにだけ使えるdraft tokenを返す', async () => {
+    const organizationId = '44444444-4444-4444-8444-444444444444';
+    const current = {
+      ...job('entity_import_analysis'),
+      organizationId,
+      params: { entity_type: 'nonhuman' },
+      result: {
+        import_analysis: {
+          suggested_fields: { species: 'dragon' },
+          prompt_supplement: 'blue dragon',
+          tmp_image_s3_key: `tmp/${userId}/entities/imports/source.webp`,
+        },
+      },
+    };
+    const { app } = setup([current]);
+
+    const response = await app.request(`/jobs/${current.id}?job_contract=v2&organization_id=${organizationId}`);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { result: { tmp_image_token: string } };
+    expect(parseDraftReferenceCandidateToken(body.result.tmp_image_token, {
+      userId,
+      organizationId,
+    }, referenceTokenOptions)).toMatchObject({ entityType: 'nonhuman' });
+    expect(() => parseDraftReferenceCandidateToken(body.result.tmp_image_token, {
+      userId,
+      organizationId: null,
+    }, referenceTokenOptions)).toThrow();
+  });
+  it('entity指定import jobは従来のentity-bound tokenを返す', async () => {
+    const importedEntityId = '33333333-3333-4333-8333-333333333333';
+    const current = {
+      ...job('entity_import_analysis'),
+      params: { entity_id: importedEntityId, entity_type: 'character' },
+      result: {
+        import_analysis: {
+          entity_id: importedEntityId,
+          suggested_fields: { art_style: 'anime' },
+          prompt_supplement: 'anime heroine',
+          tmp_image_s3_key: `tmp/${userId}/entities/imports/source.png`,
+        },
+      },
+    };
+    const { app } = setup([current]);
+
+    const response = await app.request(`/jobs/${current.id}?job_contract=v2`);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { result: { tmp_image_token: string } };
+    expect(parseReferenceCandidateToken(body.result.tmp_image_token, {
+      userId,
+      entityId: importedEntityId,
+    }, referenceTokenOptions)).toBe(`tmp/${userId}/entities/imports/source.png`);
   });
   it('still checks organization access before import detail or cancellation', async () => {
     const current = job('entity_import_analysis');

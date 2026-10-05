@@ -16,6 +16,7 @@ import type { GenerationJob, GenerationJobStatus, GenerationJobType } from '../d
 import { signImageCdnUrl } from '../infrastructure/aws/CloudFrontImageUrlSigner.js';
 import { env } from '../lib/env.js';
 import {
+  createDraftReferenceCandidateToken,
   createReferenceCandidateToken,
   createStateReferenceCandidateToken,
 } from '../services/entity/ReferenceCandidateToken.js';
@@ -29,6 +30,7 @@ import {
 import { assertMobileResponseContract } from './mobileResponseContract.js';
 
 const uuidParamSchema = z.string().uuid();
+const entityTypeSchema = z.enum(['character', 'nonhuman', 'object']);
 const DEFAULT_JOB_HISTORY_LIMIT = 25;
 const MAX_JOB_HISTORY_LIMIT = 100;
 const LEGACY_JOB_TYPES = ['page_generate', 'entity_generate', 'episode_story_autofill', 'episode_page_skeleton'] as const;
@@ -299,14 +301,31 @@ async function toJobResultResponse(job: GenerationJob, audience: ImageDeliveryAu
     if (typeof analysis !== 'object' || analysis === null || Array.isArray(analysis)) return null;
     const fields = analysis as Record<string, unknown>;
     if (typeof fields.tmp_image_s3_key !== 'string' || typeof fields.prompt_supplement !== 'string') return null;
+    const entityId = typeof fields.entity_id === 'string' && fields.entity_id.length > 0
+      ? fields.entity_id
+      : null;
+    const tokenOptions = { secret: getReferenceCandidateTokenSecret() };
+    let candidateToken: string;
+    if (entityId === null) {
+      const entityType = entityTypeSchema.safeParse(job.params.entity_type);
+      if (!entityType.success) return null;
+      candidateToken = createDraftReferenceCandidateToken({
+        userId: job.userId,
+        organizationId: job.organizationId ?? null,
+        entityType: entityType.data,
+        s3Key: fields.tmp_image_s3_key,
+      }, tokenOptions);
+    } else {
+      candidateToken = createReferenceCandidateToken({
+        userId: job.userId,
+        entityId,
+        s3Key: fields.tmp_image_s3_key,
+      }, tokenOptions);
+    }
     return {
       suggested_fields: fields.suggested_fields,
       prompt_supplement: fields.prompt_supplement,
-      tmp_image_token: createReferenceCandidateToken({
-        userId: job.userId,
-        entityId: typeof fields.entity_id === 'string' ? fields.entity_id : '',
-        s3Key: fields.tmp_image_s3_key,
-      }, { secret: getReferenceCandidateTokenSecret() }),
+      tmp_image_token: candidateToken,
     };
   }
 

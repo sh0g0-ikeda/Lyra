@@ -46,10 +46,13 @@ import type {
 import type { EntityReferenceImageExportServicePort } from '../services/entity/EntityReferenceImageExportService.js';
 import type { EntityStateReferenceServicePort } from '../services/entity/EntityStateReferenceService.js';
 import {
+  bindDraftReferenceCandidateToken,
+  createDraftReferenceCandidateToken,
   createReferenceCandidateToken,
   parseStateReferenceCandidateToken,
   parseReferenceCandidateToken,
 } from '../services/entity/ReferenceCandidateToken.js';
+import { ensureAllowedReferenceSourceKey } from '../services/entity/EntityReferenceSourceKeyPolicy.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import type { AppEnv } from '../types/app.js';
 import {
@@ -74,6 +77,12 @@ const stateReferenceCandidateImageQuerySchema = z.object({
   candidate_token: z.string().trim().min(1).max(4096),
   expected_state_revision: z.string().datetime({ offset: true }),
   organization_id: z.string().uuid().optional(),
+}).strict();
+const bindReferenceCandidateBodySchema = z.object({
+  candidate_token: z.string().trim().min(1).max(4096),
+}).strict();
+const bindReferenceCandidateResponseSchema = z.object({
+  candidate_token: z.string().min(1).max(4096),
 }).strict();
 const MAX_ENTITY_LIST_PAGE_LIMIT = 100;
 
@@ -299,6 +308,10 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       throw new ValidationError(formatZodValidationError(body.error));
     }
 
+    if (body.data.entity_id !== undefined) {
+      await dependencies.entityService.getEntity(user.id, body.data.entity_id, organizationId);
+    }
+
     let candidateEntityId = body.data.entity_id ?? '';
     let result: EntityImportAnalysis;
     if ('upload_token' in body.data) {
@@ -321,18 +334,52 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       }, organizationId);
     }
 
+    const tokenOptions = { secret: getReferenceCandidateTokenSecret() };
     const payload = {
       suggested_fields: result.suggestedFields,
       prompt_supplement: result.promptSupplement,
-      tmp_image_token: createReferenceCandidateToken({
-        userId: user.id,
-        entityId: candidateEntityId,
-        s3Key: result.tmpImageS3Key,
-      }, {
-        secret: getReferenceCandidateTokenSecret(),
-      }),
+      tmp_image_token: candidateEntityId.length === 0
+        ? createDraftReferenceCandidateToken({
+            userId: user.id,
+            organizationId,
+            entityType: body.data.entity_type,
+            s3Key: result.tmpImageS3Key,
+          }, tokenOptions)
+        : createReferenceCandidateToken({
+            userId: user.id,
+            entityId: candidateEntityId,
+            s3Key: result.tmpImageS3Key,
+          }, tokenOptions),
     };
     return c.json(assertMobileResponseContract(entityImportResponseSchema, payload));
+  });
+
+  app.post('/entities/:id/reference-candidate/bind', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const body = bindReferenceCandidateBodySchema.safeParse(
+      await readJsonBody(c, {
+        maxBytes: REQUEST_BODY_LIMITS.SMALL_JSON_BYTES,
+        description: 'Reference candidate binding',
+      }),
+    );
+    if (!body.success) {
+      throw new ValidationError(formatZodValidationError(body.error));
+    }
+
+    const entity = await dependencies.entityService.getEntity(user.id, entityId, organizationId);
+    const bound = bindDraftReferenceCandidateToken(body.data.candidate_token, {
+      userId: user.id,
+      organizationId,
+      entityId,
+      entityType: entity.entityType,
+    }, { secret: getReferenceCandidateTokenSecret() });
+    ensureAllowedReferenceSourceKey(bound.s3Key, user.id, entityId, 'candidate_token');
+    return c.json(assertMobileResponseContract(bindReferenceCandidateResponseSchema, {
+      candidate_token: bound.candidateToken,
+    }));
   });
 
   app.post('/entities/:id/generate-reference', async (c) => {

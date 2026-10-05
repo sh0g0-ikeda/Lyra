@@ -1,6 +1,6 @@
 import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
-import { ResourceStaleError } from '../../../src/domain/errors/index.js';
+import { NotFoundError, ResourceStaleError } from '../../../src/domain/errors/index.js';
 import { createApp } from '../../../src/app.js';
 import { REQUEST_BODY_LIMITS } from '../../../src/routes/requestBody.js';
 import { env } from '../../../src/lib/env.js';
@@ -32,8 +32,11 @@ import type {
   RefundCreditsParams,
 } from '../../../src/services/credit/CreditService.js';
 import {
+  createDraftReferenceCandidateToken,
   createReferenceCandidateToken,
   createStateReferenceCandidateToken,
+  parseDraftReferenceCandidateToken,
+  parseReferenceCandidateToken,
 } from '../../../src/services/entity/ReferenceCandidateToken.js';
 import type { EntityStateReferenceServicePort } from '../../../src/services/entity/EntityStateReferenceService.js';
 
@@ -48,6 +51,12 @@ const user: AuthenticatedUser = {
 const workId = '11111111-1111-4111-8111-111111111111';
 const entityId = '22222222-2222-4222-8222-222222222222';
 const now = new Date('2026-04-22T00:00:00.000Z');
+const referenceTokenOptions = {
+  secret: env.REFERENCE_CANDIDATE_TOKEN_SECRET
+    ?? env.SUPABASE_JWT_SECRET
+    ?? env.STRIPE_WEBHOOK_SECRET
+    ?? 'development-reference-candidate-token-secret',
+};
 
 class FakeUserProvisioningService implements UserProvisioningPort {
   public async provisionFromSupabaseClaims(claims: SupabaseJwtClaims): Promise<ProvisionedUser> {
@@ -633,10 +642,170 @@ describe('entity routes', () => {
     });
     expect(typeof payload.tmp_image_token).toBe('string');
     expect(payload).not.toHaveProperty('tmp_image_s3_key');
+    expect(parseDraftReferenceCandidateToken(payload.tmp_image_token as string, {
+      userId: user.id,
+      organizationId: null,
+    }, referenceTokenOptions)).toMatchObject({
+      entityType: 'character',
+      s3Key: 'tmp/user-1/entities/imports/source.png',
+    });
     expect(referenceService.lastImportRequest).toMatchObject({
       userId: user.id,
       entityType: 'character',
     });
+  });
+
+  it('既存entity指定importはownership確認後に従来のentity-bound候補を返す', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const entityService = new FakeEntityService();
+    const app = createTestApp(referenceService, undefined, entityService);
+    const token = await createToken();
+
+    const response = await app.request('/api/entities/import-image', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entity_type: 'character',
+        entity_id: entityId,
+        image_base64: 'data:image/png;base64,YWJj',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as { tmp_image_token: string };
+    expect(parseReferenceCandidateToken(payload.tmp_image_token, {
+      userId: user.id,
+      entityId,
+    }, referenceTokenOptions)).toBe('tmp/user-1/entities/imports/source.png');
+    expect(referenceService.lastImportRequest).not.toBeNull();
+  });
+
+  it('既存entityの種類を未保存で変更してimportする場合も従来のv1候補を返す', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+    const response = await app.request('/api/entities/import-image', {
+      method: 'POST', headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'},
+      body: JSON.stringify({entity_type: 'object', entity_id: entityId, image_base64: 'data:image/png;base64,YWJj'}),
+    });
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {tmp_image_token: string};
+    expect(parseReferenceCandidateToken(payload.tmp_image_token, {userId: user.id, entityId}, referenceTokenOptions)).toBe('tmp/user-1/entities/imports/source.png');
+    expect(referenceService.lastImportRequest).toMatchObject({userId: user.id, entityType: 'object'});
+  });
+
+  it.each(['import', 'bind'] as const)('%sでowned targetが存在しない場合は404となり画像処理を呼ばない', async (operation) => {
+    const referenceService = new FakeEntityReferenceService();
+    const entityService = new FakeEntityService();
+    const ownershipCalls: Array<{userId: string; entityId: string; organizationId: string | null}> = [];
+    entityService.getEntity = async (requestedUserId, requestedEntityId, organizationId: string | null = null): Promise<never> => {
+      ownershipCalls.push({userId: requestedUserId, entityId: requestedEntityId, organizationId});
+      throw new NotFoundError('Entity not found');
+    };
+    const app = createTestApp(referenceService, undefined, entityService);
+    const token = await createToken();
+    const candidateToken = createDraftReferenceCandidateToken({
+      userId: user.id, organizationId: null, entityType: 'character',
+      s3Key: 'tmp/user-1/entities/imports/source.png',
+    }, referenceTokenOptions);
+    const path = operation === 'import' ? '/api/entities/import-image' : '/api/entities/' + entityId + '/reference-candidate/bind';
+    const body = operation === 'import'
+      ? {entity_id: entityId, entity_type: 'character', image_base64: 'data:image/png;base64,YWJj'}
+      : {candidate_token: candidateToken};
+    const response = await app.request(path, {
+      method: 'POST', headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(404);
+    expect(ownershipCalls).toEqual([{userId: user.id, entityId, organizationId: null}]);
+    expect(referenceService.lastImportRequest).toBeNull();
+    expect(referenceService.lastGenerateReferenceRequest).toBeNull();
+  });
+
+  it('新規entity候補bindは未認証の場合に401となりEntityや画像へアクセスしない', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const entityService = new FakeEntityService();
+    let ownershipCalls = 0;
+    entityService.getEntity = async (): Promise<never> => {ownershipCalls += 1; throw new NotFoundError();};
+    const app = createTestApp(referenceService, undefined, entityService);
+    const response = await app.request('/api/entities/' + entityId + '/reference-candidate/bind', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({candidate_token: 'unsigned-token'}),
+    });
+    expect(response.status).toBe(401);
+    expect(ownershipCalls).toBe(0);
+    expect(referenceService.lastImportRequest).toBeNull();
+    expect(referenceService.lastGenerateReferenceRequest).toBeNull();
+  });
+
+  it('新規entity候補bindは上限超過tokenを422としてEntityや画像へアクセスしない', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const entityService = new FakeEntityService();
+    let ownershipCalls = 0;
+    entityService.getEntity = async (): Promise<never> => {ownershipCalls += 1; throw new NotFoundError();};
+    const app = createTestApp(referenceService, undefined, entityService);
+    const token = await createToken();
+    const response = await app.request('/api/entities/' + entityId + '/reference-candidate/bind', {
+      method: 'POST', headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'},
+      body: JSON.stringify({candidate_token: 'x'.repeat(4097)}),
+    });
+    expect(response.status).toBe(422);
+    expect(ownershipCalls).toBe(0);
+    expect(referenceService.lastImportRequest).toBeNull();
+    expect(referenceService.lastGenerateReferenceRequest).toBeNull();
+  });
+
+  it('新規entity候補はowned entityへbindしても期限とraw keyを公開しない', async () => {
+    const referenceService = new FakeEntityReferenceService();
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+    const draftToken = createDraftReferenceCandidateToken({
+      userId: user.id,
+      organizationId: null,
+      entityType: 'character',
+      s3Key: 'tmp/user-1/entities/imports/source.png',
+    }, referenceTokenOptions);
+
+    const response = await app.request(`/api/entities/${entityId}/reference-candidate/bind`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidate_token: draftToken }),
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as Record<string, unknown>;
+    expect(Object.keys(payload)).toEqual(['candidate_token']);
+    expect(parseReferenceCandidateToken(payload.candidate_token as string, {
+      userId: user.id,
+      entityId,
+    }, referenceTokenOptions)).toBe('tmp/user-1/entities/imports/source.png');
+    expect(referenceService.lastGenerateReferenceRequest).toBeNull();
+  });
+
+  it.each([
+    ['別organization', 'character', '33333333-3333-4333-8333-333333333333', 'tmp/user-1/entities/imports/source.png'],
+    ['別entity type', 'object', null, 'tmp/user-1/entities/imports/source.png'],
+    ['許可外source key', 'character', null, 'tmp/other-user/entities/imports/source.png'],
+  ] as const)('新規entity候補bindは%sをpaid service前に拒否する', async (_label, entityType, organizationId, s3Key) => {
+    const referenceService = new FakeEntityReferenceService();
+    const app = createTestApp(referenceService);
+    const token = await createToken();
+    const draftToken = createDraftReferenceCandidateToken({
+      userId: user.id,
+      organizationId,
+      entityType,
+      s3Key,
+    }, referenceTokenOptions);
+
+    const response = await app.request(`/api/entities/${entityId}/reference-candidate/bind`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidate_token: draftToken }),
+    });
+
+    expect(response.status).toBe(422);
+    expect(referenceService.lastImportRequest).toBeNull();
+    expect(referenceService.lastGenerateReferenceRequest).toBeNull();
   });
 
   it('import-image uses the generation rate limit bucket', async () => {
