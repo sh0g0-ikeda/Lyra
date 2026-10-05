@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EntityReferenceUploadToken } from '../../../../src/domain/types/entityReferenceUpload.js';
+import type { RepositorySchemaProfile } from '../../../../src/repositories/RepositorySchemaProfile.js';
 import type {
   CreateEntityReferenceUploadTokenInput,
   ConsumeEntityReferenceUploadTokenInput,
@@ -28,8 +29,12 @@ class FakeTokenRepository implements EntityReferenceUploadTokenRepository {
   public consumed: ConsumeEntityReferenceUploadTokenInput | null = null;
   public token: EntityReferenceUploadToken | null = buildToken();
   public consumeOnce = false;
+  public events: string[] = [];
+  public onCreate: (() => void) | null = null;
 
   public async create(input: CreateEntityReferenceUploadTokenInput): Promise<EntityReferenceUploadToken> {
+    this.events.push('persist');
+    this.onCreate?.();
     this.created = input;
     this.token = {
       ...buildToken(),
@@ -73,6 +78,7 @@ class FakeUploadStorage implements EntityReferenceUploadStoragePort {
     mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
     sizeBytes: number;
     expiresInSeconds: number;
+    signingDate?: Date;
   } | null = null;
   public loadInput: {
     s3Key: string;
@@ -93,6 +99,7 @@ class FakeUploadStorage implements EntityReferenceUploadStoragePort {
   } | null = null;
   public loadError: Error | null = null;
   public stabilizeError: Error | null = null;
+  public onPresign: (() => void) | null = null;
   public events: string[] = [];
 
   public async createPresignedPutUrl(input: {
@@ -101,6 +108,8 @@ class FakeUploadStorage implements EntityReferenceUploadStoragePort {
     sizeBytes: number;
     expiresInSeconds: number;
   }): Promise<string> {
+    this.events.push('sign');
+    this.onPresign?.();
     this.presignInput = input;
     return 'https://uploads.lyra.test/presigned';
   }
@@ -252,6 +261,92 @@ describe('EntityReferenceUploadService', () => {
       sizeBytes: pngBytes.length,
       expiresInSeconds: 300,
     });
+  });
+
+  it('tokenを安全に保存してから同一clock由来の期限でPUT URLを署名する', async () => {
+    const tokens = new FakeTokenRepository();
+    const storage = new FakeUploadStorage();
+    const signingDate = new Date('2026-07-31T00:00:00.000Z');
+    const service = buildService({
+      tokens,
+      storage,
+      now: () => signingDate,
+      tokenGenerator: () => 'opaque-upload-token',
+      persistenceProfile: 'legacy_2debe_v1',
+    });
+    storage.onPresign = () => expect(tokens.created).not.toBeNull();
+
+    await service.createPresignedUpload(userId, {
+      mimeType: 'image/png',
+      sizeBytes: pngBytes.length,
+    });
+
+    expect(tokens.events).toEqual(['persist']);
+    expect(storage.events).toEqual(['sign']);
+    expect(tokens.created?.expiresAt).toEqual(new Date('2026-07-31T00:05:00.000Z'));
+    expect(storage.presignInput?.signingDate).toEqual(signingDate);
+  });
+
+  it('canonical発行は従来どおり署名してからtokenを保存し署名日時を渡さない', async () => {
+    const tokens = new FakeTokenRepository();
+    const storage = new FakeUploadStorage();
+    const service = buildService({ tokens, storage });
+    storage.onPresign = () => expect(tokens.created).toBeNull();
+
+    await service.createPresignedUpload(userId, {
+      mimeType: 'image/png', sizeBytes: pngBytes.length,
+    });
+
+    expect(storage.presignInput).not.toHaveProperty('signingDate');
+    expect(tokens.created).not.toBeNull();
+  });
+
+  it('legacy admissionがtoken期限を超えた場合は保存済みtokenを返さず署名しない', async () => {
+    const tokens = new FakeTokenRepository();
+    const storage = new FakeUploadStorage();
+    let currentTime = new Date('2026-07-31T00:00:00.000Z');
+    tokens.onCreate = () => {
+      currentTime = new Date('2026-07-31T00:05:00.000Z');
+    };
+    const service = buildService({
+      tokens, storage, persistenceProfile: 'legacy_2debe_v1',
+      now: () => currentTime,
+    });
+
+    await expect(service.createPresignedUpload(userId, {
+      mimeType: 'image/png', sizeBytes: pngBytes.length,
+    })).rejects.toMatchObject({ code: 'CONFLICT', statusCode: 409 });
+
+    expect(tokens.created).not.toBeNull();
+    expect(storage.presignInput).toBeNull();
+  });
+
+  it('legacy署名が期限直前に完了した場合は固定期限のURLを返す', async () => {
+    const tokens = new FakeTokenRepository();
+    const storage = new FakeUploadStorage();
+    let clock = new Date('2026-07-31T00:00:00.000Z');
+    storage.onPresign = () => { clock = new Date('2026-07-31T00:04:59.999Z'); };
+    const service = buildService({ tokens, storage, persistenceProfile: 'legacy_2debe_v1', now: () => clock });
+    const result = await service.createPresignedUpload(userId, { mimeType: 'image/png', sizeBytes: pngBytes.length });
+    expect(result.uploadUrl).toBe('https://uploads.lyra.test/presigned');
+    expect(result.expiresAt).toEqual(new Date('2026-07-31T00:05:00.000Z'));
+    expect(tokens.created).not.toBeNull();
+  });
+
+  it.each([300_000, 300_001])('legacy署名完了が開始から%smsの場合は期限切れURLを返さず409にしtokenを保持する', async (elapsed) => {
+    const tokens = new FakeTokenRepository();
+    const storage = new FakeUploadStorage();
+    const startedAt = new Date('2026-07-31T00:00:00.000Z');
+    let clock = startedAt;
+    storage.onPresign = () => { clock = new Date(startedAt.getTime() + elapsed); };
+    const service = buildService({ tokens, storage, persistenceProfile: 'legacy_2debe_v1', now: () => clock });
+    let failure: unknown;
+    try { await service.createPresignedUpload(userId, { mimeType: 'image/png', sizeBytes: pngBytes.length }); }
+    catch (error) { failure = error; }
+    expect(failure).toMatchObject({ code: 'CONFLICT', statusCode: 409 });
+    expect(tokens.created).not.toBeNull();
+    expect(storage.presignInput?.signingDate).toEqual(startedAt);
+    expect(storage.events).toEqual(['sign']);
   });
 
   it('不正MIMEまたは5MiB超過ではtokenもURLも発行しない', async () => {
@@ -445,6 +540,8 @@ function buildService(overrides: {
   entities?: FakeEntityRepository;
   imports?: FakeImportService;
   organizations?: FakeOrganizationService;
+  now?: () => Date;
+  persistenceProfile?: RepositorySchemaProfile;
   tokenGenerator?: () => string;
 } = {}): EntityReferenceUploadService {
   return new EntityReferenceUploadService({
@@ -453,7 +550,8 @@ function buildService(overrides: {
     entityReferenceRepository: overrides.entities ?? new FakeEntityRepository(),
     entityReferenceService: overrides.imports ?? new FakeImportService(),
     organizationService: overrides.organizations,
-    now: () => createdAt,
+    now: overrides.now ?? (() => createdAt),
+    persistenceProfile: overrides.persistenceProfile,
     tokenGenerator: overrides.tokenGenerator,
   });
 }

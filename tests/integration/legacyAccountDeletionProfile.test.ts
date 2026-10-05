@@ -2,13 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Pool, type QueryResultRow } from 'pg';
+import { Pool, type PoolClient, type QueryResultRow } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresLegacyAccountDeletionRepository } from '../../src/legacy/account/LegacyAccountDeletionRepository.js';
 import { LegacyAccountDeletionServiceAdapter } from '../../src/legacy/account/LegacyAccountDeletionServiceAdapter.js';
 import type { LegacyAccountDeletionClaimResult } from '../../src/legacy/account/LegacyAccountDeletionTypes.js';
+import { assertLegacyPersonalWriteAllowed } from '../../src/repositories/LegacyAccountDeletionWriteFence.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
 
 const describePostgres = process.env.APP_ENV === 'test' && process.env.DATABASE_URL
@@ -76,6 +77,137 @@ describePostgres('legacy 2debe account deletion compatibility', () => {
       await admin.end();
     }
   });
+
+  it('Spec 5/11 候補user lock後のexact-old INSERTと競合してもFK循環deadlockなく一ownerになる', async () => {
+    const userId = await insertUser(pool);
+    const candidateClient = await pool.connect();
+    const oldClient = await pool.connect();
+    const oldPid = await backendPid(oldClient), candidatePid = await backendPid(candidateClient);
+    const userLocked = latch(); const resume = latch();
+    let oldInsertCompleted = false;
+    const candidateDb = pinnedDatabase(candidateClient, async text => {
+      if (text.startsWith('SELECT id FROM users')) { userLocked.open(); await resume.promise; }
+    });
+    const oldDb = pinnedDatabase(oldClient, async text => {
+      if (text.includes('INSERT INTO account_deletion_requests')) oldInsertCompleted = true;
+    });
+    const candidateToken = randomUUID(), oldToken = randomUUID();
+    const candidate = settle(new PostgresLegacyAccountDeletionRepository(candidateDb, candidateDb).claimRequest(claimInput(userId, candidateToken)));
+    let old: ReturnType<typeof settle<OldRequest | null>> | undefined;
+    try {
+      await userLocked.promise;
+      old = settle(new OldRepositoryClass(oldDb, oldDb).claimRequest({ userId, identityId: `identity-${userId}`, processingToken: oldToken }));
+      await waitUntil(async () => oldInsertCompleted || await isBlockedBy(pool, oldPid, candidatePid));
+      const insertCompletedBeforeResume = oldInsertCompleted;
+      resume.open();
+      const results = await Promise.all([candidate, old]);
+      const errors = results.filter(result => !result.ok).map(result => !result.ok ? sqlCode(result.error) : null);
+      console.info('controlled exact-old FK race', { insertCompletedBeforeResume, errors });
+      expect(errors).toEqual([]);
+      expect(insertCompletedBeforeResume).toBe(true);
+      const [newResult, oldResult] = results;
+      expect(Number(newResult.ok && newResult.value.kind === 'claimed') + Number(oldResult.ok && oldResult.value !== null)).toBe(1);
+      const persisted = await repository.getRequest(userId);
+      expect(persisted?.status).toBe('processing');
+      expect([candidateToken, oldToken]).toContain(persisted?.processingToken);
+    } finally {
+      resume.open(); await candidate; if (old) await old;
+      candidateClient.release(); oldClient.release();
+    }
+  }, 15_000);
+
+  it.each(['old first', 'candidate first'] as const)('%sのfresh claim順序でも一ownerだけを保持する', async order => {
+    const userId = await insertUser(pool);
+    const first = await pool.connect(), second = await pool.connect();
+    const firstPid = await backendPid(first), secondPid = await backendPid(second);
+    let pending: Promise<unknown> | undefined;
+    try {
+      const candidateToken = randomUUID(), oldToken = randomUUID();
+      if (order === 'old first') {
+        const oldDb = pinnedDatabase(first);
+        expect(await new OldRepositoryClass(oldDb, oldDb).claimRequest({ userId, identityId: `identity-${userId}`, processingToken: oldToken })).not.toBeNull();
+        const candidateDb = pinnedDatabase(second);
+        expect((await new PostgresLegacyAccountDeletionRepository(candidateDb, candidateDb).claimRequest(claimInput(userId, candidateToken))).kind).toBe('in_progress');
+      } else {
+        await first.query('BEGIN');
+        const candidateDb = pinnedDatabase(first);
+        const inline: TransactionRunner = { transaction: async work => work(candidateDb) };
+        expect((await new PostgresLegacyAccountDeletionRepository(candidateDb, inline).claimRequest(claimInput(userId, candidateToken))).kind).toBe('claimed');
+        const oldDb = pinnedDatabase(second);
+        pending = new OldRepositoryClass(oldDb, oldDb).claimRequest({ userId, identityId: `identity-${userId}`, processingToken: oldToken });
+        await waitUntil(() => isBlockedBy(pool, secondPid, firstPid));
+        await first.query('COMMIT');
+        expect(await pending).toBeNull();
+      }
+      expect((await repository.getRequest(userId))?.processingToken).toBe(order === 'old first' ? oldToken : candidateToken);
+    } finally {
+      await first.query('ROLLBACK'); if (pending) await pending;
+      first.release(); second.release();
+    }
+  }, 15_000);
+
+  it.each(['ordinary update', 'upload admission', 'anonymize'] as const)('claimが先の場合も%sとuser lockで排他する', async operation => {
+    const userId = await insertUser(pool);
+    const token = randomUUID();
+    if (operation === 'anonymize') expect((await repository.claimRequest(claimInput(userId, token))).kind).toBe('claimed');
+    const first = await pool.connect(), second = await pool.connect();
+    const firstPid = await backendPid(first), secondPid = await backendPid(second);
+    const locked = latch(), resume = latch();
+    const candidateDb = pinnedDatabase(first, async text => {
+      if (text.startsWith('SELECT id FROM users')) { locked.open(); await resume.promise; }
+    });
+    const candidate = settle(new PostgresLegacyAccountDeletionRepository(candidateDb, candidateDb).claimRequest(claimInput(userId, randomUUID())));
+    let later: Promise<Settled<unknown>> | undefined;
+    try {
+      await locked.promise;
+      const otherDb = pinnedDatabase(second);
+      later = settle<unknown>(operation === 'ordinary update'
+        ? second.query("UPDATE users SET display_name='concurrent update' WHERE id=$1", [userId])
+        : operation === 'anonymize'
+          ? new PostgresLegacyAccountDeletionRepository(otherDb, otherDb).anonymizePersonalData(userId, token)
+          : otherDb.transaction(client => assertLegacyPersonalWriteAllowed(client, { userId, organizationId: null })));
+      await waitUntil(() => isBlockedBy(pool, secondPid, firstPid));
+      resume.open();
+      expect((await candidate).ok).toBe(true);
+      const result = await later;
+      if (operation === 'upload admission') {
+        expect(result.ok).toBe(false);
+        expect(!result.ok && sqlCode(result.error)).toBe('FORBIDDEN');
+      } else expect(result.ok).toBe(true);
+    } finally {
+      resume.open(); await candidate; if (later) await later;
+      first.release(); second.release();
+    }
+  }, 15_000);
+
+  it.each(['ordinary update', 'upload admission', 'anonymize'] as const)('%sが先の場合はclaimがuser lock解放を待つ', async operation => {
+    const userId = await insertUser(pool);
+    const token = randomUUID();
+    if (operation === 'anonymize') expect((await repository.claimRequest(claimInput(userId, token))).kind).toBe('claimed');
+    const first = await pool.connect(), second = await pool.connect();
+    const firstPid = await backendPid(first), secondPid = await backendPid(second);
+    let pending: Promise<Settled<LegacyAccountDeletionClaimResult>> | undefined;
+    try {
+      await first.query('BEGIN');
+      const firstDb = pinnedDatabase(first);
+      if (operation === 'ordinary update') await first.query("UPDATE users SET display_name='first update' WHERE id=$1", [userId]);
+      else if (operation === 'upload admission') await assertLegacyPersonalWriteAllowed(firstDb, { userId, organizationId: null });
+      else {
+        const inline: TransactionRunner = { transaction: async work => work(firstDb) };
+        expect(await new PostgresLegacyAccountDeletionRepository(firstDb, inline).anonymizePersonalData(userId, token)).toBe(true);
+      }
+      const secondDb = pinnedDatabase(second);
+      pending = settle(new PostgresLegacyAccountDeletionRepository(secondDb, secondDb).claimRequest(claimInput(userId, randomUUID())));
+      await waitUntil(() => isBlockedBy(pool, secondPid, firstPid));
+      await first.query('COMMIT');
+      const result = await pending;
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value.kind).toBe(operation === 'anonymize' ? 'in_progress' : 'claimed');
+    } finally {
+      await first.query('ROLLBACK'); if (pending) await pending;
+      first.release(); second.release();
+    }
+  }, 15_000);
 
   it('旧fresh claimと候補fresh claimの同時実行は一方だけがprocessing ownerになる', async () => {
     const userId = await insertUser(pool);
@@ -318,4 +450,45 @@ function testDatabase(pool: Pool): DatabaseClient & TransactionRunner {
       }
     },
   };
+}
+
+function latch(): { promise: Promise<void>; open: () => void } {
+  let open: () => void = () => undefined;
+  const promise = new Promise<void>(resolve => { open = resolve; });
+  return { promise, open };
+}
+type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
+function settle<T>(work: Promise<T>): Promise<Settled<T>> {
+  return work.then(value => ({ ok: true, value }), (error: unknown) => ({ ok: false, error }));
+}
+function sqlCode(error: unknown): string {
+  return typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'unknown';
+}
+async function backendPid(client: PoolClient): Promise<number> {
+  return (await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+}
+async function isBlockedBy(pool: Pool, waiter: number, blocker: number): Promise<boolean> {
+  return (await pool.query<{ blocked: boolean }>('SELECT $2::int = ANY(pg_blocking_pids($1)) AS blocked', [waiter, blocker])).rows[0]?.blocked === true;
+}
+async function waitUntil(check: () => Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    if (await check()) return;
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('Controlled PostgreSQL race did not reach the expected lock state');
+}
+function pinnedDatabase(client: PoolClient, afterQuery?: (text: string) => Promise<void>): DatabaseClient & TransactionRunner {
+  const database: DatabaseClient & TransactionRunner = {
+    query: async <Row extends QueryResultRow = QueryResultRow>(text: string, values?: readonly unknown[]) => {
+      const result = await client.query<Row>(text, values === undefined ? undefined : [...values]);
+      if (afterQuery) await afterQuery(text);
+      return result;
+    },
+    transaction: async <T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> => {
+      await client.query('BEGIN');
+      try { const result = await work(database); await client.query('COMMIT'); return result; }
+      catch (error: unknown) { await client.query('ROLLBACK'); throw error; }
+    },
+  };
+  return database;
 }

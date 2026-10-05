@@ -36,6 +36,7 @@ export type EntityReferenceUploadPresigner = (
   client: S3Client,
   command: PutObjectCommand,
   expiresInSeconds: number,
+  signingDate?: Date,
 ) => Promise<string>;
 
 export class S3EntityReferenceUploadStorage implements EntityReferenceUploadStoragePort {
@@ -50,6 +51,7 @@ export class S3EntityReferenceUploadStorage implements EntityReferenceUploadStor
     mimeType: EntityReferenceUploadMimeType;
     sizeBytes: number;
     expiresInSeconds: number;
+    signingDate?: Date;
   }): Promise<string> {
     validateTemporaryUploadKey(input.s3Key, input.mimeType);
     if (!isEntityReferenceUploadSize(input.sizeBytes)) {
@@ -75,6 +77,7 @@ export class S3EntityReferenceUploadStorage implements EntityReferenceUploadStor
           ServerSideEncryption: 'AES256',
         }),
         input.expiresInSeconds,
+        input.signingDate,
       );
     } catch {
       throw new ConfigurationError('Unable to create upload URL');
@@ -212,10 +215,12 @@ async function defaultPresignPutUrl(
   client: S3Client,
   command: PutObjectCommand,
   expiresInSeconds: number,
+  signingDate?: Date,
 ): Promise<string> {
   return getSignedUrl(client, command, {
     expiresIn: expiresInSeconds,
     signableHeaders: new Set(['content-type']),
+    ...(signingDate === undefined ? {} : { signingDate }),
   });
 }
 

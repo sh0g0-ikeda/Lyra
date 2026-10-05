@@ -4,7 +4,13 @@ import type {
   EntityReferenceUploadPurpose,
   EntityReferenceUploadToken,
 } from '../domain/types/entityReferenceUpload.js';
-import type { DatabaseClient } from '../lib/db.js';
+import { ConfigurationError, ForbiddenError } from '../domain/errors/index.js';
+import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 export interface CreateEntityReferenceUploadTokenInput {
   tokenHash: string;
@@ -47,10 +53,29 @@ interface EntityReferenceUploadTokenRow extends QueryResultRow {
 }
 
 export class PostgresEntityReferenceUploadTokenRepository implements EntityReferenceUploadTokenRepository {
-  public constructor(private readonly client: DatabaseClient) {}
+  public constructor(
+    private readonly client: DatabaseClient & Partial<TransactionRunner>,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async create(input: CreateEntityReferenceUploadTokenInput): Promise<EntityReferenceUploadToken> {
-    const result = await this.client.query<EntityReferenceUploadTokenRow>(
+    if (this.schemaProfile !== 'legacy_2debe_v1') {
+      return this.createWithAdmission(this.client, input);
+    }
+    if (typeof this.client.transaction !== 'function') {
+      throw new ConfigurationError('Legacy entity reference upload token writes require transaction support');
+    }
+    return this.client.transaction(async (transactionClient) => {
+      await assertLegacyEntityReferenceUploadAdmission(transactionClient, input);
+      return this.createWithAdmission(transactionClient, input);
+    });
+  }
+
+  private async createWithAdmission(
+    client: DatabaseClient,
+    input: CreateEntityReferenceUploadTokenInput,
+  ): Promise<EntityReferenceUploadToken> {
+    const result = await client.query<EntityReferenceUploadTokenRow>(
       `
       INSERT INTO entity_reference_upload_tokens (
         token_hash,
@@ -123,6 +148,88 @@ export class PostgresEntityReferenceUploadTokenRepository implements EntityRefer
 
     const row = result.rows[0];
     return row === undefined ? null : mapEntityReferenceUploadTokenRow(row);
+  }
+}
+
+async function assertLegacyEntityReferenceUploadAdmission(
+  client: DatabaseClient,
+  input: CreateEntityReferenceUploadTokenInput,
+): Promise<void> {
+  await assertLegacyPersonalWriteAllowed(client, {
+    userId: input.userId,
+    organizationId: null,
+  });
+  if (input.organizationId !== null) {
+    await assertLegacyOrganizationUploadAdmission(client, input.organizationId, input.userId);
+  }
+  if (input.entityId !== null) {
+    const preliminaryEntity = await client.query<{ work_id: string }>(
+      'SELECT work_id FROM entities WHERE id = $1::uuid',
+      [input.entityId],
+    );
+    const workId = preliminaryEntity.rows[0]?.work_id;
+    if (workId === undefined) {
+      throw new ForbiddenError('Entity reference upload is no longer authorized');
+    }
+    const work = await client.query<{ id: string }>(
+      `
+      SELECT id
+      FROM works
+      WHERE id = $1::uuid
+        AND (
+          ($3::uuid IS NULL AND organization_id IS NULL AND user_id = $2::uuid)
+          OR ($3::uuid IS NOT NULL AND organization_id = $3::uuid)
+        )
+      FOR SHARE
+      `,
+      [workId, input.userId, input.organizationId],
+    );
+    if (work.rows[0] === undefined) {
+      throw new ForbiddenError('Entity reference upload is no longer authorized');
+    }
+    const entity = await client.query<{ id: string }>(
+      `
+      SELECT entities.id
+      FROM entities
+      WHERE entities.id = $1::uuid
+        AND entities.work_id = $2::uuid
+        AND ($3::uuid IS NOT NULL OR entities.user_id = $4::uuid)
+      FOR SHARE
+      `,
+      [input.entityId, workId, input.organizationId, input.userId],
+    );
+    if (entity.rows[0] === undefined) {
+      throw new ForbiddenError('Entity reference upload is no longer authorized');
+    }
+  }
+}
+
+async function assertLegacyOrganizationUploadAdmission(
+  client: DatabaseClient,
+  organizationId: string,
+  userId: string,
+): Promise<void> {
+  const organization = await client.query<{ status: string }>(
+    'SELECT status FROM organizations WHERE id = $1::uuid FOR SHARE',
+    [organizationId],
+  );
+  if (!['active', 'trialing'].includes(organization.rows[0]?.status ?? '')) {
+    throw new ForbiddenError('Entity reference upload is no longer authorized');
+  }
+  const membership = await client.query<{ role: string }>(
+    `
+    SELECT role
+    FROM organization_members
+    WHERE organization_id = $1::uuid
+      AND user_id = $2::uuid
+      AND status = 'active'
+    FOR SHARE
+    `,
+    [organizationId, userId],
+  );
+  const role = membership.rows[0]?.role;
+  if (role !== 'owner' && role !== 'admin' && role !== 'editor') {
+    throw new ForbiddenError('Entity reference upload is no longer authorized');
   }
 }
 

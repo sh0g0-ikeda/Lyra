@@ -95,6 +95,34 @@ LegacyAccountIdentityDeletionPort, LegacyAccountAssetLifecyclePort {
 }
 
 describe('LegacyAccountDeletionServiceAdapter', () => {
+  it('Spec 5/8/11 有効な個人uploadがある場合は既存job blockerで外部処理を止める', async () => {
+    const repository = new MemoryRepository();
+    repository.flight = { ...emptyFlight(), activePersonalUploadCount: 2 };
+    const providers = new RecordingProviders();
+    const service = new LegacyAccountDeletionServiceAdapter(repository, providers, providers, providers);
+    expect((await service.getDeletionPreview(USER_ID)).activePersonalJobCount).toBe(2);
+    expect(await service.requestDeletion(requestInput())).toEqual({
+      status: 'blocked', blockers: [{ code: 'ACTIVE_PERSONAL_JOB', job_count: 2 }],
+    });
+    expect(providers.scheduled).toEqual([]);
+    expect(providers.identities).toEqual([]);
+    repository.pending.push(buildRequest(TOKEN));
+    expect(await service.recoverPendingRequests(1)).toEqual({ attemptedCount: 1, completedCount: 0 });
+    expect(providers.identities).toEqual([]);
+  });
+
+  it('期限切れ一時keyは保存asset同意に含めず重複なく削除予約する', async () => {
+    const repository = new MemoryRepository();
+    repository.flight = { ...emptyFlight(), personalTemporaryUploadKeys: ['temporary/failed-signing.png', 'temporary/failed-signing.png'] };
+    const providers = new RecordingProviders();
+    const service = new LegacyAccountDeletionServiceAdapter(repository, providers, providers, providers);
+    expect((await service.getDeletionPreview(USER_ID)).personalAssetCount).toBe(0);
+    expect(await service.requestDeletion({ ...requestInput(), acknowledgePersonalAssets: false }))
+      .toEqual({ status: 'completed', blockers: [] });
+    expect(providers.scheduled).toEqual(['temporary/failed-signing.png']);
+    expect(repository.assetCheckpointCalls).toBe(1);
+  });
+
   it('active jobやsole ownerは外部処理とclaimの前にblockedになる', async () => {
     const repository = new MemoryRepository();
     repository.flight = { ...emptyFlight(), activePersonalGenerationJobCount: 1 };
@@ -241,6 +269,7 @@ function emptyFlight(): LegacyAccountDeletionFlight {
   return {
     uniqueOwnerOrganizations: [], activePersonalStripeSubscriptionIds: [],
     activeStoreSubscriptions: [], personalAssetKeys: [],
+    personalTemporaryUploadKeys: [], activePersonalUploadCount: 0,
     activePersonalGenerationJobCount: 0, activePersonalExportJobCount: 0,
   };
 }

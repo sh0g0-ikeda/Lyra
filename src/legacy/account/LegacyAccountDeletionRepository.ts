@@ -1,4 +1,5 @@
 import type { QueryResultRow } from 'pg';
+import { ConflictError } from '../../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from '../../lib/db.js';
 import { LegacyExportDeletionBlocker } from '../export/LegacyExportDeletionBlocker.js';
 import type {
@@ -30,6 +31,8 @@ interface StoreSubscriptionRow extends QueryResultRow {
   auto_renew_enabled: boolean | null;
 }
 interface ImageKeyRow extends QueryResultRow { s3_key: string }
+interface UploadKeyRow extends ImageKeyRow { is_active: boolean }
+interface ScheduledKeysRow extends QueryResultRow { scheduled_asset_keys: string[] }
 interface CountRow extends QueryResultRow { count: string }
 interface UpdatedRow extends QueryResultRow { updated: boolean }
 
@@ -93,8 +96,11 @@ implements LegacyAccountDeletionRepositoryPort {
     input: LegacyAccountDeletionClaimInput,
   ): Promise<LegacyAccountDeletionClaimResult> {
     return this.transactionRunner.transaction(async (client) => {
+      // Spec 5/11: old INSERT takes a users FK KEY SHARE after reserving the
+      // request key. NO KEY UPDATE avoids that cycle while still excluding
+      // ordinary user updates and candidate writers/anonymization.
       await client.query(
-        'SELECT id FROM users WHERE id = $1::uuid FOR UPDATE',
+        'SELECT id FROM users WHERE id = $1::uuid FOR NO KEY UPDATE',
         [input.userId],
       );
       await client.query(
@@ -199,13 +205,24 @@ implements LegacyAccountDeletionRepositoryPort {
         'SELECT id FROM users WHERE id = $1::uuid FOR UPDATE',
         [userId],
       );
-      const ownership = await client.query<UpdatedRow>(
-        `SELECT true AS updated FROM account_deletion_requests
+      const ownership = await client.query<ScheduledKeysRow>(
+        `SELECT scheduled_asset_keys FROM account_deletion_requests
          WHERE user_id = $1::uuid AND processing_token = $2::uuid AND status = 'processing'
          FOR UPDATE`,
         [userId, processingToken],
       );
-      if ((ownership.rowCount ?? 0) === 0) return false;
+      const ownedRequest = ownership.rows[0];
+      if (ownedRequest === undefined) return false;
+      // Spec 5/8/11: admission and final inventory share users -> request locks.
+      // Consuming a token does not revoke its signed PUT. Scheduled keys prove
+      // lifecycle reservation only, never physical deletion or remote PUT settlement.
+      const uploads = await this.readPersonalUploads(client, userId);
+      const assets = await client.query<ImageKeyRow>(LEGACY_PERSONAL_ASSET_KEYS_SQL, [userId]);
+      const scheduled = new Set(ownedRequest.scheduled_asset_keys);
+      if (uploads.some((row) => row.is_active)
+        || [...uploads, ...assets.rows].some((row) => !scheduled.has(row.s3_key))) {
+        throw new ConflictError('Personal account deletion has unsettled uploads or assets');
+      }
       await client.query('DELETE FROM works WHERE user_id = $1::uuid AND organization_id IS NULL', [userId]);
       await client.query('DELETE FROM organization_members WHERE user_id = $1::uuid', [userId]);
       await client.query(
@@ -297,6 +314,18 @@ implements LegacyAccountDeletionRepositoryPort {
     return row === undefined ? null : mapRequest(row);
   }
 
+  private async readPersonalUploads(client: DatabaseClient, userId: string): Promise<UploadKeyRow[]> {
+    const result = await client.query<UploadKeyRow>(
+      `SELECT s3_key, expires_at > NOW() AS is_active
+       FROM entity_reference_upload_tokens
+       WHERE user_id = $1::uuid AND organization_id IS NULL ORDER BY s3_key ASC`,
+      [userId],
+    );
+    // Keep expired/failed-signing rows and consumed rows as exact-key inventory.
+    // Legacy remote signature expiry and in-flight PUTs still need external proof.
+    return result.rows;
+  }
+
   private async readFlight(client: DatabaseClient, userId: string): Promise<LegacyAccountDeletionFlight> {
     // The same method runs on a transaction client during claim. Keep queries
     // sequential: node-postgres does not support concurrent query calls on one client.
@@ -325,6 +354,7 @@ implements LegacyAccountDeletionRepositoryPort {
         [userId],
       );
     const assets = await client.query<ImageKeyRow>(LEGACY_PERSONAL_ASSET_KEYS_SQL, [userId]);
+    const uploads = await this.readPersonalUploads(client, userId);
     const generationJobs = await client.query<CountRow>(
         `SELECT COUNT(*)::text AS count FROM generation_jobs
          WHERE user_id = $1::uuid AND organization_id IS NULL AND status IN ('queued', 'processing')`,
@@ -337,6 +367,8 @@ implements LegacyAccountDeletionRepositoryPort {
       activePersonalStripeSubscriptionIds: subscriptions.rows.map((row) => row.stripe_subscription_id),
       activeStoreSubscriptions: stores.rows.map(mapStoreSubscription),
       personalAssetKeys: assets.rows.map((row) => row.s3_key),
+      personalTemporaryUploadKeys: uploads.map((row) => row.s3_key),
+      activePersonalUploadCount: uploads.filter((row) => row.is_active).length,
       activePersonalGenerationJobCount: parseCount(generationJobs.rows[0]),
       activePersonalExportJobCount,
     };
@@ -368,6 +400,7 @@ function hasClaimBlocker(flight: LegacyAccountDeletionFlight, input: LegacyAccou
   return flight.uniqueOwnerOrganizations.length > 0
     || flight.activePersonalGenerationJobCount > 0
     || flight.activePersonalExportJobCount > 0
+    || flight.activePersonalUploadCount > 0
     || (flight.activePersonalStripeSubscriptionIds.length > 0 && !input.acknowledgePersonalSubscriptions)
     || (flight.activeStoreSubscriptions.length > 0 && !input.acknowledgeStoreBilling)
     || (flight.personalAssetKeys.length > 0 && !input.acknowledgePersonalAssets);

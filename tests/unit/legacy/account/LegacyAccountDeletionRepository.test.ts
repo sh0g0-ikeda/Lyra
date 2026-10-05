@@ -32,7 +32,9 @@ describe('PostgresLegacyAccountDeletionRepository', () => {
     const database = new RecordingDatabase();
     database.responses = [
       [{ id: '11111111-1111-4111-8111-111111111111' }],
-      [{ updated: true }],
+      [{ scheduled_asset_keys: [] }],
+      [],
+      [],
       [],
       [],
       [],
@@ -53,7 +55,7 @@ describe('PostgresLegacyAccountDeletionRepository', () => {
 
   it('claimはusersからrequestをlockしてからfresh flightを読む', async () => {
     const database = new RecordingDatabase();
-    database.responses = [[], [], [], [], [], [], [], [], [{ count: '0' }], [], [], []];
+    database.responses = [[], [], [], [], [], [], [], [], [], [{ count: '0' }], [], [], []];
     const repository = new PostgresLegacyAccountDeletionRepository(database, database);
 
     await repository.claimRequest({
@@ -65,7 +67,7 @@ describe('PostgresLegacyAccountDeletionRepository', () => {
       acknowledgePersonalAssets: true,
     });
 
-    expect(database.queries[0]?.text).toContain('FROM users WHERE id = $1::uuid FOR UPDATE');
+    expect(database.queries[0]?.text).toContain('FROM users WHERE id = $1::uuid FOR NO KEY UPDATE');
     expect(database.queries[1]?.text).toContain('account_deletion_requests WHERE user_id = $1::uuid FOR UPDATE');
     expect(database.queries[2]?.text).toContain('FROM organization_members');
   });

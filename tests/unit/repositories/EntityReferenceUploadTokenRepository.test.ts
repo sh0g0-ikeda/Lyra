@@ -1,6 +1,6 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { DatabaseClient } from '../../../src/lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEntityReferenceUploadTokenRepository } from '../../../src/repositories/EntityReferenceUploadTokenRepository.js';
 
 const tokenHash = 'a'.repeat(64);
@@ -97,11 +97,142 @@ describe('PostgresEntityReferenceUploadTokenRepository', () => {
       expiresAt: new Date('2026-07-25T00:05:00.000Z'),
     })).rejects.toThrow('Entity reference upload token was not persisted');
   });
+
+  it('legacy personal発行はusersから退会request、bound entity/workをlockしてから同じtransactionでINSERTする', async () => {
+    const database = new RecordingDatabase();
+    database.responses.push([{ id: '11111111-1111-4111-8111-111111111111' }]);
+    database.responses.push([]);
+    database.responses.push([{ work_id: '44444444-4444-4444-8444-444444444444' }]);
+    database.responses.push([{ id: '44444444-4444-4444-8444-444444444444' }]);
+    database.responses.push([{ id: '22222222-2222-4222-8222-222222222222' }]);
+    database.responses.push([buildRow({ organization_id: null })]);
+    const repository = new PostgresEntityReferenceUploadTokenRepository(
+      database,
+      'legacy_2debe_v1',
+    );
+
+    await repository.create({
+      tokenHash,
+      userId: '11111111-1111-4111-8111-111111111111',
+      organizationId: null,
+      entityId: '22222222-2222-4222-8222-222222222222',
+      purpose: 'entity_reference_import',
+      mimeType: 'image/png',
+      sizeBytes: 8,
+      s3Key: 'tmp/11111111-1111-4111-8111-111111111111/entities/imports/server-generated.png',
+      expiresAt: new Date('2026-07-25T00:05:00.000Z'),
+    });
+
+    expect(database.transactionCount).toBe(1);
+    expect(database.queries.map((query) => query.text)).toEqual([
+      expect.stringContaining('FROM users'),
+      expect.stringContaining('account_deletion_requests'),
+      expect.stringContaining('SELECT work_id FROM entities'),
+      expect.stringContaining('FROM works'),
+      expect.stringContaining('FROM entities'),
+      expect.stringContaining('INSERT INTO entity_reference_upload_tokens'),
+    ]);
+    expect(database.queries[3]?.text).toContain('FOR SHARE');
+    expect(database.queries[4]?.text).toContain('FOR SHARE');
+  });
+
+  it('legacy personal発行は退会開始後にINSERTを実行しない', async () => {
+    const database = new RecordingDatabase();
+    database.responses.push([{ id: '11111111-1111-4111-8111-111111111111' }]);
+    database.responses.push([{ status: 'processing' }]);
+    const repository = new PostgresEntityReferenceUploadTokenRepository(
+      database,
+      'legacy_2debe_v1',
+    );
+
+    await expect(repository.create({
+      tokenHash,
+      userId: '11111111-1111-4111-8111-111111111111',
+      organizationId: null,
+      entityId: null,
+      purpose: 'entity_reference_import',
+      mimeType: 'image/png',
+      sizeBytes: 8,
+      s3Key: 'tmp/11111111-1111-4111-8111-111111111111/entities/imports/server-generated.png',
+      expiresAt: new Date('2026-07-25T00:05:00.000Z'),
+    })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(database.queries.some((query) => query.text.includes('INSERT INTO entity_reference_upload_tokens'))).toBe(false);
+  });
+
+  it('legacy organization発行はorganization、active generate member、bound entity/workの順にlockする', async () => {
+    const database = new RecordingDatabase();
+    database.responses.push([{ id: '11111111-1111-4111-8111-111111111111' }]);
+    database.responses.push([]);
+    database.responses.push([{ status: 'active' }]);
+    database.responses.push([{ role: 'editor' }]);
+    database.responses.push([{ work_id: '44444444-4444-4444-8444-444444444444' }]);
+    database.responses.push([{ id: '44444444-4444-4444-8444-444444444444' }]);
+    database.responses.push([{ id: '22222222-2222-4222-8222-222222222222' }]);
+    database.responses.push([buildRow()]);
+    const repository = new PostgresEntityReferenceUploadTokenRepository(database, 'legacy_2debe_v1');
+
+    await repository.create({
+      tokenHash,
+      userId: '11111111-1111-4111-8111-111111111111',
+      organizationId: '33333333-3333-4333-8333-333333333333',
+      entityId: '22222222-2222-4222-8222-222222222222',
+      purpose: 'entity_reference_import', mimeType: 'image/png', sizeBytes: 8,
+      s3Key: 'tmp/11111111-1111-4111-8111-111111111111/entities/imports/server-generated.png',
+      expiresAt: new Date('2026-07-25T00:05:00.000Z'),
+    });
+
+    expect(database.queries.map((query) => query.text)).toEqual([
+      expect.stringContaining('FROM users'),
+      expect.stringContaining('account_deletion_requests'),
+      expect.stringContaining('FROM organizations'),
+      expect.stringContaining('FROM organization_members'),
+      expect.stringContaining('SELECT work_id FROM entities'),
+      expect.stringContaining('FROM works'),
+      expect.stringContaining('FROM entities'),
+      expect.stringContaining('INSERT INTO entity_reference_upload_tokens'),
+    ]);
+  });
+
+  it('legacy organizationのviewerまたはtransaction非対応clientはINSERT前に拒否する', async () => {
+    const database = new RecordingDatabase();
+    database.responses.push([{ id: '11111111-1111-4111-8111-111111111111' }]);
+    database.responses.push([]);
+    database.responses.push([{ status: 'active' }]);
+    database.responses.push([{ role: 'viewer' }]);
+    const repository = new PostgresEntityReferenceUploadTokenRepository(database, 'legacy_2debe_v1');
+
+    await expect(repository.create({
+      tokenHash, userId: '11111111-1111-4111-8111-111111111111',
+      organizationId: '33333333-3333-4333-8333-333333333333', entityId: null,
+      purpose: 'entity_reference_import', mimeType: 'image/png', sizeBytes: 8,
+      s3Key: 'tmp/11111111-1111-4111-8111-111111111111/entities/imports/server-generated.png',
+      expiresAt: new Date('2026-07-25T00:05:00.000Z'),
+    })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(database.queries.some((query) => query.text.includes('INSERT INTO entity_reference_upload_tokens'))).toBe(false);
+
+    const unsafe = new PostgresEntityReferenceUploadTokenRepository(
+      { query: database.query.bind(database) },
+      'legacy_2debe_v1',
+    );
+    await expect(unsafe.create({
+      tokenHash, userId: '11111111-1111-4111-8111-111111111111', organizationId: null,
+      entityId: null, purpose: 'entity_reference_import', mimeType: 'image/png', sizeBytes: 8,
+      s3Key: 'tmp/11111111-1111-4111-8111-111111111111/entities/imports/server-generated.png',
+      expiresAt: new Date('2026-07-25T00:05:00.000Z'),
+    })).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+  });
 });
 
-class RecordingDatabase implements DatabaseClient {
+class RecordingDatabase implements DatabaseClient, TransactionRunner {
   public readonly queries: Array<{ text: string; values: readonly unknown[] | undefined }> = [];
   public readonly responses: QueryResultRow[][] = [];
+  public transactionCount = 0;
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
+    return work(this);
+  }
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,

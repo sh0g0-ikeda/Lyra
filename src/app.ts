@@ -1461,7 +1461,8 @@ function resolveConfiguredEntityReferenceUploadService(
   }
 
   return new EntityReferenceUploadService({
-    uploadTokenRepository: new PostgresEntityReferenceUploadTokenRepository(db),
+    persistenceProfile: env.LYRA_PERSISTENCE_PROFILE,
+    uploadTokenRepository: new PostgresEntityReferenceUploadTokenRepository(db, env.LYRA_PERSISTENCE_PROFILE),
     uploadStorage: new S3EntityReferenceUploadStorage(
       createPageImageStorageClient(env.AWS_REGION),
       {

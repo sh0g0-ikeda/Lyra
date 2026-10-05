@@ -28,6 +28,9 @@ export interface LegacyAccountDeletionFlight {
   activePersonalStripeSubscriptionIds: string[];
   activeStoreSubscriptions: LegacyAccountDeletionStoreSubscription[];
   personalAssetKeys: string[];
+  /** Temporary upload inventory is not a saved-asset consent category. */
+  personalTemporaryUploadKeys: string[];
+  activePersonalUploadCount: number;
   activePersonalGenerationJobCount: number;
   activePersonalExportJobCount: number;
 }

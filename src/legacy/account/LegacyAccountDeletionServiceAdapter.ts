@@ -101,7 +101,7 @@ export class LegacyAccountDeletionServiceAdapter implements AccountDeletionServi
       })),
       personalAssetCount: flight.personalAssetKeys.length,
       activePersonalJobCount:
-        flight.activePersonalGenerationJobCount + flight.activePersonalExportJobCount,
+        flight.activePersonalGenerationJobCount + flight.activePersonalExportJobCount + flight.activePersonalUploadCount,
     };
   }
 
@@ -197,7 +197,7 @@ export class LegacyAccountDeletionServiceAdapter implements AccountDeletionServi
         request.cancelledSubscriptionIds.push(subscriptionId);
       }
 
-      for (const key of flight.personalAssetKeys) {
+      for (const key of personalDeletionKeys(flight)) {
         if (request.scheduledAssetKeys.includes(key)) continue;
         const result = await this.runExternalStep(
           request,
@@ -214,7 +214,7 @@ export class LegacyAccountDeletionServiceAdapter implements AccountDeletionServi
       const latest = await this.repository.getFlight(request.userId);
       const hasNewWork = latest.activePersonalStripeSubscriptionIds.some(
         (id) => !request.cancelledSubscriptionIds.includes(id),
-      ) || latest.personalAssetKeys.some((key) => !request.scheduledAssetKeys.includes(key));
+      ) || personalDeletionKeys(latest).some((key) => !request.scheduledAssetKeys.includes(key));
       if (!hasNewWork) break;
       if (pass === 2) {
         return this.deferRequest(request, 'ATTEMPT_BUDGET_EXHAUSTED', 'delete_personal_assets');
@@ -378,12 +378,16 @@ function toRequestBlockers(
   return blockers;
 }
 
+function personalDeletionKeys(flight: LegacyAccountDeletionFlight): string[] {
+  return [...new Set([...flight.personalAssetKeys, ...flight.personalTemporaryUploadKeys])];
+}
+
 function toHardBlockers(flight: LegacyAccountDeletionFlight): AccountDeletionBlocker[] {
   const blockers: AccountDeletionBlocker[] = [];
   if (flight.uniqueOwnerOrganizations.length > 0) {
     blockers.push({ code: 'UNIQUE_ORGANIZATION_OWNER', organizations: flight.uniqueOwnerOrganizations.slice(0, 25) });
   }
-  const activeJobs = flight.activePersonalGenerationJobCount + flight.activePersonalExportJobCount;
+  const activeJobs = flight.activePersonalGenerationJobCount + flight.activePersonalExportJobCount + flight.activePersonalUploadCount;
   if (activeJobs > 0) blockers.push({ code: 'ACTIVE_PERSONAL_JOB', job_count: activeJobs });
   return blockers;
 }

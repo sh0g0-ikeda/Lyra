@@ -113,6 +113,27 @@ describe('S3EntityReferenceUploadStorage', () => {
     });
   });
 
+  it('指定された署名時刻をpresignerへ渡し既存のPUT command条件を維持する', async () => {
+    const client = new FakeS3Client();
+    const signingDate = new Date('2026-07-31T00:00:00.000Z');
+    let capturedSigningDate: Date | undefined;
+    const storage = new S3EntityReferenceUploadStorage(
+      client as unknown as S3Client,
+      { bucketName: 'lyra-images', uploadUrlTtlSeconds: 300 },
+      async (_client, _command, _expiresInSeconds, receivedSigningDate) => {
+        capturedSigningDate = receivedSigningDate;
+        return 'https://s3.example.test/upload';
+      },
+    );
+
+    await storage.createPresignedPutUrl({
+      s3Key: uploadKey, mimeType: 'image/png', sizeBytes: pngBytes.length,
+      expiresInSeconds: 300, signingDate,
+    });
+
+    expect(capturedSigningDate).toEqual(signingDate);
+  });
+
   it('HEAD後のGETを申告サイズに制限して総サイズ・MIME・byte数を再検証する', async () => {
     const client = new FakeS3Client();
     const result = await buildStorage(client).loadUploadedImage({

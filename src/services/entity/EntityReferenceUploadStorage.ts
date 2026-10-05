@@ -18,6 +18,7 @@ export interface EntityReferenceUploadStoragePort {
     mimeType: EntityReferenceUploadMimeType;
     sizeBytes: number;
     expiresInSeconds: number;
+    signingDate?: Date;
   }): Promise<string>;
   loadUploadedImage(input: {
     s3Key: string;
