@@ -218,3 +218,11 @@ See the updated [integration manifest](uiux-backend-expansion-2026-09-30/統合�
 Spec §11は第一phaseで物理schemaと既存billing/deletion/export/worker workflowを保持し、046の全writer停止を許さない。旧027に3同意/外部intentの保存先がなく、旧031はentity削除でupload tokenをCASCADE削除する。既存checkpoint配列/failure欄の別用途流用は旧workflowの意味を変えるため採用しない。旧runtimeはprocessing ownerを10分で再取得し、completion/failureでtokenを解除する。C0 044のattempt/token CHECKはこの旧UPDATEと衝突するため、旧INSERTが通ることだけではmixed writer/rollback互換を証明できない。
 
 選択肢は、第一phaseの旧workflow保持を満たす互換adapterと混在/切り戻し証拠を先に揃えるか、退会専用受諾・外部step/attempt/unknown状態とnon-cascading upload inventoryの追加schemaを後続phaseとして明示的に設計すること。後者でも旧writerの所有権、旧binaryへの切り戻し、候補作成行を含む代表copy検証が必須で、nullable/opt-inだけで互換とはみなさない。048追加・factory接続・guard解除を未確認のまま行わない。
+
+## 2026-10-05 d02535c固定の更新結果 r2
+
+本節が最新sourceの索引。旧sourceの記録は履歴であり、今回の合格証明ではない。
+
+- 最新製品SHA d02535c2567540634b9c9c280405cae1c70fbfde。ローカル必須gateは個別結果・件数・証拠hashを docs/uiux-backend-expansion-2026-09-30/receipts/d02535c-final-gates-r3.json に記録。
+- 検証環境runtime確認PASS。 実画面QAはpartial。 provider acceptance=false、physical device=false。
+- productionReady=false。M2/P9/public GitHub拒否、旧writer互換とrollback、外部設定、物理実機は未完。本番/main/storeへ変更しない。

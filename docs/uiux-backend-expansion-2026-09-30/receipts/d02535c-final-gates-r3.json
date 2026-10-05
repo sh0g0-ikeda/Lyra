@@ -1,0 +1,253 @@
+{
+  "schemaVersion": 2,
+  "sourceCommit": "d02535c2567540634b9c9c280405cae1c70fbfde",
+  "observedAt": "2026-10-05T08:09:17.673Z",
+  "productionReady": false,
+  "localRequiredGatesCompleted": true,
+  "source": {
+    "trackedFiles": 1723,
+    "manifestSha256": "df67fadae5bb1b1cde947e7fec050d53b0af7ace83db356cf817b778a8db2999",
+    "receipt": {
+      "file": "d02535c-source-manifest-r1.json",
+      "sha256": "df67fadae5bb1b1cde947e7fec050d53b0af7ace83db356cf817b778a8db2999"
+    }
+  },
+  "backend": {
+    "checks": [
+      {
+        "name": "backend-node",
+        "logSha256": "dd80c2987f36cbd4144d6e3164b917ce5d58acb01370901bb08b34b744d05c98",
+        "files": 414,
+        "tests": 3545,
+        "resultJsonSha256": "0c29d06b1702b9b5dc43d2a80cdcbcdfb162a630e29c860a42bc87bf3553898d"
+      },
+      {
+        "name": "backend-bun",
+        "logSha256": "49a4961da017a49dcd65a01208da77e8a91aa27589d9466b88f995abdac94b12",
+        "files": 414,
+        "tests": 3545
+      },
+      {
+        "name": "backend-build",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "receipt": {
+      "file": "d02535c-latest-compat-backend-r1-receipt.json",
+      "sha256": "bf3e1f22341406fffeb86f9b1c520117f02ea74d64d624b23fa07222047d52c9"
+    }
+  },
+  "frontend": {
+    "checks": [
+      {
+        "name": "mobile-tests",
+        "logSha256": "0efb8c9e13f6ff7c1da5a50985ff0e62d92940c136ce8e9d4a22bd972710080b",
+        "files": 188,
+        "tests": 1042
+      },
+      {
+        "name": "mobile-typecheck",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "mobile-lint",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "mobile-contracts",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "mobile-mojibake",
+        "logSha256": "038d411a000ae02d6942e315fc660ed46eb217fabc42eeddfa9857c50bc9a852"
+      },
+      {
+        "name": "web-typecheck",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "web-lint",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "web-build",
+        "logSha256": "c40c858bba5c001c6f157775fc4762d41854c6eebf47c742ec0e148faeaad5cc"
+      }
+    ],
+    "receipt": {
+      "file": "d02535c-frontend-r3-receipt.json",
+      "sha256": "a063670f77829b9b4d56254e1c451e22d00a243ec8b4996c55b3e61b346fa16e"
+    }
+  },
+  "web": {
+    "checks": [
+      {
+        "name": "organization-on-personal",
+        "logSha256": "8570045002e6bba68525b1ba0ed8c76240f528fb0aad4f824c42eac9cc2c87ba",
+        "tests": 1,
+        "resultJsonSha256": "31ea6b51e6ca407bb2278940af6690f0f5e2fb6fbeea76de0b729aef5185682b",
+        "discoverySha256": "1298a1b0da4fe5ebc7cd34952ab769ddbf9d38bf1b959823b76c81a681cbf412",
+        "configSha256": "5a55572abf4fdcff57f030dadd0a13bbd7f6e4720af9b374d9f14c0cf91d9422"
+      },
+      {
+        "name": "organization-off-personal",
+        "logSha256": "6803210808409a6958364e118bd11a7b2da09582877ee803acc373b4ced8c2ff",
+        "tests": 1,
+        "resultJsonSha256": "130b5d20ded4b74f89d576d487c219b4875790277d7eadeda1a223613ab248e0",
+        "discoverySha256": "a797ef60dd834b192931bb2a12a5acb7e95c23a35478a5f513d8b37db1d05e3b",
+        "configSha256": "1764b9e2888656c3947c4ed01d765b8bf3df5e02f1aea8e54d98a8d95ed8fd1b"
+      },
+      {
+        "name": "organization-on-full",
+        "logSha256": "f0d1521c694fedbcea35daf96a4a7c75a5667854ea3cb45f524a9b8b60aee150",
+        "tests": 75,
+        "resultJsonSha256": "152fc653622ef9462e44942b6b7fc598d5aa803006964bfb7de2ca394f2b91c8",
+        "discoverySha256": "b7269b02d12564358d6bd6813d4df37fd0275c58741606169d65b5145e24b549",
+        "configSha256": "58d0d80ad4dbe7ee52416e54a8e9047d3cde8bae6e1a42bdb13a24474828647f"
+      }
+    ],
+    "receipt": {
+      "file": "d02535c-web-smoke-r1-receipt.json",
+      "sha256": "884cd9555e4d7a6be793f7bcdb00455fcef2dd6a1d7b89ed305bef6ce8e48af8"
+    }
+  },
+  "database": {
+    "readOnly": true,
+    "productionData": false,
+    "checks": [
+      {
+        "version": 16,
+        "invariants": 71,
+        "violations": 0,
+        "lineageBlockers": 0
+      },
+      {
+        "version": 18,
+        "invariants": 71,
+        "violations": 0,
+        "lineageBlockers": 0
+      }
+    ],
+    "receipt": {
+      "file": "readonly-db-d02535c-r2-passed-receipt.json",
+      "sha256": "a8141f6f9e4fa7cda1b9fddd06d2224da358c545bb69cf72eb994aace1ecd099"
+    }
+  },
+  "inventory": {
+    "endpoints": 151,
+    "logSha256": "bc98c812cd29808cf9cebf7b30a03eb8102a8d40d5a4739fa4209a8e82b1aef2",
+    "apkSource": "472c50813b42d0fdd3cb0333d78f0ef034829227",
+    "mobileProductDelta": 0,
+    "importedSource": "23878f92a8666efd949f3560cfeea8e4a9cfb6f7",
+    "importedSourceClean": true,
+    "receipt": {
+      "file": "d02535c-final-local-inventory-r1-receipt.json",
+      "sha256": "ed6a720f22c1aae792ce4f0ca7d01f24657e19e6d0be61eacb2024589b7d3a33"
+    }
+  },
+  "runtimeHelper": {
+    "passed": true,
+    "helperSha256": "0d67896248ca2b63be33fef935137698d9969325619766ad070d76468ab9ccaa",
+    "testSha256": "9d116f3105226bdd9be2384c5581545b25dcc22e5ac961ea894b68e4fb614450",
+    "logSha256": "87d3880e5355a4db73a713f3078641eee8b01033788ab9e5ea73d2ee95e60c69",
+    "receipt": {
+      "file": "d02535c-runtime-helper-tests-r2-receipt.json",
+      "sha256": "e1f77bc55ff76bfcccd2ee2bccbfeea4ad403599832aa992c70c5f40bce5aec4"
+    }
+  },
+  "stagingRuntime": {
+    "status": "passed",
+    "stagingOnly": true,
+    "healthz": 200,
+    "readyz": 200,
+    "api": {
+      "desired": 1,
+      "running": 1,
+      "pending": 0
+    },
+    "workersIdle": true,
+    "imageDigest": "sha256:ed1eba676312749b30c551673da0cc2c913ecbad449279d778289e546c07cc39",
+    "receipt": {
+      "file": "oci-runtime-image-d02535c-r2-status-2026-10-05T07-46-28-491Z.json",
+      "sha256": "bda4ccb0ffb5435d7ebbf292cdf3fb4cf0402db3aff553ae389f117ae63e257f"
+    }
+  },
+  "webManualQa": {
+    "status": "partial",
+    "scope": "focused-regression",
+    "checks": [
+      {
+        "name": "api-index-bundle",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "login",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "story-cancel",
+        "status": "partial",
+        "required": true
+      },
+      {
+        "name": "story-save-reload",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "entity-defaults",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "hy4-disabled",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "color-monochrome",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "saved-image-visible",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "actual-image-import",
+        "status": "partial",
+        "required": false
+      }
+    ],
+    "providerAcceptancePassed": false,
+    "productionChanged": false,
+    "receipt": {
+      "file": "d02535c-web-manual-qa-r2.json",
+      "sha256": "dac3a6b014294642d8abc19242cae76d9d81b621f9e049be9b9afed58ec63c48"
+    }
+  },
+  "originalCheckout": {
+    "verifiedFresh": true,
+    "checkedAt": "2026-10-05T08:09:17.641Z",
+    "baselineHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "currentHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "dirtyPaths": 28,
+    "changedDirtyPaths": 0,
+    "storeAssetsPath": "store-assets/google-play",
+    "discardedChanges": false,
+    "scriptSha256": "1916ad657e1b018d2e27dea377a4519d97f39d30ead02b75635dacf212d45114",
+    "receiptSha256": "7b02f4250ea1f7a733f6c47abaa3ecd2e00109c0e1eef32c9e0d0c900bb55866"
+  },
+  "physicalDeviceVerified": false,
+  "remaining": [
+    "legacy writer consent intent recovery inventory compatibility and rollback are incomplete",
+    "M2 production copy restore was refused and was not retried or bypassed",
+    "P9 specific story provider transmission was refused and the quality failure remains",
+    "external live settings remain off",
+    "physical device acceptance is not complete",
+    "public GitHub production main and Store changes were not performed"
+  ]
+}

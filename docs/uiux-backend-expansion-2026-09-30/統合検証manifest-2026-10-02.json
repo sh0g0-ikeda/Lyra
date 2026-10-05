@@ -1,311 +1,111 @@
 {
-  "schema_version": 4,
-  "observed_at_utc": "2026-10-03T19:15:37Z",
+  "schema_version": 6,
+  "observed_at_utc": "2026-10-05T08:09:17.673Z",
   "production_ready": false,
   "local_required_gates_completed": true,
-  "integration_branch": "codex/lyra-dots-integration-20261002",
-  "verified_code_commit": "ba0ec724158adeb869bc50916df148cc9a3b725c",
-  "source_commit": "ba0ec724158adeb869bc50916df148cc9a3b725c",
-  "final_code_identity_receipt": "receipts/final-source-identity.json",
-  "backend_validation_checkout_observation": {
-    "observed_at_utc": "2026-10-03T18:55:44.000Z",
-    "head": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
-    "product_paths_clean_at_backend_verification": true,
-    "uncommitted_reporting_paths": [
-      "docs/uiux-backend-expansion-2026-09-30/実装記録.md",
-      "docs/uiux-backend-expansion-2026-09-30/統合検証manifest-2026-10-02.json"
-    ],
-    "subsequent_web_localization_fix": "completed_as_ba0ec724158adeb869bc50916df148cc9a3b725c"
-  },
-  "final_checkout_observation": {
-    "observed_at_utc": "2026-10-03T19:13:19.336Z",
-    "head": "ba0ec724158adeb869bc50916df148cc9a3b725c",
-    "backend_mobile_packages_locks_tests_migrations_unchanged": true,
-    "new_code_paths": ["apps/web/src/App.tsx", "apps/web/e2e/app.spec.ts"],
-    "reporting_only_dirty_paths": [
-      "docs/uiux-backend-expansion-2026-09-30/実装記録.md",
-      "docs/uiux-backend-expansion-2026-09-30/統合検証manifest-2026-10-02.json"
-    ]
-  },
-  "imported_source_commit": "23878f92a8666efd949f3560cfeea8e4a9cfb6f7",
-  "imported_source_clean": true,
-  "imported_source_checked_at_utc": "2026-10-03T19:14:10.566Z",
+  "verified_code_commit": "d02535c2567540634b9c9c280405cae1c70fbfde",
+  "source_commit": "d02535c2567540634b9c9c280405cae1c70fbfde",
   "baseline_commit": "2bb4e2dabd24c3116c5dae86a177754b367e245d",
+  "final_gate_receipt": "docs/uiux-backend-expansion-2026-09-30/receipts/d02535c-final-gates-r3.json",
+  "staging_runtime": {
+    "status": "passed",
+    "stagingOnly": true,
+    "healthz": 200,
+    "readyz": 200,
+    "api": {
+      "desired": 1,
+      "running": 1,
+      "pending": 0
+    },
+    "workersIdle": true,
+    "imageDigest": "sha256:ed1eba676312749b30c551673da0cc2c913ecbad449279d778289e546c07cc39",
+    "receipt": {
+      "file": "oci-runtime-image-d02535c-r2-status-2026-10-05T07-46-28-491Z.json",
+      "sha256": "bda4ccb0ffb5435d7ebbf292cdf3fb4cf0402db3aff553ae389f117ae63e257f"
+    }
+  },
+  "web_manual_qa": {
+    "status": "partial",
+    "scope": "focused-regression",
+    "checks": [
+      {
+        "name": "api-index-bundle",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "login",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "story-cancel",
+        "status": "partial",
+        "required": true
+      },
+      {
+        "name": "story-save-reload",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "entity-defaults",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "hy4-disabled",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "color-monochrome",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "saved-image-visible",
+        "status": "passed",
+        "required": true
+      },
+      {
+        "name": "actual-image-import",
+        "status": "partial",
+        "required": false
+      }
+    ],
+    "providerAcceptancePassed": false,
+    "productionChanged": false,
+    "receipt": {
+      "file": "d02535c-web-manual-qa-r2.json",
+      "sha256": "dac3a6b014294642d8abc19242cae76d9d81b621f9e049be9b9afed58ec63c48"
+    }
+  },
   "original_checkout": {
-    "checkedAt": "2026-10-03T19:14:10.566Z",
+    "verifiedFresh": true,
+    "checkedAt": "2026-10-05T08:09:17.641Z",
     "baselineHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
     "currentHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
-    "baselinePaths": 28,
-    "changedBaselinePaths": [],
-    "unrelatedAdditionalPath": "store-assets/google-play",
-    "discardedChanges": false
+    "dirtyPaths": 28,
+    "changedDirtyPaths": 0,
+    "storeAssetsPath": "store-assets/google-play",
+    "discardedChanges": false,
+    "scriptSha256": "1916ad657e1b018d2e27dea377a4519d97f39d30ead02b75635dacf212d45114",
+    "receiptSha256": "7b02f4250ea1f7a733f6c47abaa3ecd2e00109c0e1eef32c9e0d0c900bb55866"
   },
-  "checks": [
-    {
-      "name": "backend final gates",
-      "status": "passed",
-      "sourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
-      "receipt": "receipts/source-coverage-945fec2-backend-gate-receipt.json",
-      "results": [
-        {
-          "name": "vitest",
-          "exitCode": 0,
-          "sourceFixed": true,
-          "summary": [
-            " Test Files  363 passed (363)",
-            "      Tests  2963 passed (2963)"
-          ],
-          "log": "source-coverage-final-945fec2-vitest.log"
-        },
-        {
-          "name": "bun",
-          "exitCode": 0,
-          "sourceFixed": true,
-          "summary": [
-            " 2963 pass",
-            " 0 fail",
-            "Ran 2963 tests across 363 files. [142.94s]"
-          ],
-          "log": "source-coverage-final-945fec2-bun.log"
-        },
-        {
-          "name": "build",
-          "exitCode": 0,
-          "sourceFixed": true,
-          "summary": [],
-          "log": "source-coverage-final-945fec2-build.log"
-        }
-      ]
-    },
-    {
-      "name": "PostgreSQL18 invariants",
-      "status": "passed",
-      "sourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
-      "checked": 71,
-      "violations": 0,
-      "receipt": "receipts/source-coverage-945fec2-invariants-receipt.json"
-    },
-    {
-      "name": "unchanged tested Web/Mobile source",
-      "status": "historical_ui_identity_before_web_progress_fix",
-      "sourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
-      "uiSource": "0f21d49bd789a44f7218186464f2086651a71762",
-      "mobileTests": 1030,
-      "webSmokeTests": 23,
-      "receipt": "receipts/source-coverage-945fec2-ui-identity.json",
-      "physicalAndroidTested": false
-    },
-    {
-      "name": "final Web progress labels and browser regression gates",
-      "status": "passed",
-      "sourceCommit": "ba0ec724158adeb869bc50916df148cc9a3b725c",
-      "receipt": "receipts/web-skeleton-localization-receipt.json",
-      "receiptSha256": "adcba71459ab7a82551d18941b67f9b561adc822fe1e6c2c08d4705afcc94485",
-      "testedFileHashesBoundToFinalCommit": true,
-      "purposeSpecificOldCodeRedTests": 2,
-      "webSmokeTests": 25,
-      "type": "passed",
-      "lint": "passed",
-      "build": "passed_with_existing_chunk_size_warning",
-      "apiDbCreditChanges": 0,
-      "currentMobileSourceAnd1030TestsStillIdentical": true,
-      "physicalAndroidTested": false
-    },
-    {
-      "name": "isolated deployment runtime build",
-      "status": "passed_backend_candidate_artifact_not_final_web_runtime_not_uploaded",
-      "sourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
-      "receipt": "receipts/clean-runtime-build-945fec2.json",
-      "compiler": {
-        "node": "v24.13.1",
-        "backendExitCode": 0,
-        "webTypeExitCode": 0,
-        "webExitCode": 0
-      },
-      "dist": {
-        "fileCount": 404,
-        "treeDigest": "eea82cb24af952418c756c231179bd6319196e766dd733b68c46822e25f66792"
-      },
-      "public": {
-        "fileCount": 28,
-        "treeDigest": "3db6457914778ed5587abaeab794578b70cd9351c6db9a0c9ffd518007791368"
-      },
-      "uploads": 0
-    },
-    {
-      "name": "Ops and future QA regression gates",
-      "status": "passed",
-      "sourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
-      "tests": 61,
-      "failed": 0,
-      "skipped": 0,
-      "receipt": "receipts/source-coverage-945fec2-node-gates-receipt.json",
-      "logSha256": "3c1d7d9a9cc408a7f63056f383ce3e777f720174d0dcc52d4868072600becaf3",
-      "reportingFailurePreserved": {
-        "log": "source-coverage-945fec2-node-gates.log",
-        "reason": "Default spec reporter was parsed as TAP; Node tests exit0 but receipt generation failed",
-        "sha256": "999a9a90e13cbfa035f51963c96496493c5abc8f7334490679ea84c208e2f40b"
-      }
-    }
-  ],
-  "application_acceptance": {
-    "stagingSourceCommit": "0f21d49bd789a44f7218186464f2086651a71762",
-    "runtimeStatusReceipt": "receipts/oci-runtime-image-0f21d49-status-2026-10-03T18-48-32-390Z.json",
-    "runtimeStatusObservedAtUtc": "2026-10-03T18:48:32.390Z",
-    "apiStable": { "desired": 1, "running": 1, "pending": 0 },
-    "workersIdle": true,
-    "health": { "healthz": 200, "readyz": 200 },
-    "latestSourceDeployed": false,
-    "runtimeProof": "receipts/stage-source-0f21d49-runtime-proof.json",
-    "runtimeImageDigest": "sha256:adcf8b9b5c5ed1a29541b5de82511806cc6ddab344968fc65e379f96f8ccc8a8",
-    "runtimeTrees": {
-      "dist": {
-        "fileCount": 403,
-        "treeDigest": "be5bce3cf399243ed6fad177512dc41291bd7695bfc6b138d90772181fbc5cf5"
-      },
-      "public": {
-        "fileCount": 28,
-        "treeDigest": "3db6457914778ed5587abaeab794578b70cd9351c6db9a0c9ffd518007791368"
-      }
-    },
-    "latestSourceActualFifteenPageResult": {
-      "status": "not_run_blocked_auto_review",
-      "requestedBackendSourceCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
-      "finalCodeBackendIdentical": true,
-      "persistenceKind": "not_run",
-      "blockerReceipt": "receipts/source-coverage-945fec2-provider-blocker.json",
-      "manualStatus": "not_run",
-      "updatedPages": 0,
-      "updatedPanels": 0,
-      "actualProviderAssertion": false,
-      "physicalAndroidTested": false
-    },
-    "characterStateWorkflowHistorical": {
-      "status": "actual_generation_credit_storage_passed_latest_projection_read_passed",
-      "priorReceipt": "receipts/state-qa-final-result.json",
-      "latestReceipt": "receipts/state-final-readonly-api-result.json",
-      "generationSource": "9577908de3b52b62083446243259ef66026cdca4",
-      "projectionSource": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-      "creditCost": 1,
-      "actualConfirmationCalls": 2,
-      "actualNetConsumption": 1,
-      "localDisplayFix": "61da135",
-      "localFixDeployed": true,
-      "credits": 11,
-      "physicalDeviceNotVerified": true
-    },
-    "source0fSyntheticSkeleton": "receipts/source0f-v16-fixture-skeleton-acceptance.json",
-    "actualLatestSourceQueueDatabaseAutofill": "not_asserted_without_final_stage_readback_receipt",
-    "expirySchedule": "disabled; API/DB/ALB costs remain",
-    "protectedProductionData": "not copied; prior refusal preserved"
+  "previous_verification": {
+    "file": "docs/uiux-backend-expansion-2026-09-30/統合検証manifest-2026-10-02.json",
+    "sha256": "4c4f627828836c3923f2c879ac1cb281f6c57aba6cbf32e853550c9252ff67ae",
+    "sourceCommit": "ba0ec724158adeb869bc50916df148cc9a3b725c",
+    "reportingCommit": null,
+    "productionReady": false
   },
-  "apk": {
-    "sourceCommit": "0f21d49bd789a44f7218186464f2086651a71762",
-    "build": {
-      "buildId": "1e64504d-f12b-43be-9e1d-3dfd7728606b",
-      "buildPage": "https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/1e64504d-f12b-43be-9e1d-3dfd7728606b",
-      "sourceSha": "0f21d49bd789a44f7218186464f2086651a71762",
-      "profile": "staging",
-      "distribution": "INTERNAL",
-      "artifact": "https://expo.dev/artifacts/eas/6m74qTGjlY75T2w98Px4EkXQqu9bmeT_guPAAfDU5g4.apk",
-      "downloadedAt": "2026-10-03T14:18:35.572Z",
-      "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/lyra-hy4-separated-staging-0f21d49.apk",
-      "bytes": 107220616,
-      "sha256": "31205d364eba3cf7d797be8f6522370b18d117ebc8d5a2726732c708bbd5c06e",
-      "physicalDeviceTested": false,
-      "productionChanged": false
-    },
-    "physicalDeviceVerified": false,
-    "compatibleUiSource": "0f21d49bd789a44f7218186464f2086651a71762",
-    "fullCryptographicSignatureValidation": "passed_apk_signature_scheme_v2",
-    "signatureReceipt": "receipts/apk-final-signature-apksig-8.7.3-r2.json",
-    "signatureTool": "Google apksig ApkVerifier 8.7.3 with JDK17",
-    "signatureErrors": 0,
-    "signatureWarnings": 0,
-    "otherSignatureSchemesAsserted": false
-  },
-  "external_gates": [
-    {
-      "name": "new backend staging deployment and 15-page actual acceptance",
-      "status": "blocked_auto_review_before_provider_send",
-      "needed": "Specific user approval is pending. No provider request was sent; final actual SQS/DB readback and all-page source review remain required."
-    },
-    {
-      "name": "AWS IAM Access Analyzer/simulation and dedicated drain Lambda",
-      "status": "blocked_auto_review",
-      "requestsSent": 0,
-      "needed": "Explicit approval for internal IAM documents/ARNs to named staging AWS validation service; no rejection bypass"
-    },
-    {
-      "name": "one-week verified shutdown/cleanup",
-      "status": "not_proven_schedule_disabled",
-      "needed": "Verified new guard, protected trusted cleanup receipt, real stop/snapshot/delete rehearsal"
-    },
-    {
-      "name": "physical Android/new APK and old store client",
-      "status": "not_run",
-      "needed": "Install provided internal APK on physical Android and exercise login/edit/generation/recovery"
-    },
-    {
-      "name": "Google OAuth/linking",
-      "status": "not_run_flag_off",
-      "needed": "Existing authorized Google external configuration and actual account acceptance"
-    },
-    {
-      "name": "Hy4 exact official image/reference-edit API contract",
-      "status": "deferred_by_user_disabled_web_buttons_only",
-      "needed": "No activation or model substitution in this work."
-    },
-    {
-      "name": "character state 1-credit actual workflow",
-      "status": "historical_workflow_passed_new_web_local_gates_passed",
-      "needed": "Prior 1-credit generation/storage evidence is historical. Current state gates are OFF; physical Android remains unverified."
-    },
-    {
-      "name": "representative production data rehearsal",
-      "status": "blocked_auto_review",
-      "needed": "Explicit approval for protected snapshot copy into named isolated test destination; no production credentials read"
-    },
-    {
-      "name": "Stripe real purchase",
-      "status": "deferred_by_user",
-      "needed": "User elected not to exercise checkout during this QA"
-    },
-    {
-      "name": "public GitHub PR216 update/remote CI",
-      "status": "blocked_prior_refusal",
-      "needed": "Resolve original refusal through original channel; no retry or separate-session bypass"
-    }
-  ],
-  "publication": {
-    "staging": true,
-    "production": false,
-    "store": false,
-    "main_merge": false,
-    "github_write": false,
-    "github_retry": false,
-    "remote_ci": false
-  },
-  "history": {
-    "previousManifestCommit": "945fec2720ad842b05e7b5de20d9d4a4e066436c",
-    "previousManifestBlob": "32bb614317341622d4e76938d73707f1009ef416",
-    "previousVerifiedCode": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
-    "providerExecution": "current source blocked before provider send; prior source records remain historical only",
-    "note": "Earlier results remain in Git history and implementation record; they are not proof of changed backend code.",
-    "lastPriorRealProvider": {
-      "sourceCommit": "6c0a0142c3698eb76df05e80b71180835feadde8",
-      "status": "rejected",
-      "receipt": "receipts/local-long15-coverage-6c0a014-result.json",
-      "manualReceipt": "receipts/source-coverage-6c0a014-manual-review.json",
-      "failedPages": [
-        1,
-        5,
-        7,
-        8,
-        9,
-        15
-      ],
-      "currentSourceAcceptance": false
-    }
-  }
+  "remaining": [
+    "legacy writer consent intent recovery inventory compatibility and rollback are incomplete",
+    "M2 production copy restore was refused and was not retried or bypassed",
+    "P9 specific story provider transmission was refused and the quality failure remains",
+    "external live settings remain off",
+    "physical device acceptance is not complete",
+    "public GitHub production main and Store changes were not performed"
+  ]
 }
