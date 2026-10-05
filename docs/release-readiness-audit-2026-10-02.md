@@ -195,3 +195,26 @@ See the updated [integration manifest](uiux-backend-expansion-2026-09-30/統合�
 ### 長編意味欠落の次候補（設計のみ・未実装）
 
 段階traceをAstraが独立レビューし、原作から位置付き文・節IDを作り、既存audit call内で各IDに対応する実panel/entity action fieldの完全一致引用を返すsidecar契約を次候補とした。beat ledgerだけを基準にするとledger自身の省略を固定化するため不可。ID過不足/重複・field存在・引用一致は機械検証できるが、「安定点灯」を「十分充電」と誤対応する意味判定は証明できない。未検証のため今回の修正として採用せず、flag既定OFFの限定検証候補に留める。追加provider call、旧経路への保存拒否、保存済みページ再生成、モデル置換は導入しない。採用前に今回の4省略検出/修復、P14正当な継続動作、偽引用/未知panel、token/timeout/最大2audit/legacy soft-save互換を検証する必要がある。設計レビュー自身のnetwork/provider/AWS/writeは0。
+
+
+## 2026-10-05 現在の公開判定と旧DB対応の残境界
+
+本番反映可能との判定は **未成立**。本節は過去の3f5e289・Dots・旧stagingの結果と区別する。最新コードの全体gateと検証配備は実施結果を実装記録へ追記し、途中停止や未実施を合格にしない。
+
+| 項目 | 現在の証拠と残事項 |
+|---|---|
+| ローカル修正 | upload発行の退会/role/scope直列化、同一署名期限と応答時期限判定、temporary inventory、旧claim FK循環、completion3marker CAS、一時import keyの実lifecycle契約を限定修正。実PG/Node/Bunの根拠は実装記録の各receipt。canonical契約・DDL・料金変更なし。 |
+| Web/Mobile | fa9固定でMobile1042・型/lint/contracts、Web型/lint/build/smoke25とorgON/OFF基本操作が合格。新固定SHAの全体証明は別。Hy4はWeb無効ボタンのみ、Mobile入口なし。state previewは1cr。 |
+| APK/実機 | APK472c508は完成済み。今回のMobile/packages差分は0。旧store版と新APKの実機・認証・編集・中断復帰・実API受入は未確認。 |
+| 検証環境 | 現在稼働imageは678c8e8、API1/worker全0。保存済み画像/手動保存/戻る・cancel等の実画面結果はこのimageの証拠。Google/link/billing/deletion/export/state新受付はOFFで、実受入へ読み替えない。 |
+| 旧DBの候補起動 | legacy_2debe_v1は全環境で起動拒否を維持。app/recoveryの退会factoryはcanonical固定。未対応の候補を既存DBへつなぐ状態ではない。稼働旧runtimeを停止/置換しない。 |
+| 外部処理・退会耐久性 | 外部作用前intent、3同意永続化、処理中crashからの安全再開、entity削除後も保持するupload exact key inventoryが未実装。tag/DBmarkerは物理画像削除の証明ではなく、旧URL実期限/進行中PUT/tmp lifecycleも未確認。 |
+| 本番代表データ/M2 | 指定本番snapshotの保護copyは自動承認レビューがデータと宛先の承認不足で拒否。copy/restoreを実施せず、別経路で迂回しない。代表データの保存作品/画像/残高、mixed writer、候補作成行の旧binary rollbackが未確認。local人工DBの71invariantsは代用しない。 |
+| 長編/P9 | 指定長い原文のOpenAI送信は既存自動承認拒否のまま未実施。別fixture/宛先/セッションへの置換で迂回しない。既存15ページ品質FAILも取り消さない。保存成功・offline preview・過去の短編成功を意味品質合格へ流用しない。 |
+| 公開PR | 公開GitHub更新は既存拒否を再試行しない。ローカル統合branch/commit/diff/PR本文・bundleとしてレビュー可能な形を整える。本番/main/store提出は今回実施しない。 |
+
+### schemaと旧writerの未解決仕様境界
+
+Spec §11は第一phaseで物理schemaと既存billing/deletion/export/worker workflowを保持し、046の全writer停止を許さない。旧027に3同意/外部intentの保存先がなく、旧031はentity削除でupload tokenをCASCADE削除する。既存checkpoint配列/failure欄の別用途流用は旧workflowの意味を変えるため採用しない。旧runtimeはprocessing ownerを10分で再取得し、completion/failureでtokenを解除する。C0 044のattempt/token CHECKはこの旧UPDATEと衝突するため、旧INSERTが通ることだけではmixed writer/rollback互換を証明できない。
+
+選択肢は、第一phaseの旧workflow保持を満たす互換adapterと混在/切り戻し証拠を先に揃えるか、退会専用受諾・外部step/attempt/unknown状態とnon-cascading upload inventoryの追加schemaを後続phaseとして明示的に設計すること。後者でも旧writerの所有権、旧binaryへの切り戻し、候補作成行を含む代表copy検証が必須で、nullable/opt-inだけで互換とはみなさない。048追加・factory接続・guard解除を未確認のまま行わない。

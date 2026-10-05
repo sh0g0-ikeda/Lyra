@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { LegacyAccountAssetLifecyclePort } from '../../../../src/legacy/account/LegacyAccountAssetLifecycle.js';
+import {
+  LegacyAccountAssetLifecycle,
+  type LegacyAccountAssetLifecycleClient,
+  type LegacyAccountAssetLifecyclePort,
+  type LegacyAccountAssetTag,
+} from '../../../../src/legacy/account/LegacyAccountAssetLifecycle.js';
 import {
   LegacyAccountDeletionServiceAdapter,
   type LegacyAccountIdentityDeletionPort,
@@ -26,6 +31,7 @@ class MemoryRepository implements LegacyAccountDeletionRepositoryPort {
   public assetCas = true;
   public assetCheckpointError: Error | null = null;
   public assetCheckpointCalls = 0;
+  public assetCheckpoints: Array<{ userId: string; token: string; key: string }> = [];
 
   public async getFlight(): Promise<LegacyAccountDeletionFlight> { return this.flight; }
   public async getRequest(): Promise<LegacyAccountDeletionRequestRecord | null> { return this.request; }
@@ -42,8 +48,9 @@ class MemoryRepository implements LegacyAccountDeletionRepositoryPort {
     return this.pending.shift() ?? null;
   }
   public async markSubscriptionCancelled(): Promise<boolean> { return true; }
-  public async markAssetScheduled(): Promise<boolean> {
+  public async markAssetScheduled(userId: string, token: string, key: string): Promise<boolean> {
     this.assetCheckpointCalls += 1;
+    this.assetCheckpoints.push({ userId, token, key });
     if (this.assetCheckpointError !== null) throw this.assetCheckpointError;
     return this.assetCas;
   }
@@ -95,6 +102,61 @@ LegacyAccountIdentityDeletionPort, LegacyAccountAssetLifecyclePort {
 }
 
 describe('LegacyAccountDeletionServiceAdapter', () => {
+  // Spec 5/8/11: compose the real legacy lifecycle with the service, using only a fake
+  // tag client. Expired personal token inventory remains separate from saved-asset consent.
+  it('期限切れpersonal一時keyは実lifecycleでexact予約してcheckpointする（物理削除は未証明）', async () => {
+    const { repository, providers, client, service, claimed } = composedLifecycle();
+    expect((await service.getDeletionPreview(USER_ID)).personalAssetCount).toBe(0);
+    const result = await service.requestDeletion({ ...requestInput(), acknowledgePersonalAssets: false });
+    expect({ result, gets: client.gets, puts: client.puts, checkpoints: repository.assetCheckpoints,
+      failures: repository.failures, scheduled: claimed.scheduledAssetKeys, owner: claimed.processingToken,
+    }).toEqual({
+      result: { status: 'completed', blockers: [] }, gets: [TEMPORARY_KEY],
+      puts: [{ key: TEMPORARY_KEY, tags: [{ Key: 'owner', Value: 'kept' }, { Key: 'lyra-deletion-state', Value: 'pending' }] }],
+      checkpoints: [{ userId: USER_ID, token: TOKEN, key: TEMPORARY_KEY }], failures: [],
+      scheduled: [TEMPORARY_KEY], owner: TOKEN,
+    });
+    expect(providers.identities).toEqual(['disable:identity-1', 'delete:identity-1']);
+  });
+
+  it.each(['unknown', 'applied'] as const)('一時keyの予約応答喪失後は実tag照合%sに従ってのみ進む', async (outcome) => {
+    const { repository, providers, client, service, claimed } = composedLifecycle();
+    client.putOutcome = outcome;
+    expect(await service.requestDeletion(requestInput())).toEqual({
+      status: outcome === 'applied' ? 'completed' : 'in_progress', blockers: [],
+    });
+    expect(client.gets).toEqual([TEMPORARY_KEY, TEMPORARY_KEY]);
+    expect(client.puts).toHaveLength(1);
+    expect(repository.assetCheckpointCalls).toBe(outcome === 'applied' ? 1 : 0);
+    expect(claimed.scheduledAssetKeys).toEqual(outcome === 'applied' ? [TEMPORARY_KEY] : []);
+    expect(providers.identities).toHaveLength(outcome === 'applied' ? 2 : 0);
+    expect(repository.failures).toEqual([]);
+    expect(claimed.processingToken).toBe(TOKEN);
+  });
+
+  it('実lifecycleの読み取り失敗はcheckpointせずownerを保持して後続を止める', async () => {
+    const { repository, providers, client, service, claimed } = composedLifecycle();
+    client.getError = new Error('tag read unavailable');
+    expect(await service.requestDeletion(requestInput())).toEqual({ status: 'in_progress', blockers: [] });
+    expect(client.gets).toEqual([TEMPORARY_KEY, TEMPORARY_KEY]);
+    expect(client.puts).toEqual([]);
+    expect(repository.assetCheckpoints).toEqual([]);
+    expect(repository.failures).toEqual([]);
+    expect(claimed.processingToken).toBe(TOKEN);
+    expect(providers.identities).toEqual([]);
+  });
+
+  it.each(['active_upload', 'saved_consent'] as const)('実lifecycleでも%s blockerは外部callを始めない', async (blocker) => {
+    const { repository, providers, client, service } = composedLifecycle();
+    if (blocker === 'active_upload') repository.flight.activePersonalUploadCount = 1;
+    else repository.flight.personalAssetKeys = ['saved/user/page.png'];
+    expect(await service.requestDeletion({ ...requestInput(), acknowledgePersonalAssets: false }))
+      .toMatchObject({ status: 'blocked' });
+    expect(client.gets).toEqual([]);
+    expect(client.puts).toEqual([]);
+    expect(repository.assetCheckpoints).toEqual([]);
+    expect(providers.identities).toEqual([]);
+  });
   it('Spec 5/8/11 有効な個人uploadがある場合は既存job blockerで外部処理を止める', async () => {
     const repository = new MemoryRepository();
     repository.flight = { ...emptyFlight(), activePersonalUploadCount: 2 };
@@ -288,4 +350,40 @@ function requestInput() {
     acknowledgePersonalSubscriptions: true, acknowledgeStoreBilling: true,
     acknowledgePersonalAssets: true,
   };
+}
+
+const TEMPORARY_KEY = `tmp/${USER_ID}/entities/imports/${TOKEN}.jpeg`;
+
+class ComposedTagClient implements LegacyAccountAssetLifecycleClient {
+  public gets: string[] = [];
+  public puts: Array<{ key: string; tags: readonly LegacyAccountAssetTag[] }> = [];
+  public tags: readonly LegacyAccountAssetTag[] = [{ Key: 'owner', Value: 'kept' }];
+  public putOutcome: 'success' | 'applied' | 'unknown' = 'success';
+  public getError: Error | null = null;
+
+  public async getObjectTags(input: { key: string }): Promise<readonly LegacyAccountAssetTag[]> {
+    this.gets.push(input.key);
+    if (this.getError !== null) throw this.getError;
+    return this.tags;
+  }
+  public async putObjectTags(input: { key: string; tags: readonly LegacyAccountAssetTag[] }): Promise<void> {
+    this.puts.push({ key: input.key, tags: input.tags });
+    if (this.putOutcome !== 'unknown') this.tags = input.tags;
+    if (this.putOutcome !== 'success') throw new Error('tag write response lost');
+  }
+}
+
+function composedLifecycle(): {
+  repository: MemoryRepository; providers: RecordingProviders; client: ComposedTagClient;
+  service: LegacyAccountDeletionServiceAdapter; claimed: LegacyAccountDeletionRequestRecord;
+} {
+  const repository = new MemoryRepository();
+  repository.flight = { ...emptyFlight(), personalTemporaryUploadKeys: [TEMPORARY_KEY] };
+  const claimed = buildRequest(TOKEN);
+  repository.claimResult = { kind: 'claimed', request: claimed };
+  const providers = new RecordingProviders();
+  const client = new ComposedTagClient();
+  const assets = new LegacyAccountAssetLifecycle(client, { bucketName: 'images' });
+  const service = new LegacyAccountDeletionServiceAdapter(repository, providers, providers, assets);
+  return { repository, providers, client, service, claimed };
 }

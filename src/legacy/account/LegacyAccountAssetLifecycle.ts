@@ -112,11 +112,15 @@ const MAX_S3_OBJECT_KEY_BYTES = 1_024;
 const IMAGE_OBJECT_KEY_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp)$/iu;
 const DELETION_TAG: LegacyAccountAssetTag = { Key: 'lyra-deletion-state', Value: 'pending' };
 
+// Only server-generated personal import keys join the existing saved-key reservation contract.
+// The token inventory supplies scope/expiry; a pending tag does not prove physical deletion.
+const TEMPORARY_IMPORT_KEY_PATTERN = /^tmp\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/entities\/imports\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpeg|png|webp)$/u;
+
 function assertAccountAssetKey(key: string): void {
   if (
     key.trim().length === 0
     || Buffer.byteLength(key, 'utf8') > MAX_S3_OBJECT_KEY_BYTES
-    || !key.startsWith('saved/')
+    || (!key.startsWith('saved/') && !TEMPORARY_IMPORT_KEY_PATTERN.test(key))
     || !IMAGE_OBJECT_KEY_EXTENSION_PATTERN.test(key)
     || key.startsWith('/')
     || key.includes('\\')
