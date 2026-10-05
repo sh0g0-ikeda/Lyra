@@ -1,10 +1,12 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import type {
   ChapterRecord,
+  BillingBalanceRecord,
   CompositionRecord,
   CurrentSessionRecord,
   EntityRecord,
   EpisodeRecord,
+  OrganizationWorkspaceRecord,
   PageRecord,
   PanelFrameRecord,
   PanelRecord,
@@ -62,8 +64,30 @@ const session: CurrentSessionRecord = {
   personal_credits: { monthly_credits: 100, purchased_credits: 0, total_credits: 100, monthly_expires_at: null },
   organizations: [], capabilities: { web_image_delivery: false },
 };
+const organizationWorkspace: OrganizationWorkspaceRecord = {
+  organization: {
+    id: 'organization-import', type: 'business', name: 'Import Studio', legal_name: null, status: 'active',
+    plan_key: 'enterprise_a', billing_email: null, created_by_user_id: 'user-1',
+    created_at: '2026-10-05T00:00:00.000Z', updated_at: '2026-10-05T00:00:00.000Z',
+  },
+  membership: {
+    id: 'membership-import', organization_id: 'organization-import', user_id: 'user-1', email: 'fixture@example.test',
+    display_name: null, role: 'owner', status: 'active', invited_by_user_id: null, joined_at: '2026-10-05T00:00:00.000Z',
+    created_at: '2026-10-05T00:00:00.000Z', updated_at: '2026-10-05T00:00:00.000Z',
+  },
+  balance: { monthly_credits: 11, purchased_credits: 0, total_credits: 11, monthly_expires_at: null },
+};
+const organizationWork: WorkRecord = { ...work, organization_id: organizationWorkspace.organization.id };
 
 type State = {
+  balance: BillingBalanceRecord;
+  balanceRequests: number;
+  balanceRequestsAfterImportCompletion: number;
+  importCompleted: boolean;
+  organizationBalance: OrganizationWorkspaceRecord['balance'];
+  organizationBalanceRequestsAfterImportCompletion: number;
+  organizationListRequestsAfterImportCompletion: number;
+  organizations: OrganizationWorkspaceRecord[];
   entities: EntityRecord[];
   scenes: SceneRecord[];
   pages: PageRecord[];
@@ -74,6 +98,23 @@ type State = {
 
 function createState(): State {
   return {
+    balance: {
+      monthly_credits: 11,
+      purchased_credits: 0,
+      total_credits: 11,
+      monthly_expires_at: null,
+      plan_code: 'free',
+      current_period_end: null,
+      cancel_at_period_end: false,
+      subscription_plans: [],
+    },
+    balanceRequests: 0,
+    balanceRequestsAfterImportCompletion: 0,
+    importCompleted: false,
+    organizationBalance: organizationWorkspace.balance,
+    organizationBalanceRequestsAfterImportCompletion: 0,
+    organizationListRequestsAfterImportCompletion: 0,
+    organizations: [],
     entities: [existingEntity], scenes: [], pages: [pageRecord], panels: [panel('panel-a', 1), panel('panel-b', 2)], frames: [frame],
   };
 }
@@ -87,15 +128,32 @@ async function seed(page: Page): Promise<void> {
 
 async function mockApi(route: Route, state: State): Promise<void> {
   const request = route.request();
-  const pathname = new URL(request.url()).pathname;
+  const url = new URL(request.url());
+  const pathname = url.pathname;
   const json = async (body: unknown, status = 200): Promise<void> => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   if (request.method() !== 'GET') {
     if (state.handleWrite !== undefined) return state.handleWrite(route);
     return json({});
   }
   if (pathname === '/api/me') return json(session);
+  if (pathname === '/api/organizations') {
+    if (state.importCompleted) {
+      state.organizationListRequestsAfterImportCompletion += 1;
+    }
+    return json({ organizations: state.organizations });
+  }
+  if (pathname === '/api/organizations/organization-import/credits/balance') {
+    if (state.importCompleted) {
+      state.organizationBalanceRequestsAfterImportCompletion += 1;
+    }
+    return json({ organization_id: organizationWorkspace.organization.id, ...state.organizationBalance });
+  }
   if (pathname === '/api/auth/capabilities') return json({ google_sign_in: false, google_linking: false, google_ios: false });
-  if (pathname === '/api/works') return json({ works: [work] });
+  if (pathname === '/api/works') {
+    return json({
+      works: url.searchParams.get('organization_id') === organizationWorkspace.organization.id ? [organizationWork] : [work],
+    });
+  }
   if (pathname === `/api/works/${work.id}/chapters`) return json({ chapters: [chapter] });
   if (pathname === `/api/chapters/${chapter.id}/episodes`) return json({ episodes: [episode] });
   if (pathname === `/api/works/${work.id}/entities`) return json({ entities: state.entities });
@@ -110,8 +168,15 @@ async function mockApi(route: Route, state: State): Promise<void> {
   if (pathname === `/api/pages/${pageRecord.id}/balloons`) return json({ balloons: [] });
   if (pathname === `/api/pages/${pageRecord.id}/generation-readiness`) return json({ ready: true, blockers: [], warnings: [], estimated_credit_cost: 3, page_revision: 'revision-1' });
   if (pathname === '/api/compositions') return json({ compositions: [composition] });
+  if (pathname === '/api/billing/balance') {
+    state.balanceRequests += 1;
+    if (state.importCompleted) {
+      state.balanceRequestsAfterImportCompletion += 1;
+    }
+    return json(state.balance);
+  }
   if (/^\/api\/jobs\//.test(pathname)) return json({ id: pathname.split('/').at(-1), job_type: 'entity_generate', status: 'queued', generation_mode: 'standard', credit_cost: 1, params: { entity_id: 'entity-created' }, result: null, error_message: null, retry_count: 0, created_at: '2026-10-05T00:00:00.000Z', started_at: null, completed_at: null, expires_at: null, cancel_requested_at: null, cancelled_at: null, commit_started_at: null });
-  return json({ monthly_credits: 100, purchased_credits: 0, total_credits: 100, monthly_expires_at: null, plan_code: 'free', current_period_end: null, cancel_at_period_end: false, subscription_plans: [] });
+  return json(state.balance);
 }
 
 async function open(page: Page, state: State, tab: 'Entities' | 'Story' | 'Pages'): Promise<void> {
@@ -122,6 +187,87 @@ async function open(page: Page, state: State, tab: 'Entities' | 'Story' | 'Pages
 }
 
 const imageFile = { name: 'reference.png', mimeType: 'image/png', buffer: Buffer.from('candidate-image') };
+
+test('画像import成功後にpersonal残高を再取得して最新値を表示する', async ({ page }) => {
+  const state = createState();
+  state.handleWrite = async (route) => {
+    const url = new URL(route.request().url());
+    const pathname = url.pathname;
+    if (pathname === '/api/entities/import-image') {
+      state.balance = { ...state.balance, monthly_credits: 10, total_credits: 10 };
+      state.importCompleted = true;
+      await route.fulfill({ json: { suggested_fields: {}, prompt_supplement: 'robot', tmp_image_token: 'robot-v1' } });
+      return;
+    }
+    throw new Error(`Unexpected write ${pathname}`);
+  };
+
+  await open(page, state, 'Entities');
+  await expect.poll(() => state.balanceRequests).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'New character', exact: true }).first().click();
+  await page.locator('.entity-reference-import input[type=file]').setInputFiles(imageFile);
+  await expect(page.locator('.notice.success')).toBeVisible();
+  await expect.poll(() => state.balanceRequestsAfterImportCompletion).toBe(1);
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
+  await expect(page.locator('.billing-balance-grid .metric').first()).toContainText('10');
+});
+
+test('画像importが500でも返還済みpersonal残高を再取得する', async ({ page }) => {
+  const state = createState();
+  state.handleWrite = async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === '/api/entities/import-image') {
+      // The server has already completed its compensating refund before responding.
+      state.balance = { ...state.balance, monthly_credits: 11, total_credits: 11 };
+      state.importCompleted = true;
+      await route.fulfill({ status: 500, json: { error: { code: 'INTERNAL_ERROR', message: 'analysis failed' } } });
+      return;
+    }
+    throw new Error(`Unexpected write ${pathname}`);
+  };
+
+  await open(page, state, 'Entities');
+  await expect.poll(() => state.balanceRequests).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'New character', exact: true }).first().click();
+  await page.locator('.entity-reference-import input[type=file]').setInputFiles(imageFile);
+  await expect(page.locator('.notice.error')).toBeVisible();
+  await expect.poll(() => state.balanceRequestsAfterImportCompletion).toBe(1);
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
+  await expect(page.locator('.billing-balance-grid .metric').first()).toContainText('11');
+});
+
+test('画像import成功後は元organizationの残高と一覧だけを再取得する', async ({ page }) => {
+  test.skip(process.env.VITE_ORGANIZATION_FEATURES_ENABLED?.trim().toLowerCase() !== 'true', 'organization UI is disabled');
+  const state = createState();
+  state.organizations = [organizationWorkspace];
+  state.handleWrite = async (route) => {
+    const url = new URL(route.request().url());
+    const pathname = url.pathname;
+    if (pathname === '/api/entities/import-image') {
+      expect(url.searchParams.get('organization_id')).toBe(organizationWorkspace.organization.id);
+      state.organizationBalance = { ...state.organizationBalance, monthly_credits: 10, total_credits: 10 };
+      state.organizations = [{ ...organizationWorkspace, balance: state.organizationBalance }];
+      state.importCompleted = true;
+      await route.fulfill({ json: { suggested_fields: {}, prompt_supplement: 'robot', tmp_image_token: 'robot-org-v1' } });
+      return;
+    }
+    throw new Error(`Unexpected write ${pathname}`);
+  };
+
+  await open(page, state, 'Entities');
+  const scope = page.locator('aside.sidebar').getByRole('combobox', { name: 'Scope', exact: true });
+  await scope.selectOption(organizationWorkspace.organization.id);
+  await expect(scope).toHaveValue(organizationWorkspace.organization.id);
+  await page.getByRole('button', { name: 'New character', exact: true }).first().click();
+  await page.locator('.entity-reference-import input[type=file]').setInputFiles(imageFile);
+  await expect(page.locator('.notice.success')).toBeVisible();
+  await expect.poll(() => state.organizationBalanceRequestsAfterImportCompletion).toBe(1);
+  await expect.poll(() => state.organizationListRequestsAfterImportCompletion).toBe(1);
+  expect(state.balanceRequestsAfterImportCompletion).toBe(0);
+  await expect(page.locator('.sidebar-workspace-summary')).toContainText('10 credits');
+});
 
 test('new draft importは追加入力を保持してCreate後bindしpreviewへv1 tokenを渡す', async ({ page }) => {
   const state = createState();

@@ -3162,6 +3162,27 @@ function StudioShell(props: {
     sessionQueryKey,
   ]);
 
+  const refreshCreditBalanceForScope = useCallback((scope: string): void => {
+    if (scope === 'personal') {
+      void queryClient.invalidateQueries({
+        queryKey: ['session', props.authSessionKey, 'workspace', 'personal', 'billing-balance'],
+        exact: true,
+      });
+      return;
+    }
+
+    void Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: sessionQueryKey(['organization-balance', scope]),
+        exact: true,
+      }),
+      queryClient.invalidateQueries({
+        queryKey: sessionQueryKey(['organizations']),
+        exact: true,
+      }),
+    ]);
+  }, [props.authSessionKey, queryClient, sessionQueryKey]);
+
   const startBillingReturnVerification = useCallback((marker: BillingReturnMarker): void => {
     billingVerificationTargetRef.current = marker;
     setBillingReturnChecking(true);
@@ -3746,6 +3767,7 @@ function StudioShell(props: {
       input.value = ''; return;
     }
     const submitted = structuredClone(currentEntityDraftContextRef.current);
+    const submittedScope = submitted.scope;
     entityOperationPendingRef.current = true;
     setImportingImage(true); setNotice(null);
     try {
@@ -3770,6 +3792,7 @@ function StudioShell(props: {
     } catch (error: unknown) {
       setNotice({type: 'error', message: toMessage(error, uiLanguage)});
     } finally {
+      refreshCreditBalanceForScope(submittedScope);
       entityOperationPendingRef.current = false; setImportingImage(false); input.value = '';
     }
   };
