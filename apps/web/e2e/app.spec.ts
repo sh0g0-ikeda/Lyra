@@ -564,6 +564,34 @@ async function mockStoryNavigationWithOrganizationApi(
   await mockStoryNavigationApi(route, fixtures);
 }
 
+const secondEntity = {
+  ...entity,
+  id: 'entity-2',
+  name: 'Rin',
+  free_description: 'A scout with a red scarf.',
+};
+
+async function mockEntityDirtyApi(
+  route: Route,
+  onEntityPut?: (route: Route) => Promise<void>,
+): Promise<void> {
+  const request = route.request();
+  const pathname = new URL(request.url()).pathname;
+  if (pathname === `/api/works/${work.id}/entities` && request.method() === 'GET') {
+    await route.fulfill({ json: { entities: [entity, secondEntity] } });
+    return;
+  }
+  if (/^\/api\/entities\/[^/]+\/reference-set$/.test(pathname) && request.method() === 'GET' && pathname !== `/api/entities/${entity.id}/reference-set`) {
+    await route.fulfill({ json: { entity_id: pathname.split('/')[3], primary_ref_id: null, status: 'empty', updated_at: entity.updated_at, reference_images: [] } });
+    return;
+  }
+  if (/^\/api\/entities\/[^/]+$/.test(pathname) && request.method() === 'PUT' && onEntityPut !== undefined) {
+    await onEntityPut(route);
+    return;
+  }
+  await mockApi(route);
+}
+
 test('shows auth screen without token', async ({ page }) => {
   await seedEnglishUi(page);
   await page.goto('/');
@@ -941,6 +969,342 @@ test('保存済みの話を再編集せず切り替える場合は確認せず�
   await expect(draft).toHaveValue('Server text for the second episode.');
   await page.getByRole('button', { name: '1 Arrival', exact: true }).click();
   await expect(draft).toHaveValue('Saved clean draft');
+});
+
+test('未保存キャラから別キャラを選ぶ場合にCancelすると入力と選択を保持しPUTしない', async ({ page }) => {
+  let entityPutCount = 0;
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockEntityDirtyApi(route, async (pendingRoute) => {
+    entityPutCount += 1;
+    await pendingRoute.fulfill({ json: entity });
+  }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Mizuki');
+  await expect(description).toHaveValue(entity.free_description);
+  await description.fill('Unsaved Mizuki description');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: /Rin/u }).click();
+
+  await expect(description).toHaveValue('Unsaved Mizuki description');
+  await expect(page.getByRole('button', { name: /^Mizuki\b/u })).toHaveClass(/active/);
+  expect(entityPutCount).toBe(0);
+});
+
+test('同じキャラのreconnect refetchは未保存の自由記述を上書きしない', async ({ page }) => {
+  let entityReads = 0;
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    if (new URL(request.url()).pathname === `/api/works/${work.id}/entities` && request.method() === 'GET') {
+      entityReads += 1;
+      await route.fulfill({ json: { entities: [{ ...entity, free_description: entityReads > 1 ? 'Updated remote character description' : entity.free_description, updated_at: `2026-04-26T00:00:0${entityReads}.000Z` }, secondEntity] } });
+      return;
+    }
+    await mockEntityDirtyApi(route);
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Mizuki');
+  await expect(description).toHaveValue(entity.free_description);
+  await description.fill('Keep across entity refetch');
+  // The query uses a five-second stale window before reconnect can trigger a fetch.
+  await page.waitForTimeout(5_100);
+  const refetched = page.waitForResponse((response) =>
+    response.request().method() === 'GET' && new URL(response.url()).pathname === `/api/works/${work.id}/entities`
+  );
+  await page.context().setOffline(true);
+  await page.context().setOffline(false);
+  const response = await refetched;
+  await response.finished();
+  const body = await response.json() as { entities: Array<{ id: string; updated_at: string }> };
+  expect(body.entities[0]).toMatchObject({
+    id: entity.id,
+    updated_at: '2026-04-26T00:00:02.000Z',
+  });
+  expect(entityReads).toBeGreaterThan(1);
+  await expect(description).toHaveValue('Keep across entity refetch');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Reset draft', exact: true }).click();
+  await expect(description).toHaveValue('Updated remote character description');
+  await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(entity.name);
+});
+
+test('遅いキャラ保存の応答は保存待機中の追加入力を上書きしない', async ({ page }) => {
+  let releaseSave: (() => void) | undefined;
+  const savePending = new Promise<void>((resolve) => { releaseSave = resolve; });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockEntityDirtyApi(route, async (pendingRoute) => {
+    await savePending;
+    await pendingRoute.fulfill({ json: { ...entity, free_description: 'Stale saved description', updated_at: '2026-04-26T00:00:02.000Z' } });
+  }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Mizuki');
+  await expect(description).toHaveValue(entity.free_description);
+  await description.fill('First entity save');
+  const requestStarted = page.waitForRequest((request) => request.method() === 'PUT' && new URL(request.url()).pathname === `/api/entities/${entity.id}`);
+  const responseFinished = page.waitForResponse((response) => response.request().method() === 'PUT' && new URL(response.url()).pathname === `/api/entities/${entity.id}`);
+  await page.getByRole('button', { name: 'Save character', exact: true }).click();
+  await requestStarted;
+  await description.fill('Later entity edit must win');
+  releaseSave?.();
+  await (await responseFinished).finished();
+  await expect(page.locator('.notice.success')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save character', exact: true })).toBeEnabled();
+  await expect(description).toHaveValue('Later entity edit must win');
+});
+
+test('未保存キャラを破棄して別キャラへ移動し戻る場合はサーバー値を復元しPUTしない', async ({ page }) => {
+  let entityPutCount = 0;
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockEntityDirtyApi(route, async (pendingRoute) => {
+    entityPutCount += 1;
+    await pendingRoute.fulfill({ json: entity });
+  }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await expect(description).toHaveValue(entity.free_description);
+  await description.fill('Discard this character draft');
+  let warnings = 0;
+  page.once('dialog', (dialog) => { warnings += 1; return dialog.accept(); });
+  await page.getByRole('button', { name: /Rin/u }).click();
+  await expect(description).toHaveValue(secondEntity.free_description);
+  expect(warnings).toBe(1);
+  await page.getByRole('button', { name: /Mizuki/u }).click();
+  await expect(description).toHaveValue(entity.free_description);
+  expect(entityPutCount).toBe(0);
+});
+
+test('新規キャラdraftから既存キャラを選ぶ場合にCancelすると新規入力を保持する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockEntityDirtyApi(route));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Mizuki');
+  await page.getByRole('button', { name: 'New character', exact: true }).first().click();
+
+  const name = page.getByRole('textbox', { name: 'Name', exact: true });
+  await name.fill('Unsaved new character');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: /Rin/u }).click();
+  await expect(name).toHaveValue('Unsaved new character');
+  await expect(page.getByText('Creating a new character. Saving here will add a new record and will not overwrite existing characters.', { exact: true })).toBeVisible();
+});
+
+test('キャラResetをCancelすると入力を保持し破棄確定後は同じ既存キャラへ戻る', async ({ page }) => {
+  let writes = 0;
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => {
+    if (route.request().method() !== 'GET') writes += 1;
+    return mockEntityDirtyApi(route);
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  const name = page.getByRole('textbox', { name: 'Name', exact: true });
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await expect(name).toHaveValue(entity.name);
+  await expect(description).toHaveValue(entity.free_description);
+  await description.fill('Keep until Reset is confirmed');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: 'Reset draft', exact: true }).click();
+  await expect(description).toHaveValue('Keep until Reset is confirmed');
+  await expect(name).toHaveValue(entity.name);
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Reset draft', exact: true }).click();
+  await expect(description).toHaveValue(entity.free_description);
+  await expect(name).toHaveValue(entity.name);
+  await expect(page.getByRole('button', { name: 'Save character', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create character', exact: true })).toHaveCount(0);
+  expect(writes).toBe(0);
+});
+
+test('キャラ保存が失敗した場合に入力を保持して再編集と切替Cancelができる', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockEntityDirtyApi(route, async (pendingRoute) => {
+    await pendingRoute.fulfill({ status: 500, json: { error: { code: 'INTERNAL_ERROR', message: 'Temporary test failure' } } });
+  }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await expect(description).toHaveValue(entity.free_description);
+  await description.fill('Failed save keeps this character');
+  const response = page.waitForResponse((r) => r.request().method() === 'PUT' && new URL(r.url()).pathname === '/api/entities/' + entity.id);
+  await page.getByRole('button', { name: 'Save character', exact: true }).click();
+  await (await response).finished();
+  await expect(page.locator('.notice.error')).toBeVisible();
+  await expect(description).toHaveValue('Failed save keeps this character');
+  await description.fill('Editing again after the failure');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: /^Rin\b/u }).click();
+  await expect(description).toHaveValue('Editing again after the failure');
+});
+
+test('キャラ保存を連打しても保存中は要求を一回だけ送る', async ({ page }) => {
+  let puts = 0;
+  let release: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockEntityDirtyApi(route, async (r) => {
+    puts += 1;
+    await pending;
+    await r.fulfill({ json: { ...entity, updated_at: '2026-04-26T00:00:02.000Z' } });
+  }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(entity.name);
+  const request = page.waitForRequest((r) => r.method() === 'PUT' && new URL(r.url()).pathname === '/api/entities/' + entity.id);
+  const response = page.waitForResponse((r) => r.request().method() === 'PUT' && new URL(r.url()).pathname === '/api/entities/' + entity.id);
+  const save = page.getByRole('button', { name: 'Save character', exact: true });
+  await save.evaluate((button) => {
+    if (!(button instanceof HTMLButtonElement)) throw new Error('Expected the character save button');
+    button.click();
+    button.click();
+  });
+  await request;
+  const disabledDuringSave = await save.isDisabled();
+  release?.();
+  await (await response).finished();
+  await expect(page.locator('.notice.success')).toBeVisible();
+  expect(disabledDuringSave).toBe(true);
+  expect(puts).toBe(1);
+  await expect(save).toBeEnabled();
+});
+
+test('キャラ作成待機中の追加入力は作成成功後も新しいキャラの下書きに残す', async ({ page }) => {
+  let release: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  let created: typeof entity | undefined;
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    const request = route.request(), pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/works/' + work.id + '/entities' && request.method() === 'POST') {
+      const payload = request.postDataJSON() as { name: string; free_description: string };
+      await pending;
+      created = { ...entity, id: 'entity-created', name: payload.name, free_description: payload.free_description, updated_at: '2026-04-26T00:00:02.000Z' };
+      await route.fulfill({ json: created });
+      return;
+    }
+    if (pathname === '/api/works/' + work.id + '/entities' && request.method() === 'GET') {
+      await route.fulfill({ json: { entities: created === undefined ? [entity, secondEntity] : [created, entity, secondEntity] } });
+      return;
+    }
+    await mockEntityDirtyApi(route);
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(entity.name);
+  await page.getByRole('button', { name: 'New character', exact: true }).first().click();
+  await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Created test character');
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await description.fill('Submitted description');
+  const request = page.waitForRequest((r) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/works/' + work.id + '/entities');
+  const response = page.waitForResponse((r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/works/' + work.id + '/entities');
+  await page.getByRole('button', { name: 'Create character', exact: true }).click();
+  await request;
+  await description.fill('New text typed while creating');
+  release?.();
+  await (await response).finished();
+  await expect(page.locator('.notice.success')).toBeVisible();
+  await expect(description).toHaveValue('New text typed while creating');
+  await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Created test character');
+  await expect(page.getByRole('button', { name: 'Save character', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create character', exact: true })).toHaveCount(0);
+});
+
+test('キャラ保存済みの入力を変えず切替える場合は確認せず保存内容を表示する', async ({ page }) => {
+  let saved = entity;
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    const request = route.request(), pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/works/' + work.id + '/entities' && request.method() === 'GET') {
+      await route.fulfill({ json: { entities: [saved, secondEntity] } });return;
+    }
+    await mockEntityDirtyApi(route, async (r) => {
+      const payload = r.request().postDataJSON() as { free_description: string };
+      saved = { ...entity, free_description: payload.free_description, updated_at: '2026-04-26T00:00:02.000Z' };
+      await r.fulfill({ json: saved });
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await expect(description).toHaveValue(entity.free_description);
+  await description.fill('Clean saved character');
+  const response = page.waitForResponse((r) => r.request().method() === 'PUT' && new URL(r.url()).pathname === '/api/entities/' + entity.id);
+  await page.getByRole('button', { name: 'Save character', exact: true }).click();
+  await (await response).finished();
+  await expect(page.locator('.notice.success')).toBeVisible();
+  page.on('dialog', () => { throw new Error('A clean saved character must not trigger discard confirmation'); });
+  await page.getByRole('button', { name: /^Rin\b/u }).click();
+  await expect(description).toHaveValue(secondEntity.free_description);
+  await page.getByRole('button', { name: /^Mizuki\b/u }).click();
+  await expect(description).toHaveValue('Clean saved character');
+});
+
+test('キャラの未保存入力がある場合にworkspaceと別作品の切替Cancelは入力を保持する', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === '/api/works/' + work.id + '/entities' || pathname.startsWith('/api/entities/')) {
+      await mockEntityDirtyApi(route);return;
+    }
+    await mockStoryNavigationWithOrganizationApi(route, fixtures);
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await expect(description).toHaveValue(entity.free_description);
+  await description.fill('Keep character through context cancellation');
+  const scope = page.locator('aside.sidebar').getByRole('combobox', { name: 'Scope', exact: true });
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await scope.selectOption(organizationWorkspace.organization.id);
+  await expect(scope).toHaveValue('');
+  await expect(description).toHaveValue('Keep character through context cancellation');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: fixtures.works[1].title, exact: true }).click();
+  await expect(description).toHaveValue('Keep character through context cancellation');
+});
+
+test('キャラの未保存入力がある場合にブラウザ再読込をCancelすると入力を保持する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockEntityDirtyApi(route));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  const description = page.getByRole('textbox', { name: 'Free description', exact: true });
+  await expect(description).toHaveValue(entity.free_description);
+  await description.fill('Keep character through reload cancellation');
+  let navigations = 0;
+  page.on('framenavigated', (frame) => { if (frame === page.mainFrame()) navigations += 1; });
+  const warning = page.waitForEvent('dialog');
+  const requested = page.evaluate(() => window.location.reload());
+  const dialog = await warning;
+  expect(dialog.type()).toBe('beforeunload');
+  await dialog.dismiss();
+  await requested;
+  expect(navigations).toBe(0);
+  await expect(description).toHaveValue('Keep character through reload cancellation');
 });
 
 test('Mobileが保存した開始状態を旧Webの話とbaseキャラ保存で消さない', async ({ page }) => {
@@ -1912,4 +2276,93 @@ test('jaではページ骨格生成の処理中fallbackを表示する', async (
 
   await expect(page.getByText('ページ骨格を生成しています。この処理は20分程度かかる場合があります。', { exact: true })).toBeVisible();
   await expect(page.getByText('ストーリーからページとコマの設定を自動入力しています。この処理は20分程度かかる場合があります。', { exact: true })).toHaveCount(0);
+});
+
+
+// Automatic list changes must not discard a local draft or treat it as a new record.
+test('外部更新で選択中キャラが消えた場合に未保存入力を保持し新規作成へ変えない', async ({ page }) => {
+  let removed = false;
+  await seedEnglishUi(page); await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    if (new URL(route.request().url()).pathname === '/api/works/' + work.id + '/entities' && route.request().method() === 'GET') {
+      await route.fulfill({ json: { entities: removed ? [secondEntity] : [entity, secondEntity] } }); return;
+    }
+    await mockEntityDirtyApi(route);
+  });
+  await page.goto('/'); await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  const draft=page.getByRole('textbox', { name: 'Free description', exact: true });
+  await expect(draft).toHaveValue(entity.free_description); await draft.fill('Keep externally removed character draft');
+  removed=true; await page.waitForTimeout(5100);
+  const fetched=page.waitForResponse(r=>r.request().method()==='GET' && new URL(r.url()).pathname==='/api/works/'+work.id+'/entities');
+  await page.context().setOffline(true); await page.context().setOffline(false); await (await fetched).finished();
+  await expect(draft).toHaveValue('Keep externally removed character draft');
+  await expect(page.getByRole('button',{name:'Create character',exact:true})).toHaveCount(0);
+  page.once('dialog',d=>d.dismiss()); await page.getByRole('button',{name:'Rin Character',exact:true}).click();
+  await expect(draft).toHaveValue('Keep externally removed character draft');
+});
+
+test('外部更新で選択中作品が消えた場合に未保存キャラを別作品へ移さない', async ({ page }) => {
+  const fixtures=storyNavigationFixtures(); let removed=false;
+  await seedEnglishUi(page); await seedAuthenticatedSession(page);
+  await page.route('**/api/**',async route=>{
+    const path=new URL(route.request().url()).pathname;
+    if(path==='/api/works' && route.request().method()==='GET') {await route.fulfill({json:{works:removed?fixtures.works.slice(1):fixtures.works}});return;}
+    if(path==='/api/works/'+work.id+'/entities') {await mockEntityDirtyApi(route);return;}
+    await mockStoryNavigationApi(route,fixtures);
+  });
+  await page.goto('/'); await page.getByRole('button',{name:'Entities',exact:true}).click();
+  const draft=page.getByRole('textbox',{name:'Free description',exact:true});
+  await expect(draft).toHaveValue(entity.free_description);await draft.fill('Keep missing work local draft');
+  removed=true;await page.waitForTimeout(5100);
+  const fetched=page.waitForResponse(r=>r.request().method()==='GET' && new URL(r.url()).pathname==='/api/works');
+  await page.context().setOffline(true);await page.context().setOffline(false);await(await fetched).finished();
+  await expect(draft).toHaveValue('Keep missing work local draft');
+  page.once('dialog',d=>d.dismiss());await page.getByRole('button',{name:'Sunward Company',exact:true}).click();
+  await expect(draft).toHaveValue('Keep missing work local draft');
+});
+
+test('外部更新で法人参加権限が消えた場合に未保存キャラをpersonalへ移さない',async({page})=>{
+  let removed=false;const fixtures=storyNavigationFixtures();
+  await seedEnglishUi(page);await seedAuthenticatedSession(page);
+  await page.route('**/api/**',async route=>{
+    const path=new URL(route.request().url()).pathname;
+    if(path==='/api/organizations') {await route.fulfill({json:{organizations:removed?[]:[organizationWorkspace]}});return;}
+    if(path==='/api/works/'+work.id+'/entities') {await mockEntityDirtyApi(route);return;}
+    await mockStoryNavigationApi(route,fixtures);
+  });
+  await page.goto('/');await page.locator('aside.sidebar').getByRole('combobox',{name:'Scope',exact:true}).selectOption(organizationWorkspace.organization.id);
+  await page.getByRole('button',{name:'Entities',exact:true}).click();
+  const draft=page.getByRole('textbox',{name:'Free description',exact:true});
+  await expect(draft).toHaveValue(entity.free_description);await draft.fill('Keep revoked workspace local draft');
+  removed=true;await page.waitForTimeout(5100);
+  const fetched=page.waitForResponse(r=>r.request().method()==='GET' && new URL(r.url()).pathname==='/api/organizations');
+  await page.context().setOffline(true);await page.context().setOffline(false);await(await fetched).finished();
+  await expect(draft).toHaveValue('Keep revoked workspace local draft');
+});
+
+test('外部更新より古いキャラ保存応答はbaselineとquery cacheを巻き戻さない',async({page})=>{
+  let remote=entity;let release:()=>void=()=>{throw new Error('save not pending');};
+  const pending=new Promise<void>(resolve=>{release=resolve;});
+  await seedEnglishUi(page);await seedAuthenticatedSession(page);
+  await page.route('**/api/**',async route=>{
+    const path=new URL(route.request().url()).pathname,method=route.request().method();
+    if(path==='/api/works/'+work.id+'/entities' && method==='GET'){await route.fulfill({json:{entities:[remote,secondEntity]}});return;}
+    if(path==='/api/entities/'+entity.id && method==='PUT'){await pending;await route.fulfill({json:{...entity,free_description:'Submitted stale save',updated_at:'2026-04-26T00:00:02.000Z'}});return;}
+    await mockEntityDirtyApi(route);
+  });
+  await page.goto('/');await page.getByRole('button',{name:'Entities',exact:true}).click();
+  const draft=page.getByRole('textbox',{name:'Free description',exact:true});
+  await expect(draft).toHaveValue(entity.free_description);await draft.fill('Submitted stale save');
+  const put=page.waitForRequest(r=>r.method()==='PUT'&&new URL(r.url()).pathname==='/api/entities/'+entity.id);
+  await page.getByRole('button',{name:'Save character',exact:true}).click();await put;
+  remote={...entity,free_description:'Newer server revision',updated_at:'2026-04-26T00:00:03.000Z'};
+  await page.waitForTimeout(5100);
+  const fetched=page.waitForResponse(r=>r.request().method()==='GET'&&new URL(r.url()).pathname==='/api/works/'+work.id+'/entities');
+  await page.context().setOffline(true);await page.context().setOffline(false);await(await fetched).finished();
+  await expect(draft).toHaveValue('Submitted stale save');
+  const finished=page.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname==='/api/entities/'+entity.id);
+  release();await(await finished).finished();await expect(page.getByRole('button',{name:'Save character',exact:true})).toBeEnabled();
+  await expect(draft).toHaveValue('Submitted stale save');
+  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Reset draft',exact:true}).click();
+  await expect(draft).toHaveValue('Newer server revision');
 });

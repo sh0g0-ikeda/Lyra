@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { reconcileSavedStoryDraft } from '../../../apps/web/src/domain/storyDraftSave';
+import { reconcileSavedStoryDraft } from '../../../apps/web/src/domain/storyDraftSave.js';
 const baseline = { title: 'Old title', story: 'Old story', entities_involved: 'entity-1' };
 const submitted = { ...baseline, title: 'New title', story: 'New story' };
 const saved = { ...submitted, title: 'Normalized title', entities_involved: 'entity-1, entity-2' };

@@ -1,3 +1,5 @@
+import { isOlderEditorRevision, reconcileSavedEditorDraft } from './domain/editorDraftSave';
+import { useRetainedSelection } from './hooks/useRetainedSelection';
 import { reconcileSavedStoryDraft, sameStoryDraft } from './domain/storyDraftSave';
 import { GoogleSignInButton, GoogleIdentityLinkPanel } from './components/GoogleAuthControls';
 import { canReadWebImage, imageDeliveryNotice, mergeImageDeliveryMetadata, type ImageDeliveryMetadata } from './domain/imageDelivery';
@@ -234,6 +236,14 @@ interface EntityDraft {
   speech_profile: string;
 }
 
+interface EntityEditorContext {
+  scope: string;
+  workId: string;
+  mode: 'edit' | 'create';
+  id: string;
+  draft: EntityDraft;
+}
+
 interface CharacterStructuredFieldsDraft {
   aliases: string;
   gender_expression: string;
@@ -282,6 +292,13 @@ interface CharacterStructuredFieldsDraft {
   clothing_description: string;
   distinguishing_features: string;
   art_style: string;
+}
+
+interface SavedEditorDraft<TDraft extends object> {
+  key: string;
+  draft: TDraft;
+  revision: string;
+  updatedAt?: string;
 }
 
 interface SceneDraft {
@@ -2356,14 +2373,6 @@ function StudioShell(props: {
   const workspaceNavigationRef = useRef<((organizationId: string) => void) | null>(null);
   const hydratedChapterVersionRef = useRef<string | null>(null);
   const hydratedEpisodeVersionRef = useRef<string | null>(null);
-  const storyDraftContextRef = useRef({
-    scope: activeOrganizationId ?? 'personal', selectedWorkId, selectedChapterId, selectedEpisodeId, chapterDraft, episodeDraft,
-  });
-  useLayoutEffect(() => {
-    storyDraftContextRef.current = {
-      scope: activeOrganizationId ?? 'personal', selectedWorkId, selectedChapterId, selectedEpisodeId, chapterDraft, episodeDraft,
-    };
-  }, [activeOrganizationId, selectedWorkId, selectedChapterId, selectedEpisodeId, chapterDraft, episodeDraft]);
   const [storyInstruction, setStoryInstruction] = useState('');
   const [storyBusy, setStoryBusy] = useState(false);
   const [storyImprovementDraft, setStoryImprovementDraft] = useState<StoryEpisodeImprovementRecord['draft'] | null>(null);
@@ -2376,6 +2385,25 @@ function StudioShell(props: {
   const [entityDraft, setEntityDraft] = useState<EntityDraft>(createEmptyEntityDraft());
   const [entityEditorMode, setEntityEditorMode] = useState<'edit' | 'create'>('edit');
   const [selectedEntityId, setSelectedEntityId] = useState('');
+  const savedEntityDraftRef = useRef<{ scope: string; workId: string; id: string; draft: EntityDraft; updatedAt: string } | null>(null);
+  const hydratedEntityRevisionRef = useRef<string | null>(null);
+  const entityOperationPendingRef = useRef(false);
+  const currentEntityDraftContextRef = useRef<EntityEditorContext>({
+    scope: activeOrganizationId ?? 'personal', workId: selectedWorkId, mode: entityEditorMode, id: selectedEntityId, draft: entityDraft,
+  });
+  const storyDraftContextRef = useRef({
+    scope: activeOrganizationId ?? 'personal', selectedWorkId, selectedChapterId, selectedEpisodeId, chapterDraft, episodeDraft,
+    entityEditorMode, selectedEntityId, entityDraft,
+  });
+  useLayoutEffect(() => {
+    currentEntityDraftContextRef.current = {
+      scope: activeOrganizationId ?? 'personal', workId: selectedWorkId, mode: entityEditorMode, id: selectedEntityId, draft: entityDraft,
+    };
+    storyDraftContextRef.current = {
+      scope: activeOrganizationId ?? 'personal', selectedWorkId, selectedChapterId, selectedEpisodeId, chapterDraft, episodeDraft,
+      entityEditorMode, selectedEntityId, entityDraft,
+    };
+  }, [activeOrganizationId, selectedWorkId, selectedChapterId, selectedEpisodeId, chapterDraft, episodeDraft, entityEditorMode, selectedEntityId, entityDraft]);
   const [sceneDraft, setSceneDraft] = useState<SceneDraft>(createEmptySceneDraft());
   const [selectedSceneId, setSelectedSceneId] = useState('');
   const [pageSettingsDraft, setPageSettingsDraft] = useState<PageSettingsDraft>(createEmptyPageSettingsDraft());
@@ -2384,7 +2412,32 @@ function StudioShell(props: {
   const [panelEntityToAddId, setPanelEntityToAddId] = useState('');
   const [frameTemplateId, setFrameTemplateId] = useState('standard_4');
   const [frameDrafts, setFrameDrafts] = useState<PanelFrameDraft[]>([]);
+  const savedSceneDraftRef = useRef<SavedEditorDraft<SceneDraft> | null>(null);
+  const savedPageDraftRef = useRef<SavedEditorDraft<PageSettingsDraft> | null>(null);
+  const savedPanelDraftRef = useRef<SavedEditorDraft<PanelDraft> | null>(null);
+  const savedFramesDraftRef = useRef<SavedEditorDraft<PanelFrameDraft[]> | null>(null);
+  const sceneDraftKey = JSON.stringify([activeOrganizationId, selectedWorkId, selectedEpisodeId, selectedSceneId]);
+  const pageDraftKey = JSON.stringify([activeOrganizationId, selectedWorkId, selectedEpisodeId, selectedPageId]);
+  const panelDraftKey = JSON.stringify([activeOrganizationId, selectedWorkId, selectedEpisodeId, selectedPageId, selectedPanelId]);
+  const framesDraftKey = JSON.stringify([activeOrganizationId, selectedWorkId, selectedEpisodeId, selectedPageId]);
+  const currentPageEditorRef = useRef({sceneDraftKey, pageDraftKey, panelDraftKey, framesDraftKey, sceneDraft, pageSettingsDraft, panelDraft, frameDrafts,
+    sceneId: selectedSceneId, pageId: selectedPageId, panelId: selectedPanelId, episodeId: selectedEpisodeId});
+  useLayoutEffect(() => {
+    currentPageEditorRef.current = {sceneDraftKey, pageDraftKey, panelDraftKey, framesDraftKey, sceneDraft, pageSettingsDraft, panelDraft, frameDrafts,
+      sceneId: selectedSceneId, pageId: selectedPageId, panelId: selectedPanelId, episodeId: selectedEpisodeId};
+  }, [sceneDraftKey, pageDraftKey, panelDraftKey, framesDraftKey, sceneDraft, pageSettingsDraft, panelDraft, frameDrafts, selectedSceneId, selectedPageId, selectedPanelId, selectedEpisodeId]);
+  const isSceneDraftDirty = useCallback((): boolean => savedSceneDraftRef.current?.key === sceneDraftKey && !sameStoryDraft(sceneDraft, savedSceneDraftRef.current.draft), [sceneDraftKey, sceneDraft]);
+  const isPageDraftDirty = useCallback((): boolean => savedPageDraftRef.current?.key === pageDraftKey && !sameStoryDraft(pageSettingsDraft, savedPageDraftRef.current.draft), [pageDraftKey, pageSettingsDraft]);
+  const isPanelDraftDirty = useCallback((): boolean => savedPanelDraftRef.current?.key === panelDraftKey && !sameStoryDraft(panelDraft, savedPanelDraftRef.current.draft), [panelDraftKey, panelDraft]);
+  const isFramesDraftDirty = useCallback((): boolean => savedFramesDraftRef.current?.key === framesDraftKey && !sameStoryDraft(frameDrafts, savedFramesDraftRef.current.draft), [framesDraftKey, frameDrafts]);
   const [importingImage, setImportingImage] = useState(false);
+  type DraftImportedReference = {scope: string; workId: string; entityType: EntityDraft['entity_type']; candidateToken: string; entityId: string | null};
+  const [draftImportedReference, setDraftImportedReference] = useState<DraftImportedReference | null>(null);
+  const draftImportedReferenceRef = useRef<DraftImportedReference | null>(null);
+  const storeDraftImportedReference = (candidate: DraftImportedReference | null): void => {
+    draftImportedReferenceRef.current = candidate;
+    setDraftImportedReference(candidate);
+  };
   const [uploadedReferenceCandidatesByEntityId, setUploadedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
   const [generatedReferenceCandidatesByEntityId, setGeneratedReferenceCandidatesByEntityId] = useState<Record<string, ReferenceCandidate[]>>({});
   const [uploadedReferenceSourceByEntityId, setUploadedReferenceSourceByEntityId] = useState<Record<string, string>>({});
@@ -2393,6 +2446,31 @@ function StudioShell(props: {
   const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf');
   const [exportSelectedPageIds, setExportSelectedPageIds] = useState<string[]>([]);
   const [exportFilename, setExportFilename] = useState('lyra-pages');
+  // A disappearing server record must not redirect a dirty editor to another record.
+  const protectAutomaticSelection = useCallback((target: 'scope' | 'work' | 'chapter' | 'episode' | 'entity' | 'scene' | 'page' | 'panel'): boolean => {
+    const scope = activeOrganizationId ?? 'personal';
+    const chapterSaved = savedChapterDraftRef.current;
+    const episodeSaved = savedEpisodeDraftRef.current;
+    const entitySaved = savedEntityDraftRef.current;
+    const chapterDirty = (target === 'scope' || target === 'work' || target === 'chapter') &&
+      chapterSaved?.scope === scope && chapterSaved.id === selectedChapterId && !sameStoryDraft(chapterDraft, chapterSaved.draft);
+    const episodeDirty = target !== 'entity' && episodeSaved?.scope === scope && episodeSaved.id === selectedEpisodeId &&
+      !sameStoryDraft(episodeDraft, episodeSaved.draft);
+    const importedDraftDirty = draftImportedReference?.scope === scope && draftImportedReference.workId === selectedWorkId;
+    const entityDirty = (target === 'scope' || target === 'work' || target === 'entity') && (importedDraftDirty || (entityEditorMode === 'create'
+      ? !sameStoryDraft(entityDraft, createEmptyEntityDraft())
+      : entitySaved?.scope === scope && entitySaved.workId === selectedWorkId && entitySaved.id === selectedEntityId && !sameStoryDraft(entityDraft, entitySaved.draft)));
+    const pageChanges = target === 'scope' || target === 'work' || target === 'chapter' || target === 'episode' || target === 'page';
+    const localEditorDirty = (pageChanges && (isSceneDraftDirty() || isPageDraftDirty() || isPanelDraftDirty() || isFramesDraftDirty())) ||
+      (target === 'scene' && isSceneDraftDirty()) || (target === 'panel' && isPanelDraftDirty());
+    if (chapterDirty || episodeDirty || entityDirty || localEditorDirty || pendingActionsRef.current > 0 || entityOperationPendingRef.current || busyAction !== null || storyBusy || importingImage) {
+      setNotice({ type: 'info', message: pickUiText(uiLanguage,
+        'This selection is no longer available. Your local changes are kept. Choose another item when ready.',
+        '選択していた内容を利用できなくなりました。入力は保持しています。編集を終えてから別の項目を選んでください。') });
+      return true;
+    }
+    return false;
+  }, [activeOrganizationId, selectedWorkId, selectedChapterId, selectedEpisodeId, selectedEntityId, chapterDraft, episodeDraft, entityDraft, entityEditorMode, busyAction, storyBusy, importingImage, uiLanguage, draftImportedReference, isSceneDraftDirty, isPageDraftDirty, isPanelDraftDirty, isFramesDraftDirty]);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [lightboxTitle, setLightboxTitle] = useState('');
   const [layoutPreviewTemplateId, setLayoutPreviewTemplateId] = useState<string | null>(null);
@@ -2668,13 +2746,14 @@ function StudioShell(props: {
     if (
       activeOrganizationId !== null &&
       organizationWorkspacesQuery.isSuccess &&
-      activeOrganizationWorkspace === null
+      activeOrganizationWorkspace === null && !protectAutomaticSelection('scope')
     ) {
       setSelectedOrganizationId('');
     }
   }, [
     activeOrganizationId,
     activeOrganizationWorkspace,
+    protectAutomaticSelection,
     organizationWorkspacesQuery.isSuccess,
     setSelectedOrganizationId,
   ]);
@@ -2705,7 +2784,7 @@ function StudioShell(props: {
     queryFn: () => api.getBalance(),
   });
 
-  const selectedWork = works.find((work) => work.id === selectedWorkId) ?? null;
+  const selectedWork = useRetainedSelection(works, selectedWorkId, activeOrganizationId ?? 'personal');
   const selectedWorkScopedId = selectedWork?.id ?? '';
 
   const chaptersQuery = useQuery({
@@ -2714,7 +2793,7 @@ function StudioShell(props: {
     enabled: selectedWork !== null,
   });
   const chapters = useMemo(() => chaptersQuery.data?.chapters ?? [], [chaptersQuery.data?.chapters]);
-  const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0] ?? null;
+  const selectedChapter = useRetainedSelection(chapters, selectedChapterId, JSON.stringify([activeOrganizationId, selectedWorkId]));
 
   const episodesQuery = useQuery({
     queryKey: scopedQueryKey(['episodes', selectedChapter?.id ?? '']),
@@ -2722,7 +2801,7 @@ function StudioShell(props: {
     enabled: selectedChapter !== null,
   });
   const episodes = useMemo(() => episodesQuery.data?.episodes ?? [], [episodesQuery.data?.episodes]);
-  const selectedEpisode = episodes.find((episode) => episode.id === selectedEpisodeId) ?? episodes[0] ?? null;
+  const selectedEpisode = useRetainedSelection(episodes, selectedEpisodeId, JSON.stringify([activeOrganizationId, selectedWorkId, selectedChapterId]));
 
   const entitiesQuery = useQuery({
     queryKey: scopedQueryKey(['entities', selectedWorkScopedId]),
@@ -2738,7 +2817,7 @@ function StudioShell(props: {
   const selectedEntity =
     entityEditorMode === 'create'
       ? null
-      : entities.find((entity) => entity.id === selectedEntityId) ?? entities[0] ?? null;
+      : entities.find((entity) => entity.id === selectedEntityId) ?? (selectedEntityId.length === 0 ? entities[0] ?? null : null);
 
   const entityReferenceSetQuery = useQuery({
     queryKey: scopedQueryKey(['entity-reference-set', selectedEntity?.id ?? '']),
@@ -2752,7 +2831,7 @@ function StudioShell(props: {
     enabled: selectedEpisode !== null,
   });
   const scenes = useMemo(() => scenesQuery.data?.scenes ?? [], [scenesQuery.data?.scenes]);
-  const selectedScene = scenes.find((scene) => scene.id === selectedSceneId) ?? scenes[0] ?? null;
+  const selectedScene = useRetainedSelection(scenes, selectedSceneId, JSON.stringify([activeOrganizationId, selectedWorkId, selectedEpisodeId]));
 
   const pagesQuery = useQuery({
     queryKey: scopedQueryKey(['pages', selectedEpisode?.id ?? '']),
@@ -2760,7 +2839,7 @@ function StudioShell(props: {
     enabled: selectedEpisode !== null,
   });
   const pages = useMemo(() => pagesQuery.data?.pages ?? [], [pagesQuery.data?.pages]);
-  const selectedPage = pages.find((page) => page.id === selectedPageId) ?? pages[0] ?? null;
+  const selectedPage = useRetainedSelection(pages, selectedPageId, JSON.stringify([activeOrganizationId, selectedWorkId, selectedEpisodeId]));
 
   const compositionsQuery = useQuery({
     queryKey: scopedQueryKey(['compositions']),
@@ -2777,7 +2856,7 @@ function StudioShell(props: {
     enabled: selectedPage !== null,
   });
   const panels = useMemo(() => panelsQuery.data?.panels ?? [], [panelsQuery.data?.panels]);
-  const selectedPanel = panels.find((panel) => panel.id === selectedPanelId) ?? panels[0] ?? null;
+  const selectedPanel = useRetainedSelection(panels, selectedPanelId, JSON.stringify([activeOrganizationId, selectedWorkId, selectedEpisodeId, selectedPageId]));
   const availablePanelEntities = useMemo(
     () =>
       entities.filter(
@@ -3007,8 +3086,9 @@ function StudioShell(props: {
 
     setActiveTab('story');
   }, []);
+  const hasUnsavedFrameGeometry = framesQuery.isSuccess && !sameStoryDraft(frameDrafts, frames.map(toPanelFrameDraft));
   const generatePageDisabled =
-    busyAction === 'Generate in color' || busyAction === 'Generate monochrome page' || pageGenerationBlocked;
+    busyAction === 'Generate in color' || busyAction === 'Generate monochrome page' || pageGenerationBlocked || hasUnsavedFrameGeometry;
   const entityPreviewGenerationMessage =
     selectedEntityGenerationJob !== null
       ? selectedEntityGenerationJob.status === 'queued'
@@ -3193,73 +3273,66 @@ function StudioShell(props: {
       return;
     }
 
-    if (!worksQuery.data.works.some((work) => work.id === selectedWorkId)) {
+    if ((selectedWorkId.length > 0 || worksQuery.data.works.length > 0) && !worksQuery.data.works.some((work) => work.id === selectedWorkId) && !protectAutomaticSelection('work')) {
       setSelectedWorkId(worksQuery.data.works[0]?.id ?? '');
     }
-  }, [selectedWorkId, setSelectedWorkId, worksQuery.data]);
+  }, [selectedWorkId, setSelectedWorkId, worksQuery.data, protectAutomaticSelection]);
 
   useEffect(() => {
     if (!chaptersQuery.isSuccess) {
       return;
     }
-    if (!chapters.some((chapter) => chapter.id === selectedChapterId)) {
+    if ((selectedChapterId.length > 0 || chapters.length > 0) && !chapters.some((chapter) => chapter.id === selectedChapterId) && !protectAutomaticSelection('chapter')) {
       setSelectedChapterId(chapters[0]?.id ?? '');
     }
-  }, [chapters, chaptersQuery.isSuccess, selectedChapterId, setSelectedChapterId]);
+  }, [chapters, chaptersQuery.isSuccess, selectedChapterId, setSelectedChapterId, protectAutomaticSelection]);
 
   useEffect(() => {
     if (!episodesQuery.isSuccess) {
       return;
     }
-    if (!episodes.some((episode) => episode.id === selectedEpisodeId)) {
+    if ((selectedEpisodeId.length > 0 || episodes.length > 0) && !episodes.some((episode) => episode.id === selectedEpisodeId) && !protectAutomaticSelection('episode')) {
       setSelectedEpisodeId(episodes[0]?.id ?? '');
     }
-  }, [episodes, episodesQuery.isSuccess, selectedEpisodeId, setSelectedEpisodeId]);
+  }, [episodes, episodesQuery.isSuccess, selectedEpisodeId, setSelectedEpisodeId, protectAutomaticSelection]);
 
   useEffect(() => {
-    if (!pages.some((page) => page.id === selectedPageId)) {
+    if (pagesQuery.isSuccess && (selectedPageId.length > 0 || pages.length > 0) && !pages.some((page) => page.id === selectedPageId) && !protectAutomaticSelection('page')) {
       setSelectedPageId(pages[0]?.id ?? '');
     }
-  }, [pages, selectedPageId, setSelectedPageId]);
+  }, [pages, selectedPageId, setSelectedPageId, pagesQuery.isSuccess, protectAutomaticSelection]);
 
   useEffect(() => {
-    if (entityEditorMode === 'create') {
+    if (entityEditorMode === 'create' || !entitiesQuery.isSuccess) {
       return;
     }
 
-    if (!entities.some((entity) => entity.id === selectedEntityId)) {
+    if ((selectedEntityId.length > 0 || entities.length > 0) && !entities.some((entity) => entity.id === selectedEntityId) && !protectAutomaticSelection('entity')) {
       setSelectedEntityId(entities[0]?.id ?? '');
     }
-  }, [entities, entityEditorMode, selectedEntityId]);
+  }, [entities, entitiesQuery.isSuccess, entityEditorMode, selectedEntityId, protectAutomaticSelection]);
 
   useEffect(() => {
-    if (!scenes.some((scene) => scene.id === selectedSceneId)) {
+    if (scenesQuery.isSuccess && (selectedSceneId.length > 0 || scenes.length > 0) && !scenes.some((scene) => scene.id === selectedSceneId) && !protectAutomaticSelection('scene')) {
       setSelectedSceneId(scenes[0]?.id ?? '');
     }
-  }, [scenes, selectedSceneId]);
+  }, [scenes, selectedSceneId, setSelectedSceneId, scenesQuery.isSuccess, protectAutomaticSelection]);
 
   useEffect(() => {
-    if (!panels.some((panel) => panel.id === selectedPanelId)) {
+    if (panelsQuery.isSuccess && (selectedPanelId.length > 0 || panels.length > 0) && !panels.some((panel) => panel.id === selectedPanelId) && !protectAutomaticSelection('panel')) {
       setSelectedPanelId(panels[0]?.id ?? '');
     }
-  }, [panels, selectedPanelId]);
+  }, [panels, selectedPanelId, setSelectedPanelId, panelsQuery.isSuccess, protectAutomaticSelection]);
 
   useEffect(() => {
-    if (selectedPage !== null) {
-      const nextDraft = toPageSettingsDraft(selectedPage);
-      setPageSettingsDraft((current) =>
-        current.dialogue_mode === nextDraft.dialogue_mode &&
-        current.page_dialogue_toggle === nextDraft.page_dialogue_toggle &&
-        current.style_reference_title === nextDraft.style_reference_title &&
-        current.style_reference_notes === nextDraft.style_reference_notes &&
-        current.story_page_purpose === nextDraft.story_page_purpose &&
-        current.story_continuity_note === nextDraft.story_continuity_note &&
-        sameStringArray(current.story_source_scene_ids, nextDraft.story_source_scene_ids)
-          ? current
-          : nextDraft,
-      );
-    }
-  }, [selectedPage]);
+    if (selectedPage === null || selectedPage.id !== selectedPageId || !pagesQuery.isSuccess) return;
+    const nextDraft = toPageSettingsDraft(selectedPage);
+    const revision = JSON.stringify([pageDraftKey, selectedPage.updated_at, nextDraft]);
+    const previous = savedPageDraftRef.current;
+    if (previous?.key === pageDraftKey && (previous.revision === revision || (previous.updatedAt !== undefined && isOlderEditorRevision(selectedPage.updated_at, previous.updatedAt)))) return;
+    savedPageDraftRef.current = {key: pageDraftKey, draft: nextDraft, revision, updatedAt: selectedPage.updated_at};
+    setPageSettingsDraft((current) => previous?.key === pageDraftKey && !sameStoryDraft(current, previous.draft) ? current : nextDraft);
+  }, [selectedPage, selectedPageId, pageDraftKey, pagesQuery.isSuccess]);
 
   useEffect(() => {
     setExportSelectedPageIds((current) => {
@@ -3338,22 +3411,52 @@ function StudioShell(props: {
   }, [activeOrganizationId, selectedEpisode]);
 
   useEffect(() => {
-    if (entityEditorMode === 'edit' && selectedEntity !== null) {
-      setEntityDraft(toEntityDraft(selectedEntity));
-    }
-  }, [entityEditorMode, selectedEntity]);
+    savedEntityDraftRef.current = null;
+    hydratedEntityRevisionRef.current = null;
+    setEntityEditorMode('edit');
+    setSelectedEntityId('');
+    setEntityDraft(createEmptyEntityDraft());
+  }, [activeOrganizationId, selectedWorkId]);
 
   useEffect(() => {
-    if (selectedScene !== null) {
-      setSceneDraft(toSceneDraft(selectedScene));
+    if (entityEditorMode !== 'edit' || selectedEntity === null || !entitiesQuery.isSuccess) {
+      return;
     }
-  }, [selectedScene]);
+    const scope = activeOrganizationId ?? 'personal';
+    const nextDraft = toEntityDraft(selectedEntity);
+    const revision = JSON.stringify([scope, selectedWorkId, selectedEntity.id, selectedEntity.updated_at, nextDraft]);
+    if (hydratedEntityRevisionRef.current === revision) {
+      return;
+    }
+    const previous = savedEntityDraftRef.current;
+    const sameEntity = previous?.scope === scope && previous.workId === selectedWorkId && previous.id === selectedEntity.id;
+    if (sameEntity && Date.parse(selectedEntity.updated_at) < Date.parse(previous.updatedAt)) {
+      return;
+    }
+    savedEntityDraftRef.current = { scope, workId: selectedWorkId, id: selectedEntity.id, draft: nextDraft, updatedAt: selectedEntity.updated_at };
+    hydratedEntityRevisionRef.current = revision;
+    setEntityDraft((current) => sameEntity && !sameStoryDraft(current, previous.draft) ? current : nextDraft);
+  }, [activeOrganizationId, selectedWorkId, entityEditorMode, selectedEntity, entitiesQuery.isSuccess]);
 
   useEffect(() => {
-    if (selectedPanel !== null) {
-      setPanelDraft(toPanelDraft(selectedPanel));
-    }
-  }, [selectedPanel]);
+    if (selectedScene === null || selectedScene.id !== selectedSceneId || !scenesQuery.isSuccess) return;
+    const nextDraft = toSceneDraft(selectedScene);
+    const revision = JSON.stringify([sceneDraftKey, selectedScene.updated_at, nextDraft]);
+    const previous = savedSceneDraftRef.current;
+    if (previous?.key === sceneDraftKey && (previous.revision === revision || (previous.updatedAt !== undefined && isOlderEditorRevision(selectedScene.updated_at, previous.updatedAt)))) return;
+    savedSceneDraftRef.current = {key: sceneDraftKey, draft: nextDraft, revision, updatedAt: selectedScene.updated_at};
+    setSceneDraft((current) => previous?.key === sceneDraftKey && !sameStoryDraft(current, previous.draft) ? current : nextDraft);
+  }, [selectedScene, selectedSceneId, sceneDraftKey, scenesQuery.isSuccess]);
+
+  useEffect(() => {
+    if (selectedPanel === null || selectedPanel.id !== selectedPanelId || !panelsQuery.isSuccess) return;
+    const nextDraft = toPanelDraft(selectedPanel);
+    const revision = JSON.stringify([panelDraftKey, selectedPanel.updated_at, nextDraft]);
+    const previous = savedPanelDraftRef.current;
+    if (previous?.key === panelDraftKey && (previous.revision === revision || (previous.updatedAt !== undefined && isOlderEditorRevision(selectedPanel.updated_at, previous.updatedAt)))) return;
+    savedPanelDraftRef.current = {key: panelDraftKey, draft: nextDraft, revision, updatedAt: selectedPanel.updated_at};
+    setPanelDraft((current) => previous?.key === panelDraftKey && !sameStoryDraft(current, previous.draft) ? current : nextDraft);
+  }, [selectedPanel, selectedPanelId, panelDraftKey, panelsQuery.isSuccess]);
 
   useEffect(() => {
     if (availablePanelEntities.length === 0) {
@@ -3367,8 +3470,13 @@ function StudioShell(props: {
   }, [availablePanelEntities, panelEntityToAddId]);
 
   useEffect(() => {
-    setFrameDrafts(frames.map(toPanelFrameDraft));
-  }, [frames]);
+    if (!framesQuery.isSuccess || selectedPage === null || selectedPage.id !== selectedPageId) return;
+    const nextDraft = frames.map(toPanelFrameDraft), revision = JSON.stringify(nextDraft);
+    const previous = savedFramesDraftRef.current;
+    if (previous?.key === framesDraftKey && previous.revision === revision) return;
+    savedFramesDraftRef.current = {key: framesDraftKey, draft: nextDraft, revision};
+    setFrameDrafts((current) => previous?.key === framesDraftKey && !sameStoryDraft(current, previous.draft) ? current : nextDraft);
+  }, [frames, framesQuery.isSuccess, framesDraftKey, selectedPage, selectedPageId]);
 
   useEffect(() => {
     for (const job of [...trackedJobs].reverse()) {
@@ -3507,12 +3615,159 @@ function StudioShell(props: {
     );
   };
 
+  const isEntityDraftDirty = useCallback((): boolean => {
+    if (draftImportedReference?.scope === (activeOrganizationId ?? 'personal') && draftImportedReference.workId === selectedWorkId) return true;
+    if (entityEditorMode === 'create') {
+      return !sameStoryDraft(entityDraft, createEmptyEntityDraft());
+    }
+    const saved = savedEntityDraftRef.current;
+    return saved?.scope === (activeOrganizationId ?? 'personal') && saved.workId === selectedWorkId && saved.id === selectedEntityId &&
+      !sameStoryDraft(entityDraft, saved.draft);
+  }, [activeOrganizationId, selectedWorkId, selectedEntityId, entityEditorMode, entityDraft, draftImportedReference]);
+
+  const confirmEditorNavigation = (target: 'scene' | 'page' | 'panel' | 'layout'): boolean => {
+    if (pendingActionsRef.current > 0 || entityOperationPendingRef.current || busyAction !== null || storyBusy || importingImage) {
+      setNotice({type: 'info', message: pickUiText(uiLanguage, 'Wait for the current operation to finish.', '処理が終わるまでお待ちください。')});
+      return false;
+    }
+    const dirty = target === 'scene' ? isSceneDraftDirty() : target === 'panel' ? isPanelDraftDirty() :
+      target === 'layout' ? isPanelDraftDirty() || isFramesDraftDirty() : isPageDraftDirty() || isPanelDraftDirty() || isFramesDraftDirty();
+    return !dirty || window.confirm(pickUiText(uiLanguage, 'Discard unsaved changes and leave? Cancel keeps editing.', '未保存の変更を破棄して移動しますか？キャンセルすると編集を続けられます。'));
+  };
+
+  const discardPageEditors = (scene = true): void => {
+    if (scene) {savedSceneDraftRef.current = null; setSceneDraft(createEmptySceneDraft()); setSelectedSceneId('');}
+    savedPageDraftRef.current = null; savedPanelDraftRef.current = null; savedFramesDraftRef.current = null;
+    setPageSettingsDraft(createEmptyPageSettingsDraft()); setPanelDraft(createEmptyPanelDraft()); setFrameDrafts([]);
+    setSelectedPageId(''); setSelectedPanelId('');
+  };
+
+  const selectSceneForEditing = (id: string): void => {
+    if (id === selectedSceneId || !confirmEditorNavigation('scene')) return;
+    savedSceneDraftRef.current = null; setSelectedSceneId(id);
+  };
+  const selectPageForEditing = (id: string): void => {
+    if (id === selectedPageId || !confirmEditorNavigation('page')) return;
+    discardPageEditors(false); setSelectedPageId(id);
+  };
+  const selectPanelForEditing = (id: string): void => {
+    if (id === selectedPanelId || !confirmEditorNavigation('panel')) return;
+    savedPanelDraftRef.current = null; setSelectedPanelId(id);
+  };
+
+  const confirmEntityNavigation = (): boolean => {
+    if (entityOperationPendingRef.current || pendingActionsRef.current > 0 || busyAction !== null || storyBusy || importingImage) {
+      setNotice({ type: 'info', message: pickUiText(uiLanguage, 'Wait for the current operation to finish before changing the character.',
+        '処理が終わってからキャラクターを切り替えてください。') });
+      return false;
+    }
+    return !isEntityDraftDirty() || window.confirm(pickUiText(uiLanguage,
+      'Discard unsaved character changes? Cancel keeps editing.',
+      '未保存のキャラクターの変更を破棄しますか？キャンセルすると編集を続けられます。'));
+  };
+
+  const discardEntityDraft = (): void => {
+    storeDraftImportedReference(null);
+    savedEntityDraftRef.current = null;
+    hydratedEntityRevisionRef.current = null;
+    setEntityDraft(createEmptyEntityDraft());
+    setEntityEditorMode('edit');
+    setSelectedEntityId('');
+    setReferenceSelection([]);
+    setReferencePrimaryKey('');
+  };
+
+  const acceptSavedEntity = (saved: EntityRecord, submitted: EntityEditorContext): void => {
+    const current = currentEntityDraftContextRef.current;
+    if (current.scope !== submitted.scope || current.workId !== submitted.workId || current.mode !== submitted.mode || current.id !== submitted.id) {
+      return;
+    }
+    const previous = savedEntityDraftRef.current;
+    if (previous?.scope === submitted.scope && previous.workId === submitted.workId && previous.id === saved.id &&
+      Date.parse(saved.updated_at) < Date.parse(previous.updatedAt)) return;
+    const nextDraft = toEntityDraft(saved);
+    savedEntityDraftRef.current = { scope: submitted.scope, workId: submitted.workId, id: saved.id, draft: nextDraft, updatedAt: saved.updated_at };
+    hydratedEntityRevisionRef.current = JSON.stringify([submitted.scope, submitted.workId, saved.id, saved.updated_at, nextDraft]);
+    setEntityDraft((draft) => sameStoryDraft(draft, submitted.draft) ? nextDraft : draft);
+  };
+
+  const runEntityAction = async (label: string, action: () => Promise<void | string>): Promise<void> => {
+    if (entityOperationPendingRef.current || pendingActionsRef.current > 0 || busyAction !== null || importingImage) {
+      setNotice({ type: 'info', message: pickUiText(uiLanguage, 'Wait for the current character operation to finish.',
+        'キャラクターの処理が終わるまでお待ちください。') });
+      return;
+    }
+    entityOperationPendingRef.current = true;
+    try {
+      await runAction(label, action);
+    } finally {
+      entityOperationPendingRef.current = false;
+    }
+  };
+
+  const rememberBoundReferenceCandidate = (entityId: string, token: string): void => {
+    setUploadedReferenceCandidatesByEntityId((current) => ({...current, [entityId]: dedupeReferenceCandidates([
+      {candidate_token: token, source: 'upload'}, ...(current[entityId] ?? []),
+    ]).slice(0, 3)}));
+    setUploadedReferenceSourceByEntityId((current) => ({...current, [entityId]: token}));
+  };
+
+  const attachDraftReferenceCandidate = async (candidate: DraftImportedReference): Promise<void> => {
+    const context = currentEntityDraftContextRef.current;
+    if (candidate.entityId === null || context.scope !== candidate.scope || context.workId !== candidate.workId ||
+      context.id !== candidate.entityId || context.draft.entity_type !== candidate.entityType) {
+      throw new Error(pickUiText(uiLanguage, 'The imported image belongs to a different character draft. Reset or import again.', '取り込んだ画像とキャラクターの種類が一致しません。リセットするか画像を取り込み直してください。'));
+    }
+    const bound = await api.bindEntityReferenceCandidate(candidate.entityId, candidate.candidateToken, activeOrganizationId);
+    const current = currentEntityDraftContextRef.current;
+    if (current.scope !== candidate.scope || current.workId !== candidate.workId || current.id !== candidate.entityId) return;
+    rememberBoundReferenceCandidate(candidate.entityId, bound.candidate_token);
+    if (draftImportedReferenceRef.current?.candidateToken === candidate.candidateToken) storeDraftImportedReference(null);
+  };
+
+  const importEntityReferenceImage = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const input = event.currentTarget, file = input.files?.[0];
+    if (file === undefined) return;
+    if (entityOperationPendingRef.current || pendingActionsRef.current > 0 || busyAction !== null || storyBusy) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) {
+      setNotice({type: 'error', message: translateUiString(uiLanguage, file.size > 5 * 1024 * 1024 ? 'Image file is too large.' : 'Only PNG, JPEG, and WebP are allowed.')});
+      input.value = ''; return;
+    }
+    const submitted = structuredClone(currentEntityDraftContextRef.current);
+    entityOperationPendingRef.current = true;
+    setImportingImage(true); setNotice(null);
+    try {
+      const imageBase64 = await toDataUrl(file);
+      const entityId = submitted.mode === 'create' || submitted.id.length === 0 ? null : submitted.id;
+      const result = await api.importEntityImage({entity_type: submitted.draft.entity_type,
+        ...(entityId === null ? {} : {entity_id: entityId}), image_base64: imageBase64}, activeOrganizationId);
+      const current = currentEntityDraftContextRef.current;
+      if (current.scope !== submitted.scope || current.workId !== submitted.workId || current.mode !== submitted.mode || current.id !== submitted.id) {
+        setNotice({type: 'info', message: pickUiText(uiLanguage, 'The character draft changed before image analysis finished.', '画像解析が終わる前に編集対象が変わりました。')}); return;
+      }
+      if (entityId === null) storeDraftImportedReference({scope: submitted.scope, workId: submitted.workId, entityType: submitted.draft.entity_type, candidateToken: result.tmp_image_token, entityId: null});
+      else rememberBoundReferenceCandidate(entityId, result.tmp_image_token);
+      if (current.draft.entity_type !== submitted.draft.entity_type) {
+        setNotice({type: 'info', message: pickUiText(uiLanguage, 'The imported image is kept for the original character type. Switch back to use it, or reset to discard it.', '取り込んだ画像は元のキャラクターの種類に合わせて保持しています。元の種類に戻せば利用できます。破棄する場合はリセットしてください。')}); return;
+      }
+      setEntityDraft((draft) => ({...draft,
+        structured_fields: draft.structured_fields === submitted.draft.structured_fields ? JSON.stringify(result.suggested_fields, null, 2) : draft.structured_fields,
+        prompt_supplement: draft.prompt_supplement === submitted.draft.prompt_supplement ? result.prompt_supplement : draft.prompt_supplement,
+      }));
+      setNotice({type: 'success', message: translateUiString(uiLanguage, 'Image analyzed. Generate preview next.')});
+    } catch (error: unknown) {
+      setNotice({type: 'error', message: toMessage(error, uiLanguage)});
+    } finally {
+      entityOperationPendingRef.current = false; setImportingImage(false); input.value = '';
+    }
+  };
+
   // Navigation never saves a draft. Confirm only when the target replaces its editor.
-  const confirmStoryNavigation = (chapterChanges: boolean, episodeChanges: boolean): boolean => {
-    if (!chapterChanges && !episodeChanges) {
+  const confirmStoryNavigation = (chapterChanges: boolean, episodeChanges: boolean, entityChanges = false): boolean => {
+    if (!chapterChanges && !episodeChanges && !entityChanges) {
       return true;
     }
-    if (pendingActionsRef.current > 0 || busyAction !== null || storyBusy) {
+    if (pendingActionsRef.current > 0 || busyAction !== null || storyBusy || (entityChanges && (importingImage || entityOperationPendingRef.current))) {
       setNotice({ type: 'info', message: pickUiText(uiLanguage,
         'Wait for the current operation to finish before changing the story.',
         '処理が終わってから話を切り替えてください。') });
@@ -3522,12 +3777,19 @@ function StudioShell(props: {
       !sameStoryDraft(chapterDraft, savedChapterDraftRef.current.draft);
     const episodeDirty = episodeChanges && savedEpisodeDraftRef.current?.scope === (activeOrganizationId ?? 'personal') && savedEpisodeDraftRef.current.id === selectedEpisodeId &&
       !sameStoryDraft(episodeDraft, savedEpisodeDraftRef.current.draft);
-    return !(chapterDirty || episodeDirty) || window.confirm(pickUiText(uiLanguage,
-      'Discard unsaved story changes and leave? Cancel keeps editing.',
-      '未保存のストーリーの変更を破棄して移動しますか？キャンセルすると編集を続けられます。'));
+    const entityDirty = entityChanges && isEntityDraftDirty();
+    const pageEditorsDirty = episodeChanges && (isSceneDraftDirty() || isPageDraftDirty() || isPanelDraftDirty() || isFramesDraftDirty());
+    return !(chapterDirty || episodeDirty || entityDirty || pageEditorsDirty) || window.confirm(entityDirty
+      ? pickUiText(uiLanguage, 'Discard unsaved changes and leave? Cancel keeps editing.',
+        '未保存の変更を破棄して移動しますか？キャンセルすると編集を続けられます。')
+      : pickUiText(uiLanguage, 'Discard unsaved story changes and leave? Cancel keeps editing.',
+        '未保存のストーリーの変更を破棄して移動しますか？キャンセルすると編集を続けられます。'));
+
   };
 
-  const discardStoryDrafts = (chapterChanges: boolean, episodeChanges: boolean): void => {
+  const discardStoryDrafts = (chapterChanges: boolean, episodeChanges: boolean, entityChanges = false): void => {
+    if (entityChanges) discardEntityDraft();
+    if (episodeChanges) discardPageEditors();
     if (chapterChanges) {
       const saved = savedChapterDraftRef.current;
       if (saved?.scope === (activeOrganizationId ?? 'personal') && saved.id === selectedChapterId) {
@@ -3547,22 +3809,23 @@ function StudioShell(props: {
   };
 
   const selectStory = (workId: string, chapterId: string, episodeId: string): void => {
-    const chapterChanges = workId !== selectedWorkId || chapterId !== selectedChapterId;
+    const workChanges = workId !== selectedWorkId;
+    const chapterChanges = workChanges || chapterId !== selectedChapterId;
     const episodeChanges = chapterChanges || episodeId !== selectedEpisodeId;
-    if (!confirmStoryNavigation(chapterChanges, episodeChanges)) {
+    if (!confirmStoryNavigation(chapterChanges, episodeChanges, workChanges)) {
       return;
     }
-    discardStoryDrafts(chapterChanges, episodeChanges);
+    discardStoryDrafts(chapterChanges, episodeChanges, workChanges);
     setSelectedWorkId(workId);
     setSelectedChapterId(chapterId);
     setSelectedEpisodeId(episodeId);
   };
 
   const selectWorkspace = (organizationId: string): void => {
-    if (organizationId === (activeOrganizationId ?? '') || !confirmStoryNavigation(true, true)) {
+    if (organizationId === (activeOrganizationId ?? '') || !confirmStoryNavigation(true, true, true)) {
       return;
     }
-    discardStoryDrafts(true, true);
+    discardStoryDrafts(true, true, true);
     setSelectedOrganizationId(organizationId);
   };
 
@@ -3576,14 +3839,93 @@ function StudioShell(props: {
         !sameStoryDraft(chapterDraft, savedChapterDraftRef.current.draft);
       const episodeDirty = savedEpisodeDraftRef.current?.scope === (activeOrganizationId ?? 'personal') && savedEpisodeDraftRef.current.id === selectedEpisodeId &&
         !sameStoryDraft(episodeDraft, savedEpisodeDraftRef.current.draft);
-      if (chapterDirty || episodeDirty) {
+      if (chapterDirty || episodeDirty || isEntityDraftDirty() || isSceneDraftDirty() || isPageDraftDirty() || isPanelDraftDirty() || isFramesDraftDirty()) {
         event.preventDefault();
         event.returnValue = '';
       }
     };
     window.addEventListener('beforeunload', protectUnsavedStory);
     return () => window.removeEventListener('beforeunload', protectUnsavedStory);
-  }, [activeOrganizationId, chapterDraft, episodeDraft, selectedChapterId, selectedEpisodeId]);
+  }, [activeOrganizationId, chapterDraft, episodeDraft, selectedChapterId, selectedEpisodeId, isEntityDraftDirty, isSceneDraftDirty, isPageDraftDirty, isPanelDraftDirty, isFramesDraftDirty]);
+
+  const acceptSavedScene = (saved: SceneRecord, submitted: typeof currentPageEditorRef.current, omitted: readonly (keyof SceneDraft)[] = []): void => {
+    if (currentPageEditorRef.current.sceneDraftKey !== submitted.sceneDraftKey) return;
+    const previous = savedSceneDraftRef.current;
+    if (previous?.key === submitted.sceneDraftKey && previous.updatedAt !== undefined && isOlderEditorRevision(saved.updated_at, previous.updatedAt)) return;
+    const nextDraft = toSceneDraft(saved);
+    savedSceneDraftRef.current = {key: submitted.sceneDraftKey, draft: nextDraft, revision: JSON.stringify([submitted.sceneDraftKey, saved.updated_at, nextDraft]), updatedAt: saved.updated_at};
+    setSceneDraft((current) => reconcileSavedEditorDraft(current, submitted.sceneDraft, nextDraft, previous?.key === submitted.sceneDraftKey ? previous.draft : submitted.sceneDraft, omitted).draft);
+    queryClient.setQueryData<{scenes: SceneRecord[]}>(scopedQueryKey(['scenes', submitted.episodeId]), (cache) => {
+      if (cache === undefined) return cache;
+      return {...cache, scenes: cache.scenes.map((item) => item.id !== saved.id || isOlderEditorRevision(saved.updated_at, item.updated_at) ? item : saved)};
+    });
+  };
+
+  const acceptSavedPage = (saved: PageRecord, submitted: typeof currentPageEditorRef.current, omitted: readonly (keyof PageSettingsDraft)[] = []): void => {
+    if (currentPageEditorRef.current.pageDraftKey !== submitted.pageDraftKey) return;
+    const previous = savedPageDraftRef.current;
+    if (previous?.key === submitted.pageDraftKey && previous.updatedAt !== undefined && isOlderEditorRevision(saved.updated_at, previous.updatedAt)) return;
+    const nextDraft = toPageSettingsDraft(saved);
+    savedPageDraftRef.current = {key: submitted.pageDraftKey, draft: nextDraft, revision: JSON.stringify([submitted.pageDraftKey, saved.updated_at, nextDraft]), updatedAt: saved.updated_at};
+    setPageSettingsDraft((current) => reconcileSavedEditorDraft(current, submitted.pageSettingsDraft, nextDraft, previous?.key === submitted.pageDraftKey ? previous.draft : submitted.pageSettingsDraft, omitted).draft);
+    queryClient.setQueryData<{pages: PageRecord[]}>(scopedQueryKey(['pages', submitted.episodeId]), (cache) => {
+      if (cache === undefined) return cache;
+      return {...cache, pages: cache.pages.map((item) => item.id !== saved.id || isOlderEditorRevision(saved.updated_at, item.updated_at) ? item : saved)};
+    });
+  };
+
+  const acceptSavedPanel = (saved: PanelRecord, submitted: typeof currentPageEditorRef.current, omitted: readonly (keyof PanelDraft)[] = []): void => {
+    if (currentPageEditorRef.current.panelDraftKey !== submitted.panelDraftKey) return;
+    const previous = savedPanelDraftRef.current;
+    if (previous?.key === submitted.panelDraftKey && previous.updatedAt !== undefined && isOlderEditorRevision(saved.updated_at, previous.updatedAt)) return;
+    const nextDraft = toPanelDraft(saved);
+    savedPanelDraftRef.current = {key: submitted.panelDraftKey, draft: nextDraft, revision: JSON.stringify([submitted.panelDraftKey, saved.updated_at, nextDraft]), updatedAt: saved.updated_at};
+    setPanelDraft((current) => reconcileSavedEditorDraft(current, submitted.panelDraft, nextDraft, previous?.key === submitted.panelDraftKey ? previous.draft : submitted.panelDraft, omitted).draft);
+    queryClient.setQueryData<{panels: PanelRecord[]}>(scopedQueryKey(['panels', submitted.pageId]), (cache) => {
+      if (cache === undefined) return cache;
+      return {...cache, panels: cache.panels.map((item) => item.id !== saved.id || isOlderEditorRevision(saved.updated_at, item.updated_at) ? item : saved)};
+    });
+  };
+
+  const persistCurrentScene = async (fullSave: boolean): Promise<void> => {
+    if (selectedScene === null) return;
+    const submitted = structuredClone(currentPageEditorRef.current);
+    const saved = await api.updateScene(submitted.sceneId, fullSave ? toScenePayload(submitted.sceneDraft, loadedSelectedWorkEntityIds) : toSceneAutosavePayload(submitted.sceneDraft), activeOrganizationId);
+    acceptSavedScene(saved, submitted, fullSave ? [] : ['involved_entity_ids']);
+  };
+  const persistCurrentPage = async (): Promise<void> => {
+    if (selectedPage === null) return;
+    const submitted = structuredClone(currentPageEditorRef.current);
+    const saved = await api.updatePage(submitted.pageId, toPageSettingsPayload(submitted.pageSettingsDraft), activeOrganizationId);
+    acceptSavedPage(saved, submitted);
+  };
+  const persistCurrentPanel = async (): Promise<void> => {
+    if (selectedPanel === null) return;
+    const submitted = structuredClone(currentPageEditorRef.current);
+    const saved = await api.updatePanel(submitted.panelId, toPanelPayload(submitted.panelDraft), activeOrganizationId);
+    try {
+      const assignments = await api.replacePanelAssignments(submitted.panelId, toPanelAssignmentsPayload(submitted.panelDraft), activeOrganizationId);
+      acceptSavedPanel({...saved, entities: assignments.entities}, submitted);
+    } catch (error: unknown) {
+      acceptSavedPanel(saved, submitted, ['assignments']);
+      throw error;
+    }
+  };
+  const persistCurrentFrames = async (): Promise<void> => {
+    if (selectedPage === null) return;
+    const submitted = structuredClone(currentPageEditorRef.current);
+    const submittedRevision = savedFramesDraftRef.current?.revision;
+    const saved = await api.replaceFrames(submitted.pageId, toPanelFramesPayload(submitted.frameDrafts), activeOrganizationId);
+    if (currentPageEditorRef.current.framesDraftKey !== submitted.framesDraftKey) return;
+    if (savedFramesDraftRef.current?.revision !== submittedRevision) {
+      await invalidateScopedQuery(['frames', submitted.pageId]);
+      throw new Error(pickUiText(uiLanguage, 'The frame geometry changed while saving. Your input is kept. Review and save again.', '保存中に枠が更新されました。入力は保持しています。内容を確認して保存し直してください。'));
+    }
+    const nextDraft = saved.frames.map(toPanelFrameDraft);
+    savedFramesDraftRef.current = {key: submitted.framesDraftKey, draft: nextDraft, revision: JSON.stringify(nextDraft)};
+    setFrameDrafts((current) => sameStoryDraft(current, submitted.frameDrafts) ? nextDraft : current);
+    queryClient.setQueryData(scopedQueryKey(['frames', submitted.pageId]), saved);
+  };
 
   const saveCurrentEpisodeContext = async (): Promise<void> => {
     if (selectedEpisode !== null) {
@@ -3592,7 +3934,7 @@ function StudioShell(props: {
     }
 
     if (selectedScene !== null) {
-      await api.updateScene(selectedScene.id, toSceneAutosavePayload(sceneDraft), activeOrganizationId);
+      await persistCurrentScene(false);
     }
 
     if (selectedChapter !== null) {
@@ -3604,15 +3946,9 @@ function StudioShell(props: {
   };
 
   const saveCurrentPageGenerationContext = async (): Promise<void> => {
-    if (selectedPage !== null) {
-      await api.updatePage(selectedPage.id, toPageSettingsPayload(pageSettingsDraft), activeOrganizationId);
-    }
-
-    if (selectedPage !== null && selectedPanel !== null) {
-      const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
-      await api.updatePanel(selectedPanel.id, toPanelPayload(panelDraft), activeOrganizationId);
-      await api.replacePanelAssignments(selectedPanel.id, assignmentsPayload, activeOrganizationId);
-    }
+    if (isFramesDraftDirty()) throw new Error(pickUiText(uiLanguage, 'Save frame geometry before generating.', '生成する前に枠の編集を保存してください。'));
+    await persistCurrentPage();
+    await persistCurrentPanel();
   };
 
   const saveCurrentEntityGenerationContext = async (): Promise<void> => {
@@ -3620,13 +3956,18 @@ function StudioShell(props: {
       return;
     }
 
-    const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(entityDraft), activeOrganizationId);
+    const submitted = structuredClone(currentEntityDraftContextRef.current);
+    const savedEntity = await api.updateEntity(selectedEntity.id, toEntityPayload(submitted.draft), activeOrganizationId);
+    acceptSavedEntity(savedEntity, submitted);
     cacheEntityRecord(savedEntity);
-    setEntityDraft(toEntityDraft(savedEntity));
     await invalidateScopedQuery(['entities', selectedWork.id]);
   };
 
   const beginNewEntityDraft = (): void => {
+    if (!confirmEntityNavigation()) return;
+    storeDraftImportedReference(null);
+    savedEntityDraftRef.current = null;
+    hydratedEntityRevisionRef.current = null;
     setEntityEditorMode('create');
     setSelectedEntityId('');
     setEntityDraft(createEmptyEntityDraft());
@@ -3634,7 +3975,23 @@ function StudioShell(props: {
     setReferencePrimaryKey('');
   };
 
+  const resetEntityDraft = (): void => {
+    if (!confirmEntityNavigation()) return;
+    storeDraftImportedReference(null);
+    const saved = savedEntityDraftRef.current;
+    if (entityEditorMode === 'edit' && saved?.scope === (activeOrganizationId ?? 'personal') && saved.workId === selectedWorkId && saved.id === selectedEntityId) {
+      setEntityDraft(saved.draft);
+    } else {
+      setEntityDraft(createEmptyEntityDraft());
+    }
+  };
+
   const selectEntityForEditing = (entityId: string): void => {
+    if (entityEditorMode === 'edit' && entityId === selectedEntityId) return;
+    if (!confirmEntityNavigation()) return;
+    storeDraftImportedReference(null);
+    savedEntityDraftRef.current = null;
+    hydratedEntityRevisionRef.current = null;
     setEntityEditorMode('edit');
     setSelectedEntityId(entityId);
     setReferenceSelection([]);
@@ -3675,7 +4032,6 @@ function StudioShell(props: {
     nextPanels[targetIndex] = currentPanel;
 
     await api.reorderPanels(selectedPage.id, nextPanels.map((panel) => panel.id), activeOrganizationId);
-    setSelectedPanelId(panelId);
     await refreshSelectedPagePanelData(selectedPage.id);
   };
 
@@ -3690,7 +4046,9 @@ function StudioShell(props: {
       remainingPanels[Math.min(deletedIndex, remainingPanels.length - 1)]?.id ?? '';
 
     await api.deletePanel(panel.id, activeOrganizationId);
-    setSelectedPanelId(nextSelectedPanelId);
+    if (selectedPanelId === panel.id) {
+      savedPanelDraftRef.current = null; setPanelDraft(createEmptyPanelDraft()); setSelectedPanelId(nextSelectedPanelId);
+    }
     await refreshSelectedPagePanelData(selectedPage.id);
   };
 
@@ -3700,7 +4058,9 @@ function StudioShell(props: {
         return { entities: [entity] };
       }
 
-      const entityExists = current.entities.some((item) => item.id === entity.id);
+      const existing = current.entities.find((item) => item.id === entity.id);
+      if (existing !== undefined && Date.parse(entity.updated_at) < Date.parse(existing.updated_at)) return current;
+      const entityExists = existing !== undefined;
       return {
         ...current,
         entities: entityExists
@@ -3722,6 +4082,10 @@ function StudioShell(props: {
   };
 
   const runAction = async (label: string, action: () => Promise<string | void>): Promise<void> => {
+    if (pendingActionsRef.current > 0) {
+      setNotice({type: 'info', message: pickUiText(uiLanguage, 'Wait for the current operation to finish.', '処理が終わるまでお待ちください。')});
+      return;
+    }
     pendingActionsRef.current += 1;
     try {
       setBusyAction(label);
@@ -4588,10 +4952,10 @@ function StudioShell(props: {
           className="organization-create-form"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!confirmStoryNavigation(true, true)) {
+            if (!confirmStoryNavigation(true, true, true)) {
               return;
             }
-            const submittedContext = structuredClone(storyDraftContextRef.current);
+            const submittedContext = structuredClone({story: storyDraftContextRef.current, editors: currentPageEditorRef.current});
             void runAction('Create organization', async () => {
               const createdWorkspace = await api.createOrganization({
                 name: organizationDraft.name.trim(),
@@ -4599,9 +4963,9 @@ function StudioShell(props: {
                 billing_email:
                   organizationDraft.billing_email.trim().length > 0 ? organizationDraft.billing_email.trim() : props.email,
               });
-              const contextUnchanged = JSON.stringify(storyDraftContextRef.current) === JSON.stringify(submittedContext);
+              const contextUnchanged = JSON.stringify({story: storyDraftContextRef.current, editors: currentPageEditorRef.current}) === JSON.stringify(submittedContext);
               if (contextUnchanged) {
-                discardStoryDrafts(true, true);
+                discardStoryDrafts(true, true, true);
                 setSelectedOrganizationId(createdWorkspace.organization.id);
               }
               setOrganizationDraft({
@@ -4696,16 +5060,16 @@ function StudioShell(props: {
         className="story-create-form"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!confirmStoryNavigation(true, true)) {
+          if (!confirmStoryNavigation(true, true, true)) {
             return;
           }
-          const submittedContext = structuredClone(storyDraftContextRef.current);
+          const submittedContext = structuredClone({story: storyDraftContextRef.current, editors: currentPageEditorRef.current});
           void runAction('Create work', async () => {
             const createdWork = await api.createWork(toCreateWorkPayload(newWorkDraft), activeOrganizationId);
-            const contextUnchanged = JSON.stringify(storyDraftContextRef.current) === JSON.stringify(submittedContext);
+            const contextUnchanged = JSON.stringify({story: storyDraftContextRef.current, editors: currentPageEditorRef.current}) === JSON.stringify(submittedContext);
             setNewWorkDraft((current) => JSON.stringify(current) === JSON.stringify(newWorkDraft) ? createEmptyWorkDraft() : current);
             if (contextUnchanged) {
-              discardStoryDrafts(true, true);
+              discardStoryDrafts(true, true, true);
               setSelectedWorkId(createdWork.id);
               setActiveTab('story');
             }
@@ -5111,6 +5475,22 @@ function StudioShell(props: {
       </aside>
 
       <main className="workspace">
+        {activeOrganizationId !== null && organizationWorkspacesQuery.isSuccess && activeOrganizationWorkspace === null ? (
+          <section className="panel-section">
+            <h2>{pickUiText(uiLanguage, 'Local editing recovery', '編集中の入力の保護')}</h2>
+            <p>{pickUiText(uiLanguage,
+              'Workspace access is unavailable. Your local input is kept here for copying. Saving requires workspace access.',
+              'ワークスペースを利用できなくなりました。入力をコピーできるよう保持しています。保存には利用権限が必要です。')}</p>
+            {entityDraft.name.trim().length > 0 || entityDraft.free_description.trim().length > 0 || draftImportedReference !== null ? (
+              <>
+                <label><span>{translateUiString(uiLanguage, 'Free description')}</span><textarea readOnly value={entityDraft.free_description} /></label>
+                <label><span>{pickUiText(uiLanguage, 'Character input', 'キャラクターの入力')}</span><textarea readOnly rows={8} value={JSON.stringify(entityDraft, null, 2)} /></label>
+              </>
+            ) : null}
+            <label><span>{pickUiText(uiLanguage, 'Other local input', 'その他の編集中の入力')}</span><textarea readOnly rows={8} value={JSON.stringify({chapter: chapterDraft, episode: episodeDraft, scene: sceneDraft, page: pageSettingsDraft, panel: panelDraft, frames: frameDrafts}, null, 2)} /></label>
+          </section>
+        ) : null}
+
         <header className="topbar">
           {canViewActiveOrganizationWorks ? (
             <nav
@@ -5695,7 +6075,7 @@ function StudioShell(props: {
                         <button
                           key={scene.id}
                           className={`mini-card ${selectedScene?.id === scene.id ? 'active' : ''}`}
-                          onClick={() => setSelectedSceneId(scene.id)}
+                          onClick={() => selectSceneForEditing(scene.id)}
                           type="button"
                         >
                           <strong>{scene.order}</strong>
@@ -5716,12 +6096,15 @@ function StudioShell(props: {
                         className="secondary-button"
                         onClick={() =>
                           void runAction('Create scene', async () => {
-                            await api.createScene(
-                              selectedEpisode.id,
-                              toCreateScenePayload(sceneDraft, loadedSelectedWorkEntityIds),
-                              activeOrganizationId,
-                            );
-                            setSceneDraft(createEmptySceneDraft());
+                            const submitted = structuredClone(currentPageEditorRef.current);
+                            const created = await api.createScene(selectedEpisode.id, toCreateScenePayload(submitted.sceneDraft, loadedSelectedWorkEntityIds), activeOrganizationId);
+                            if (currentPageEditorRef.current.sceneDraftKey === submitted.sceneDraftKey) {
+                              const key = JSON.stringify([activeOrganizationId, selectedWorkId, selectedEpisode.id, created.id]);
+                              const nextDraft = toSceneDraft(created);
+                              savedSceneDraftRef.current = {key, draft: nextDraft, revision: JSON.stringify([key, created.updated_at, nextDraft]), updatedAt: created.updated_at};
+                              setSceneDraft((current) => sameStoryDraft(current, submitted.sceneDraft) ? nextDraft : current);
+                              setSelectedSceneId(created.id);
+                            }
                             await invalidateScopedQuery(['scenes', selectedEpisode.id]);
                           })
                         }
@@ -5735,11 +6118,7 @@ function StudioShell(props: {
                           className="ghost-button"
                           onClick={() =>
                             void runAction('Save scene', async () => {
-                              await api.updateScene(
-                                selectedScene.id,
-                                toScenePayload(sceneDraft, loadedSelectedWorkEntityIds),
-                                activeOrganizationId,
-                              );
+                              await persistCurrentScene(true);
                               await invalidateScopedQuery(['scenes', selectedEpisode.id]);
                             })
                           }
@@ -5802,7 +6181,7 @@ function StudioShell(props: {
                         </button>
                         <button
                           className="ghost-button"
-                          onClick={beginNewEntityDraft}
+                          onClick={resetEntityDraft}
                           type="button"
                         >
                           <RefreshCw size={16} />
@@ -5817,8 +6196,10 @@ function StudioShell(props: {
                                 return;
                               }
 
-                              void runAction('Delete entity', async () => {
+                              void runEntityAction('Delete entity', async () => {
                                 await api.deleteEntity(selectedEntity.id, activeOrganizationId);
+                                discardEntityDraft();
+                                setSelectedEntityId(entities.find((item) => item.id !== selectedEntity.id)?.id ?? '');
                                 removeEntityFromCache(selectedWork.id, selectedEntity.id);
                                 await invalidateScopedQuery(['entities', selectedWork.id]);
                               });
@@ -5866,21 +6247,8 @@ function StudioShell(props: {
                       <label className="file-drop">
                         <input
                           accept="image/png,image/jpeg,image/webp"
-                          onChange={(event) =>
-                            void handleEntityImport(
-                              event,
-                              entityDraft.entity_type,
-                              selectedEntity?.id ?? null,
-                              api,
-                              activeOrganizationId,
-                              setImportingImage,
-                              setNotice,
-                              setEntityDraft,
-                              setUploadedReferenceCandidatesByEntityId,
-                              setUploadedReferenceSourceByEntityId,
-                              uiLanguage,
-                            )
-                          }
+                          disabled={busyAction !== null || importingImage}
+                          onChange={(event) => void importEntityReferenceImage(event)}
                           type="file"
                         />
                         <span>{importingImage ? translateUiString(uiLanguage, 'Importing image...') : translateUiString(uiLanguage, 'Drop or choose image')}</span>
@@ -5921,21 +6289,38 @@ function StudioShell(props: {
                       </span>
                     </div>
                     <div className="toolbar">
-                      {entityEditorMode === 'create' || selectedEntity === null ? (
+                      {entityEditorMode === 'create' || (selectedEntityId.length === 0 && entities.length === 0) ? (
                         <button
                           className="secondary-button"
+                          disabled={busyAction !== null || importingImage}
                           onClick={() =>
-                            void runAction('Create entity', async () => {
+                            void runEntityAction('Create entity', async () => {
+                              const submitted = structuredClone(currentEntityDraftContextRef.current);
+                              const imported = draftImportedReferenceRef.current;
+                              if (imported !== null && (imported.scope !== submitted.scope || imported.workId !== submitted.workId || imported.entityType !== submitted.draft.entity_type)) {
+                                throw new Error(pickUiText(uiLanguage, 'Reset or import an image matching this character type before creating.', 'キャラクターの種類に合う画像を取り込み直すか、リセットしてから作成してください。'));
+                              }
                               const createdEntity = await api.createEntity(
                                 selectedWork.id,
-                                toEntityPayload(entityDraft),
+                                toEntityPayload(submitted.draft),
                                 activeOrganizationId,
                               );
+                              const current = currentEntityDraftContextRef.current;
+                              const targetUnchanged = current.scope === submitted.scope && current.workId === submitted.workId && current.mode === submitted.mode && current.id === submitted.id;
+                              if (targetUnchanged) {
+                                acceptSavedEntity(createdEntity, submitted);
+                                setEntityEditorMode('edit');
+                                setSelectedEntityId(createdEntity.id);
+                              }
                               cacheEntityRecord(createdEntity);
-                              setEntityEditorMode('edit');
-                              setSelectedEntityId(createdEntity.id);
-                              setEntityDraft(toEntityDraft(createdEntity));
-                              await invalidateScopedQuery(['entities', selectedWork.id]);
+                              if (targetUnchanged && imported !== null) {
+                                const candidate = {...imported, entityId: createdEntity.id};
+                                storeDraftImportedReference(candidate);
+                                await invalidateScopedQuery(['entities', selectedWork.id]);
+                                await attachDraftReferenceCandidate(candidate);
+                              } else {
+                                await invalidateScopedQuery(['entities', selectedWork.id]);
+                              }
                             })
                           }
                           type="button"
@@ -5947,15 +6332,17 @@ function StudioShell(props: {
                       {entityEditorMode === 'edit' && selectedEntity !== null ? (
                         <button
                           className="secondary-button"
+                          disabled={busyAction !== null || importingImage}
                           onClick={() =>
-                            void runAction('Save entity', async () => {
+                            void runEntityAction('Save entity', async () => {
+                              const submitted = structuredClone(currentEntityDraftContextRef.current);
                               const savedEntity = await api.updateEntity(
                                 selectedEntity.id,
-                                toEntityPayload(entityDraft),
+                                toEntityPayload(submitted.draft),
                                 activeOrganizationId,
                               );
+                              acceptSavedEntity(savedEntity, submitted);
                               cacheEntityRecord(savedEntity);
-                              setEntityDraft(toEntityDraft(savedEntity));
                               await invalidateScopedQuery(['entities', selectedWork.id]);
                             })
                           }
@@ -5979,9 +6366,9 @@ function StudioShell(props: {
                       <div className="toolbar">
                         <button
                           className="secondary-button"
-                          disabled={entityReferenceGenerationBlocked}
+                          disabled={entityReferenceGenerationBlocked || draftImportedReference?.entityId === selectedEntity.id}
                           onClick={() =>
-                            void runAction('Generate reference', async () => {
+                            void runEntityAction('Generate reference', async () => {
                               await saveCurrentEntityGenerationContext();
                               setGeneratedReferenceCandidatesByEntityId((current) => ({
                                 ...current,
@@ -6007,7 +6394,7 @@ function StudioShell(props: {
                           className="primary-button"
                           disabled={referenceConfirmationBlocked}
                           onClick={() =>
-                            void runAction('Confirm references', async () => {
+                            void runEntityAction('Confirm references', async () => {
                               const selectedReferenceKeys = Array.from(
                                 new Set(
                                   referencePrimaryKey.length > 0
@@ -6054,6 +6441,12 @@ function StudioShell(props: {
                       </div>
                       <p className="muted" id="hy4-character-unavailable">{translateUiString(uiLanguage, 'We are checking the Hy4 Preview image generation and reference-image editing API. It is not available yet.')}</p>
                     </section>
+                    {draftImportedReference?.entityId === selectedEntity?.id && draftImportedReference !== null ? (
+                      <button className="secondary-button" disabled={busyAction !== null || importingImage} type="button"
+                        onClick={() => void runEntityAction('Attach imported image', async () => {await attachDraftReferenceCandidate(draftImportedReference);})}>
+                        {pickUiText(uiLanguage, 'Retry attaching imported image', '取り込んだ画像の引継ぎを再試行')}
+                      </button>
+                    ) : null}
                     <GenerationReadinessNotice
                       blockers={entityReferenceGenerationBlockers}
                       language={uiLanguage}
@@ -6184,7 +6577,7 @@ function StudioShell(props: {
                                       if (!confirmUiAction('Delete this reference image? This cannot be undone.')) {
                                         return;
                                       }
-                                      void runAction('Delete reference', async () => {
+                                      void runEntityAction('Delete reference', async () => {
                                         await api.deleteEntityReference(
                                           selectedEntity.id,
                                           image.ref_id,
@@ -6225,6 +6618,7 @@ function StudioShell(props: {
                           className="primary-button skeleton-plan-button"
                           disabled={skeletonActionDisabled || selectedEpisodePageSkeletonJob !== null || pageSkeletonBlocked}
                           onClick={() => {
+                            if (!confirmEditorNavigation('page')) return;
                             const overwriteExisting = episodeHasExistingPagePlan;
                             if (
                               overwriteExisting &&
@@ -6238,9 +6632,8 @@ function StudioShell(props: {
                               return;
                             }
                             void runAction('Generate page skeleton', async () => {
+                              const submittedEditors = structuredClone(currentPageEditorRef.current);
                               await saveCurrentEpisodeContext();
-                              setSelectedPageId('');
-                              setSelectedPanelId('');
                               const result = await api.generatePageSkeleton(
                                 selectedEpisode.id,
                                 {
@@ -6250,6 +6643,7 @@ function StudioShell(props: {
                                 },
                                 activeOrganizationId,
                               );
+                              if (sameStoryDraft(currentPageEditorRef.current, submittedEditors)) discardPageEditors(false);
                               if ('job_id' in result) {
                                 trackJob(result.job_id);
                               } else {
@@ -6356,7 +6750,7 @@ function StudioShell(props: {
                         <button
                           key={page.id}
                           className={`page-card ${selectedPage?.id === page.id ? 'active' : ''}`}
-                          onClick={() => setSelectedPageId(page.id)}
+                          onClick={() => selectPageForEditing(page.id)}
                           type="button"
                         >
                           <div className="page-card-header">
@@ -6404,11 +6798,7 @@ function StudioShell(props: {
                             className="secondary-button"
                             onClick={() =>
                               void runAction('Save story sources', async () => {
-                                await api.updatePage(
-                                  selectedPage.id,
-                                  toPageSettingsPayload(pageSettingsDraft),
-                                  activeOrganizationId,
-                                );
+                                await persistCurrentPage();
                                 await invalidateScopedQuery(['pages', selectedEpisode.id]);
                               })
                             }
@@ -6489,7 +6879,8 @@ function StudioShell(props: {
                             <button
                               className="ghost-button"
                               disabled={FRAME_TEMPLATE_PANEL_COUNTS[frameTemplateId] === undefined}
-                              onClick={() =>
+                              onClick={() => {
+                                if (!confirmEditorNavigation('layout')) return;
                                 void runAction('Apply panel layout', async () => {
                                   const nextPanelCount = FRAME_TEMPLATE_PANEL_COUNTS[frameTemplateId] ?? selectedPagePanelCount;
                                   const deletedPanelCount = Math.max(selectedPagePanelCount - nextPanelCount, 0);
@@ -6505,13 +6896,14 @@ function StudioShell(props: {
                                     false,
                                     activeOrganizationId,
                                   );
+                                  savedFramesDraftRef.current = null; savedPanelDraftRef.current = null;
                                   await invalidateScopedQuery(['frames', selectedPage.id]);
                                   await invalidateScopedQuery(['panels', selectedPage.id]);
                                   if (selectedEpisode !== null) {
                                     await invalidateScopedQuery(['pages', selectedEpisode.id]);
                                   }
                                 })
-                              }
+                              }}
                               type="button"
                             >
                               <Wand2 size={16} />
@@ -6635,11 +7027,7 @@ function StudioShell(props: {
                             className="secondary-button"
                             onClick={() =>
                               void runAction('Save frame geometry', async () => {
-                                await api.replaceFrames(
-                                  selectedPage.id,
-                                  toPanelFramesPayload(frameDrafts),
-                                  activeOrganizationId,
-                                );
+                                await persistCurrentFrames();
                                 await invalidateScopedQuery(['frames', selectedPage.id]);
                               })
                             }
@@ -6661,7 +7049,7 @@ function StudioShell(props: {
                             >
                               <button
                                 className="panel-order-main"
-                                onClick={() => setSelectedPanelId(panel.id)}
+                                onClick={() => selectPanelForEditing(panel.id)}
                                 type="button"
                               >
                                 <strong>{formatPanelOrderLabel(uiLanguage, panel.order)}</strong>
@@ -6830,17 +7218,7 @@ function StudioShell(props: {
                               className="secondary-button panel-save-button"
                               onClick={() =>
                                 void runAction('Save panel', async () => {
-                                  const assignmentsPayload = toPanelAssignmentsPayload(panelDraft);
-                                  await api.updatePanel(
-                                    selectedPanel.id,
-                                    toPanelPayload(panelDraft),
-                                    activeOrganizationId,
-                                  );
-                                  await api.replacePanelAssignments(
-                                    selectedPanel.id,
-                                    assignmentsPayload,
-                                    activeOrganizationId,
-                                  );
+                                  await persistCurrentPanel();
                                   await invalidateScopedQuery(['panels', selectedPage.id]);
                                 })
                               }
@@ -6976,6 +7354,7 @@ function StudioShell(props: {
                             {translateUiString(uiLanguage, 'We are checking the Hy4 Preview image generation and reference-image editing API. It is not available yet.')}
                           </p>
                         </section>
+                        {hasUnsavedFrameGeometry ? <p role="status" className="muted">{pickUiText(uiLanguage, 'Save frame geometry before generating.', '生成する前にコマ形状を保存してください。')}</p> : null}
                         <GenerationReadinessNotice
                           blockers={pageGenerationBlockers}
                           language={uiLanguage}
@@ -7008,11 +7387,7 @@ function StudioShell(props: {
                             className="secondary-button"
                             onClick={() =>
                               void runAction('Save page settings', async () => {
-                                await api.updatePage(
-                                  selectedPage.id,
-                                  toPageSettingsPayload(pageSettingsDraft),
-                                  activeOrganizationId,
-                                );
+                                await persistCurrentPage();
                                 await invalidateScopedQuery(['pages', selectedEpisode.id]);
                               })
                             }
@@ -8432,83 +8807,6 @@ function Metric(props: { label: string; value: string }) {
   );
 }
 
-async function handleEntityImport(
-  event: ChangeEvent<HTMLInputElement>,
-  entityType: EntityDraft['entity_type'],
-  selectedEntityId: string | null,
-  api: LyraApiClient,
-  organizationId: string | null,
-  setImportingImage: (nextValue: boolean) => void,
-  setNotice: (nextValue: NoticeState) => void,
-  setEntityDraft: (nextValue: EntityDraft | ((current: EntityDraft) => EntityDraft)) => void,
-  setUploadedReferenceCandidatesByEntityId: (
-    nextValue:
-      | Record<string, ReferenceCandidate[]>
-      | ((current: Record<string, ReferenceCandidate[]>) => Record<string, ReferenceCandidate[]>),
-  ) => void,
-  setUploadedReferenceSourceByEntityId: (
-    nextValue:
-      | Record<string, string>
-      | ((current: Record<string, string>) => Record<string, string>),
-  ) => void,
-  uiLanguage: UiLanguage,
-): Promise<void> {
-  const file = event.target.files?.[0];
-  if (file === undefined) {
-    return;
-  }
-
-  const allowedMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
-  const maxFileSizeBytes = 5 * 1024 * 1024;
-  if (!allowedMimeTypes.has(file.type)) {
-    setNotice({ type: 'error', message: translateUiString(uiLanguage, 'Only PNG, JPEG, and WebP are allowed.') });
-    event.target.value = '';
-    return;
-  }
-  if (file.size > maxFileSizeBytes) {
-    setNotice({ type: 'error', message: translateUiString(uiLanguage, 'Image file is too large.') });
-    event.target.value = '';
-    return;
-  }
-
-  try {
-    setImportingImage(true);
-    const imageBase64 = await toDataUrl(file);
-    const result = await api.importEntityImage({
-      entity_type: entityType,
-      ...(selectedEntityId === null ? {} : { entity_id: selectedEntityId }),
-      image_base64: imageBase64,
-    }, organizationId);
-    setEntityDraft((current) => ({
-      ...current,
-      structured_fields: JSON.stringify(result.suggested_fields, null, 2),
-      prompt_supplement: result.prompt_supplement,
-    }));
-    if (selectedEntityId !== null) {
-      setUploadedReferenceCandidatesByEntityId((current) => ({
-        ...current,
-        [selectedEntityId]: dedupeReferenceCandidates([
-          {
-            candidate_token: result.tmp_image_token,
-            source: 'upload',
-          },
-          ...(current[selectedEntityId] ?? []),
-        ]).slice(0, 3),
-      }));
-      setUploadedReferenceSourceByEntityId((current) => ({
-        ...current,
-        [selectedEntityId]: result.tmp_image_token,
-      }));
-    }
-    setNotice({ type: 'success', message: translateUiString(uiLanguage, 'Image analyzed. Generate preview next.') });
-  } catch (error) {
-    setNotice({ type: 'error', message: toMessage(error, uiLanguage) });
-  } finally {
-    setImportingImage(false);
-    event.target.value = '';
-  }
-}
-
 function toChapterDraft(chapter: ChapterRecord): ChapterDraft {
   return {
     order: String(chapter.order),
@@ -9076,10 +9374,6 @@ function toPageSettingsPayload(draft: PageSettingsDraft): Record<string, unknown
     };
   }
   return payload;
-}
-
-function sameStringArray(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function resolveStorySourceScenes(sceneIds: string[], scenes: SceneRecord[]): SceneRecord[] {

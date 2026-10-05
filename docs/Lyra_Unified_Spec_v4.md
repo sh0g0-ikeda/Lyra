@@ -604,6 +604,49 @@ retain an explicit unknown outcome through state navigation and reconciliation.
 Read recovery never silently repeats a paid mutation. Targeted rendered-style
 contrast is tested locally; native layout and accessibility acceptance remain open.
 
+### Draft reference image binding (2026-10-05)
+
+An entity image import without an existing entity returns an opaque, signed
+entity-draft candidate token (v3). It binds user, organization (including personal
+null scope), requested entity type, temporary image key and expiry. Existing
+entity imports retain the entity-bound v1 token and continue accepting a locally
+edited entity type before that entity is saved. Ownership and organization scope
+are verified before paid import analysis; type editing grants no extra permission.
+
+POST /api/entities/:id/reference-candidate/bind accepts only candidate_token and
+returns only a bound candidate_token. It requires edit_work permission and target
+ownership, and checks the draft token's user, organization, entity type, source-key
+policy and expiry. Binding issues a v1 token for that target with the original
+expiry; it neither renews the temporary image nor invokes provider, credits,
+storage writes or DB mutation. Rebinding within the same scope and expiry is
+idempotent and is not a single-use claim. Existing v1/base and v2/state validation
+remain unchanged. Quoted import results retain the same opaque response fields.
+No persistence schema changes or migration are required for this token addition.
+
+Browser draft imports are kept in their original workspace/work/type until the
+created entity is bound. Binding failure keeps the successful entity creation and
+the candidate for retry; recovery does not analyze or charge for the image again.
+The installed Mobile path does not adopt an unbound draft candidate after creating
+an entity, so its prior restriction remains; existing entity imports remain v1.
+
+Browser navigation and same-resource refresh preserve unsaved chapter, episode,
+entity, scene, page-settings, panel and frame input. Cancellation never saves or
+changes selection. Background loading and errors are not authoritative empty
+lists. Remote removal retains local edits and requires an explicit selection;
+revoked workspace access exposes local recovery for copying without restoring
+server permissions. Save responses preserve later typing and omitted dirty fields,
+and reject older known revisions. Panel assignment failure after metadata success
+rebases only the successful data and prevents generation. Frame edits must be
+saved before page generation; layout replacement and deletion preserve drafts
+until a successful, explicitly requested operation.
+Frame records have no server revision field in the current API. The browser
+checks the observed baseline at submission and refetches without adopting a late
+response if that baseline changes. This client check does not add server-side
+optimistic locking. An empty initial selection is not a disappeared record and
+never replaces the current action's success or error notice. A draft candidate
+is retained with its original type when that type changes during import; changing
+back reuses the candidate without another analysis.
+
 ## 12. Related documents
 
 - `docs/Lyra_StoryAI_SubSpec.md`

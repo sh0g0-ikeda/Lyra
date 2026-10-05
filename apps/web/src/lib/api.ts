@@ -399,6 +399,12 @@ export class LyraApiClient {
     return this.request(`/api/entities/import-image${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
+  public bindEntityReferenceCandidate(entityId: string, candidateToken: string, organizationId?: string | null): Promise<{candidate_token: string}> {
+    return this.request('/api/entities/' + entityId + '/reference-candidate/bind' + organizationQuery(organizationId), {
+      method: 'POST', body: {candidate_token: candidateToken},
+    });
+  }
+
   public generateEntityReference(entityId: string, body?: Record<string, unknown>, organizationId?: string | null): Promise<{ job_id: string }> {
     return this.request(`/api/entities/${entityId}/generate-reference${organizationQuery(organizationId)}`, {
       method: 'POST',
