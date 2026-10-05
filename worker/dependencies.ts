@@ -361,12 +361,14 @@ export function resolveWorkerDependencies(
       episodeStoryAutofillExecutionRepository,
       pageService,
       env.EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED,
+      persistenceProfile === 'legacy_2debe_v1' ? episodeStoryAutofillExecutionRepository : undefined,
     ),
     episodePageSkeletonWorkerService: new EpisodePageSkeletonWorkerService(
       episodePageSkeletonExecutionRepository,
       pageSkeletonService,
       pageService,
       generationJobCancellationControl,
+      persistenceProfile === 'legacy_2debe_v1' ? episodePageSkeletonExecutionRepository : undefined,
     ),
   };
 }

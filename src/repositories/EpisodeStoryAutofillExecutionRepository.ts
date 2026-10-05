@@ -1,4 +1,5 @@
 import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
+import { isDeepStrictEqual } from 'node:util';
 import type { QueryResultRow } from 'pg';
 import type { EpisodePagePlanApplyResult } from '../domain/types/page.js';
 import type { EpisodeUnresolvedStateTransition } from '../domain/types/episodeStateTransition.js';
@@ -9,6 +10,8 @@ import {
   enqueueTerminalGenerationJobNotificationAfterRegistryLock,
   lockMobilePushTokenRegistryForTerminalSettlement,
 } from './PushNotificationOutboxRepository.js';
+import { ConfigurationError } from '../domain/errors/index.js';
+import { bindTransaction } from './TransactionBoundDatabase.js';
 
 export interface CompleteEpisodeStoryAutofillInput {
   jobId: string;
@@ -40,6 +43,26 @@ export interface EpisodeStoryAutofillExecutionRepository {
   }): Promise<boolean>;
 }
 
+export type EpisodeStoryAutofillAttemptSettlement =
+  | 'active'
+  | 'cancelled'
+  | 'completed'
+  | 'failed'
+  | 'lost';
+
+/** Selected by the factory only for explicit legacy_2debe_v1 workers. */
+export interface LegacyEpisodeStoryAutofillAttemptPort {
+  updateEpisodeStoryAutofillProgressForAttempt(
+    job: GenerationJob,
+    input: Omit<UpdateEpisodeStoryAutofillProgressInput, 'jobId' | 'userId'>,
+  ): Promise<boolean>;
+  settleEpisodeStoryAutofillAttempt(
+    job: GenerationJob,
+    errorMessage?: string,
+    stateBlocker?: EpisodeStoryAutofillStateBlocker,
+  ): Promise<EpisodeStoryAutofillAttemptSettlement>;
+}
+
 export interface EpisodeStoryAutofillStateBlocker {
   code: EpisodeStatePlanErrorCode;
   candidates: EpisodeUnresolvedStateTransition[];
@@ -52,7 +75,7 @@ type EpisodeStatePlanErrorCode =
   | 'STATE_MAPPING_AMBIGUOUS'
   | 'LIMIT_EXCEEDED';
 
-interface GenerationJobRow extends QueryResultRow {
+export interface GenerationJobRow extends QueryResultRow {
   id: string;
   user_id: string;
   organization_id: string | null;
@@ -77,7 +100,7 @@ interface GenerationJobRow extends QueryResultRow {
 }
 
 export class PostgresEpisodeStoryAutofillExecutionRepository
-  implements EpisodeStoryAutofillExecutionRepository
+  implements EpisodeStoryAutofillExecutionRepository, LegacyEpisodeStoryAutofillAttemptPort
 {
   public constructor(
     private readonly client: DatabaseClient & TransactionRunner,
@@ -137,6 +160,87 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
     );
 
     return (result.rowCount ?? 0) > 0;
+  }
+
+  public async updateEpisodeStoryAutofillProgressForAttempt(
+    job: GenerationJob,
+    input: Omit<UpdateEpisodeStoryAutofillProgressInput, 'jobId' | 'userId'>,
+  ): Promise<boolean> {
+    this.requireLegacyProfile();
+    if (job.startedAt === null) return false;
+    const updatedAt = new Date().toISOString();
+    const progress: Record<string, unknown> = {
+      progress_stage: input.stage,
+      progress_message: input.message,
+      progress_updated_at: updatedAt,
+    };
+    if (input.currentChunk !== undefined) progress.progress_current_chunk = input.currentChunk;
+    if (input.totalChunks !== undefined) progress.progress_total_chunks = input.totalChunks;
+    if (input.stage === 'started') progress.progress_started_at = updatedAt;
+    const result = await this.client.query(
+      `UPDATE generation_jobs
+       SET result = COALESCE(result, '{}'::jsonb) || $7::jsonb
+       WHERE id = $1::uuid
+         AND user_id = $2::uuid
+         AND organization_id IS NOT DISTINCT FROM $3::uuid
+         AND job_type = 'episode_story_autofill'
+         AND status = 'processing'
+         AND retry_count = $4::int
+         AND date_trunc('milliseconds', started_at) = $5::timestamptz
+         AND params = $6::jsonb
+         AND cancel_requested_at IS NULL
+       RETURNING id`,
+      [
+        job.id,
+        job.userId,
+        job.organizationId,
+        job.retryCount,
+        job.startedAt.toISOString(),
+        JSON.stringify(job.params),
+        JSON.stringify(progress),
+      ],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  public async settleEpisodeStoryAutofillAttempt(
+    job: GenerationJob,
+    errorMessage?: string,
+    stateBlocker?: EpisodeStoryAutofillStateBlocker,
+  ): Promise<EpisodeStoryAutofillAttemptSettlement> {
+    this.requireLegacyProfile();
+    return this.client.transaction(async (client) => {
+      await lockMobilePushTokenRegistryForTerminalSettlement(client);
+      const locked = (await client.query<GenerationJobRow>(
+        'SELECT * FROM generation_jobs WHERE id = $1::uuid FOR UPDATE',
+        [job.id],
+      )).rows[0];
+      if (!sameStoryAutofillAttempt(locked, job)) return 'lost';
+      if (locked.status === 'completed') return 'completed';
+      if (locked.status === 'failed') return 'failed';
+      if (locked.status === 'cancelled') return 'cancelled';
+      if (locked.status !== 'processing' || locked.commit_started_at !== null) return 'lost';
+      const bound = new PostgresEpisodeStoryAutofillExecutionRepository(
+        bindTransaction(client),
+        this.schemaProfile,
+      );
+      if (locked.cancel_requested_at !== null) {
+        return await bound.cancelEpisodeStoryAutofill(job.id, job.userId) ? 'cancelled' : 'lost';
+      }
+      if (errorMessage === undefined) return 'active';
+      return await bound.failEpisodeStoryAutofill({
+        jobId: job.id,
+        userId: job.userId,
+        errorMessage,
+        ...(stateBlocker === undefined ? {} : { stateBlocker }),
+      }) ? 'failed' : 'lost';
+    });
+  }
+
+  private requireLegacyProfile(): void {
+    if (this.schemaProfile !== 'legacy_2debe_v1') {
+      throw new ConfigurationError('Legacy story autofill attempt handling requires the legacy repository profile');
+    }
   }
 
   public async isEpisodeStoryAutofillCancellationRequested(
@@ -428,6 +532,24 @@ function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
     cancelledAt: row.cancelled_at,
     commitStartedAt: row.commit_started_at,
   };
+}
+
+export function sameStoryAutofillAttempt(
+  row: GenerationJobRow | undefined,
+  job: GenerationJob,
+): row is GenerationJobRow {
+  return row !== undefined
+    && row.id === job.id
+    && row.user_id === job.userId
+    && row.organization_id === (job.organizationId ?? null)
+    && row.job_type === 'episode_story_autofill'
+    && job.jobType === 'episode_story_autofill'
+    && row.credit_cost === job.creditCost
+    && row.retry_count === job.retryCount
+    && row.started_at !== null
+    && job.startedAt !== null
+    && row.started_at.getTime() === job.startedAt.getTime()
+    && isDeepStrictEqual(toJsonObject(row.params), job.params);
 }
 
 function toJsonObject(value: unknown): Record<string, unknown> {

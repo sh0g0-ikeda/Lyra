@@ -5,6 +5,9 @@ import type { AppLanguage } from '../../../../src/domain/types/language.js';
 import type {
   CompleteEpisodeStoryAutofillInput,
   EpisodeStoryAutofillExecutionRepository,
+  EpisodeStoryAutofillAttemptSettlement,
+  EpisodeStoryAutofillStateBlocker,
+  LegacyEpisodeStoryAutofillAttemptPort,
   UpdateEpisodeStoryAutofillProgressInput,
 } from '../../../../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
 import type {
@@ -120,6 +123,26 @@ class ControlledPageService implements PageServicePort {
   }
 }
 
+class FakeLegacyAttemptPort implements LegacyEpisodeStoryAutofillAttemptPort {
+  public settlements: EpisodeStoryAutofillAttemptSettlement[] = ['active'];
+  public progressCalls = 0;
+  public failureMessages: string[] = [];
+
+  public async updateEpisodeStoryAutofillProgressForAttempt(): Promise<boolean> {
+    this.progressCalls += 1;
+    return true;
+  }
+
+  public async settleEpisodeStoryAutofillAttempt(
+    _job: GenerationJob,
+    errorMessage?: string,
+    _stateBlocker?: EpisodeStoryAutofillStateBlocker,
+  ): Promise<EpisodeStoryAutofillAttemptSettlement> {
+    if (errorMessage !== undefined) this.failureMessages.push(errorMessage);
+    return this.settlements.shift() ?? 'active';
+  }
+}
+
 describe('EpisodeStoryAutofillWorkerService cancellation', () => {
   it.each([
     ['falseを返す', false],
@@ -180,6 +203,32 @@ describe('EpisodeStoryAutofillWorkerService cancellation', () => {
 
     expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
     expect(repository.completeCalls).toBe(0);
+  });
+
+  it('legacy workerはclaim attemptをPageServiceへ渡し進捗をattempt CASで保存する', async () => {
+    const repository = new FakeExecutionRepository();
+    const pageService = new ControlledPageService();
+    const legacyAttempt = new FakeLegacyAttemptPort();
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true, legacyAttempt);
+
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.executionControl?.storyAutofillAttempt).toBe(repository.job);
+    expect(legacyAttempt.progressCalls).toBe(1);
+    expect(repository.progressCallCount).toBe(0);
+  });
+
+  it('legacy stale workerのcatchは新attemptをgeneric failedで上書きしない', async () => {
+    const repository = new FakeExecutionRepository();
+    const pageService = new ControlledPageService();
+    pageService.onAutofill = async () => { throw new Error('old provider response'); };
+    const legacyAttempt = new FakeLegacyAttemptPort();
+    legacyAttempt.settlements = ['active', 'lost'];
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true, legacyAttempt);
+
+    expect(await worker.processJob('job-1')).toEqual({ status: 'skipped' });
+    expect(repository.failed).toBe(false);
+    expect(repository.cancelled).toBe(false);
+    expect(legacyAttempt.failureMessages).toEqual(['old provider response']);
   });
 
   it('PageServiceが原子的job完了を証明しない場合は成功にしない', async () => {

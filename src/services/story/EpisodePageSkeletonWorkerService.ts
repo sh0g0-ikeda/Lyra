@@ -1,7 +1,9 @@
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { AppLanguage } from '../../domain/types/language.js';
+import type { GenerationJob } from '../../domain/types/job.js';
 import type {
   EpisodePageSkeletonExecutionRepository,
+  LegacyEpisodePageSkeletonCommitPort,
 } from '../../repositories/EpisodePageSkeletonExecutionRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { PageServicePort } from '../page/PageService.js';
@@ -25,6 +27,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
     private readonly pageSkeletonService: PageSkeletonServicePort,
     _pageService?: PageServicePort,
     private readonly cancellationControl?: GenerationJobCancellationControlRepository,
+    private readonly legacyCommit?: LegacyEpisodePageSkeletonCommitPort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEpisodePageSkeletonJobResult> {
@@ -32,6 +35,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
     if (job === null) {
       return { status: 'skipped' };
     }
+    if (this.legacyCommit !== undefined) return this.processLegacyJob(job, this.legacyCommit);
     if (await this.finalizeCancellationIfRequested(job.id)) {
       return { status: 'processed', jobStatus: 'cancelled' };
     }
@@ -112,6 +116,34 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         errorMessage: sanitizePersistedErrorMessage(error, 'Episode page skeleton failed'),
       });
       return { status: 'processed', jobStatus: 'failed' };
+    }
+  }
+
+  private async processLegacyJob(
+    job: GenerationJob,
+    commit: LegacyEpisodePageSkeletonCommitPort,
+  ): Promise<ProcessEpisodePageSkeletonJobResult> {
+    try {
+      const initial = await commit.settleEpisodePageSkeletonAttempt(job);
+      if (initial === 'cancelled' || initial === 'failed') return { status: 'processed', jobStatus: initial };
+      if (initial !== 'active') return { status: 'skipped' };
+      const episodeId = readStringParam(job.params, 'episode_id');
+      const language = readLanguageParam(job.params, 'language');
+      const overwriteExisting = readBooleanParam(job.params, 'overwrite_existing');
+      if (episodeId === null || language === null || overwriteExisting === null) {
+        throw new ConfigurationError('Episode page skeleton job is missing required params');
+      }
+      // Provider, repair and schema validation finish before the DB transaction.
+      const preparation = await this.pageSkeletonService.prepareForEpisode(job.userId, episodeId, {
+        overwriteExisting, language, allowCompilerFallback: false,
+      }, job.organizationId);
+      await commit.commitPreparedEpisodePageSkeleton(job, preparation);
+      return { status: 'processed', jobStatus: 'completed' };
+    } catch (error: unknown) {
+      const settlement = await commit.settleEpisodePageSkeletonAttempt(job,
+        sanitizePersistedErrorMessage(error, 'Episode page skeleton failed'));
+      if (settlement === 'failed' || settlement === 'cancelled') return { status: 'processed', jobStatus: settlement };
+      return { status: 'skipped' };
     }
   }
 

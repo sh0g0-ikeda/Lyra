@@ -1,4 +1,5 @@
 ﻿import { PANEL_FRAME_TEMPLATES, listPanelFrameTemplateDefinitions } from '../../domain/constants/panelFrameTemplates.js';
+import { fingerprintPageSkeletonContext } from '../../domain/pageSkeletonFingerprint.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
 import { inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
@@ -62,6 +63,8 @@ export interface PageSkeletonPreparation {
   organizationId: string | null;
   overwriteExisting: boolean;
   pages: PageSkeletonPageDraft[];
+  /** Required by the explicit legacy atomic commit strategy. */
+  sourceFingerprint?: string;
 }
 
 export class PageSkeletonService implements PageSkeletonServicePort {
@@ -102,6 +105,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     if (context === null) {
       throw new NotFoundError('Episode not found');
     }
+    const sourceFingerprint = fingerprintPageSkeletonContext(context);
     if (!overwriteExisting && context.pageSkeletonGenerated) {
       throw new ConflictError('Page skeleton has already been generated for this episode');
     }
@@ -169,6 +173,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       organizationId,
       overwriteExisting,
       pages,
+      sourceFingerprint,
     };
   }
 

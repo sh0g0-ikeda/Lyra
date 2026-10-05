@@ -2,7 +2,10 @@ import { ConfigurationError, ValidationError } from '../../domain/errors/index.j
 import type { AppLanguage } from '../../domain/types/language.js';
 import type {
   EpisodeStoryAutofillExecutionRepository,
+  EpisodeStoryAutofillStateBlocker,
+  LegacyEpisodeStoryAutofillAttemptPort,
 } from '../../repositories/EpisodeStoryAutofillExecutionRepository.js';
+import type { GenerationJob } from '../../domain/types/job.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import {
   MAX_EPISODE_STATE_JOB_BLOCKER_CANDIDATES,
@@ -38,6 +41,7 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
     private readonly repository: EpisodeStoryAutofillExecutionRepository,
     private readonly pageService: PageServicePort,
     private readonly cancellationEnabled = true,
+    private readonly legacyAttempt?: LegacyEpisodeStoryAutofillAttemptPort,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEpisodeStoryAutofillJobResult> {
@@ -46,9 +50,20 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
       return { status: 'skipped' };
     }
 
+    if (this.legacyAttempt !== undefined) {
+      const initial = await this.legacyAttempt.settleEpisodeStoryAutofillAttempt(job);
+      if (initial === 'cancelled' || initial === 'completed' || initial === 'failed') {
+        return { status: 'processed', jobStatus: initial };
+      }
+      if (initial !== 'active') return { status: 'skipped' };
+    }
+
     const episodeId = readStringParam(job.params, 'episode_id');
     const language = readLanguageParam(job.params, 'language');
     if (episodeId === null || language === null) {
+      if (this.legacyAttempt !== undefined) {
+        return this.settleLegacyFailure(job, 'Episode story autofill job is missing required params');
+      }
       await this.repository.failEpisodeStoryAutofill({
         jobId: job.id,
         userId: job.userId,
@@ -58,6 +73,9 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
     }
     const stateOptions = readStateAutofillOptions(job.params);
     if (stateOptions === null) {
+      if (this.legacyAttempt !== undefined) {
+        return this.settleLegacyFailure(job, 'Episode story autofill job has invalid state options');
+      }
       await this.repository.failEpisodeStoryAutofill({
         jobId: job.id,
         userId: job.userId,
@@ -67,7 +85,7 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
     }
 
     try {
-      await this.recordProgress(job.id, job.userId, {
+      await this.recordProgress(job, {
         stage: 'started',
         message: 'Applying story plan to pages and panels. This process can take around 20 minutes.',
         currentChunk: null,
@@ -79,14 +97,14 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         episodeId,
       });
 
-      const executionControl = this.createExecutionControl(job.id, job.userId);
+      const executionControl = this.createExecutionControl(job);
 
       const result = await this.pageService.autofillEpisodeFromStory(
         job.userId,
         episodeId,
         language,
         async (progress) => {
-          await this.recordProgress(job.id, job.userId, progress);
+          await this.recordProgress(job, progress);
         },
         job.organizationId,
         executionControl,
@@ -119,6 +137,24 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
       });
       return { status: 'processed', jobStatus: 'completed' };
     } catch (error) {
+      if (this.legacyAttempt !== undefined) {
+        return this.settleLegacyFailure(
+          job,
+          sanitizePersistedErrorMessage(error, 'Episode story autofill failed'),
+          error instanceof EpisodeStatePlanError
+            ? {
+                code: error.code,
+                candidates: error.candidates
+                  .slice(0, MAX_EPISODE_STATE_JOB_BLOCKER_CANDIDATES)
+                  .map((candidate) => ({
+                    ...candidate,
+                    suggestedDescription: candidate.suggestedDescription
+                      .slice(0, MAX_EPISODE_STATE_JOB_BLOCKER_DESCRIPTION_CHARS),
+                  })),
+              }
+            : undefined,
+        );
+      }
       const cancellationFinalized =
         (error instanceof EpisodeStoryAutofillCancelledError || this.cancellationEnabled) &&
         await this.repository.cancelEpisodeStoryAutofill(job.id, job.userId);
@@ -160,10 +196,18 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
     }
   }
 
-  private createExecutionControl(jobId: string, userId: string): EpisodePagePlanExecutionControl {
+  private createExecutionControl(job: GenerationJob): EpisodePagePlanExecutionControl {
+    const { id: jobId, userId } = job;
     return {
       jobId,
+      ...(this.legacyAttempt === undefined ? {} : { storyAutofillAttempt: job }),
       checkpoint: async () => {
+        if (this.legacyAttempt !== undefined) {
+          const settlement = await this.legacyAttempt.settleEpisodeStoryAutofillAttempt(job);
+          if (settlement === 'active') return;
+          if (settlement === 'cancelled') throw new EpisodeStoryAutofillCancelledError();
+          throw new EpisodeStoryAutofillAttemptLostError();
+        }
         if (
           this.cancellationEnabled &&
           await this.repository.isEpisodeStoryAutofillCancellationRequested(jobId, userId)
@@ -172,6 +216,9 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         }
       },
       beginCommit: async () => {
+        if (this.legacyAttempt !== undefined) {
+          throw new ConfigurationError('Legacy story autofill commit must start inside the persistence transaction');
+        }
         const started = await this.repository.beginEpisodeStoryAutofillCommit(jobId, userId);
         if (started) {
           return;
@@ -188,8 +235,7 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
   }
 
   private async recordProgress(
-    jobId: string,
-    userId: string,
+    job: GenerationJob,
     progress: EpisodePagePlanProgress | {
       stage: string;
       message: string;
@@ -199,17 +245,24 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
   ): Promise<void> {
     let updated: boolean;
     try {
-      updated = await this.repository.updateEpisodeStoryAutofillProgress({
-        jobId,
-        userId,
-        stage: progress.stage,
-        message: progress.message,
-        currentChunk: progress.currentChunk,
-        totalChunks: progress.totalChunks,
-      });
+      updated = this.legacyAttempt === undefined
+        ? await this.repository.updateEpisodeStoryAutofillProgress({
+            jobId: job.id,
+            userId: job.userId,
+            stage: progress.stage,
+            message: progress.message,
+            currentChunk: progress.currentChunk,
+            totalChunks: progress.totalChunks,
+          })
+        : await this.legacyAttempt.updateEpisodeStoryAutofillProgressForAttempt(job, {
+          stage: progress.stage,
+          message: progress.message,
+          currentChunk: progress.currentChunk,
+          totalChunks: progress.totalChunks,
+        });
     } catch (error) {
       console.warn('episode_story_autofill_progress_update_failed', {
-        jobId,
+        jobId: job.id,
         reason: sanitizePersistedErrorMessage(error, 'Progress update failed'),
       });
       throw new ConfigurationError(EPISODE_STORY_AUTOFILL_PROGRESS_PERSISTENCE_ERROR);
@@ -217,11 +270,28 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
 
     if (!updated) {
       console.warn('episode_story_autofill_progress_update_failed', {
-        jobId,
+        jobId: job.id,
         reason: 'Progress update was not accepted',
       });
       throw new ConfigurationError(EPISODE_STORY_AUTOFILL_PROGRESS_PERSISTENCE_ERROR);
     }
+  }
+
+  private async settleLegacyFailure(
+    job: GenerationJob,
+    errorMessage: string,
+    stateBlocker?: EpisodeStoryAutofillStateBlocker,
+  ): Promise<ProcessEpisodeStoryAutofillJobResult> {
+    if (this.legacyAttempt === undefined) return { status: 'skipped' };
+    const settlement = await this.legacyAttempt.settleEpisodeStoryAutofillAttempt(
+      job,
+      errorMessage,
+      stateBlocker,
+    );
+    if (settlement === 'cancelled' || settlement === 'completed' || settlement === 'failed') {
+      return { status: 'processed', jobStatus: settlement };
+    }
+    return { status: 'skipped' };
   }
 }
 
@@ -243,6 +313,13 @@ class EpisodeStoryAutofillCancelledError extends Error {
   public constructor() {
     super('Episode story autofill was cancelled');
     this.name = 'EpisodeStoryAutofillCancelledError';
+  }
+}
+
+class EpisodeStoryAutofillAttemptLostError extends Error {
+  public constructor() {
+    super('Episode story autofill attempt is no longer current');
+    this.name = 'EpisodeStoryAutofillAttemptLostError';
   }
 }
 

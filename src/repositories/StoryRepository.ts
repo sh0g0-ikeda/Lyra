@@ -244,6 +244,7 @@ interface CollaborationRow extends QueryResultRow {
 }
 
 interface EpisodeSkeletonContextRow extends QueryResultRow {
+  graph_fingerprint?: string;
   episode_id: string;
   chapter_id: string;
   work_id: string;
@@ -2103,6 +2104,46 @@ export class PostgresStoryRepository
     userId: string,
     organizationId: string | null = null,
   ): Promise<EpisodePageSkeletonContext | null> {
+    // One statement snapshots both prompt context and everything an overwrite
+    // would replace. Hash inside Postgres; raw saved graph never leaves the DB.
+    const graphFingerprintProjection = this.schemaProfile === 'legacy_2debe_v1' ? `,
+             encode(sha256(convert_to(jsonb_build_object(
+               'work', to_jsonb(works),
+               'chapter', to_jsonb(chapters),
+               'episode', to_jsonb(episodes),
+               'scenes', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(s) ORDER BY s.id), '[]'::jsonb)
+                 FROM scenes s WHERE s.episode_id = episodes.id
+               ),
+               'pages', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY p.id), '[]'::jsonb)
+                 FROM pages p WHERE p.episode_id = episodes.id
+               ),
+               'panels', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY p.id), '[]'::jsonb)
+                 FROM panels p INNER JOIN pages g ON g.id = p.page_id WHERE g.episode_id = episodes.id
+               ),
+               'frames', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(f) ORDER BY f.id), '[]'::jsonb)
+                 FROM panel_frames f INNER JOIN pages g ON g.id = f.page_id WHERE g.episode_id = episodes.id
+               ),
+               'balloons', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(b) ORDER BY b.id), '[]'::jsonb)
+                 FROM balloons b INNER JOIN pages g ON g.id = b.page_id WHERE g.episode_id = episodes.id
+               ),
+               'entities', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]'::jsonb)
+                 FROM entities e WHERE e.work_id = works.id
+               ),
+               'references', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY r.id), '[]'::jsonb)
+                 FROM reference_sets r INNER JOIN entities e ON e.id = r.entity_id WHERE e.work_id = works.id
+               ),
+               'states', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(s) ORDER BY s.id), '[]'::jsonb)
+                 FROM entity_states s INNER JOIN entities e ON e.id = s.entity_id WHERE e.work_id = works.id
+               )
+             )::text, 'UTF8')), 'hex') AS graph_fingerprint` : '';
     const result = await this.client.query<EpisodeSkeletonContextRow>(
       `
       SELECT episodes.id AS episode_id,
@@ -2182,7 +2223,7 @@ export class PostgresStoryRepository
                )
                FROM scenes
                WHERE scenes.episode_id = episodes.id
-             ) AS scene_summaries
+             ) AS scene_summaries${graphFingerprintProjection}
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
@@ -2218,6 +2259,7 @@ export class PostgresStoryRepository
     );
 
     return {
+      ...(this.schemaProfile === 'legacy_2debe_v1' ? { graphFingerprint: row.graph_fingerprint } : {}),
       episodeId: row.episode_id,
       chapterId: row.chapter_id,
       workId: row.work_id,
@@ -2431,7 +2473,7 @@ export class PostgresStoryRepository
     organizationId: string | null = null,
   ): Promise<PageSkeletonPersistResult | null> {
     const overwriteExisting = options?.overwriteExisting === true;
-    return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
+    return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const ownershipResult = await transactionClient.query<SkeletonLockRow>(
         `
         SELECT episodes.id,

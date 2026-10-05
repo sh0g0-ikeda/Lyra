@@ -2,8 +2,22 @@ import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from '../../../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
+import type { GenerationJob } from '../../../src/domain/types/job.js';
 
 describe('PostgresEpisodeStoryAutofillExecutionRepository terminal settlement', () => {
+  it('legacy attempt進捗はretryとmillisecond精度started_atをCAS条件にする', async () => {
+    const database = new TerminalSettlementDatabase('completed');
+    const repository = new PostgresEpisodeStoryAutofillExecutionRepository(database, 'legacy_2debe_v1');
+    const job = attemptJob();
+
+    await expect(repository.updateEpisodeStoryAutofillProgressForAttempt(job, {
+      stage: 'applying', message: 'saving', currentChunk: null, totalChunks: null,
+    })).resolves.toBe(true);
+
+    expect(database.queries[0]).toContain("date_trunc('milliseconds', started_at)");
+    expect(database.queries[0]).toContain('retry_count = $4::int');
+    expect(database.updateValues[0]?.[4]).toBe('2026-07-31T00:00:01.123Z');
+  });
   it('v1成功時だけboundedなstate transition結果を保存する', async () => {
     const database = new TerminalSettlementDatabase('completed');
     const repository = new PostgresEpisodeStoryAutofillExecutionRepository(database);
@@ -154,5 +168,17 @@ function jobRow(status: 'completed' | 'failed'): QueryResultRow {
     cancel_requested_by: null,
     cancelled_at: null,
     commit_started_at: new Date('2026-07-31T00:00:01.500Z'),
+  };
+}
+
+function attemptJob(): GenerationJob {
+  return {
+    id: 'job-1', userId: 'user-1', organizationId: null,
+    jobType: 'episode_story_autofill', status: 'processing', generationMode: null,
+    creditCost: 0, params: { episode_id: 'episode-1', language: 'ja' }, result: null,
+    sqsMessageId: null, openaiRequestId: null, errorMessage: null, retryCount: 0,
+    createdAt: new Date('2026-07-31T00:00:00.000Z'),
+    startedAt: new Date('2026-07-31T00:00:01.123Z'), completedAt: null, expiresAt: null,
+    cancelRequestedAt: null, cancelRequestedBy: null, cancelledAt: null, commitStartedAt: null,
   };
 }

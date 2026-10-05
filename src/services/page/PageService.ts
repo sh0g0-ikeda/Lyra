@@ -13,6 +13,7 @@ import {
   inferEntityIdsFromTexts,
 } from '../../domain/entityAliases.js';
 import type { AppLanguage } from '../../domain/types/language.js';
+import type { GenerationJob } from '../../domain/types/job.js';
 import { STORY_PROMPT_CONTEXT_LIMITS } from '../../domain/storyPromptCompaction.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import {
@@ -123,6 +124,7 @@ export interface EpisodeStateAutofillOptions {
 
 export interface EpisodePagePlanExecutionControl {
   jobId?: string;
+  storyAutofillAttempt?: GenerationJob;
   checkpoint(): Promise<void>;
   beginCommit(): Promise<void>;
 }
@@ -519,7 +521,14 @@ export class PageService implements PageServicePort {
     ) {
       await executionControl?.checkpoint();
       return episodePlanPersistence.withLockedEpisodePlan(
-        { episodeId, userId, organizationId },
+        {
+          episodeId,
+          userId,
+          organizationId,
+          ...(executionControl?.storyAutofillAttempt === undefined
+            ? {}
+            : { storyAutofillAttempt: executionControl.storyAutofillAttempt }),
+        },
         async (lockedContext, resources) => {
           if (fingerprintEpisodePlanningContext(lockedContext) !== contextFingerprint) {
             throw new ConflictError(
@@ -547,13 +556,20 @@ export class PageService implements PageServicePort {
             });
           }
 
-          await executionControl?.beginCommit();
-          await reportEpisodePlanProgress(progressReporter, {
+          if (resources.storyAutofillCommitStarted !== true) {
+            await executionControl?.beginCommit();
+          }
+          const applyingProgress: EpisodePagePlanProgress = {
             stage: 'applying',
             message: 'Saving story plan to pages and panels. This process can take around 20 minutes.',
             currentChunk: null,
             totalChunks: null,
-          });
+          };
+          if (resources.updateStoryAutofillProgress === undefined) {
+            await reportEpisodePlanProgress(progressReporter, applyingProgress);
+          } else if (!await resources.updateStoryAutofillProgress(applyingProgress)) {
+            throw new ConflictError('Episode story autofill progress could not be committed atomically');
+          }
           const result = await this.applyEpisodePlanSuggestion(
             lockedContext,
             userId,

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StoryRepository } from '../../../../src/repositories/StoryRepository.js';
 import { PageSkeletonService } from '../../../../src/services/story/PageSkeletonService.js';
+import { fingerprintPageSkeletonContext } from '../../../../src/domain/pageSkeletonFingerprint.js';
 import type { StoryAiClientPort, StoryAiModelRequest } from '../../../../src/services/story/StoryAiClientPort.js';
 import type {
   EpisodePageSkeletonContext,
@@ -254,6 +255,35 @@ class FakeStoryAiClient implements StoryAiClientPort {
 }
 
 describe('PageSkeletonService', () => {
+  it('legacy graph digestは指紋に含めるがprovider入力へ含めない', async () => {
+    const canonicalRepository = new FakeStoryRepository();
+    const legacyRepository = new FakeStoryRepository();
+    if (legacyRepository.skeletonContext === null) throw new Error('Missing context');
+    legacyRepository.skeletonContext.graphFingerprint = 'opaque-saved-graph-digest';
+    const canonicalClient = new FakeStoryAiClient();
+    const legacyClient = new FakeStoryAiClient();
+    const canonical = await new PageSkeletonService(canonicalRepository, canonicalClient).prepareForEpisode('user-1', legacyRepository.skeletonContext.episodeId);
+    const legacy = await new PageSkeletonService(legacyRepository, legacyClient).prepareForEpisode('user-1', legacyRepository.skeletonContext.episodeId);
+    expect(legacyClient.lastRequest).toEqual(canonicalClient.lastRequest);
+    expect(legacyClient.lastRequest?.userPrompt).not.toContain('opaque-saved-graph-digest');
+    expect(legacy.sourceFingerprint).not.toBe(canonical.sourceFingerprint);
+  });
+
+  it('provider呼出前の保存済みcontext fingerprintを準備結果へ保持する', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    if (repository.skeletonContext === null) throw new Error('Missing context');
+    const before = fingerprintPageSkeletonContext(repository.skeletonContext);
+    vi.spyOn(client, 'generatePageSkeleton').mockImplementation(async () => {
+      if (repository.skeletonContext !== null) repository.skeletonContext.introduction = 'changed during provider';
+      return client.generatedPages;
+    });
+    const preparation = await new PageSkeletonService(repository, client).prepareForEpisode('user-1', repository.skeletonContext.episodeId);
+    expect(preparation.sourceFingerprint).toBe(before);
+    expect(preparation.sourceFingerprint).not.toBe(fingerprintPageSkeletonContext(repository.skeletonContext));
+    expect(repository.createdPages).toEqual([]);
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

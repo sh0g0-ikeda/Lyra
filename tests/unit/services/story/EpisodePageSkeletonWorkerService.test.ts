@@ -172,6 +172,43 @@ class FakePageService implements PageServicePort {
 }
 
 describe('EpisodePageSkeletonWorkerService', () => {
+  // Spec 5/11: explicit legacy strategy owns admission, attempt CAS, graph writes
+  // and terminal settlement in one transaction; canonical ports stay unchanged.
+  it('legacy atomic portを選ぶ場合は分離commit保存terminal経路を呼ばない', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    const service = new FakePageSkeletonService();
+    const cancellation = new FakeCancellationControl();
+    let commits = 0;
+    const atomic = {
+      settleEpisodePageSkeletonAttempt: async () => 'active' as const,
+      commitPreparedEpisodePageSkeleton: async () => {
+        commits += 1;
+        return { pagesCreated: 1, panelsCreated: 1, replacedExisting: false };
+      },
+    };
+    const worker = new EpisodePageSkeletonWorkerService(repository, service, undefined, cancellation, atomic);
+    expect(await worker.processJob('job')).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(commits).toBe(1);
+    expect(service.persistCalls).toEqual([]);
+    expect(repository.completed).toBeNull();
+    expect(repository.progressUpdates).toEqual([]);
+    expect(cancellation.beginCommitCalls).toBe(0);
+    expect(cancellation.finalizeCalls).toBe(0);
+  });
+
+  it('legacy確定後attemptを失った場合はgeneric failとcancelで別試行を上書きしない', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    const cancellation = new FakeCancellationControl();
+    let settlements = 0;
+    const atomic = {
+      settleEpisodePageSkeletonAttempt: async () => ++settlements === 1 ? 'active' as const : 'lost' as const,
+      commitPreparedEpisodePageSkeleton: async () => { throw new Error('stale attempt'); },
+    };
+    const worker = new EpisodePageSkeletonWorkerService(repository, new FakePageSkeletonService(), undefined, cancellation, atomic);
+    expect(await worker.processJob('job')).toEqual({ status: 'skipped' });
+    expect(repository.failed).toBeNull();
+    expect(cancellation.finalizeCalls).toBe(0);
+  });
   it('disables compiler fallback before saving queued page skeletons', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     const pageSkeletonService = new FakePageSkeletonService();

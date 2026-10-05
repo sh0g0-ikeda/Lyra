@@ -44,9 +44,11 @@ import type {
 } from '../../../../src/services/page/PageAutofillCompiler.js';
 import type { PanelEntityAssignmentServicePort } from '../../../../src/services/page/PanelEntityAssignmentService.js';
 import type {
+  EpisodePlanPersistenceInput,
   EpisodePlanPersistencePort,
   EpisodePlanPersistenceResources,
 } from '../../../../src/services/page/EpisodePlanPersistence.js';
+import type { GenerationJob } from '../../../../src/domain/types/job.js';
 import type { CompileEpisodeStateTransitionInput } from '../../../../src/services/page/EpisodeStateTransitionCompiler.js';
 import {
   PageService,
@@ -368,7 +370,7 @@ class ChunkAwareEpisodePagePlanCompiler implements EpisodePagePlanCompilerPort {
 }
 
 class FakeEpisodePlanPersistence implements EpisodePlanPersistencePort {
-  public calls: Array<{ episodeId: string; userId: string; organizationId: string | null }> = [];
+  public calls: EpisodePlanPersistenceInput[] = [];
 
   public constructor(
     private readonly context: EpisodePagePlanContext,
@@ -376,7 +378,7 @@ class FakeEpisodePlanPersistence implements EpisodePlanPersistencePort {
   ) {}
 
   public async withLockedEpisodePlan<T>(
-    input: { episodeId: string; userId: string; organizationId: string | null },
+    input: EpisodePlanPersistenceInput,
     work: (
       context: EpisodePagePlanContext,
       resources: EpisodePlanPersistenceResources,
@@ -3059,6 +3061,59 @@ describe('PageService', () => {
     const checkpointCountBeforeRetry = retryCheckpointCount;
     await detailCompiler.lastInput?.beforeRetry?.();
     expect(retryCheckpointCount).toBe(checkpointCountBeforeRetry + 1);
+  });
+
+  it('legacy claim attemptはbeginCommitとapplying進捗を外側clientへ戻さずbound transactionへ渡す', async () => {
+    const context = buildEpisodePlanningContext();
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const boundStages: string[] = [];
+    const externalStages: string[] = [];
+    const attempt: GenerationJob = {
+      id: 'job-legacy-1', userId: 'user-1', organizationId: null,
+      jobType: 'episode_story_autofill', status: 'processing', generationMode: null,
+      creditCost: 0, params: { episode_id: 'episode-1', language: 'ja' }, result: null,
+      sqsMessageId: null, openaiRequestId: null, errorMessage: null, retryCount: 2,
+      createdAt: new Date('2026-10-01T00:00:00.000Z'),
+      startedAt: new Date('2026-10-01T00:00:01.123Z'), completedAt: null,
+      expiresAt: null, cancelRequestedAt: null, cancelRequestedBy: null,
+      cancelledAt: null, commitStartedAt: null,
+    };
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(),
+      panelRepository: new FakePanelRepository(),
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+      storyAutofillCommitStarted: true,
+      updateStoryAutofillProgress: async (progress) => {
+        boundStages.push(progress.stage);
+        return true;
+      },
+      completeStoryAutofillJob: async () => true,
+    });
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), new FakeEpisodePagePlanCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true }, persistence,
+    );
+    let outerBeginCommit = 0;
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja',
+      async (progress) => { externalStages.push(progress.stage); },
+      null,
+      {
+        jobId: attempt.id,
+        storyAutofillAttempt: attempt,
+        checkpoint: async () => undefined,
+        beginCommit: async () => { outerBeginCommit += 1; },
+      },
+    )).resolves.toMatchObject({ jobCompletedAtomically: true });
+
+    expect(persistence.calls[0]?.storyAutofillAttempt).toBe(attempt);
+    expect(outerBeginCommit).toBe(0);
+    expect(boundStages).toEqual(['applying']);
+    expect(externalStages).not.toContain('applying');
   });
 
   it('worker経由の通常話全体反映はjob完了できなければ成功を返さない', async () => {
