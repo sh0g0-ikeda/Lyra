@@ -3519,7 +3519,7 @@ function StudioShell(props: {
 
       if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
         handledJobsRef.current.add(job.id);
-        void invalidateScopedQuery(['billing-balance']);
+        refreshCreditBalanceForScope(activeOrganizationId ?? 'personal');
 
         if (job.job_type === 'page_generate') {
           const pageId = typeof job.params.page_id === 'string' ? job.params.page_id : null;
@@ -3578,7 +3578,7 @@ function StudioShell(props: {
           }
       }
     }
-  }, [trackedJobs, invalidateScopedQuery]);
+  }, [trackedJobs, activeOrganizationId, invalidateScopedQuery, refreshCreditBalanceForScope]);
 
   const referenceCandidates = useMemo(() => {
     if (selectedEntity === null) {
