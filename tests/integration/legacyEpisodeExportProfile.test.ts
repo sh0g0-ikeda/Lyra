@@ -66,6 +66,8 @@ describePostgres('legacy 2debe episode export compatibility', () => {
 
   it('current facadeが旧fingerprintとcamelCase snapshotを保ち、idempotency・scope・blockerを維持する', async () => {
     const fixture = await insertPersonalFixture(pool);
+    const databaseNow = (await pool.query<{ now: Date }>('SELECT NOW() AS now')).rows[0]?.now;
+    if (databaseNow === undefined) throw new Error('database clock is unavailable');
     const queue = new RecordingQueue();
     const guard = new RecordingGuard();
     const adapter = new LegacyEpisodeExportServiceAdapter(
@@ -73,7 +75,7 @@ describePostgres('legacy 2debe episode export compatibility', () => {
       queue,
       guard,
       new FixedSigner(),
-      () => new Date('2026-10-04T08:00:00.000Z'),
+      () => new Date(databaseNow.getTime()),
     );
     const request = {
       audience: 'mobile' as const,
