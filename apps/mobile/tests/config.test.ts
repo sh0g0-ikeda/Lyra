@@ -25,6 +25,22 @@ afterEach(() => {
 });
 
 describe('mobile configuration validation', () => {
+  const stagingConfig = { ...productionConfig, buildEnvironment: 'preview' as const,
+    apiBaseUrl: 'https://staging.example.test', webEditorUrl: 'https://staging.example.test/',
+    cognitoRedirectUri: 'lyra-mobile-staging://auth/mobile/callback',
+    cognitoLogoutRedirectUri: 'lyra-mobile-staging://auth/mobile/logout' };
+  it('検証APKの場合に検証用callbackとlogoutの組を受け入れる', () => {
+    expect(validateMobileConfig(stagingConfig)).toMatchObject({ valid: true, issues: [] });
+  });
+  it('検証callbackに公開アプリのlogoutを組み合わせた場合に拒否する', () => {
+    expect(validateMobileConfig({ ...stagingConfig, cognitoLogoutRedirectUri: productionConfig.cognitoLogoutRedirectUri }).issues).toContain('COGNITO_LOGOUT_REDIRECT_URI');
+  });
+  it.each(['lyra-mobile-staging://evil/mobile/callback', 'lyra-mobile-staging://auth/mobile/callback?redirect=evil', 'lyra-mobile-staging://auth/mobile/callback#fragment'])('検証APKのcallbackが固定値と違う場合に拒否する %s', (cognitoRedirectUri) => {
+    expect(validateMobileConfig({ ...stagingConfig, cognitoRedirectUri }).issues).toContain('COGNITO_REDIRECT_URI');
+  });
+  it('公開アプリの場合に検証schemeを受け入れない', () => {
+    expect(validateMobileConfig({ ...productionConfig, cognitoRedirectUri: stagingConfig.cognitoRedirectUri, cognitoLogoutRedirectUri: stagingConfig.cognitoLogoutRedirectUri }).valid).toBe(false);
+  });
   it('staging variantでは検証済みAPI originをWeb editor URLにする', async () => {
     vi.stubEnv('EXPO_PUBLIC_APP_VARIANT', 'staging');
     vi.stubEnv('EXPO_PUBLIC_API_BASE_URL', 'https://staging.example.test');

@@ -12,6 +12,7 @@ import { useGoogleAuthCapabilities } from '@/hooks/useGoogleAuthCapabilities';
 import { ApiError, LyraMobileApiClient } from '@/lib/api';
 import { reauthenticateWithCognito } from '@/lib/auth';
 import { confirmAction } from '@/lib/confirm';
+import { config } from '@/lib/config';
 import { googleAuthMessages } from '@/lib/googleAuthMessages';
 import { GoogleIdentityLinkFlow, googleAllowedOnPlatform, parseGoogleLinkReturn } from '@/lib/googleIdentityLink';
 import { useAppState } from '@/state/appState';
@@ -45,7 +46,7 @@ export function GoogleIdentityLinkPanel({ onSignInAgain }: GoogleIdentityLinkPan
 
   useEffect(() => {
     const receive = (url: string | null): void => {
-      const id = url === null ? null : parseGoogleLinkReturn(url);
+      const id = url === null ? null : parseGoogleLinkReturn(url, config.cognitoRedirectUri);
       if (id !== null && mounted.current) setRecoveryId(id);
     };
     void Linking.getInitialURL().then(receive).catch(() => undefined);
@@ -66,6 +67,7 @@ export function GoogleIdentityLinkPanel({ onSignInAgain }: GoogleIdentityLinkPan
           flow.current?.invalidate();
           setStatus(null); setRecoveryId(null); setCanContinue(false);
           flow.current = new GoogleIdentityLinkFlow({
+            cognitoRedirectUri: config.cognitoRedirectUri,
             expectedUserId: userId,
             currentUserId: () => mounted.current ? currentUser.current : null,
             reauthenticate: reauthenticateWithCognito,

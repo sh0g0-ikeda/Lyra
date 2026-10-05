@@ -3,9 +3,16 @@ import type { AuthTokens } from '@/domain/types';
 import type { GoogleAuthCapabilities, GoogleLinkStart, GoogleLinkStartBody, GoogleLinkStatus } from '@/domain/googleAuth';
 
 export const googleIdentityLinkReturnUri = 'lyra-mobile://auth/identity-link';
+const productionCognitoRedirectUri = 'lyra-mobile://auth/mobile/callback';
+
+export function googleIdentityLinkReturnUriForRedirectUri(cognitoRedirectUri: string): string {
+  if (cognitoRedirectUri === productionCognitoRedirectUri) return googleIdentityLinkReturnUri;
+  if (cognitoRedirectUri === 'lyra-mobile-staging://auth/mobile/callback') return 'lyra-mobile-staging://auth/identity-link';
+  throw new Error('INVALID_RETURN_CONFIGURATION');
+}
 
 export function googleAllowedOnPlatform(capabilities: GoogleAuthCapabilities | undefined, platform: string, capability: 'google_sign_in' | 'google_linking'): boolean {
-  return platform !== 'ios' && capabilities?.[capability] === true;
+  return capabilities?.[capability] === true && (platform !== 'ios' || capabilities.google_ios === true);
 }
 
 export function validateGoogleAuthorizationUrl(raw: string): string {
@@ -16,10 +23,10 @@ export function validateGoogleAuthorizationUrl(raw: string): string {
   return raw;
 }
 
-export function parseGoogleLinkReturn(raw: string): string | null {
+export function parseGoogleLinkReturn(raw: string, cognitoRedirectUri = productionCognitoRedirectUri): string | null {
   try {
     const url = new URL(raw);
-    if (`${url.protocol}//${url.host}${url.pathname}` !== googleIdentityLinkReturnUri || url.hash || url.username || url.password) return null;
+    if (`${url.protocol}//${url.host}${url.pathname}` !== googleIdentityLinkReturnUriForRedirectUri(cognitoRedirectUri) || url.hash || url.username || url.password) return null;
     const values = [...url.searchParams.entries()];
     if (values.length !== 1 || values[0]?.[0] !== 'challenge_id') return null;
     const id = z.uuid().safeParse(values[0][1]);
@@ -33,6 +40,7 @@ export interface GoogleIdentityLinkClient {
   getGoogleIdentityLinkStatus(id: string): Promise<GoogleLinkStatus>;
 }
 interface LinkFlowPorts {
+  cognitoRedirectUri: string;
   expectedUserId: string;
   currentUserId: () => string | null;
   reauthenticate: () => Promise<AuthTokens>;
@@ -82,9 +90,9 @@ export class GoogleIdentityLinkFlow {
     this.assertCurrent();
     if (this.receipt.status === 'pending' && this.receipt.authorization_url !== null && !this.receipt.requires_reauthentication) {
       const url = validateGoogleAuthorizationUrl(this.receipt.authorization_url);
-      const result = await this.ports.openBrowser(url, googleIdentityLinkReturnUri);
+      const result = await this.ports.openBrowser(url, googleIdentityLinkReturnUriForRedirectUri(this.ports.cognitoRedirectUri));
       this.assertCurrent();
-      if (result.type === 'success' && parseGoogleLinkReturn(result.url ?? '') !== this.receipt.challenge_id) throw new Error('INVALID_RETURN');
+      if (result.type === 'success' && parseGoogleLinkReturn(result.url ?? '', this.ports.cognitoRedirectUri) !== this.receipt.challenge_id) throw new Error('INVALID_RETURN');
     }
     return this.check();
   }

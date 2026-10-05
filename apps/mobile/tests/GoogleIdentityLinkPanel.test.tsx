@@ -5,6 +5,7 @@ import { ApiError } from '@/lib/api';
 import { GoogleIdentityLinkPanel } from '@/components/GoogleIdentityLinkPanel';
 
 const mocks = vi.hoisted(() => ({
+  config: { cognitoRedirectUri: 'lyra-mobile://auth/mobile/callback' },
   platform: { OS: 'android' }, caps: { data: { google_sign_in: true, google_linking: true, google_ios: false }, isError: false },
   confirm: vi.fn(), reauthenticate: vi.fn(), openBrowser: vi.fn(), setTokens: vi.fn(), randomUUID: vi.fn(),
   api: { getGoogleAuthCapabilities: vi.fn(), getGoogleIdentityLinkStatus: vi.fn() },
@@ -17,6 +18,7 @@ vi.mock('react-native', () => ({ Platform: mocks.platform, Text: 'text', Linking
 vi.mock('expo-crypto', () => ({ randomUUID: mocks.randomUUID }));
 vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: mocks.openBrowser }));
 vi.mock('@/lib/auth', () => ({ reauthenticateWithCognito: mocks.reauthenticate }));
+vi.mock('@/lib/config', () => ({ config: mocks.config }));
 vi.mock('@/lib/api', () => ({ ApiError: class extends Error { constructor(message: string, public status: number, public code: string) { super(message); } }, LyraMobileApiClient: class { constructor(token: () => string) { mocks.currentToken = token; } getCurrentSession = mocks.fresh.getCurrentSession; startGoogleIdentityLink = mocks.fresh.startGoogleIdentityLink; getGoogleIdentityLinkStatus = mocks.fresh.getGoogleIdentityLinkStatus; } }));
 vi.mock('@/lib/confirm', () => ({ confirmAction: mocks.confirm }));
 vi.mock('@/hooks/useGoogleAuthCapabilities', () => ({ useGoogleAuthCapabilities: () => mocks.caps }));
@@ -38,6 +40,7 @@ const begin = async (): Promise<void> => {
   await act(async () => { mocks.confirm.mock.calls.at(-1)?.[0].onConfirm(); });
 };
 beforeEach(() => {
+  mocks.config.cognitoRedirectUri = 'lyra-mobile://auth/mobile/callback';
   vi.clearAllMocks(); mocks.platform.OS = 'android'; mocks.user.id = 'user-one'; mocks.caps.isError = false;
   mocks.caps.data = { google_sign_in: true, google_linking: true, google_ios: false };
   mocks.api.getGoogleAuthCapabilities.mockResolvedValue(mocks.caps.data);
@@ -50,6 +53,24 @@ beforeEach(() => {
   mocks.fresh.getGoogleIdentityLinkStatus.mockResolvedValue({ challenge_id: id, status: 'pending', expires_at: expires, requires_reauthentication: false });
 });
 describe('GoogleIdentityLinkPanel', () => {
+  it('検証APKのcold-returnの場合に同じ検証schemeだけを受け入れ認証済statusを照会する', async () => {
+    mocks.config.cognitoRedirectUri = 'lyra-mobile-staging://auth/mobile/callback';
+    mocks.initialUrl.mockResolvedValue('lyra-mobile-staging://auth/identity-link?challenge_id=' + id);
+    mocks.api.getGoogleIdentityLinkStatus.mockResolvedValue({ challenge_id: id, status: 'linked', expires_at: expires, requires_reauthentication: true });
+    await render(); await press('google-link-check');
+    expect(mocks.api.getGoogleIdentityLinkStatus).toHaveBeenCalledWith(id);
+    expect(mocks.setTokens).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+  it('検証APKが公開アプリ用cold-returnを受け取った場合に照会せず元sessionを保つ', async () => {
+    mocks.config.cognitoRedirectUri = 'lyra-mobile-staging://auth/mobile/callback';
+    mocks.initialUrl.mockResolvedValue('lyra-mobile://auth/identity-link?challenge_id=' + id);
+    await render();
+    expect(renderer.root.findAllByProps({ testID: 'google-link-check' })).toHaveLength(0);
+    expect(mocks.api.getGoogleIdentityLinkStatus).not.toHaveBeenCalled();
+    expect(mocks.setTokens).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
   it('disabled・capability error・iOSでは開始UIを出さず、既存sessionを変更しない', async () => {
     mocks.caps.data.google_linking = false; await render(); expect(renderer.toJSON()).toBeNull(); act(() => renderer.unmount());
     mocks.caps.data.google_linking = true; mocks.platform.OS = 'ios'; await render(); expect(renderer.toJSON()).toBeNull(); act(() => renderer.unmount());

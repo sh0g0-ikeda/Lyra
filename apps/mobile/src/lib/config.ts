@@ -180,13 +180,23 @@ export const validateMobileConfig = (input: MobileConfig): MobileConfigValidatio
       addIssue(issues, 'PRODUCTION_LOGOUT_REDIRECT_URI');
     }
   } else {
+    const stagingRedirect = 'lyra-mobile-staging://auth/mobile/callback';
+    const stagingLogout = 'lyra-mobile-staging://auth/mobile/logout';
+    const usesStagingScheme = parseUrl(input.cognitoRedirectUri)?.protocol === 'lyra-mobile-staging:'
+      || parseUrl(input.cognitoLogoutRedirectUri)?.protocol === 'lyra-mobile-staging:';
+    if (usesStagingScheme) {
+      if (input.cognitoRedirectUri !== stagingRedirect) addIssue(issues, 'COGNITO_REDIRECT_URI');
+      if (input.cognitoLogoutRedirectUri !== stagingLogout) addIssue(issues, 'COGNITO_LOGOUT_REDIRECT_URI');
+    }
     if (
+      input.cognitoRedirectUri !== stagingRedirect &&
       !input.cognitoRedirectUri.startsWith('lyra-mobile://') &&
       parseUrl(input.cognitoRedirectUri)?.protocol !== 'https:'
     ) {
       addIssue(issues, 'COGNITO_REDIRECT_URI');
     }
     if (
+      input.cognitoLogoutRedirectUri !== stagingLogout &&
       !input.cognitoLogoutRedirectUri.startsWith('lyra-mobile://') &&
       parseUrl(input.cognitoLogoutRedirectUri)?.protocol !== 'https:'
     ) {

@@ -364,7 +364,7 @@ export class LyraMobileApiClient {
   }
 
   public getGoogleAuthCapabilities(): Promise<GoogleAuthCapabilities> {
-    return this.request('/api/auth/capabilities', googleAuthCapabilitiesSchema);
+    return this.request('/api/auth/capabilities?version=2', googleAuthCapabilitiesSchema);
   }
 
   public startGoogleIdentityLink(input: GoogleLinkStartBody): Promise<GoogleLinkStart> {

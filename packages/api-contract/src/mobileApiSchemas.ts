@@ -1519,6 +1519,9 @@ export const generationQuoteReceiptSchema = z.object({
 export const googleAuthCapabilitiesSchema = z.object({
   google_sign_in: z.boolean(), google_linking: z.boolean(), google_ios: z.literal(false),
 }).strict();
+export const googleAuthCapabilitiesV2Schema = z.object({
+  version: z.literal(2), google_sign_in: z.boolean(), google_linking: z.boolean(), google_ios: z.boolean(),
+}).strict();
 export const googleLinkStateSchema = z.enum(['pending', 'processing', 'linked', 'cancelled', 'expired', 'failed', 'recovery_required']);
 export const googleLinkStartBodySchema = z.object({ platform: z.enum(['mobile', 'web']), request_key: z.string().uuid() }).strict();
 export const googleLinkStatusSchema = z.object({

@@ -1,21 +1,36 @@
 import { describe, expect, it, vi } from 'vitest';
-import { GoogleIdentityLinkFlow, googleAllowedOnPlatform, parseGoogleLinkReturn, validateGoogleAuthorizationUrl } from '@/lib/googleIdentityLink';
+import { GoogleIdentityLinkFlow, googleAllowedOnPlatform, googleIdentityLinkReturnUriForRedirectUri, parseGoogleLinkReturn, validateGoogleAuthorizationUrl } from '@/lib/googleIdentityLink';
 
 const id = 'af1a66da-a1a1-4b4a-8a8a-6b906a785493';
 const key = 'bb1a66da-a1a1-4b4a-8a8a-6b906a785493';
 const url = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=dedicated&state=opaque';
 const expires = '2026-10-01T13:10:00Z';
-function fixture() {
+function fixture(cognitoRedirectUri = 'lyra-mobile://auth/mobile/callback') {
   let userId: string | null = 'user-one';
   const client = {
     getCurrentSession: vi.fn().mockResolvedValue({ user: { id: 'user-one' } }),
     startGoogleIdentityLink: vi.fn().mockResolvedValue({ challenge_id: id, status: 'pending', authorization_url: url, expires_at: expires, requires_reauthentication: false }),
     getGoogleIdentityLinkStatus: vi.fn().mockResolvedValue({ challenge_id: id, status: 'linked', expires_at: expires, requires_reauthentication: true })
   };
-  const ports = { expectedUserId: 'user-one', currentUserId: () => userId, reauthenticate: vi.fn().mockResolvedValue({ idToken: 'fresh-native-token' }), createClient: vi.fn().mockReturnValue(client), createRequestKey: () => key, openBrowser: vi.fn().mockResolvedValue({ type: 'success', url: `lyra-mobile://auth/identity-link?challenge_id=${id}` }) };
+  const ports = { cognitoRedirectUri, expectedUserId: 'user-one', currentUserId: () => userId, reauthenticate: vi.fn().mockResolvedValue({ idToken: 'fresh-native-token' }), createClient: vi.fn().mockReturnValue(client), createRequestKey: () => key, openBrowser: vi.fn().mockResolvedValue({ type: 'success', url: `lyra-mobile://auth/identity-link?challenge_id=${id}` }) };
   return { client, ports, flow: new GoogleIdentityLinkFlow(ports), switchUser: () => { userId = 'another-user'; } };
 }
 describe('GoogleIdentityLinkFlow', () => {
+  it('検証APKの場合に検証schemeでブラウザから復帰し公開アプリschemeを拒否する', async () => {
+    const f = fixture('lyra-mobile-staging://auth/mobile/callback');
+    f.ports.openBrowser.mockResolvedValue({ type: 'success', url: 'lyra-mobile-staging://auth/identity-link?challenge_id=' + id });
+    await expect(f.flow.start()).resolves.toMatchObject({ status: 'linked' });
+    expect(f.ports.openBrowser).toHaveBeenCalledWith(url, 'lyra-mobile-staging://auth/identity-link');
+    expect(parseGoogleLinkReturn('lyra-mobile://auth/identity-link?challenge_id=' + id, 'lyra-mobile-staging://auth/mobile/callback')).toBeNull();
+    expect(parseGoogleLinkReturn('lyra-mobile-staging://auth/identity-link?challenge_id=' + id, 'lyra-mobile-staging://auth/mobile/callback')).toBe(id);
+  });
+  it('許可したCognito callbackだけからGoogle連携の戻り先を導出する', () => {
+    expect(googleIdentityLinkReturnUriForRedirectUri('lyra-mobile://auth/mobile/callback')).toBe('lyra-mobile://auth/identity-link');
+    expect(googleIdentityLinkReturnUriForRedirectUri('lyra-mobile-staging://auth/mobile/callback')).toBe('lyra-mobile-staging://auth/identity-link');
+    for (const invalid of ['https://evil.example/auth/mobile/callback', 'lyra-mobile://evil/mobile/callback', 'lyra-mobile://auth/mobile/callback?redirect=evil']) {
+      expect(() => googleIdentityLinkReturnUriForRedirectUri(invalid)).toThrow('INVALID_RETURN_CONFIGURATION');
+    }
+  });
   it('fresh同userを確認し開始→browser→認証済statusでのみ成功を判定する', async () => {
     const { flow, client, ports } = fixture();
     await expect(flow.start()).resolves.toMatchObject({ status: 'linked' });
@@ -88,8 +103,15 @@ describe('GoogleIdentityLinkFlow', () => {
   });
   it('iOS・未確認capability・disabledはGoogleを提供しない', () => {
     expect(googleAllowedOnPlatform(undefined, 'android', 'google_sign_in')).toBe(false);
-    expect(googleAllowedOnPlatform({ google_sign_in: true, google_linking: true, google_ios: false }, 'ios', 'google_sign_in')).toBe(false);
-    expect(googleAllowedOnPlatform({ google_sign_in: true, google_linking: true, google_ios: false }, 'android', 'google_linking')).toBe(true);
+    expect(googleAllowedOnPlatform({ version: 2, google_sign_in: true, google_linking: true, google_ios: false }, 'ios', 'google_sign_in')).toBe(false);
+    expect(googleAllowedOnPlatform({ version: 2, google_sign_in: true, google_linking: true, google_ios: false }, 'android', 'google_linking')).toBe(true);
+  });
+  it('v2で審査済みiOS capabilityが有効な場合にGoogleを提供する', () => {
+    const capabilities = { version: 2 as const, google_sign_in: true, google_linking: true, google_ios: true };
+    expect(googleAllowedOnPlatform(capabilities, 'ios', 'google_sign_in')).toBe(true);
+    expect(googleAllowedOnPlatform(capabilities, 'ios', 'google_linking')).toBe(true);
+    expect(googleAllowedOnPlatform({ ...capabilities, google_sign_in: false }, 'ios', 'google_sign_in')).toBe(false);
+    expect(googleAllowedOnPlatform({ ...capabilities, google_linking: false }, 'ios', 'google_linking')).toBe(false);
   });
   it('native callbackはUUIDだけを受け付けtokenや追加queryを拒否する', () => {
     expect(parseGoogleLinkReturn(`lyra-mobile://auth/identity-link?challenge_id=${id}`)).toBe(id);
