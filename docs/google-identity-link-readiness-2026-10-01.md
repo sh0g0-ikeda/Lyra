@@ -1,8 +1,12 @@
 # Google sign-in and explicit identity linking
 
-Status: implemented locally behind default-OFF server capabilities. No Google/Cognito
-configuration, IAM grant, migration, provider call, store submission or deployment
-was performed by this work. This is not an activation approval.
+Status (2026-10-06): implemented behind default-OFF server capabilities. The isolated
+staging Cognito domain now uses Managed Login v2 with default Native/Web branding;
+a pool-scoped branding grant was explicitly approved for the staging CloudFormation
+role. Existing email login and client configuration were verified unchanged. Google
+IdP, link credentials, collision-trigger attachment and real Google acceptance remain
+incomplete. No production change, migration or store submission was performed.
+This is not production readiness or Google activation evidence.
 
 ## Protocol and preservation
 
@@ -38,7 +42,9 @@ was performed by this work. This is not an activation approval.
 ## API
 
 Public: `GET /api/auth/capabilities` returns `google_sign_in`, `google_linking`,
-`google_ios:false`. Callback is the fixed
+`google_ios:false` with its original strict schema. `GET /api/auth/capabilities?version=2`
+returns `version:2` and boolean capabilities. Unknown/duplicate versions are rejected;
+new Web/Mobile clients hide Google if the v2 response is unavailable or invalid. Callback is the fixed
 `GET /api/auth/identity-links/google/callback` route.
 
 Authenticated: `POST /api/auth/identity-links/google/start` accepts only `platform`
@@ -46,7 +52,10 @@ Authenticated: `POST /api/auth/identity-links/google/start` accepts only `platfo
 Neither endpoint accepts a subject, destination username, price, storage key,
 callback URL or Google access token from the client.
 
-Return to Mobile is fixed to `lyra-mobile://auth/identity-link?challenge_id=UUID`.
+Return to Mobile is fixed by `GOOGLE_LINK_MOBILE_RETURN_URI`: production uses
+`lyra-mobile://auth/identity-link?challenge_id=UUID`, isolated staging uses
+`lyra-mobile-staging://auth/identity-link?challenge_id=UUID`. The server rejects
+misconfigured schemes, and the client validates against its own fixed Cognito callback.
 It is a wake-up signal, not proof of success. Mobile fetches authenticated status.
 The Web return is the fixed configured HTTPS `/auth/identity-link` path, not request-controlled.
 
@@ -69,6 +78,7 @@ The Web return is the fixed configured HTTPS `/auth/identity-link` path, not req
    - `GOOGLE_LINK_CLIENT_ID`, `GOOGLE_LINK_CLIENT_SECRET`: dedicated link client
    - `GOOGLE_LINK_REDIRECT_URI`: exact HTTPS backend callback path above
    - `GOOGLE_LINK_WEB_RETURN_URI`: fixed HTTPS Web `/auth/identity-link` return path
+   - `GOOGLE_LINK_MOBILE_RETURN_URI`: exact environment-specific native return above
    - `GOOGLE_LINK_ENCRYPTION_SECRET`: stable high-entropy secret, at least 32
      characters, held only in the approved runtime secret store
    - `AUTH_PROVIDER=cognito`, `AWS_REGION`, `COGNITO_USER_POOL_ID` and existing
@@ -82,11 +92,21 @@ The Web return is the fixed configured HTTPS `/auth/identity-link` path, not req
    case variants, cancelled/expired flows, duplicate callback, response loss,
    account switching, deletion races and read-only recovery. New capabilities
    and all identity routes fail closed if required configuration is absent.
-6. iOS Google remains false. Hiding the app's CTA alone is insufficient: a shared
+6. iOS remains default-OFF. The v1 response always stays false for older apps.
+   v2 iOS can activate only with `GOOGLE_IOS_ENABLED=true`,
+   `GOOGLE_IOS_POLICY_REVIEWED=true`, and a distinct `GOOGLE_IOS_COGNITO_CLIENT_ID`
+   included in `COGNITO_ALLOWED_CLIENT_IDS`. These configuration guards do not
+   prove Apple policy acceptance or device behavior. Hiding the app's CTA alone is insufficient: a shared
    Cognito Hosted UI client can still expose Google. Review a separate iOS app
    client/provider policy and the Apple/exception decision before any iOS public
    release. This work does not implement unrequested Apple sign-in.
-7. Verify native custom-scheme callback, app switching, fresh-login prompt and
+7. Explicit linking requires Cognito Managed Login branding (domain version 2)
+   and an eligible pool tier. Classic Hosted UI ignores `prompt=login`; `max_age=0`
+   is not accepted as proof of fresh authentication. Retain the server-side recent
+   `auth_time` check. Isolated staging already uses ESSENTIALS, so no tier change
+   was made. Production settings and real fresh Google/native proof remain unverified.
+   See [AWS authorization endpoint](https://docs.aws.amazon.com/cognito/latest/developerguide/authorization-endpoint.html).
+   Verify native custom-scheme callback, app switching, fresh-login prompt and
    cookie/session behavior on real devices. The Web account UI and fixed return
    handler are implemented behind the same capabilities; real browser/IdP
    acceptance remains unverified and is required before exposing the entry point.
@@ -117,6 +137,10 @@ The Web return is the fixed configured HTTPS `/auth/identity-link` path, not req
   acceptance belong in the release evidence file; these focused results alone
   are not a production readiness claim.
 
+
+Apple policy reference (checked 2026-10-06): [App Review §4.8 Login Services](https://developer.apple.com/app-store/review/guidelines/#login-services).
+Google requires an equivalent privacy-preserving option unless an applicable exception is established;
+no Apple/exception acceptance is claimed by the configuration flag.
 
 AWS protocol references: [ListUsers search semantics](https://docs.aws.amazon.com/cognito/latest/developerguide/how-to-manage-user-accounts.html),
 [trigger timeout](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-working-with-lambda-triggers.html).
@@ -165,8 +189,13 @@ The Account panel starts explicit linking through an isolated native-Cognito
 popup with `identity_provider=COGNITO`, `prompt=login`, and `max_age=0`. It reuses
 the existing configured Cognito redirect URI, verifies fresh `/api/me` ownership,
 and uses that fresh ID token only in an in-memory API client. The main tab's
-session and drafts are not replaced. The separate PKCE state and popup nonce,
-origin, and source checks prevent treating an unrelated window as fresh proof.
+session and drafts are not replaced. A same-origin bootstrap acknowledges a
+UUID nonce before writing isolated PKCE state. Exact origin/source/nonce checks
+and a nonce-specific BroadcastChannel relay handle Cognito COOP isolation.
+Fresh proof is relayed without replacing the opener's persisted session. Explicit
+Cancel clears listeners and closes the popup. After COOP isolation, manual window
+closure can remain undetected until the ten-minute timeout; it never counts as
+link success.
 
 The backend's fixed HTTPS `/auth/identity-link` return carries only a UUID
 challenge ID. Web bootstrap handles this path before ordinary Cognito redirect
@@ -184,7 +213,8 @@ messages and reads, popup source/origin/nonce, storage failures, and bootstrap
 recovery. Web build, lint, and root TypeScript build pass. A fully mocked browser
 suite is in `apps/web/e2e-google/googleAuth.spec.ts`, run with
 `npx --prefix apps/web playwright test --config apps/web/playwright.google.config.ts`.
-The cloud environment cannot launch Chromium because socket creation is denied;
-these browser scenarios have not run, and real browser/Cognito/Google acceptance
-is unverified. Provider flags, IdP/client settings, and external accounts were
-not changed.
+The three Google scenarios passed in actual local Chrome with mocked Cognito,
+Google and API responses. This includes COOP/BroadcastChannel relay behavior,
+not real provider authorization. Whole-suite evidence and final source hashes
+are recorded in the implementation log. Real Google/link/device acceptance is
+still required; provider flags and Google IdP settings remain OFF/unconfigured.
