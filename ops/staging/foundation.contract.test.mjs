@@ -100,7 +100,13 @@ assert.deepEqual(nativeClient.CallbackURLs, ['lyra-mobile-staging://auth/mobile/
 assert.deepEqual(nativeClient.LogoutURLs, ['lyra-mobile-staging://auth/mobile/logout']);
 assert.deepEqual(resource('WebUserPoolClient', 'AWS::Cognito::UserPoolClient').CallbackURLs, [{ 'Fn::Sub': 'https://${StagingDistribution.DomainName}/auth/callback' }]);
 assert.equal(resource('StagingUserPool', 'AWS::Cognito::UserPool').UsernameAttributes[0], 'email');
-assert.equal(resource('StagingUserPoolDomain', 'AWS::Cognito::UserPoolDomain').ManagedLoginVersion, 1);
+// Google explicit linking needs prompt=login, which classic hosted UI ignores.
+assert.equal(resource('StagingUserPoolDomain', 'AWS::Cognito::UserPoolDomain').ManagedLoginVersion, 2);
+for (const [branding, client] of [['NativeManagedLoginBranding', 'NativeUserPoolClient'], ['WebManagedLoginBranding', 'WebUserPoolClient']]) {
+  assert.deepEqual(resource(branding, 'AWS::Cognito::ManagedLoginBranding'), {
+    UserPoolId: { Ref: 'StagingUserPool' }, ClientId: { Ref: client }, UseCognitoProvidedValues: true,
+  });
+}
 
 for (const output of ['VpcId', 'AlbDnsName', 'CloudFrontDomainName', 'DatabaseEndpoint', 'AssetsBucketName', 'BuildSourceBucketName', 'GenerationQueueArn', 'ExportQueueArn', 'GenerationQueueUrl', 'ExportQueueUrl', 'EcrRepositoryUri', 'TasksSecurityGroupId', 'WorkerSecurityGroupId', 'DatabaseSecurityGroupId', 'ApiLogGroupName', 'WorkerLogGroupName', 'UserPoolId', 'NativeUserPoolClientId', 'WebUserPoolClientId']) {
   assert.ok(template.Outputs[output], `${output} output must exist`);

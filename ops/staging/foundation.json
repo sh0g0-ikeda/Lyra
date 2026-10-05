@@ -1160,7 +1160,7 @@
     "ContainerRepository": {
       "Type": "AWS::ECR::Repository",
       "Properties": {
-          "EmptyOnDelete": true,
+        "EmptyOnDelete": true,
         "RepositoryName": {
           "Fn::Sub": "${ResourcePrefix}-api"
         },
@@ -1593,7 +1593,7 @@
         "Domain": {
           "Fn::Sub": "${ResourcePrefix}-auth"
         },
-        "ManagedLoginVersion": 1
+        "ManagedLoginVersion": 2
       }
     },
     "NativeUserPoolClient": {
@@ -1660,6 +1660,30 @@
           "COGNITO"
         ],
         "PreventUserExistenceErrors": "ENABLED"
+      }
+    },
+    "NativeManagedLoginBranding": {
+      "Type": "AWS::Cognito::ManagedLoginBranding",
+      "Properties": {
+        "UserPoolId": {
+          "Ref": "StagingUserPool"
+        },
+        "ClientId": {
+          "Ref": "NativeUserPoolClient"
+        },
+        "UseCognitoProvidedValues": true
+      }
+    },
+    "WebManagedLoginBranding": {
+      "Type": "AWS::Cognito::ManagedLoginBranding",
+      "Properties": {
+        "UserPoolId": {
+          "Ref": "StagingUserPool"
+        },
+        "ClientId": {
+          "Ref": "WebUserPoolClient"
+        },
+        "UseCognitoProvidedValues": true
       }
     }
   },
