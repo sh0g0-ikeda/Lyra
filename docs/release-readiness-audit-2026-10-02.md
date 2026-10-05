@@ -226,3 +226,14 @@ Spec §11は第一phaseで物理schemaと既存billing/deletion/export/worker wo
 - 最新製品SHA d02535c2567540634b9c9c280405cae1c70fbfde。ローカル必須gateは個別結果・件数・証拠hashを docs/uiux-backend-expansion-2026-09-30/receipts/d02535c-final-gates-r3.json に記録。
 - 検証環境runtime確認PASS。 実画面QAはpartial。 provider acceptance=false、physical device=false。
 - productionReady=false。M2/P9/public GitHub拒否、旧writer互換とrollback、外部設定、物理実機は未完。本番/main/storeへ変更しない。
+
+
+## 2026-10-05 Web画像解析後の残高更新 (c343192)
+
+- 実画面で画像解析後の残高が11のまま、再読込すると10になることを確認し、送信時のworkspace/sessionに限定した再取得を実装。個人の成功/500返還、組織の残高だけの再取得を回帰テストで確認。確定操作は料金0のため追加再取得を入れていない。
+- 根拠: Unified Spec の認証・テナンシー・クレジット・Verification gate。影響は Web の表示キャッシュとE2Eのみ。API/DB/料金/画像/保存済み入力を変更していない。
+- 回帰検証: 担当のRED/GREENにはrawが残っておらず採用しなかった。統合コミット前に主担当がbaselineコードへ新テストを当て3件RED、修正コードで3件GREENをログ・JSON付き確定した。R1のtestIgnore対象誤り、R2の使用中port、R3の隔離下終了処理、R4の存在しないPC用Accountボタンの失敗を保存し、PCのAccount menu→Workspace settingsへテストを修正してR5で合格。これは実装前に保存済みのREDがあったという意味ではない。Sol追加レビューの起動はagent thread limitで失敗したため主担当がquerykey/session/scope/finallyとテストを直接レビュー。
+- Web 78件、型検査、lint warnings=0、build合格。バックエンド3545件・モバイル1042件は d02535c2567540634b9c9c280405cae1c70fbfde で実行済み。今回その入力全件のGit blob/mode/path一致を確認し、同じテストの再実行を省略した。新SHAで再実行したとは記録していない。
+- 検証環境の最新反映: image sha256:6754dce8fab618e66a43d6181ebd572f5a776adf1ed2b73e53be09eb05f9e095 / healthz・readyz 200 / workers 0。残高の実画面再確認: 再読込せず更新を確認。オフラインテストを実課金・実生成の全体合格とは扱わない。
+- 元checkoutのdirty28件とstore-assetsを保護。M2/P9/legacyDB・旧writer・rollback/Google・課金・実機の保留は継続。本番・main・ストア・公開GitHubを変更していない。本番判定はNO-GO。
+- 根拠receipt: docs/uiux-backend-expansion-2026-09-30/receipts/c343192-web-balance-final-r1.json。既存の失敗ログ・d02535c証跡を保存。
