@@ -643,7 +643,7 @@ Frame records have no server revision field in the current API. The browser
 checks the observed baseline at submission and refetches without adopting a late
 response if that baseline changes. This client check does not add server-side
 optimistic locking. An empty initial selection is not a disappeared record and
-never replaces the current action's success or error notice. A draft candidate
+never replaces the current action's success or error notice. Initial scene or panel selection waits while a new local draft or operation is pending; unbound new input is also protected by navigation and beforeunload. A draft candidate
 is retained with its original type when that type changes during import; changing
 back reuses the candidate without another analysis.
 

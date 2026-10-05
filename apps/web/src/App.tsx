@@ -2426,9 +2426,19 @@ function StudioShell(props: {
     currentPageEditorRef.current = {sceneDraftKey, pageDraftKey, panelDraftKey, framesDraftKey, sceneDraft, pageSettingsDraft, panelDraft, frameDrafts,
       sceneId: selectedSceneId, pageId: selectedPageId, panelId: selectedPanelId, episodeId: selectedEpisodeId};
   }, [sceneDraftKey, pageDraftKey, panelDraftKey, framesDraftKey, sceneDraft, pageSettingsDraft, panelDraft, frameDrafts, selectedSceneId, selectedPageId, selectedPanelId, selectedEpisodeId]);
-  const isSceneDraftDirty = useCallback((): boolean => savedSceneDraftRef.current?.key === sceneDraftKey && !sameStoryDraft(sceneDraft, savedSceneDraftRef.current.draft), [sceneDraftKey, sceneDraft]);
+  const isSceneDraftDirty = useCallback((): boolean => {
+    const saved = savedSceneDraftRef.current;
+    return saved?.key === sceneDraftKey
+      ? !sameStoryDraft(sceneDraft, saved.draft)
+      : selectedSceneId.length === 0 && !sameStoryDraft(sceneDraft, createEmptySceneDraft());
+  }, [sceneDraftKey, sceneDraft, selectedSceneId]);
   const isPageDraftDirty = useCallback((): boolean => savedPageDraftRef.current?.key === pageDraftKey && !sameStoryDraft(pageSettingsDraft, savedPageDraftRef.current.draft), [pageDraftKey, pageSettingsDraft]);
-  const isPanelDraftDirty = useCallback((): boolean => savedPanelDraftRef.current?.key === panelDraftKey && !sameStoryDraft(panelDraft, savedPanelDraftRef.current.draft), [panelDraftKey, panelDraft]);
+  const isPanelDraftDirty = useCallback((): boolean => {
+    const saved = savedPanelDraftRef.current;
+    return saved?.key === panelDraftKey
+      ? !sameStoryDraft(panelDraft, saved.draft)
+      : selectedPanelId.length === 0 && !sameStoryDraft(panelDraft, createEmptyPanelDraft());
+  }, [panelDraftKey, panelDraft, selectedPanelId]);
   const isFramesDraftDirty = useCallback((): boolean => savedFramesDraftRef.current?.key === framesDraftKey && !sameStoryDraft(frameDrafts, savedFramesDraftRef.current.draft), [framesDraftKey, frameDrafts]);
   const [importingImage, setImportingImage] = useState(false);
   type DraftImportedReference = {scope: string; workId: string; entityType: EntityDraft['entity_type']; candidateToken: string; entityId: string | null};
@@ -3273,7 +3283,7 @@ function StudioShell(props: {
       return;
     }
 
-    if ((selectedWorkId.length > 0 || worksQuery.data.works.length > 0) && !worksQuery.data.works.some((work) => work.id === selectedWorkId) && !protectAutomaticSelection('work')) {
+    if ((selectedWorkId.length > 0 || worksQuery.data.works.length > 0) && !worksQuery.data.works.some((work) => work.id === selectedWorkId) && (selectedWorkId.length === 0 || !protectAutomaticSelection('work'))) {
       setSelectedWorkId(worksQuery.data.works[0]?.id ?? '');
     }
   }, [selectedWorkId, setSelectedWorkId, worksQuery.data, protectAutomaticSelection]);
@@ -3282,7 +3292,7 @@ function StudioShell(props: {
     if (!chaptersQuery.isSuccess) {
       return;
     }
-    if ((selectedChapterId.length > 0 || chapters.length > 0) && !chapters.some((chapter) => chapter.id === selectedChapterId) && !protectAutomaticSelection('chapter')) {
+    if ((selectedChapterId.length > 0 || chapters.length > 0) && !chapters.some((chapter) => chapter.id === selectedChapterId) && (selectedChapterId.length === 0 || !protectAutomaticSelection('chapter'))) {
       setSelectedChapterId(chapters[0]?.id ?? '');
     }
   }, [chapters, chaptersQuery.isSuccess, selectedChapterId, setSelectedChapterId, protectAutomaticSelection]);
@@ -3291,13 +3301,13 @@ function StudioShell(props: {
     if (!episodesQuery.isSuccess) {
       return;
     }
-    if ((selectedEpisodeId.length > 0 || episodes.length > 0) && !episodes.some((episode) => episode.id === selectedEpisodeId) && !protectAutomaticSelection('episode')) {
+    if ((selectedEpisodeId.length > 0 || episodes.length > 0) && !episodes.some((episode) => episode.id === selectedEpisodeId) && (selectedEpisodeId.length === 0 || !protectAutomaticSelection('episode'))) {
       setSelectedEpisodeId(episodes[0]?.id ?? '');
     }
   }, [episodes, episodesQuery.isSuccess, selectedEpisodeId, setSelectedEpisodeId, protectAutomaticSelection]);
 
   useEffect(() => {
-    if (pagesQuery.isSuccess && (selectedPageId.length > 0 || pages.length > 0) && !pages.some((page) => page.id === selectedPageId) && !protectAutomaticSelection('page')) {
+    if (pagesQuery.isSuccess && (selectedPageId.length > 0 || pages.length > 0) && !pages.some((page) => page.id === selectedPageId) && (selectedPageId.length === 0 || !protectAutomaticSelection('page'))) {
       setSelectedPageId(pages[0]?.id ?? '');
     }
   }, [pages, selectedPageId, setSelectedPageId, pagesQuery.isSuccess, protectAutomaticSelection]);
@@ -3307,22 +3317,24 @@ function StudioShell(props: {
       return;
     }
 
-    if ((selectedEntityId.length > 0 || entities.length > 0) && !entities.some((entity) => entity.id === selectedEntityId) && !protectAutomaticSelection('entity')) {
+    if ((selectedEntityId.length > 0 || entities.length > 0) && !entities.some((entity) => entity.id === selectedEntityId) && (selectedEntityId.length === 0 || !protectAutomaticSelection('entity'))) {
       setSelectedEntityId(entities[0]?.id ?? '');
     }
   }, [entities, entitiesQuery.isSuccess, entityEditorMode, selectedEntityId, protectAutomaticSelection]);
 
   useEffect(() => {
-    if (scenesQuery.isSuccess && (selectedSceneId.length > 0 || scenes.length > 0) && !scenes.some((scene) => scene.id === selectedSceneId) && !protectAutomaticSelection('scene')) {
+    if (selectedSceneId.length === 0 && (isSceneDraftDirty() || pendingActionsRef.current > 0 || busyAction !== null)) return;
+    if (scenesQuery.isSuccess && (selectedSceneId.length > 0 || scenes.length > 0) && !scenes.some((scene) => scene.id === selectedSceneId) && (selectedSceneId.length === 0 || !protectAutomaticSelection('scene'))) {
       setSelectedSceneId(scenes[0]?.id ?? '');
     }
-  }, [scenes, selectedSceneId, setSelectedSceneId, scenesQuery.isSuccess, protectAutomaticSelection]);
+  }, [scenes, selectedSceneId, setSelectedSceneId, scenesQuery.isSuccess, protectAutomaticSelection, isSceneDraftDirty, busyAction]);
 
   useEffect(() => {
-    if (panelsQuery.isSuccess && (selectedPanelId.length > 0 || panels.length > 0) && !panels.some((panel) => panel.id === selectedPanelId) && !protectAutomaticSelection('panel')) {
+    if (selectedPanelId.length === 0 && (isPanelDraftDirty() || pendingActionsRef.current > 0 || busyAction !== null)) return;
+    if (panelsQuery.isSuccess && (selectedPanelId.length > 0 || panels.length > 0) && !panels.some((panel) => panel.id === selectedPanelId) && (selectedPanelId.length === 0 || !protectAutomaticSelection('panel'))) {
       setSelectedPanelId(panels[0]?.id ?? '');
     }
-  }, [panels, selectedPanelId, setSelectedPanelId, panelsQuery.isSuccess, protectAutomaticSelection]);
+  }, [panels, selectedPanelId, setSelectedPanelId, panelsQuery.isSuccess, protectAutomaticSelection, isPanelDraftDirty, busyAction]);
 
   useEffect(() => {
     if (selectedPage === null || selectedPage.id !== selectedPageId || !pagesQuery.isSuccess) return;

@@ -357,3 +357,30 @@ test('frame保存待機中のremote更新後は遅い保存応答で入力と基
   await page.locator('.page-card').nth(1).click();expect(dialogs).toBe(1);
   await expect(x).toHaveValue('0.25');expect(state.writes).toBe(1);
 });
+
+
+for (const kind of ['scene', 'panel'] as const) {
+  test('初回' + kind + '一覧の遅い応答は未選択の新規入力を消さず再読込Cancelで保持する', async ({page}) => {
+    const state=createState();
+    const pathname=kind==='scene'?'/api/episodes/'+episode.id+'/scenes':'/api/pages/page-1/panels';
+    let release: (()=>void) | undefined;
+    const pending=new Promise<void>(resolve=>{release=resolve;});
+    await seed(page);
+    await page.route('**/api/**',async route=>{
+      if(route.request().method()==='GET' && new URL(route.request().url()).pathname===pathname) await pending;
+      await mockEditorApi(route,state);
+    });
+    const initialRequest=page.waitForRequest(request=>request.method()==='GET' && new URL(request.url()).pathname===pathname);
+    const initialResponse=page.waitForResponse(response=>response.request().method()==='GET' && new URL(response.url()).pathname===pathname);
+    await page.goto('/');
+    if(kind==='panel') await page.getByRole('button',{name:'Pages',exact:true}).click();
+    await initialRequest;
+    const draft=page.getByRole('textbox',{name:kind==='scene'?'Location':'Situation',exact:true});
+    await draft.fill('Keep new '+kind+' input');
+    release?.();await(await initialResponse).finished();
+    await expect(draft).toHaveValue('Keep new '+kind+' input');
+    const warning=page.waitForEvent('dialog'),reload=page.evaluate(()=>window.location.reload());
+    const dialog=await warning;expect(dialog.type()).toBe('beforeunload');await dialog.dismiss();await reload;
+    await expect(draft).toHaveValue('Keep new '+kind+' input');expect(state.writes).toBe(0);
+  });
+}

@@ -297,6 +297,16 @@ async function mockApi(
     return json({ pages: [pageRecord] });
   }
 
+  if (pathname === `/api/pages/${pageRecord.id}` && route.request().method() === 'PUT') {
+    return json(pageRecord);
+  }
+  if (pathname === `/api/panels/${panel.id}` && route.request().method() === 'PUT') {
+    return json(panel);
+  }
+  if (pathname === `/api/panels/${panel.id}/entities` && route.request().method() === 'PUT') {
+    return json({ entities: panel.entities });
+  }
+
   if (pathname === `/api/works/${work.id}/entities`) {
     if (route.request().method() === 'GET') {
       return json({ entities: [entity] });
@@ -809,18 +819,30 @@ test('desktop Scope と Account Current workspace は未保存話をCancelで保
 
 test('失敗した話の保存は本文を保持して再編集できる', async ({ page }) => {
   const fixtures = storyNavigationFixtures();
+  let releasePages: (() => void) | undefined;
+  const pagesPending = new Promise<void>((resolve) => { releasePages = resolve; });
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
-  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures, async (pendingRoute) => {
-    await pendingRoute.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'save failed' } }) });
-  }));
+  await page.route('**/api/**', async (route) => {
+    if (route.request().method() === 'GET' && new URL(route.request().url()).pathname === `/api/episodes/${episode.id}/pages`) {
+      await pagesPending;
+    }
+    await mockStoryNavigationApi(route, fixtures, async (pendingRoute) => {
+      await pendingRoute.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'save failed' } }) });
+    });
+  });
+  const initialPagesRequest = page.waitForRequest((request) => request.method() === 'GET' && new URL(request.url()).pathname === `/api/episodes/${episode.id}/pages`);
+  const initialPagesResponse = page.waitForResponse((response) => response.request().method() === 'GET' && new URL(response.url()).pathname === `/api/episodes/${episode.id}/pages`);
   await page.goto('/');
+  await initialPagesRequest;
 
   const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
   await draft.fill('Keep after failed save');
   const failedResponse = page.waitForResponse((response) => response.status() === 500 && response.request().method() === 'PUT' && new URL(response.url()).pathname === `/api/episodes/${episode.id}`);
   await page.locator('.episode-save-desktop').click();
   await (await failedResponse).finished();
+  releasePages?.();
+  await (await initialPagesResponse).finished();
   await expect(page.locator('.notice.error')).toBeVisible();
   await expect(page.locator('.episode-save-desktop')).toBeEnabled();
   await expect(draft).toHaveValue('Keep after failed save');
