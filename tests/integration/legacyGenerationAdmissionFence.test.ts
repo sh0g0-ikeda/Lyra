@@ -231,7 +231,7 @@ describePostgres('legacy generation admission account-deletion fence', () => {
     const anonymizeGate = deferred<void>();
     const requestLocked = deferred<void>();
     const anonymizeDatabase = await PinnedDatabase.connect(pool, async (sql) => {
-      if (sql.includes('SELECT true AS updated FROM account_deletion_requests') && sql.includes('FOR UPDATE')) {
+      if (sql.includes('FROM account_deletion_requests') && sql.includes('FOR UPDATE')) {
         requestLocked.resolve();
         await anonymizeGate.promise;
       }
