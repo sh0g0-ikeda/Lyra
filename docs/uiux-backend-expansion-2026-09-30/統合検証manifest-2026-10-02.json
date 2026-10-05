@@ -1,6 +1,6 @@
 {
   "schema_version": 6,
-  "observed_at_utc": "2026-10-05T14:09:30.845Z",
+  "observed_at_utc": "2026-10-05T14:27:23.806Z",
   "production_ready": false,
   "local_required_gates_completed": true,
   "verified_code_commit": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
@@ -8,11 +8,9 @@
   "baseline_commit": "2bb4e2dabd24c3116c5dae86a177754b367e245d",
   "final_gate_receipt": "docs/uiux-backend-expansion-2026-09-30/receipts/37490ff-organization-balance-final-r1.json",
   "staging_runtime": {
-    "status": "passed-for-current-runtime-only",
-    "sourceCommit": "c3431926b5d2222aa50b6bf225066042d3f6be46",
-    "latestCandidateDeployed": false,
-    "pendingSourceCommit": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
-    "pendingDeploymentStatus": "automatic-approval-review-rejected",
+    "status": "runtime-and-readonly-qa-passed",
+    "sourceCommit": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
+    "latestCandidateDeployed": true,
     "stagingOnly": true,
     "healthz": 200,
     "readyz": 200,
@@ -20,14 +18,20 @@
       "desired": 1,
       "running": 1,
       "pending": 0,
-      "imageDigest": "sha256:6754dce8fab618e66a43d6181ebd572f5a776adf1ed2b73e53be09eb05f9e095"
+      "imageDigest": "sha256:30570be3c364fc74d31c5f8d11033c0563c4b4c349ca229b1e4badf07efd5244"
     },
     "workersIdle": true,
-    "imageDigest": "sha256:6754dce8fab618e66a43d6181ebd572f5a776adf1ed2b73e53be09eb05f9e095",
+    "imageDigest": "sha256:30570be3c364fc74d31c5f8d11033c0563c4b4c349ca229b1e4badf07efd5244",
     "receipt": {
-      "file": "oci-runtime-image-c343192-r2-status-2026-10-05T14-02-34-871Z.json",
-      "sha256": "891262816cfb662f1a1a4cf0bba08abf20f28e0e54bc12d0d3df8c6631343f75"
-    }
+      "file": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/oci-runtime-image-37490ff-r2-status-2026-10-05T14-20-50-456Z.json",
+      "sha256": "e5a1c3ebc0a12483054e48e80de2d30ece0774b057ad1f62ea258d23bcde31a2"
+    },
+    "readonlyQA": {
+      "file": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/37490ff-deployed-readonly-qa-r1.json",
+      "sha256": "896b708d5152b25a3e7bb501950da7533976576b8320501e8266069172f92d54"
+    },
+    "liveOrganizationGenerationSettlementVerified": false,
+    "fullReleaseAcceptancePassed": false
   },
   "web_manual_qa": {
     "status": "partial",
@@ -88,7 +92,7 @@
   },
   "original_checkout": {
     "verifiedFresh": true,
-    "checkedAt": "2026-10-05T14:09:29.834Z",
+    "checkedAt": "2026-10-05T14:27:23.791Z",
     "baselineHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
     "currentHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
     "dirtyPaths": 28,
@@ -119,7 +123,6 @@
     "P9 designated long-story acceptance remains failed/refused; no replacement proof",
     "Google linking billing restore refund acceptance and physical APK acceptance remain unverified",
     "public GitHub update was refused; local review packet only",
-    "new-staging-publish: automatic-approval-review-rejected",
     "legacyDB: design-and-compatibility-blocked",
     "M2: previous-auto-review-refusal-retained",
     "P9: known-quality-failure-and-previous-provider-refusal-retained",
@@ -256,11 +259,10 @@
       "secretsIncluded": false
     },
     "stagingDeployment": {
-      "status": "blocked",
-      "file": "37490ff-publish-blocked-r1.json",
-      "sha256": "8bcb97b91fdf4d79cd8f0556c0d6751d4b6bfeb5ae064375efec5998d618f29e",
-      "latestCandidateDeployed": false,
-      "deployedSource": "c3431926b5d2222aa50b6bf225066042d3f6be46"
+      "status": "runtime-verified-after-explicit-payload-approval",
+      "latestCandidateDeployed": true,
+      "deployedSource": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
+      "receipt": "docs/uiux-backend-expansion-2026-09-30/receipts/37490ff-staging-final-r1.json"
     },
     "currentStagingReadonly": {
       "runtime": {
@@ -306,11 +308,6 @@
     ],
     "unresolved": [
       {
-        "id": "new-staging-publish",
-        "status": "automatic-approval-review-rejected",
-        "required": "explicit approval of the 37490ff payload to the existing named private ECR"
-      },
-      {
         "id": "legacyDB",
         "status": "design-and-compatibility-blocked",
         "required": "first-phase design must preserve old workflows; old deletion owner split OR later durable protocol/schema needs explicit decision and mixed-writer/rollback proof",
@@ -349,5 +346,19 @@
         "required": "local review packet only; public GitHub unchanged"
       }
     ]
-  }
+  },
+  "previous_staging_verification": {
+    "sha256": "7002cde24f915c393b972a5ef03a8f715bb3f09ebf33d241afcac9b58cacaee6",
+    "sourceCommit": "c3431926b5d2222aa50b6bf225066042d3f6be46",
+    "latestCandidateDeployed": false,
+    "historicalLocalReceipt": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/37490ff-local-completion-records-r1-receipt.json",
+    "blockedDeployment": {
+      "status": "blocked",
+      "file": "37490ff-publish-blocked-r1.json",
+      "sha256": "8bcb97b91fdf4d79cd8f0556c0d6751d4b6bfeb5ae064375efec5998d618f29e",
+      "latestCandidateDeployed": false,
+      "deployedSource": "c3431926b5d2222aa50b6bf225066042d3f6be46"
+    }
+  },
+  "latest_staging_receipt": "docs/uiux-backend-expansion-2026-09-30/receipts/37490ff-staging-final-r1.json"
 }

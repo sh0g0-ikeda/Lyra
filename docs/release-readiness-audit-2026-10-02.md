@@ -250,3 +250,12 @@ Spec §11は第一phaseで物理schemaと既存billing/deletion/export/worker wo
 - 旧DB profileは全環境で起動拒否を維持。旧027の3同意/外部intent欠落、processing再開の旧10分reclaimと新pending-onlyの衝突、旧031CASCADEによるexact-key inventory消失、tag/markerだけでは物理削除を証明できない問題をSolと主担当で再確認。factory接続/048追加/guard解除は行わない。既存退会の旧runtime単独所有を維持する運用分離、または後続durable protocol/schemaを明示設計し、混在・切戻し・代表copy証拠が必要。
 - 15pageの意味欠落FAILを維持。gated-OFF引用coverageのローカル成功から意味検出・修復を合格へ読み替えない。M2/P9/publicGitHub/newIAMの以前の拒否を迂回しない。Google・課金・旧版/新APK実機・S3・shutdown/一週間固定費は未完了。productionReady=false。本番/main/store変更0。
 - 証拠: docs/uiux-backend-expansion-2026-09-30/receipts/37490ff-organization-balance-final-r1.json。
+
+
+## 2026-10-05 最新37490ffの検証環境更新と受入範囲
+
+- 直前の新payload送信拒否について、人間が37490ffのbackend429/Web28を既存private ECRへ送信することを明示承認。固定hashの同じpayloadを送信しreadback確認。迂回先・別payloadは使用していない。過去の拒否receiptは履歴として保持。
+- 検証image sha256:30570be3c364fc74d31c5f8d11033c0563c4b4c349ca229b1e4badf07efd5244を既存staging runtimeへ適用。Solによる独立レビューと実行直前の再検証で、5 TaskDefinition/4 Serviceのimage更新だけ、全22parameterのうち非image21parameter/template/設定/flag/IAM/DB不変を確認。API desired/running1、pending0、全worker0、healthz/readyz200、全task image固定を実行後receiptで確認。AUTO_RUN_MIGRATIONS=falseを維持しmigration taskは実行していない。
+- 最新bundleをCUAで読み込み、ログイン済み状態・既存作品・話・キャラ・参照画像・残高、Webのストーリー/キャラクター/ページ/アカウントへの遷移をreadonlyで確認。390x844のWebにはガイドも残存。これはnative APKの4タブ/5編集dialogの実機検証ではない。個人9→組織0→個人9への復帰、通常カラー/白黒と無効Hy4の表示を確認。保存/生成/購入/削除0。組織の実生成・決済後の残高更新は今回liveで実行しておらず、5回帰ケースと全83E2Eのローカル証拠を受入範囲として明記する。実機・外部OFF機能・代表DB・長編意味品質の合格に読み替えない。
+- 旧DBに安全に追加できる独立実装をSolが限定再判定。旧runtimeを退会の唯一のownerとして候補APIから分離する運用契約、または後続durable consent/intent/unknown/non-cascading inventory schemaのphase/rollback契約が先に必要。どちらも旧binary/候補作成行/10分reclaim/混在・切戻し/代表copy/実S3の証拠が必要。factory接続・048追加・guard解除は行わない。
+- 本番/main/store変更0、productionReady=false。M2/P9/publicGitHub/newIAMに対する別の以前の拒否は解除されておらず、再試行・迂回なし。元dirty28件とstore-assetsを保護。最新製品SHA 37490ff6a7a1b2dd7af12c520ff264ae768065c2、詳細証拠 docs/uiux-backend-expansion-2026-09-30/receipts/37490ff-staging-final-r1.json。
