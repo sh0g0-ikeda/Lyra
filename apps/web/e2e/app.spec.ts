@@ -1,5 +1,5 @@
 import { expect, test as base, type ConsoleMessage, type Page, type Route } from '@playwright/test';
-import type { CurrentSessionRecord } from '../src/types/api';
+import type { CurrentSessionRecord, OrganizationWorkspaceRecord } from '../src/types/api';
 
 // React's error boundary catches render failures before pageerror can report them.
 // Keep both diagnostics in the mocked smoke gate and its failure artifacts.
@@ -482,6 +482,88 @@ async function seedTrackedJobs(
   }, { storageKey, values: jobIds });
 }
 
+function storyNavigationFixtures(): {
+  works: Array<typeof work>;
+  chapters: Record<string, Array<typeof chapter>>;
+  episodes: Record<string, Array<typeof episode>>;
+} {
+  const secondWork = { ...work, id: 'work-2', title: 'Sunward Company' };
+  const secondChapter = { ...chapter, id: 'chapter-2', work_id: work.id, order: 2, title: 'Second movement' };
+  const otherWorkChapter = { ...chapter, id: 'chapter-3', work_id: secondWork.id, title: 'Sunward opening' };
+  const secondEpisode = {
+    ...episode,
+    id: 'episode-2',
+    order: 2,
+    title: 'Countermarch',
+    story_full_draft: 'Server text for the second episode.',
+  };
+  const otherWorkEpisode = {
+    ...episode,
+    id: 'episode-3',
+    chapter_id: otherWorkChapter.id,
+    title: 'Dawn patrol',
+    story_full_draft: 'Server text for the other work.',
+  };
+  return {
+    works: [work, secondWork],
+    chapters: { [work.id]: [chapter, secondChapter], [secondWork.id]: [otherWorkChapter] },
+    episodes: { [chapter.id]: [episode, secondEpisode], [secondChapter.id]: [secondEpisode], [otherWorkChapter.id]: [otherWorkEpisode] },
+  };
+}
+
+async function mockStoryNavigationApi(
+  route: Route,
+  fixtures: ReturnType<typeof storyNavigationFixtures>,
+  onEpisodePut?: (route: Route) => Promise<void>,
+): Promise<void> {
+  const request = route.request();
+  const pathname = new URL(request.url()).pathname;
+  if (pathname === '/api/works' && request.method() === 'GET') {
+    await route.fulfill({ json: { works: fixtures.works } });
+    return;
+  }
+  const workMatch = /^\/api\/works\/([^/]+)\/chapters$/.exec(pathname);
+  if (workMatch !== null && request.method() === 'GET') {
+    await route.fulfill({ json: { chapters: fixtures.chapters[workMatch[1]] ?? [] } });
+    return;
+  }
+  const chapterMatch = /^\/api\/chapters\/([^/]+)\/episodes$/.exec(pathname);
+  if (chapterMatch !== null && request.method() === 'GET') {
+    await route.fulfill({ json: { episodes: fixtures.episodes[chapterMatch[1]] ?? [] } });
+    return;
+  }
+  if (/^\/api\/episodes\/[^/]+$/.test(pathname) && request.method() === 'PUT' && onEpisodePut !== undefined) {
+    await onEpisodePut(route);
+    return;
+  }
+  await mockApi(route);
+}
+
+const organizationWorkspace: OrganizationWorkspaceRecord = {
+  organization: {
+    id: 'organization-1', type: 'business', name: 'Studio North', legal_name: null, status: 'active',
+    plan_key: 'enterprise_a', billing_email: null, created_by_user_id: work.user_id,
+    created_at: '2026-04-26T00:00:00.000Z', updated_at: '2026-04-26T00:00:00.000Z',
+  },
+  membership: {
+    id: 'membership-1', organization_id: 'organization-1', user_id: work.user_id, email: 'fixture@example.test',
+    display_name: null, role: 'owner', status: 'active', invited_by_user_id: null, joined_at: '2026-04-26T00:00:00.000Z',
+    created_at: '2026-04-26T00:00:00.000Z', updated_at: '2026-04-26T00:00:00.000Z',
+  },
+  balance: { monthly_credits: 100, purchased_credits: 40, total_credits: 140, monthly_expires_at: null },
+};
+
+async function mockStoryNavigationWithOrganizationApi(
+  route: Route,
+  fixtures: ReturnType<typeof storyNavigationFixtures>,
+): Promise<void> {
+  if (new URL(route.request().url()).pathname === '/api/organizations') {
+    await route.fulfill({ json: { organizations: [organizationWorkspace] } });
+    return;
+  }
+  await mockStoryNavigationApi(route, fixtures);
+}
+
 test('shows auth screen without token', async ({ page }) => {
   await seedEnglishUi(page);
   await page.goto('/');
@@ -515,6 +597,350 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await page.getByRole('button', { name: 'Pages', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
+});
+
+test('未保存の話から別の話を選ぶ場合にCancelすると入力と選択を保持しPUTしない', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  let episodePutCount = 0;
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures, async (pendingRoute) => {
+    episodePutCount += 1;
+    await pendingRoute.fulfill({ json: episode });
+  }));
+  await page.goto('/');
+
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Unsaved full episode draft');
+  page.once('dialog', async (dialog) => {
+    expect(dialog.type()).toBe('confirm');
+    expect(dialog.message()).toBe('Discard unsaved story changes and leave? Cancel keeps editing.');
+    await dialog.dismiss();
+  });
+  await page.getByRole('button', { name: '2 Countermarch', exact: true }).click();
+
+  await expect(draft).toHaveValue('Unsaved full episode draft');
+  await expect(page.getByRole('button', { name: '1 Arrival', exact: true }).locator('xpath=..')).toHaveClass(/active/);
+  expect(episodePutCount).toBe(0);
+});
+
+test('未保存の話を破棄して移動し戻る場合はサーバー本文へ戻りPUTしない', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  let episodePutCount = 0;
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures, async (pendingRoute) => {
+    episodePutCount += 1;
+    await pendingRoute.fulfill({ json: episode });
+  }));
+  await page.goto('/');
+
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Discard this local draft');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: '2 Countermarch', exact: true }).click();
+  await expect(draft).toHaveValue('Server text for the second episode.');
+  await page.getByRole('button', { name: '1 Arrival', exact: true }).click();
+
+  await expect(draft).toHaveValue('Arrival at the fort.\n\nA suspicious briefing.\n\nA duel in the rain.\n\nAn unseen observer.');
+  expect(episodePutCount).toBe(0);
+});
+
+test('同じ話の再選択とタブ往復では未保存の本文を確認なしで保持する', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures));
+  await page.goto('/');
+
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Keep this draft across harmless navigation');
+  page.on('dialog', (dialog) => { throw new Error(`unexpected ${dialog.type()} dialog: ${dialog.message()}`); });
+  await page.getByRole('button', { name: '1 Arrival', exact: true }).click();
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await page.getByRole('button', { name: 'Story', exact: true }).click();
+
+  await expect(draft).toHaveValue('Keep this draft across harmless navigation');
+});
+
+test('未保存の想定ページ数は章と作品の変更をCancelしても保持しPUTしない', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  let episodePutCount = 0;
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures, async (pendingRoute) => {
+    episodePutCount += 1;
+    await pendingRoute.fulfill({ json: episode });
+  }));
+  await page.goto('/');
+
+  const estimatedPages = page.getByRole('spinbutton', { name: 'Estimated pages', exact: true });
+  await estimatedPages.fill('13');
+  for (const target of ['2 Second movement', 'Sunward Company']) {
+    page.once('dialog', (dialog) => dialog.dismiss());
+    await page.getByRole('button', { name: target, exact: true }).click();
+    await expect(estimatedPages).toHaveValue('13');
+  }
+  expect(episodePutCount).toBe(0);
+});
+
+test('遅い保存の古い応答は後続の話入力を上書きしない', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  let releaseSave: (() => void) | undefined;
+  const saveStarted = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures, async (pendingRoute) => {
+    await saveStarted;
+    await pendingRoute.fulfill({ json: { ...episode, story_full_draft: 'Old server save response', version: 2 } });
+  }));
+  await page.goto('/');
+
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('First save payload');
+  const requestStarted = page.waitForRequest((request) => request.method() === 'PUT' && new URL(request.url()).pathname === `/api/episodes/${episode.id}`);
+  const responseFinished = page.waitForResponse((response) => response.request().method() === 'PUT' && new URL(response.url()).pathname === `/api/episodes/${episode.id}`);
+  await page.locator('.episode-save-desktop').click();
+  await requestStarted;
+  await draft.fill('Later local edit must win');
+  await page.getByRole('button', { name: '2 Countermarch', exact: true }).click();
+  await expect(page.getByRole('button', { name: '1 Arrival', exact: true }).locator('xpath=..')).toHaveClass(/active/);
+  releaseSave?.();
+  await (await responseFinished).finished();
+  await expect(page.locator('.episode-save-desktop')).toBeEnabled();
+  await expect(draft).toHaveValue('Later local edit must win');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: '2 Countermarch', exact: true }).click();
+  await expect(draft).toHaveValue('Later local edit must win');
+});
+
+test('空の作品を経由して破棄後に戻る場合はサーバー本文へ戻り、その後の編集を再びguardする', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  fixtures.chapters['work-2'] = [];
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures));
+  await page.goto('/');
+
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Discard through empty work');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Sunward Company', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Episode draft', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Moonlit Regiment', exact: true }).click();
+
+  await expect(draft).toHaveValue('Arrival at the fort.\n\nA suspicious briefing.\n\nA duel in the rain.\n\nAn unseen observer.');
+  await draft.fill('Fresh edit after empty work roundtrip');
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toBe('Discard unsaved story changes and leave? Cancel keeps editing.');
+    await dialog.dismiss();
+  });
+  await page.getByRole('button', { name: '2 Countermarch', exact: true }).click();
+  await expect(draft).toHaveValue('Fresh edit after empty work roundtrip');
+});
+
+test('desktop Scope と Account Current workspace は未保存話をCancelで保持し、破棄後の同一ID往復もguardする', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationWithOrganizationApi(route, fixtures));
+  await page.goto('/');
+
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  const desktopScope = page.locator('aside.sidebar').getByRole('combobox', { name: 'Scope', exact: true });
+  await draft.fill('Keep through desktop scope cancel');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await desktopScope.selectOption(organizationWorkspace.organization.id);
+  await expect(desktopScope).toHaveValue('');
+  await expect(draft).toHaveValue('Keep through desktop scope cancel');
+
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
+  const accountWorkspace = page.getByRole('heading', { name: 'Workspace', exact: true }).locator('xpath=ancestor::section[1]');
+  const currentWorkspace = accountWorkspace.getByRole('combobox', { name: 'Current workspace', exact: true });
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await currentWorkspace.selectOption(organizationWorkspace.organization.id);
+  await expect(currentWorkspace).toHaveValue('');
+  await page.getByRole('button', { name: 'Story', exact: true }).click();
+  await expect(draft).toHaveValue('Keep through desktop scope cancel');
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
+  page.once('dialog', (dialog) => dialog.accept());
+  await currentWorkspace.selectOption(organizationWorkspace.organization.id);
+  await expect(currentWorkspace).toHaveValue(organizationWorkspace.organization.id);
+  await desktopScope.selectOption('');
+  await page.getByRole('button', { name: 'Story', exact: true }).click();
+  await expect(draft).toHaveValue('Arrival at the fort.\n\nA suspicious briefing.\n\nA duel in the rain.\n\nAn unseen observer.');
+  await draft.fill('Guard after workspace roundtrip');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await desktopScope.selectOption(organizationWorkspace.organization.id);
+  await expect(draft).toHaveValue('Guard after workspace roundtrip');
+});
+
+test('失敗した話の保存は本文を保持して再編集できる', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures, async (pendingRoute) => {
+    await pendingRoute.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'save failed' } }) });
+  }));
+  await page.goto('/');
+
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Keep after failed save');
+  const failedResponse = page.waitForResponse((response) => response.status() === 500 && response.request().method() === 'PUT' && new URL(response.url()).pathname === `/api/episodes/${episode.id}`);
+  await page.locator('.episode-save-desktop').click();
+  await (await failedResponse).finished();
+  await expect(page.locator('.notice.error')).toBeVisible();
+  await expect(page.locator('.episode-save-desktop')).toBeEnabled();
+  await expect(draft).toHaveValue('Keep after failed save');
+  await draft.fill('Edited after failed save');
+  await expect(draft).toHaveValue('Edited after failed save');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: '2 Countermarch', exact: true }).click();
+  await expect(draft).toHaveValue('Edited after failed save');
+});
+
+test('遅い話名変更の応答は変更中の本文を上書きしない', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  let releaseRename: (() => void) | undefined;
+  const renamePending = new Promise<void>((resolve) => { releaseRename = resolve; });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures, async (pendingRoute) => {
+    await renamePending;
+    const renamed = { ...episode, title: 'Renamed arrival', version: 2 };
+    fixtures.episodes[chapter.id] = [renamed, fixtures.episodes[chapter.id][1]];
+    await pendingRoute.fulfill({ json: renamed });
+  }));
+  await page.goto('/');
+
+  await page.getByRole('button', { name: 'Actions for episode “Arrival”', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Rename episode', exact: true }).click();
+  const title = page.getByRole('textbox', { name: 'Episode title', exact: true });
+  await title.fill('Renamed arrival');
+  const renameRequest = page.waitForRequest((request) => request.method() === 'PUT' && new URL(request.url()).pathname === `/api/episodes/${episode.id}`);
+  const renameResponse = page.waitForResponse((response) => response.request().method() === 'PUT' && new URL(response.url()).pathname === `/api/episodes/${episode.id}`);
+  await title.press('Enter');
+  await renameRequest;
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Text edited while rename is pending');
+  releaseRename?.();
+  await (await renameResponse).finished();
+  await expect(page.getByRole('button', { name: '1 Renamed arrival', exact: true })).toBeVisible();
+  await expect(page.locator('.notice.success')).toBeVisible();
+  await expect(draft).toHaveValue('Text edited while rename is pending');
+});
+
+test('作品作成待機中に話を編集した場合は新しい作品を自動選択せず本文を保持する', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  const createdWork = { ...work, id: 'work-created', title: 'Created while editing' };
+  let releaseCreate: (() => void) | undefined;
+  const createPending = new Promise<void>((resolve) => { releaseCreate = resolve; });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/works' && request.method() === 'POST') {
+      await createPending;
+      fixtures.works.push(createdWork);
+      fixtures.chapters[createdWork.id] = [];
+      await route.fulfill({ json: createdWork });
+      return;
+    }
+    await mockStoryNavigationApi(route, fixtures);
+  });
+  await page.goto('/');
+
+  const createForm = page.locator('.sidebar-create-disclosure form');
+  await createForm.getByRole('textbox', { name: 'Title', exact: true }).fill(createdWork.title);
+  const createRequest = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === '/api/works');
+  const createResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/works');
+  await createForm.getByRole('button', { name: 'Create', exact: true }).click();
+  await createRequest;
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Story edited while work creation is pending');
+  releaseCreate?.();
+  await (await createResponse).finished();
+  await expect(page.getByRole('button', { name: createdWork.title, exact: true })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Your current edits are kept');
+  await expect(draft).toHaveValue('Story edited while work creation is pending');
+  await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true }).locator('xpath=..')).toHaveClass(/active/);
+});
+
+test('未保存の話がある場合にブラウザ再読込をキャンセルすると入力を保持する', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures));
+  await page.goto('/');
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Keep this draft when reload is cancelled');
+  let navigations = 0;
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) navigations += 1;
+  });
+  const warning = page.waitForEvent('dialog');
+  // A dismissed beforeunload deliberately prevents a navigation load event.
+  const reloadRequested = page.evaluate(() => window.location.reload());
+  const dialog = await warning;
+  expect(dialog.type()).toBe('beforeunload');
+  await dialog.dismiss();
+  await reloadRequested;
+  expect(navigations).toBe(0);
+  await expect(draft).toHaveValue('Keep this draft when reload is cancelled');
+});
+
+test('同じ話のversionを再取得する場合に未保存本文を上書きしない', async ({ page, context }) => {
+  const fixtures = storyNavigationFixtures();
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures));
+  await page.goto('/');
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Keep local text across background refetch');
+  const remote = { ...episode, story_full_draft: 'Updated remotely', version: 2 };
+  fixtures.episodes[chapter.id] = [remote, fixtures.episodes[chapter.id][1]];
+  // React Query intentionally treats data as fresh for 5 seconds in this app.
+  await page.waitForTimeout(5_100);
+  const refetched = page.waitForResponse((response) => response.request().method() === 'GET' && new URL(response.url()).pathname === `/api/chapters/${chapter.id}/episodes`);
+  await context.setOffline(true);
+  await context.setOffline(false);
+  const response = await refetched;
+  await response.finished();
+  const body = await response.json() as { episodes: Array<{ version: number }> };
+  expect(body.episodes[0].version).toBe(2);
+  await expect(draft).toHaveValue('Keep local text across background refetch');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: '2 Countermarch', exact: true }).click();
+  await expect(draft).toHaveValue('Keep local text across background refetch');
+});
+
+test('保存済みの話を再編集せず切り替える場合は確認せず保存内容を保持する', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures, async (pendingRoute) => {
+    const payload = pendingRoute.request().postDataJSON() as Record<string, unknown>;
+    const saved = { ...episode, story_full_draft: String(payload.story_full_draft), version: 2 };
+    fixtures.episodes[chapter.id] = [saved, fixtures.episodes[chapter.id][1]];
+    await pendingRoute.fulfill({ json: saved });
+  }));
+  await page.goto('/');
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Saved clean draft');
+  const savedResponse = page.waitForResponse((response) => response.request().method() === 'PUT' && new URL(response.url()).pathname === `/api/episodes/${episode.id}`);
+  await page.locator('.episode-save-desktop').click();
+  await (await savedResponse).finished();
+  await expect(page.locator('.notice.success')).toBeVisible();
+  page.on('dialog', (dialog) => { throw new Error(`Unexpected ${dialog.type()} dialog after successful save`); });
+  await page.getByRole('button', { name: '2 Countermarch', exact: true }).click();
+  await expect(draft).toHaveValue('Server text for the second episode.');
+  await page.getByRole('button', { name: '1 Arrival', exact: true }).click();
+  await expect(draft).toHaveValue('Saved clean draft');
 });
 
 test('Mobileが保存した開始状態を旧Webの話とbaseキャラ保存で消さない', async ({ page }) => {

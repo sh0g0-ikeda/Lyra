@@ -1,6 +1,7 @@
+import { reconcileSavedStoryDraft, sameStoryDraft } from './domain/storyDraftSave';
 import { GoogleSignInButton, GoogleIdentityLinkPanel } from './components/GoogleAuthControls';
 import { canReadWebImage, imageDeliveryNotice, mergeImageDeliveryMetadata, type ImageDeliveryMetadata } from './domain/imageDelivery';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import {
   BookOpen,
   Bot,
@@ -2304,6 +2305,7 @@ function StudioShell(props: {
   const isMobileViewport = useIsMobileViewport();
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const pendingActionsRef = useRef(0);
   const legacyTrackedJobsKey = scopedStorageKey(trackedJobsStorageKey, props.authSessionKey);
   const workspaceTrackedJobsKey = scopedStorageKey(
     trackedJobsStorageKey,
@@ -2349,8 +2351,19 @@ function StudioShell(props: {
   const [newEpisodeDraft, setNewEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
   const preservedChapterDraftRef = useRef<PreservedStoryDraft<ChapterDraft> | null>(null);
   const preservedEpisodeDraftRef = useRef<PreservedStoryDraft<EpisodeDraft> | null>(null);
+  const savedChapterDraftRef = useRef<{ scope: string; id: string; draft: ChapterDraft } | null>(null);
+  const savedEpisodeDraftRef = useRef<{ scope: string; id: string; draft: EpisodeDraft } | null>(null);
+  const workspaceNavigationRef = useRef<((organizationId: string) => void) | null>(null);
   const hydratedChapterVersionRef = useRef<string | null>(null);
   const hydratedEpisodeVersionRef = useRef<string | null>(null);
+  const storyDraftContextRef = useRef({
+    scope: activeOrganizationId ?? 'personal', selectedWorkId, selectedChapterId, selectedEpisodeId, chapterDraft, episodeDraft,
+  });
+  useLayoutEffect(() => {
+    storyDraftContextRef.current = {
+      scope: activeOrganizationId ?? 'personal', selectedWorkId, selectedChapterId, selectedEpisodeId, chapterDraft, episodeDraft,
+    };
+  }, [activeOrganizationId, selectedWorkId, selectedChapterId, selectedEpisodeId, chapterDraft, episodeDraft]);
   const [storyInstruction, setStoryInstruction] = useState('');
   const [storyBusy, setStoryBusy] = useState(false);
   const [storyImprovementDraft, setStoryImprovementDraft] = useState<StoryEpisodeImprovementRecord['draft'] | null>(null);
@@ -2457,6 +2470,12 @@ function StudioShell(props: {
   }, [selectedOrganizationId, setSelectedOrganizationId]);
 
   useEffect(() => {
+    savedChapterDraftRef.current = null;
+    savedEpisodeDraftRef.current = null;
+    hydratedChapterVersionRef.current = null;
+    hydratedEpisodeVersionRef.current = null;
+    preservedChapterDraftRef.current = null;
+    preservedEpisodeDraftRef.current = null;
     setSelectedWorkId('');
     setSelectedChapterId('');
     setSelectedEpisodeId('');
@@ -2624,7 +2643,7 @@ function StudioShell(props: {
     void api.acceptOrganizationInvitation(pendingToken.trim())
       .then((workspace) => {
         window.sessionStorage.removeItem(pendingOrganizationInviteTokenStorageKey);
-        setSelectedOrganizationId(workspace.organization.id);
+        workspaceNavigationRef.current?.(workspace.organization.id);
         setNotice({
           type: 'success',
           message: pickUiText(uiLanguageRef.current, 'Joined the organization.', '法人ワークスペースに参加しました。'),
@@ -3266,13 +3285,15 @@ function StudioShell(props: {
 
   useEffect(() => {
     if (selectedChapter === null) {
-      hydratedChapterVersionRef.current = null;
       return;
     }
-    const hydrationKey = `${selectedChapter.id}:${selectedChapter.version}`;
+    const hydrationKey = `${activeOrganizationId ?? 'personal'}:${selectedChapter.id}:${selectedChapter.version}`;
+    const savedDraft = toChapterDraft(selectedChapter);
+    const previous = savedChapterDraftRef.current;
     const preserved = preservedChapterDraftRef.current;
     preservedChapterDraftRef.current = null;
     if (preserved?.id === selectedChapter.id && preserved.expectedTitle === selectedChapter.title) {
+      savedChapterDraftRef.current = { scope: activeOrganizationId ?? 'personal', id: selectedChapter.id, draft: savedDraft };
       hydratedChapterVersionRef.current = hydrationKey;
       setChapterDraft(preserved.draft);
       return;
@@ -3280,19 +3301,26 @@ function StudioShell(props: {
     if (hydratedChapterVersionRef.current === hydrationKey) {
       return;
     }
+    savedChapterDraftRef.current = { scope: activeOrganizationId ?? 'personal', id: selectedChapter.id, draft: savedDraft };
     hydratedChapterVersionRef.current = hydrationKey;
-    setChapterDraft(toChapterDraft(selectedChapter));
-  }, [selectedChapter]);
+    setChapterDraft((current) =>
+      previous?.scope === (activeOrganizationId ?? 'personal') && previous.id === selectedChapter.id && !sameStoryDraft(current, previous.draft)
+        ? current
+        : savedDraft,
+    );
+  }, [activeOrganizationId, selectedChapter]);
 
   useEffect(() => {
     if (selectedEpisode === null) {
-      hydratedEpisodeVersionRef.current = null;
       return;
     }
-    const hydrationKey = `${selectedEpisode.id}:${selectedEpisode.version}`;
+    const hydrationKey = `${activeOrganizationId ?? 'personal'}:${selectedEpisode.id}:${selectedEpisode.version}`;
+    const savedDraft = toEpisodeDraft(selectedEpisode);
+    const previous = savedEpisodeDraftRef.current;
     const preserved = preservedEpisodeDraftRef.current;
     preservedEpisodeDraftRef.current = null;
     if (preserved?.id === selectedEpisode.id && preserved.expectedTitle === selectedEpisode.title) {
+      savedEpisodeDraftRef.current = { scope: activeOrganizationId ?? 'personal', id: selectedEpisode.id, draft: savedDraft };
       hydratedEpisodeVersionRef.current = hydrationKey;
       setEpisodeDraft(preserved.draft);
       return;
@@ -3300,9 +3328,14 @@ function StudioShell(props: {
     if (hydratedEpisodeVersionRef.current === hydrationKey) {
       return;
     }
+    savedEpisodeDraftRef.current = { scope: activeOrganizationId ?? 'personal', id: selectedEpisode.id, draft: savedDraft };
     hydratedEpisodeVersionRef.current = hydrationKey;
-    setEpisodeDraft(toEpisodeDraft(selectedEpisode));
-  }, [selectedEpisode]);
+    setEpisodeDraft((current) =>
+      previous?.scope === (activeOrganizationId ?? 'personal') && previous.id === selectedEpisode.id && !sameStoryDraft(current, previous.draft)
+        ? current
+        : savedDraft,
+    );
+  }, [activeOrganizationId, selectedEpisode]);
 
   useEffect(() => {
     if (entityEditorMode === 'edit' && selectedEntity !== null) {
@@ -3461,9 +3494,101 @@ function StudioShell(props: {
     }
   }, [referenceCandidates, referencePrimaryKey, referenceSelection]);
 
+  const acceptSavedEpisode = (saved: EpisodeRecord, submittedDraft: EpisodeDraft, fullSave = true): void => {
+    const previous = savedEpisodeDraftRef.current;
+    if (previous?.scope !== (activeOrganizationId ?? 'personal') || previous.id !== saved.id) {
+      return;
+    }
+    const savedDraft = toEpisodeDraft(saved);
+    savedEpisodeDraftRef.current = { scope: previous.scope, id: saved.id, draft: savedDraft };
+    hydratedEpisodeVersionRef.current = `${previous.scope}:${saved.id}:${saved.version}`;
+    setEpisodeDraft((current) =>
+      reconcileSavedStoryDraft(current, submittedDraft, savedDraft, previous.draft, fullSave).draft,
+    );
+  };
+
+  // Navigation never saves a draft. Confirm only when the target replaces its editor.
+  const confirmStoryNavigation = (chapterChanges: boolean, episodeChanges: boolean): boolean => {
+    if (!chapterChanges && !episodeChanges) {
+      return true;
+    }
+    if (pendingActionsRef.current > 0 || busyAction !== null || storyBusy) {
+      setNotice({ type: 'info', message: pickUiText(uiLanguage,
+        'Wait for the current operation to finish before changing the story.',
+        '処理が終わってから話を切り替えてください。') });
+      return false;
+    }
+    const chapterDirty = chapterChanges && savedChapterDraftRef.current?.scope === (activeOrganizationId ?? 'personal') && savedChapterDraftRef.current.id === selectedChapterId &&
+      !sameStoryDraft(chapterDraft, savedChapterDraftRef.current.draft);
+    const episodeDirty = episodeChanges && savedEpisodeDraftRef.current?.scope === (activeOrganizationId ?? 'personal') && savedEpisodeDraftRef.current.id === selectedEpisodeId &&
+      !sameStoryDraft(episodeDraft, savedEpisodeDraftRef.current.draft);
+    return !(chapterDirty || episodeDirty) || window.confirm(pickUiText(uiLanguage,
+      'Discard unsaved story changes and leave? Cancel keeps editing.',
+      '未保存のストーリーの変更を破棄して移動しますか？キャンセルすると編集を続けられます。'));
+  };
+
+  const discardStoryDrafts = (chapterChanges: boolean, episodeChanges: boolean): void => {
+    if (chapterChanges) {
+      const saved = savedChapterDraftRef.current;
+      if (saved?.scope === (activeOrganizationId ?? 'personal') && saved.id === selectedChapterId) {
+        setChapterDraft(saved.draft);
+      }
+      hydratedChapterVersionRef.current = null;
+      preservedChapterDraftRef.current = null;
+    }
+    if (episodeChanges) {
+      const saved = savedEpisodeDraftRef.current;
+      if (saved?.scope === (activeOrganizationId ?? 'personal') && saved.id === selectedEpisodeId) {
+        setEpisodeDraft(saved.draft);
+      }
+      hydratedEpisodeVersionRef.current = null;
+      preservedEpisodeDraftRef.current = null;
+    }
+  };
+
+  const selectStory = (workId: string, chapterId: string, episodeId: string): void => {
+    const chapterChanges = workId !== selectedWorkId || chapterId !== selectedChapterId;
+    const episodeChanges = chapterChanges || episodeId !== selectedEpisodeId;
+    if (!confirmStoryNavigation(chapterChanges, episodeChanges)) {
+      return;
+    }
+    discardStoryDrafts(chapterChanges, episodeChanges);
+    setSelectedWorkId(workId);
+    setSelectedChapterId(chapterId);
+    setSelectedEpisodeId(episodeId);
+  };
+
+  const selectWorkspace = (organizationId: string): void => {
+    if (organizationId === (activeOrganizationId ?? '') || !confirmStoryNavigation(true, true)) {
+      return;
+    }
+    discardStoryDrafts(true, true);
+    setSelectedOrganizationId(organizationId);
+  };
+
+  useEffect(() => {
+    workspaceNavigationRef.current = selectWorkspace;
+  });
+
+  useEffect(() => {
+    const protectUnsavedStory = (event: BeforeUnloadEvent): void => {
+      const chapterDirty = savedChapterDraftRef.current?.scope === (activeOrganizationId ?? 'personal') && savedChapterDraftRef.current.id === selectedChapterId &&
+        !sameStoryDraft(chapterDraft, savedChapterDraftRef.current.draft);
+      const episodeDirty = savedEpisodeDraftRef.current?.scope === (activeOrganizationId ?? 'personal') && savedEpisodeDraftRef.current.id === selectedEpisodeId &&
+        !sameStoryDraft(episodeDraft, savedEpisodeDraftRef.current.draft);
+      if (chapterDirty || episodeDirty) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', protectUnsavedStory);
+    return () => window.removeEventListener('beforeunload', protectUnsavedStory);
+  }, [activeOrganizationId, chapterDraft, episodeDraft, selectedChapterId, selectedEpisodeId]);
+
   const saveCurrentEpisodeContext = async (): Promise<void> => {
     if (selectedEpisode !== null) {
-      await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft), activeOrganizationId);
+      const saved = await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft), activeOrganizationId);
+      acceptSavedEpisode(saved, episodeDraft, false);
     }
 
     if (selectedScene !== null) {
@@ -3597,6 +3722,7 @@ function StudioShell(props: {
   };
 
   const runAction = async (label: string, action: () => Promise<string | void>): Promise<void> => {
+    pendingActionsRef.current += 1;
     try {
       setBusyAction(label);
       const customSuccessMessage = await action();
@@ -3608,6 +3734,7 @@ function StudioShell(props: {
     } catch (error) {
       setNotice({ type: 'error', message: toMessage(error, uiLanguage) });
     } finally {
+      pendingActionsRef.current -= 1;
       setBusyAction(null);
     }
   };
@@ -3757,11 +3884,12 @@ function StudioShell(props: {
     }
 
     void runAction('Save episode', async () => {
-      await api.updateEpisode(
+      const saved = await api.updateEpisode(
         selectedEpisode.id,
         toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds),
         activeOrganizationId,
       );
+      acceptSavedEpisode(saved, episodeDraft);
       await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
     });
   };
@@ -3789,7 +3917,7 @@ function StudioShell(props: {
         <>
       <label className="field">
         <span>{pickUiText(uiLanguage, 'Current workspace', '\u73fe\u5728\u306e\u4f5c\u696d\u5834\u6240')}</span>
-        <select value={activeOrganizationId ?? ''} onChange={(event) => setSelectedOrganizationId(event.target.value)}>
+        <select value={activeOrganizationId ?? ''} onChange={(event) => selectWorkspace(event.target.value)}>
           <option value="">{pickUiText(uiLanguage, 'Personal', '\u500b\u4eba')}</option>
           {organizationWorkspaces.map((workspace) => (
             <option key={workspace.organization.id} value={workspace.organization.id}>
@@ -4460,6 +4588,10 @@ function StudioShell(props: {
           className="organization-create-form"
           onSubmit={(event) => {
             event.preventDefault();
+            if (!confirmStoryNavigation(true, true)) {
+              return;
+            }
+            const submittedContext = structuredClone(storyDraftContextRef.current);
             void runAction('Create organization', async () => {
               const createdWorkspace = await api.createOrganization({
                 name: organizationDraft.name.trim(),
@@ -4467,13 +4599,21 @@ function StudioShell(props: {
                 billing_email:
                   organizationDraft.billing_email.trim().length > 0 ? organizationDraft.billing_email.trim() : props.email,
               });
-              setSelectedOrganizationId(createdWorkspace.organization.id);
+              const contextUnchanged = JSON.stringify(storyDraftContextRef.current) === JSON.stringify(submittedContext);
+              if (contextUnchanged) {
+                discardStoryDrafts(true, true);
+                setSelectedOrganizationId(createdWorkspace.organization.id);
+              }
               setOrganizationDraft({
                 name: '',
                 legal_name: '',
                 billing_email: props.email,
               });
               await queryClient.invalidateQueries({ queryKey: sessionQueryKey(['organizations']) });
+              if (!contextUnchanged) {
+                return pickUiText(uiLanguage, 'Organization created. Your current edits are kept; select its workspace when ready.',
+                  '法人を作成しました。現在の編集中の内容は保持しています。準備ができたらワークスペースを切り替えてください。');
+              }
             });
           }}
         >
@@ -4556,12 +4696,24 @@ function StudioShell(props: {
         className="story-create-form"
         onSubmit={(event) => {
           event.preventDefault();
+          if (!confirmStoryNavigation(true, true)) {
+            return;
+          }
+          const submittedContext = structuredClone(storyDraftContextRef.current);
           void runAction('Create work', async () => {
             const createdWork = await api.createWork(toCreateWorkPayload(newWorkDraft), activeOrganizationId);
-            setNewWorkDraft(createEmptyWorkDraft());
-            setSelectedWorkId(createdWork.id);
-            setActiveTab('story');
+            const contextUnchanged = JSON.stringify(storyDraftContextRef.current) === JSON.stringify(submittedContext);
+            setNewWorkDraft((current) => JSON.stringify(current) === JSON.stringify(newWorkDraft) ? createEmptyWorkDraft() : current);
+            if (contextUnchanged) {
+              discardStoryDrafts(true, true);
+              setSelectedWorkId(createdWork.id);
+              setActiveTab('story');
+            }
             await invalidateScopedQuery(['works']);
+            if (!contextUnchanged) {
+              return pickUiText(uiLanguage, 'Work created. Your current edits are kept; select the new work from the list.',
+                '作品を作成しました。現在の編集中の内容は保持しています。新しい作品は作品一覧から選んでください。');
+            }
           });
         }}
       >
@@ -4788,7 +4940,7 @@ function StudioShell(props: {
             <>
           <label className="field compact-field">
             <span>{pickUiText(uiLanguage, 'Scope', '\u7bc4\u56f2')}</span>
-            <select value={activeOrganizationId ?? ''} onChange={(event) => setSelectedOrganizationId(event.target.value)}>
+            <select value={activeOrganizationId ?? ''} onChange={(event) => selectWorkspace(event.target.value)}>
               <option value="">{pickUiText(uiLanguage, 'Personal', '\u500b\u4eba')}</option>
               {organizationWorkspaces.map((workspace) => (
                 <option key={workspace.organization.id} value={workspace.organization.id}>
@@ -4862,43 +5014,43 @@ function StudioShell(props: {
                   invalidateScopedQuery={invalidateScopedQuery}
                   language={uiLanguage}
                   onSelectChapter={(workId, chapterId) => {
-                    setSelectedWorkId(workId);
-                    setSelectedChapterId(chapterId);
-                    setSelectedEpisodeId('');
+                    if (workId !== selectedWorkId || chapterId !== selectedChapterId) {
+                      selectStory(workId, chapterId, '');
+                    }
                   }}
-                  onSelectEpisode={(workId, chapterId, episodeId) => {
-                    setSelectedWorkId(workId);
-                    setSelectedChapterId(chapterId);
-                    setSelectedEpisodeId(episodeId);
-                  }}
+                  onSelectEpisode={selectStory}
                   onChapterMetadataChanged={(updatedChapter) => {
                     if (updatedChapter.id !== selectedChapterId) {
                       return;
                     }
-                    const preservedDraft = { ...chapterDraft, title: updatedChapter.title ?? '' };
-                    preservedChapterDraftRef.current = {
-                      id: updatedChapter.id,
-                      expectedTitle: updatedChapter.title,
-                      draft: preservedDraft,
-                    };
-                    setChapterDraft(preservedDraft);
+                    setChapterDraft((current) => {
+                      const preservedDraft = { ...current, title: updatedChapter.title ?? '' };
+                      preservedChapterDraftRef.current = {
+                        id: updatedChapter.id,
+                        expectedTitle: updatedChapter.title,
+                        draft: preservedDraft,
+                      };
+                      return preservedDraft;
+                    });
                   }}
                   onEpisodeMetadataChanged={(updatedEpisode) => {
                     if (updatedEpisode.id !== selectedEpisodeId) {
                       return;
                     }
-                    const preservedDraft = { ...episodeDraft, title: updatedEpisode.title ?? '' };
-                    preservedEpisodeDraftRef.current = {
-                      id: updatedEpisode.id,
-                      expectedTitle: updatedEpisode.title,
-                      draft: preservedDraft,
-                    };
-                    setEpisodeDraft(preservedDraft);
+                    setEpisodeDraft((current) => {
+                      const preservedDraft = { ...current, title: updatedEpisode.title ?? '' };
+                      preservedEpisodeDraftRef.current = {
+                        id: updatedEpisode.id,
+                        expectedTitle: updatedEpisode.title,
+                        draft: preservedDraft,
+                      };
+                      return preservedDraft;
+                    });
                   }}
                   onSelectWork={(workId) => {
-                    setSelectedWorkId(workId);
-                    setSelectedChapterId('');
-                    setSelectedEpisodeId('');
+                    if (workId !== selectedWorkId) {
+                      selectStory(workId, '', '');
+                    }
                   }}
                   organizationId={activeOrganizationId}
                   runAction={runAction}
@@ -5069,9 +5221,9 @@ function StudioShell(props: {
                               <button
                                 className={`tree-item ${selectedChapter?.id === chapter.id ? 'active' : ''}`}
                                 onClick={() => {
-                                  setSelectedChapterId(chapter.id);
-                                  setSelectedEpisodeId('');
-                                  setSelectedWorkId(selectedWork?.id ?? '');
+                                  if (chapter.id !== selectedChapterId) {
+                                    selectStory(selectedWork?.id ?? '', chapter.id, '');
+                                  }
                                 }}
                                 type="button"
                               >
@@ -5159,11 +5311,17 @@ function StudioShell(props: {
                                 className="ghost-button"
                                 onClick={() =>
                                   void runAction('Save chapter', async () => {
-                                    await api.updateChapter(
+                                    const saved = await api.updateChapter(
                                       selectedChapter.id,
                                       toChapterPayload(chapterDraft, loadedSelectedWorkEntityIds),
                                       activeOrganizationId,
                                     );
+                                    if (savedChapterDraftRef.current?.scope === (activeOrganizationId ?? 'personal') && savedChapterDraftRef.current.id === saved.id) {
+                                      const savedDraft = toChapterDraft(saved);
+                                      savedChapterDraftRef.current = { scope: activeOrganizationId ?? 'personal', id: saved.id, draft: savedDraft };
+                                      hydratedChapterVersionRef.current = `${activeOrganizationId ?? 'personal'}:${saved.id}:${saved.version}`;
+                                      setChapterDraft((current) => sameStoryDraft(current, chapterDraft) ? savedDraft : current);
+                                    }
                                     await invalidateScopedQuery(['chapters', selectedWork?.id ?? '']);
                                   })
                                 }
@@ -5193,7 +5351,7 @@ function StudioShell(props: {
                             <div className="tree-item-row" key={episode.id}>
                               <button
                                 className={`tree-item ${selectedEpisodeId === episode.id ? 'active' : ''}`}
-                                onClick={() => setSelectedEpisodeId(episode.id)}
+                                onClick={() => selectStory(selectedWorkId, selectedChapterId, episode.id)}
                                 type="button"
                               >
                                 <span>{episode.order}</span>
