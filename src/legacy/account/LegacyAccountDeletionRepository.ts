@@ -263,6 +263,9 @@ implements LegacyAccountDeletionRepositoryPort {
           processing_token = NULL, processing_started_at = NULL,
           completed_at = COALESCE(completed_at, NOW()), updated_at = NOW()
       WHERE user_id = $1::uuid AND processing_token = $2::uuid AND status = 'processing'
+        AND data_anonymized_at IS NOT NULL
+        AND identity_disabled_at IS NOT NULL
+        AND identity_deleted_at IS NOT NULL
       RETURNING true AS updated
       `,
       [userId, processingToken],

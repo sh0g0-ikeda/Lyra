@@ -78,6 +78,63 @@ describePostgres('legacy 2debe account deletion compatibility', () => {
     }
   });
 
+
+  // Spec 5/11: local completion records existing checkpoints; it does not prove
+  // physical object deletion or add durable external intent/recovery.
+  it.each(['data_anonymized_at', 'identity_disabled_at', 'identity_deleted_at'] as const)('%sが欠ける場合は完了せずrequest全列とowner/checkpointsを保持する', async missing => {
+    const fixture = await completionFixture(missing);
+    expect(await repository.markCompleted(fixture.userId, fixture.token)).toBe(false);
+    expect(await completionRow(fixture.userId)).toEqual(fixture.before);
+  });
+
+  it('3markerと正ownerが揃う場合は完了してownerだけを解放し再実行で完了日時を変えない', async () => {
+    const fixture = await completionFixture();
+    expect(await repository.markCompleted(fixture.userId, fixture.token)).toBe(true);
+    const completed = await completionRow(fixture.userId);
+    expect(completed).toEqual({
+      ...fixture.before, status: 'completed', blocker_codes: [], last_failure_code: null,
+      processing_token: null, processing_started_at: null,
+      completed_at: expect.any(Date), updated_at: expect.any(Date),
+    });
+    expect(await repository.markCompleted(fixture.userId, fixture.token)).toBe(false);
+    expect(await completionRow(fixture.userId)).toEqual(completed);
+  });
+
+  it('3markerが揃ってもstale ownerの場合はrequest全列を保持する', async () => {
+    const fixture = await completionFixture();
+    expect(await repository.markCompleted(fixture.userId, randomUUID())).toBe(false);
+    expect(await completionRow(fixture.userId)).toEqual(fixture.before);
+  });
+
+  it.each(['blocked', 'pending_external_action'] as const)('3markerとtokenが一致してもstatus=%sの場合はrequest全列を保持する', async status => {
+    const fixture = await completionFixture();
+    await pool.query('UPDATE account_deletion_requests SET status=$2 WHERE user_id=$1', [fixture.userId, status]);
+    const before = await completionRow(fixture.userId);
+    expect(await repository.markCompleted(fixture.userId, fixture.token)).toBe(false);
+    expect(await completionRow(fixture.userId)).toEqual(before);
+  });
+
+  async function completionRow(userId: string): Promise<QueryResultRow> {
+    return (await pool.query('SELECT * FROM account_deletion_requests WHERE user_id=$1', [userId])).rows[0]!;
+  }
+
+  async function completionFixture(missing?: 'data_anonymized_at' | 'identity_disabled_at' | 'identity_deleted_at'): Promise<{ userId: string; token: string; before: QueryResultRow }> {
+    const userId = await insertUser(pool), token = randomUUID();
+    expect((await repository.claimRequest(claimInput(userId, token))).kind).toBe('claimed');
+    await pool.query(
+      `UPDATE account_deletion_requests SET
+       data_anonymized_at = CASE WHEN $2 THEN NULL ELSE NOW()-INTERVAL '3 minutes' END,
+       identity_disabled_at = CASE WHEN $3 THEN NULL ELSE NOW()-INTERVAL '2 minutes' END,
+       identity_deleted_at = CASE WHEN $4 THEN NULL ELSE NOW()-INTERVAL '1 minute' END,
+       cancelled_subscription_ids = ARRAY['sub-preserved'],
+       scheduled_asset_keys = ARRAY['saved/preserved.png'],
+       blocker_codes = ARRAY['preserved-blocker'], last_failure_code = 'PRESERVED_FAILURE'
+       WHERE user_id=$1`,
+      [userId, missing === 'data_anonymized_at', missing === 'identity_disabled_at', missing === 'identity_deleted_at'],
+    );
+    return { userId, token, before: await completionRow(userId) };
+  }
+
   it('Spec 5/11 候補user lock後のexact-old INSERTと競合してもFK循環deadlockなく一ownerになる', async () => {
     const userId = await insertUser(pool);
     const candidateClient = await pool.connect();
