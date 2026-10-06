@@ -1,0 +1,96 @@
+{
+  "schema": "lyra.source-effort-v9.integration/v1",
+  "date": "2026-10-07",
+  "sourceBefore": "069e560c1d4bec1369b6471235ae1ca3ec30cb77",
+  "scope": {
+    "defaultSourceReasoningEffort": "low",
+    "explicitReasoningEffortWins": true,
+    "compilerPromptVersion": "episode_source_requirements_v9",
+    "beatDefaultReasoningUnchanged": true,
+    "outlineDefaultReasoningUnchanged": true,
+    "modelUnchanged": "gpt-5",
+    "maxOutputTokensUnchanged": 32000,
+    "schemaAndValidatorsUnchanged": true,
+    "packBoundariesUnchanged": true,
+    "timeoutUnchanged": true
+  },
+  "files": {
+    "src/domain/constants/generation.ts": "47aa76065c5cd1c8b5ca769c7d60234418f4b9ac1482c9c91a8b200839126967",
+    "src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.ts": "9867ad70de2acd0c32eb779b32cbda8e41c34408a9addb5c19edff5e59732398",
+    "tests/unit/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.test.ts": "c6cb1b1fd3b49c8914eec67c23d2b81266a0edc5f78afd4d9f561ed77174ca45"
+  },
+  "tdd": {
+    "red": {
+      "tests": 15,
+      "passed": 14,
+      "failed": 1,
+      "expectedFailure": "source request reasoning was undefined instead of low",
+      "logSha256": "a1f3db6aa12bdef3d2abeed999a0391cb61eec9ac712e4cc46594936017f8fbc"
+    },
+    "greenTarget": {
+      "tests": 15,
+      "passed": 15,
+      "failed": 0,
+      "logSha256": "0ee3fa233f441ec3ea991527412e4eeacb1495eb8ea73da2d3dee547ea0a4be7"
+    },
+    "greenRelated": {
+      "files": 4,
+      "tests": 147,
+      "passed": 147,
+      "failed": 0,
+      "logSha256": "c557b6b0fb0b4d3a9ca7ef7277253afe561fce36d28d6453d71be2e7a587f4c2"
+    },
+    "typecheck": {
+      "status": "PASS",
+      "command": "node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+      "logSha256": "2757e735ccc38fcb3350109615c25d0e4d75e93f8b2936c150a1d057928249e9"
+    },
+    "diffCheck": {
+      "status": "PASS",
+      "command": "git diff --check",
+      "logSha256": "bb9ef24d1fda758e32467c5496d4f3366d08885b0f60a13d2e6d83ccc7f835e9"
+    }
+  },
+  "parentReview": "GO: default source call only; explicit profile effort wins; other compiler requests, models, schema, pack boundaries and atomic persistence unchanged",
+  "parentBun": {
+    "files": 2,
+    "passed": 114,
+    "failed": 0,
+    "assertions": 637
+  },
+  "priorProviderRun": {
+    "id": "r115",
+    "status": "FAIL_TIMEOUT",
+    "transportCalls": 2,
+    "successfulSourcePacks": 1,
+    "timedOutPack": "P5-P8",
+    "timeoutSeconds": 180,
+    "detailCalls": 0,
+    "auditCalls": 0,
+    "savedPages": 0,
+    "creditMutations": 0
+  },
+  "failedChecks": [
+    {
+      "runner": "Bun parent sandbox",
+      "status": "EPERM_BEFORE_TESTS",
+      "retry": "same targeted tests outside restricted runtime: 114 PASS; no product fix required"
+    }
+  ],
+  "evidence": {
+    "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/google-activation-r3/source-effort-v9-r125/final-receipt.json",
+    "sha256": "b8bff6dfb5fc17314cb0f7dbda02c0dd7f6812984f2ed490bf26e4a6ec45a2b9"
+  },
+  "remaining": [
+    "one exact failed source pack real API diagnostic",
+    "fresh full15 real provider and durable acceptance",
+    "full final backend gates",
+    "real clone migration and cleanup",
+    "latest staging API and normal/Google/old-client acceptance",
+    "physical Android/iOS and iOS Google policy/client decision"
+  ],
+  "productionReady": false,
+  "productionChanges": 0,
+  "mainMerge": 0,
+  "storeSubmission": 0
+}

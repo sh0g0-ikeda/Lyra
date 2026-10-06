@@ -8,6 +8,7 @@ import {
   EPISODE_BEAT_PLAN_COMPILER_OPENAI_MODEL,
   EPISODE_BEAT_PLAN_COMPILER_VERSION,
   EPISODE_BEAT_PLAN_OUTLINE_COMPILER_VERSION,
+  EPISODE_SOURCE_REQUIREMENT_COMPILER_DEFAULT_REASONING_EFFORT,
   EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION,
 } from '../../domain/constants/generation.js';
 import {
@@ -129,7 +130,7 @@ export class OpenAIEpisodeBeatPlanCompiler
     const validated = await requestStructuredOpenAIResponse({
       client: this.client,
       model: this.model,
-      reasoningEffort: this.reasoningEffort,
+      reasoningEffort: this.reasoningEffort ?? EPISODE_SOURCE_REQUIREMENT_COMPILER_DEFAULT_REASONING_EFFORT,
       maxOutputTokens: EPISODE_BEAT_PLAN_COMPILER_MAX_TOKENS,
       schemaName: 'episode_source_requirements',
       jsonSchema: buildEpisodeSourceRequirementJsonSchema(maximumRequirements),

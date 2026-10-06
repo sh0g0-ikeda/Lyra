@@ -126,6 +126,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     expect(input[0]?.content[0]?.text).toContain('under 8,000 characters');
     expect(input[1]?.content[0]?.text).toContain('[CURRENT PAGES]');
     expect(request?.max_output_tokens).toBeGreaterThanOrEqual(16_000);
+    expect(request?.reasoning).toBeUndefined();
     expect(text.format).toMatchObject({ type: 'json_schema', strict: true });
   });
 
@@ -173,6 +174,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     }).format.schema;
 
     expect(request?.max_output_tokens).toBeGreaterThanOrEqual(32_000);
+    expect(request?.reasoning).toBeUndefined();
     expect(result.compilerPromptVersion).toBe('episode_beat_outline_v6');
     expect(input[0]?.content[0]?.text).toContain(
       'Do not add generated or invented camera directions',
@@ -305,12 +307,37 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         { event: '小石を除く', result: null, conditionalUntil: null, requiredByEnd: true },
       ],
     });
-    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v8');
+    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v9');
     const requestInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
+    const requestText = requests[0]?.text as {
+      format: { name: string; type: string; strict: boolean; schema: Record<string, unknown> };
+    };
     expect(requestInput[0]?.content[0]?.text).toContain('extraction only');
     expect(requestInput[1]?.content[0]?.text).toContain(unit.text);
     expect(requestInput[1]?.content[0]?.text).not.toContain('generated-note-sentinel');
+    expect(requests[0]?.model).toBe('gpt-5');
+    expect(requests[0]?.reasoning).toEqual({ effort: 'low' });
     expect(requests[0]?.max_output_tokens).toBe(32_000);
+    expect(requestText.format).toMatchObject({
+      name: 'episode_source_requirements',
+      type: 'json_schema',
+      strict: true,
+    });
+
+    await new OpenAIEpisodeBeatPlanCompiler(client, 'gpt-5', 'medium')
+      .compileSourceRequirements({ extraction, language: 'ja' });
+    expect(requests[1]).toMatchObject({
+      model: 'gpt-5',
+      reasoning: { effort: 'medium' },
+      max_output_tokens: 32_000,
+      text: {
+        format: {
+          name: 'episode_source_requirements',
+          type: 'json_schema',
+          strict: true,
+        },
+      },
+    });
   });
 
   it('providerにorderを求めず応答順に依存せずtrusted unit順を復元する', async () => {
