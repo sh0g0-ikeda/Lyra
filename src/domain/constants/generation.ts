@@ -87,7 +87,9 @@ export const PAGE_AUTOFILL_COMPILER_VERSION = 'page_autofill_v7';
 
 export const EPISODE_PAGE_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS = 24000;
-export const EPISODE_PAGE_PLAN_COMPILER_VERSION = 'episode_page_plan_v16';
+export const EPISODE_PAGE_PLAN_COMPILER_VERSION = 'episode_page_plan_v17';
+// Two capped panel-order arrays, fixed IDs and relation metadata; no response prose.
+export const EPISODE_PAGE_PLAN_MAX_PLACEMENT_CORRECTION_BYTES = 1_024;
 // Matches the persisted story_full_draft API character limit.
 export const EPISODE_FULL_STORY_DRAFT_MAX_CHARS = 8_000;
 export const EPISODE_PLAN_SOURCE_REVIEW_MAX_UNITS = 256;

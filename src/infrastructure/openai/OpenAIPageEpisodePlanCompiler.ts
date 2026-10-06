@@ -1,4 +1,5 @@
-import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
+import { Buffer } from 'node:buffer';
+import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL, EPISODE_PAGE_PLAN_MAX_PLACEMENT_CORRECTION_BYTES } from '../../domain/constants/generation.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { z } from 'zod';
 import type { OpenAIReasoningEffort, StructuredOpenAIResponseFailureReason } from './StructuredOpenAIResponse.js';
@@ -84,6 +85,10 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
       sourceRequirements?.requirements.flatMap((requirement) => requirement.pageId === null ? [] : [requirement.pageId]) ?? []);
     const placementRequirements = sourceRequirements?.requirements.filter((requirement) =>
       requirement.scope !== 'global' && requirement.pageId !== null && placementPageIds.has(requirement.pageId)) ?? [];
+    if (sourceRequirements !== undefined) {
+      validateSourceRequirementPageOrder(sourceRequirements.requirements, placementRequirements);
+    }
+    let placementCorrection: string | undefined;
     for (let attempt = 1; attempt <= EPISODE_PAGE_PLAN_COMPILER_MAX_ATTEMPTS; attempt += 1) {
       try {
         validated = await requestStructuredOpenAIResponse({
@@ -110,26 +115,36 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
             },
             {
               role: 'user',
-              content: [{ type: 'input_text', text: buildUserPrompt(input.compilerBrief) }],
+              content: [{ type: 'input_text', text: buildUserPrompt(input.compilerBrief) + (placementCorrection === undefined ? '' : `\n[PLACEMENT CORRECTION - SERVER DATA]\n${placementCorrection}\nCorrect this allocation and its affected panel fields from the unchanged original source. Do not change requirement IDs, page ownership, panel count, or the contracted schema.\n[END PLACEMENT CORRECTION]`) }],
             },
           ],
         });
+        if (sourceRequirements !== undefined) {
+          validateSourceRequirementPlacements(validated, sourceRequirements.requirements, placementPageIds);
+        }
         break;
       } catch (error) {
-        if (
-          !(error instanceof StructuredOpenAIResponseError)
-          || !error.retryable
-          || !RETRYABLE_DETAIL_PLAN_FAILURE_REASONS.has(error.reason)
-          || attempt >= EPISODE_PAGE_PLAN_COMPILER_MAX_ATTEMPTS
-        ) {
+        let reason: StructuredOpenAIResponseFailureReason | 'source_requirement_panel_order';
+        let requestId: string | null;
+        if (error instanceof SourceRequirementPanelOrderError) {
+          reason = 'source_requirement_panel_order';
+          requestId = null;
+          placementCorrection = error.correction;
+        } else if (error instanceof StructuredOpenAIResponseError && error.retryable &&
+            RETRYABLE_DETAIL_PLAN_FAILURE_REASONS.has(error.reason)) {
+          reason = error.reason;
+          requestId = error.requestId;
+          placementCorrection = undefined;
+        } else {
           throw error;
         }
+        if (attempt >= EPISODE_PAGE_PLAN_COMPILER_MAX_ATTEMPTS) throw error;
+        validated = null;
+        // The cancellation checkpoint runs after bounded feedback assembly and
+        // immediately before the next logical request. Transport retries stay unchanged.
         await input.beforeRetry?.();
         console.warn('episode_page_plan_compiler_retry', {
-          attempt,
-          nextAttempt: attempt + 1,
-          reason: error.reason,
-          requestId: error.requestId,
+          attempt, nextAttempt: attempt + 1, reason, requestId,
         });
       }
     }
@@ -137,10 +152,6 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
     if (validated === null) {
       throw new ConfigurationError('Episode page plan compiler exhausted retry attempts');
     }
-    if (sourceRequirements !== undefined) {
-      validateSourceRequirementPlacements(validated, sourceRequirements.requirements, placementPageIds);
-    }
-
     return {
       suggestion: {
         pages: validated.pages.map((page) => ({
@@ -837,7 +848,43 @@ function validateSourceRequirementPlacements(
       const placement = placementByRequirementId.get(requirement.requirementId);
       if (predecessorPlacement === undefined || placement === undefined ||
           Math.max(...predecessorPlacement.panel_orders) > Math.min(...placement.panel_orders)) {
-        throw new ConfigurationError('Detail plan source requirement relation contradicts panel order');
+        if (predecessorPlacement === undefined || placement === undefined) {
+          throw new ConfigurationError('Detail plan source requirement relation contradicts panel order');
+        }
+        throw new SourceRequirementPanelOrderError(JSON.stringify({
+          predecessorId, requirementId: requirement.requirementId,
+          pageId: requirement.pageId,
+          predecessorPanelOrders: predecessorPlacement.panel_orders,
+          panelOrders: placement.panel_orders,
+          relation: 'max(predecessorPanelOrders) <= min(panelOrders)',
+        }));
+      }
+    }
+  }
+}
+
+/** Only server-validated IDs and bounded numeric orders can enter corrective input.
+ * Schema errors, provider failures and impossible source dependencies stay separate. */
+class SourceRequirementPanelOrderError extends ConfigurationError {
+  public constructor(public readonly correction: string) {
+    super('Detail plan source requirement relation contradicts panel order');
+    if (Buffer.byteLength(correction, 'utf8') > EPISODE_PAGE_PLAN_MAX_PLACEMENT_CORRECTION_BYTES) {
+      throw new ConfigurationError('Detail placement correction exceeded its bounded metadata budget');
+    }
+  }
+}
+
+function validateSourceRequirementPageOrder(
+  requirements: NonNullable<CompileEpisodePagePlanInput['sourceRequirements']>['requirements'],
+  placementRequirements: NonNullable<CompileEpisodePagePlanInput['sourceRequirements']>['requirements'],
+): void {
+  const byId = new Map(requirements.map(requirement => [requirement.requirementId, requirement] as const));
+  for (const requirement of placementRequirements) {
+    for (const priorId of requirement.afterRequirementIds) {
+      const prior = byId.get(priorId);
+      if (prior === undefined || prior.scope === 'global') continue;
+      if (prior.pageNumber === null || requirement.pageNumber === null || prior.pageNumber > requirement.pageNumber) {
+        throw new ConfigurationError('Detail plan source requirement relation contradicts page order');
       }
     }
   }

@@ -244,6 +244,17 @@ successor panel order; equality permits an authored sequence inside one panel.
 The provider-only classification remains a semantic judgment and requires actual
 source-to-draft review; structural placement success is not acceptance proof.
 Normal and repair detail calls retain the same complete requirements.
+Detail prerequisite placement validation runs inside the existing two logical
+structured attempts. Only a typed same-page panel-order failure can use the
+remaining attempt with at most 1,024 bytes of server-validated IDs and numeric
+orders; raw provider prose and errors are never echoed. It retains the complete
+original brief, schema and output limit, and runs the cancellation checkpoint
+immediately before the correction request. Structured and placement correction
+share this same limit. Impossible future-page prerequisites fail before any
+provider call. Underlying transient HTTP retries remain unchanged; two logical
+attempts are not a production guarantee of two HTTP sends. Every correction
+must pass the unchanged placement validator and continue through the existing
+semantic audit and saving policy.
 Unsupported mappings or capacity take the complete legacy path before any paid
 call; a paid extraction failure does not start an additional legacy compiler call.
 Requirements and placements are internal and are stripped before public saving.
