@@ -33,6 +33,8 @@ describe('EpisodeSourceRequirements', () => {
     expect(prepared?.pages.map((page) => page.pageId)).toEqual([PAGE_1, PAGE_2]);
     expect(prepared?.units.map((unit) => unit.text).join('')).toBe(original);
     expect(prepared?.compilerBrief).toContain('[ORIGINAL SOURCE UNITS - ONLY AUTHORITY]');
+    expect(prepared?.units[0]?.locatorCatalog[0]).toMatchObject({ id: 1, start: 0, end: 1 });
+    expect(prepared?.compilerBrief).toContain('locator_catalog=1:');
     expect(prepared?.compilerBrief).not.toContain('page_purpose');
     expect(prepared?.compilerBrief).not.toContain('continuity');
     expect(prepared?.compilerBrief).not.toContain('handoff');

@@ -1,4 +1,8 @@
 import { Buffer } from 'node:buffer';
+import {
+  EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_INPUT_BYTES,
+  EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES,
+} from '../../domain/constants/generation.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { EpisodeBeatPlan } from './EpisodeBeatPlanCompiler.js';
 
@@ -30,6 +34,14 @@ export interface EpisodeSourceUnit {
   pageId: string | null;
   pageNumber: number | null;
   text: string;
+  locatorCatalog: readonly EpisodeSourceLocator[];
+}
+
+export interface EpisodeSourceLocator {
+  id: number;
+  start: number;
+  end: number;
+  char: string;
 }
 
 export interface EpisodeSourceRequirementExtraction {
@@ -184,7 +196,8 @@ export function buildEpisodeSourceRequirementExtractionPacks(
   const seenUnitIds = new Set(packed.flatMap((pack) => pack.units.map((unit) => unit.unitId)));
   if (packed.length !== pagePacks.length || seenUnitIds.size !== extraction.units.length ||
       packed.some((pack) => pack.units.length === 0 ||
-        pack.estimatedWorstCaseOutputBytes > MAX_REQUIREMENT_PROVIDER_OUTPUT_BYTES)) {
+        pack.estimatedWorstCaseOutputBytes > MAX_REQUIREMENT_PROVIDER_OUTPUT_BYTES ||
+        Buffer.byteLength(JSON.stringify(pack.compilerBrief), 'utf8') > EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_INPUT_BYTES)) {
     return null;
   }
   return packed;
@@ -375,7 +388,22 @@ function splitLosslessSourceUnits(
     pageId,
     pageNumber,
     text: chunk,
+    locatorCatalog: buildLocatorCatalog(chunk),
   }));
+}
+
+// Code-point IDs keep provider locators stable while start/end preserve exact UTF-16 slicing.
+function buildLocatorCatalog(text: string): EpisodeSourceLocator[] {
+  const catalog: EpisodeSourceLocator[] = [];
+  let start = 0;
+  let id = 1;
+  for (const char of text) {
+    const end = start + char.length;
+    catalog.push({ id, start, end, char });
+    start = end;
+    id += 1;
+  }
+  return catalog;
 }
 
 function estimateRequirementOutputBytes(pageCount: number, nonblankUnitCount: number): number {
@@ -431,7 +459,7 @@ function formatExtractionBrief(
     '[ALLOWED PAGE OWNERS]',
     ...pages.map((page) => `Page ${page.pageNumber} (${page.pageId})`),
     '[ORIGINAL SOURCE UNITS - ONLY AUTHORITY]',
-    ...units.map((unit, index) => `${index + 1} | unit_id=${unit.unitId} | scope=${unit.scope} | page_id=${unit.scope === 'global' ? 'global' : unit.pageId} | ${JSON.stringify(unit.text)}`),
+    ...units.map((unit, index) => `${index + 1} | unit_id=${unit.unitId} | scope=${unit.scope} | page_id=${unit.scope === 'global' ? 'global' : unit.pageId} | ${JSON.stringify(unit.text)} | locator_catalog=${unit.locatorCatalog.map((locator) => `${locator.id}:${JSON.stringify(locator.char)}`).join(',')}`),
     '[END ORIGINAL SOURCE UNITS]',
   ].join('\n');
 }
@@ -461,6 +489,7 @@ export const EPISODE_SOURCE_REQUIREMENT_LIMITS = {
   maxUnits: MAX_SOURCE_UNITS,
   maxRequirements: MAX_REQUIREMENTS,
   maxProviderOutputBytes: MAX_REQUIREMENT_PROVIDER_OUTPUT_BYTES,
-  maxProviderBytesPerRequirement: REQUIREMENT_PROVIDER_WORST_CASE_BYTES,
+  maxProviderBytesPerRequirement: EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES,
+  maxProviderInputBytes: EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_INPUT_BYTES,
   maxSerializedBytes: MAX_REQUIREMENT_SERIALIZED_BYTES,
 } as const;

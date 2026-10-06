@@ -1,5 +1,8 @@
 import { STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY } from '../../../../src/infrastructure/openai/StoryEditorialPrompts.js';
 import { describe, expect, it } from 'vitest';
+
+// v3 design: provider IDs address Unicode code points; the adapter restores UTF-16 spans.
+const locatorFor = (source: string, text: string): string => { const start = source.indexOf(text); const prefix = [...source.slice(0, start)].length + 1; return `${prefix}-${prefix + [...text].length - 1}`; };
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEpisodeBeatPlanCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
 import { EpisodeBeatPlanOutputLimitError } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
@@ -263,10 +266,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       pages: [{ pageId, pageNumber: 1 }],
     })!;
     const unit = extraction.units[0]!;
-    const locator = (text: string): string => {
-      const start = unit.text.indexOf(text);
-      return `${start}:${start + text.length}`;
-    };
+    const locator = (text: string): string => locatorFor(unit.text, text);
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -301,7 +301,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         { event: '再び押して', result: '中へ入る', conditionalUntil: null, requiredByEnd: true },
       ],
     });
-    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v2');
+    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v3');
     const requestInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
     expect(requestInput[0]?.content[0]?.text).toContain('extraction only');
     expect(requestInput[1]?.content[0]?.text).toContain(unit.text);
@@ -321,10 +321,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       unit.scope === 'page' && unit.text.includes('開始する')) + 1;
     const globalText = extraction.units[globalOrdinal - 1]!.text;
     const pageText = extraction.units[pageOrdinal - 1]!.text;
-    const locator = (source: string, text: string): string => {
-      const start = source.indexOf(text);
-      return `${start}:${start + text.length}`;
-    };
+    const locator = (source: string, text: string): string => locatorFor(source, text);
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -370,10 +367,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     const pageOrdinal = extraction.units.findIndex((unit) => unit.scope === 'page') + 1;
     const globalText = extraction.units[globalOrdinal - 1]!.text;
     const pageText = extraction.units[pageOrdinal - 1]!.text;
-    const locator = (source: string, text: string): string => {
-      const start = source.indexOf(text);
-      return `${start}:${start + text.length}`;
-    };
+    const locator = (source: string, text: string): string => locatorFor(source, text);
     const client = {
       postJson: async () => ({
         body: { output_text: JSON.stringify({ requirements: [{
@@ -410,17 +404,15 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     })!;
     const globalOrdinal = extraction.units.findIndex((unit) => unit.scope === 'global') + 1;
     const pageOrdinal = extraction.units.findIndex((unit) => unit.scope === 'page') + 1;
-    const globalText = extraction.units[globalOrdinal - 1]!.text;
     const pageText = extraction.units[pageOrdinal - 1]!.text;
-    const pageEventStart = pageText.indexOf('開始する');
     const client = {
       postJson: async () => ({
         body: { output_text: JSON.stringify({ requirements: [{
           i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
-          x: [`1:0:${globalText.length + 1}`], q: [],
+          x: ['1:1-9999'], q: [],
         }, {
           i: 2, u: pageOrdinal, o: 1,
-          e: [`${pageEventStart}:${pageEventStart + '開始する'.length}`], r: [null],
+          e: [locatorFor(pageText, '開始する')], r: [null],
           a: [], c: [null], z: [true], x: [], q: [],
         }] }) },
         requestId: 'req-invalid-global-locator',
@@ -458,7 +450,6 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
               .filter(({ unit }) => unit.text.trim().length > 0)
               .map(({ unit, unitIndex }, requirementIndex) => {
                 const trimmed = unit.text.trim();
-                const start = unit.text.indexOf(trimmed);
                 return unit.scope === 'global'
                   ? {
                       i: requirementIndex + 1, u: unitIndex + 1, o: 1,
@@ -466,7 +457,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
                     }
                   : {
                       i: requirementIndex + 1, u: unitIndex + 1, o: 1,
-                      e: [`${start}:${start + trimmed.length}`], r: [null],
+                      e: [locatorFor(unit.text, trimmed)], r: [null],
                       a: [], c: [null], z: [true], x: [], q: [],
                     };
               }),
@@ -497,23 +488,23 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     ]);
   });
 
-  it('source requirement schemaの最大field payloadは408 bytes/recordのpreflight上限内に収まる', () => {
+  it('source requirement schemaの最大field payload全体は固定reserveを含むpreflight上限内に収まる', () => {
     const maximumRecord = {
       i: 512, u: 256, o: 10_000,
-      e: ['9999:9999', '9999:9999', '9999:9999', '9999:9999', '9999:9999'],
-      r: ['9999:9999', '9999:9999', '9999:9999', '9999:9999', '9999:9999'],
+      e: ['9999-9999', '9999-9999', '9999-9999', '9999-9999', '9999-9999'],
+      r: ['9999-9999', '9999-9999', '9999-9999', '9999-9999', '9999-9999'],
       a: [512, 512, 512, 512],
-      c: ['9999:9999', '9999:9999', '9999:9999', '9999:9999', '9999:9999'],
-      z: [true, true, true, true, true],
-      x: ['1:9999:9999', '2:9999:9999', '3:9999:9999', '4:9999:9999', '5:9999:9999'],
-      q: ['9999:9999', '9999:9999', '9999:9999', '9999:9999'],
+      c: ['9999-9999', '9999-9999', '9999-9999', '9999-9999', '9999-9999'],
+      z: [false, false, false, false, false],
+      x: ['1:9999-9999', '2:9999-9999', '3:9999-9999', '4:9999-9999', '5:9999-9999'],
+      q: ['9999-9999', '9999-9999', '9999-9999', '9999-9999'],
     };
     const maximumPackPayload = {
-      requirements: Array.from({ length: 55 }, () => maximumRecord),
+      requirements: Array.from({ length: 56 }, () => maximumRecord),
     };
 
     expect(Buffer.byteLength(JSON.stringify(maximumRecord), 'utf8'))
-      .toBeLessThanOrEqual(EPISODE_SOURCE_REQUIREMENT_LIMITS.maxProviderBytesPerRequirement);
+      .toBe(413);
     expect(Buffer.byteLength(JSON.stringify(maximumPackPayload), 'utf8'))
       .toBeLessThanOrEqual(EPISODE_SOURCE_REQUIREMENT_LIMITS.maxProviderOutputBytes);
   });

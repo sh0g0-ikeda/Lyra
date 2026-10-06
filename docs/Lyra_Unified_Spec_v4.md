@@ -213,7 +213,7 @@ when it fits the safe output budget.
 
 For a complete original-page mapping without character-state opt-in, bounded
 original-source requirement extraction replaces the existing beat-plan pack calls.
-It preserves source-unit locators, authored quotes, ordered prerequisite/result
+It preserves source-unit locators as a shared displayed Unicode-code-point catalog with 1-based inclusive endpoints and exact UTF-16 restoration, authored quotes, ordered prerequisite/result
 obligations and page completion boundaries. Global meaning ownership remains
 global; extraction pack assignment does not make it a page-visible event. Every
 global requirement carries its complete trimmed original unit in context. Empty
