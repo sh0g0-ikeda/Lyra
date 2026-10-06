@@ -429,6 +429,7 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
   public pagesToReturn: CompiledEpisodeBeatPlan['plan']['pages'] | null = null;
   public outputLimitAbovePageCount: number | null = null;
   public sourceRequirementInputs: CompileEpisodeSourceRequirementsInput[] = [];
+  public omitGlobalSourceContext = false;
 
   public async compileBeatPlan(
     input: CompileEpisodeBeatPlanInput,
@@ -498,6 +499,9 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
             const pageNumber = unit.pageNumber ?? firstPage.pageNumber;
             const order = (ordersByPage.get(pageId) ?? 0) + 1;
             ordersByPage.set(pageId, order);
+            const globalContext = unit.scope === 'global' && !this.omitGlobalSourceContext
+              ? unit.text.trim()
+              : null;
             return {
               requirementId: `req-${input.extraction.pages[0]!.pageNumber}-${index + 1}`,
               scope: unit.scope,
@@ -505,8 +509,8 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
               pageNumber: unit.scope === 'global' ? null : pageNumber,
               sourceUnitIds: [unit.unitId],
               order: unit.scope === 'global' ? Number(unit.unitId.replace('global-u', '')) : order,
-              events: [unit.text.trim()], results: [], afterRequirementIds: [],
-              conditionalUntil: null, requiredByEnd: true, context: null, emotion: null,
+              events: unit.scope === 'global' ? [] : [unit.text.trim()], results: [], afterRequirementIds: [],
+              conditionalUntil: null, requiredByEnd: unit.scope !== 'global', context: globalContext, emotion: null,
               function: null, camera: null, framing: null, quotedText: [],
             };
           }),
@@ -1942,6 +1946,73 @@ describe('PageService', () => {
         (page) => page.sources.map((source) => source.ref).join(',') === 'source',
       ) === true,
     )).toBe(true);
+  });
+
+  it('continuity v3 ONはglobal原文全文がcontextにないsource requirementをdetail・監査・保存前に拒否する', async () => {
+    const pageRepository = new FakePageRepository();
+    const context = buildMultiPageEpisodePlanningContext(4);
+    context.episode.storyFullDraft = [
+      '全15ページの日本の漫画。',
+      ...context.pages.map((page) => `${page.pageNumber}ページ目：原文動作-${page.pageNumber}を最後まで行う。`),
+    ].join('\n');
+    pageRepository.episodePlanningContext = context;
+    const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const beatCompiler = new FakeEpisodeBeatPlanCompiler();
+    beatCompiler.omitGlobalSourceContext = true;
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+      undefined,
+      beatCompiler,
+      auditCompiler,
+      true,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(false);
+    expect(beatCompiler.sourceRequirementInputs.length).toBeGreaterThan(0);
+    expect(beatCompiler.inputs).toHaveLength(0);
+    expect(episodeCompiler.inputs).toHaveLength(0);
+    expect(auditCompiler.inputs).toHaveLength(0);
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+  });
+
+  it('continuity v3 OFFはsource requirementを呼ばず既存v2 detail経路を保つ', async () => {
+    const pageRepository = new FakePageRepository();
+    const context = buildMultiPageEpisodePlanningContext(4);
+    context.episode.storyFullDraft = [
+      '全15ページの日本の漫画。',
+      ...context.pages.map((page) => `${page.pageNumber}ページ目：原文動作-${page.pageNumber}を最後まで行う。`),
+    ].join('\n');
+    pageRepository.episodePlanningContext = context;
+    const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const beatCompiler = new FakeEpisodeBeatPlanCompiler();
+    beatCompiler.omitGlobalSourceContext = true;
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+      undefined,
+      beatCompiler,
+      auditCompiler,
+      false,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(beatCompiler.sourceRequirementInputs).toHaveLength(0);
+    expect(beatCompiler.inputs).toHaveLength(0);
+    expect(episodeCompiler.inputs.length).toBeGreaterThan(0);
+    expect(auditCompiler.inputs).toHaveLength(0);
   });
 
   it('source requirement extraction前のcheckpointでcancelされた場合はproviderと保存を開始しない', async () => {

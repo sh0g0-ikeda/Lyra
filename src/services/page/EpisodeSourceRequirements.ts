@@ -263,7 +263,15 @@ export function validateEpisodeSourceRequirements(
       coveredUnitIds.add(unitId);
       ownedSource.push(unit.text);
     }
-    assertRequirementTextIsSourceOwned(requirement, ownedSource.join(''));
+    const ownedSourceText = ownedSource.join('');
+    // The source-owned flow is already isolated by continuity V3. Requiring the
+    // literal global unit here proves complete transport, not semantic quality.
+    if (requirement.scope === 'global' && requirement.context !== ownedSourceText.trim()) {
+      throw new ConfigurationError(
+        'Global source requirement context must preserve the complete trimmed source unit',
+      );
+    }
+    assertRequirementTextIsSourceOwned(requirement, ownedSourceText);
     if (requirement.obligations !== undefined) {
       if (requirement.obligations.length === 0 || requirement.obligations.length > 5 ||
           requirement.obligations.map((obligation) => obligation.event).join('\u0000') !== requirement.events.join('\u0000') ||

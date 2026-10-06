@@ -300,7 +300,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         { event: '再び押して', result: '中へ入る', conditionalUntil: null, requiredByEnd: true },
       ],
     });
-    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v1');
+    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v2');
     const requestInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
     expect(requestInput[0]?.content[0]?.text).toContain('extraction only');
     expect(requestInput[1]?.content[0]?.text).toContain(unit.text);
@@ -330,7 +330,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         requests.push(payload);
         return { body: { output_text: JSON.stringify({ requirements: [{
           i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
-          x: [`1:${locator(globalText, '全頁同じ衣装')}`], q: [],
+          x: [`1:${locator(globalText, globalText.trim())}`], q: [],
         }, {
           i: 2, u: pageOrdinal, o: 1, e: [locator(pageText, '開始する')], r: [null],
           a: [], c: [null], z: [true], x: [], q: [],
@@ -343,14 +343,53 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     });
 
     expect(result.requirements.requirements[0]).toMatchObject({
-      scope: 'global', pageId: null, pageNumber: null, events: [], context: '全頁同じ衣装',
+      scope: 'global', pageId: null, pageNumber: null, events: [], context: globalText.trim(),
     });
     expect(result.requirements.requirements[1]).toMatchObject({
       scope: 'page', pageId, pageNumber: 1, events: ['開始する'],
     });
     const input = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
     expect(input[0]?.content[0]?.text).toContain('do not turn them into page-owned visible events');
+    expect(input[0]?.content[0]?.text).toContain('complete trimmed global unit');
     expect(input[1]?.content[0]?.text).toContain('scope=global');
+  });
+
+  it.each([
+    ['empty', null],
+    ['partial', '全頁同じ衣装'],
+  ])('global source unitの%s contextを拒否する', async (_label, contextText) => {
+    const pageId = '11111111-1111-4111-8111-111111111111';
+    const extraction = prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: '全頁同じ衣装。\n1ページ目：開始する。',
+      pages: [{ pageId, pageNumber: 1 }],
+    })!;
+    const globalOrdinal = extraction.units.findIndex((unit) => unit.scope === 'global') + 1;
+    const pageOrdinal = extraction.units.findIndex((unit) => unit.scope === 'page') + 1;
+    const globalText = extraction.units[globalOrdinal - 1]!.text;
+    const pageText = extraction.units[pageOrdinal - 1]!.text;
+    const locator = (source: string, text: string): string => {
+      const start = source.indexOf(text);
+      return `${start}:${start + text.length}`;
+    };
+    const client = {
+      postJson: async () => ({
+        body: { output_text: JSON.stringify({ requirements: [{
+          i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
+          x: contextText === null ? [] : [`1:${locator(globalText, contextText)}`], q: [],
+        }, {
+          i: 2, u: pageOrdinal, o: 1, e: [locator(pageText, '開始する')], r: [null],
+          a: [], c: [null], z: [true], x: [], q: [],
+        }] }) },
+        requestId: 'req-incomplete-global-source',
+      }),
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({
+      extraction,
+      language: 'ja',
+    })).rejects.toThrow(
+      'Global source requirement context must preserve the complete trimmed source unit',
+    );
   });
 
   it('source requirement schemaの最大field payloadは408 bytes/recordのpreflight上限内に収まる', () => {

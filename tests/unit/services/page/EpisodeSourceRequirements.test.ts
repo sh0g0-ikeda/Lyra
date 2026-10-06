@@ -127,6 +127,32 @@ describe('EpisodeSourceRequirements', () => {
     expect(detail).not.toContain('assign every listed requirement');
   });
 
+  it('global requirementはtrim済み原文全文をcontextに保持し空・partialを拒否する', () => {
+    const prepared = prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: '全15ページの日本の漫画。\n1ページ目：開始する。',
+      pages: [{ pageId: PAGE_1, pageNumber: 1 }],
+    })!;
+    const globalUnit = prepared.units.find((unit) => unit.scope === 'global' && unit.text.trim().length > 0)!;
+    const pageUnit = prepared.units.find((unit) => unit.scope === 'page' && unit.text.trim().length > 0)!;
+    const requirementsFor = (context: string | null): EpisodeSourceRequirements => ({
+      requirements: [{
+        ...requirement('global-r1', globalUnit.unitId, 1, [], [], [], null, false),
+        scope: 'global', pageId: null, pageNumber: null, context,
+      }, requirement('page-r1', pageUnit.unitId, 1, ['開始する'], [], [], null, true)],
+    });
+
+    expect(validateEpisodeSourceRequirements(
+      prepared,
+      requirementsFor(globalUnit.text.trim()),
+    )).toEqual(requirementsFor(globalUnit.text.trim()));
+    expect(() => validateEpisodeSourceRequirements(prepared, requirementsFor(null))).toThrow(
+      'Global source requirement context must preserve the complete trimmed source unit',
+    );
+    expect(() => validateEpisodeSourceRequirements(prepared, requirementsFor('全15ページ'))).toThrow(
+      'Global source requirement context must preserve the complete trimmed source unit',
+    );
+  });
+
   it('1 unitの明示引用が4件を超える場合はpaid extraction前にlegacyへ戻す', () => {
     expect(prepareEpisodeSourceRequirementExtraction({
       storyFullDraft: '1ページ目：「一」「二」「三」「四」「五」と続けて言う。',

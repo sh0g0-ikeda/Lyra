@@ -104,7 +104,7 @@ export const EPISODE_BEAT_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_BEAT_PLAN_COMPILER_MAX_TOKENS = 32_000;
 export const EPISODE_BEAT_PLAN_COMPILER_VERSION = 'episode_beat_plan_v10';
 export const EPISODE_BEAT_PLAN_OUTLINE_COMPILER_VERSION = 'episode_beat_outline_v6';
-export const EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION = 'episode_source_requirements_v1';
+export const EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION = 'episode_source_requirements_v2';
 
 export const EPISODE_PLAN_AUDIT_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS = 20_000;
