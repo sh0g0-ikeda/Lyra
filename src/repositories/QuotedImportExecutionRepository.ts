@@ -1,3 +1,4 @@
+import type { RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { EntityImportAnalysis } from '../domain/types/entityReference.js';
@@ -15,13 +16,13 @@ const IMPORT_STALE_AFTER_MS=20*60*1000;
 const IMPORT_PROGRESS_SQL="COALESCE(NULLIF(j.result->>'import_heartbeat_at','')::timestamptz,j.started_at,j.created_at)";
 
 export class PostgresQuotedImportExecutionRepository {
-  public constructor(private readonly database:DatabaseClient & TransactionRunner){}
+  public constructor(private readonly database:DatabaseClient & TransactionRunner,private readonly persistenceProfile:RepositorySchemaProfile='canonical'){}
   public async claim(jobId:string):Promise<GenerationJob|null>{
     const quote=await new PostgresGenerationQuoteRepository(this.database).findAcceptedJob(jobId);
     const updated=await this.database.query(`UPDATE generation_jobs SET status='processing',started_at=NOW(),error_message=NULL
       WHERE id=$1::uuid AND job_type='entity_import_analysis' AND status='queued' AND cancel_requested_at IS NULL RETURNING id`,[jobId]);
     if(!updated.rows.length) return null;
-    return new PostgresGenerationJobRepository(this.database).findByIdAndUserId(jobId,quote.userId,quote.organizationId);
+    return new PostgresGenerationJobRepository(this.database,this.persistenceProfile).findByIdAndUserId(jobId,quote.userId,quote.organizationId);
   }
   public async checkpointCopy(jobId:string,s3Key:string):Promise<boolean>{
     const result=await this.database.query(`UPDATE generation_jobs SET result=COALESCE(result,'{}'::jsonb)||jsonb_build_object('import_copy_intent',$2::text)
@@ -47,7 +48,7 @@ export class PostgresQuotedImportExecutionRepository {
   }
   public async failAndRefund(job:Pick<GenerationJob,'id'|'userId'|'organizationId'|'creditCost'>,message:string,staleBefore?:Date):Promise<void>{
     await this.database.transaction(async(client)=>{
-      const bound=bindTransaction(client);const jobs=new PostgresGenerationJobRepository(bound);
+      const bound=bindTransaction(client);const jobs=new PostgresGenerationJobRepository(bound,this.persistenceProfile);
       // Cancellation also locks the balance before the job. Preserve that order.
       if(job.organizationId) await new PostgresOrganizationRepository(bound,bound).getCreditBalanceForUpdate(job.organizationId,client);
       else await new PostgresCreditRepository(bound,bound).getBalanceForUpdate(job.userId,client);
@@ -77,7 +78,7 @@ export class PostgresQuotedImportExecutionRepository {
     );
     let count=0;
     for(const row of result.rows){
-      const jobs=new PostgresGenerationJobRepository(this.database);
+      const jobs=new PostgresGenerationJobRepository(this.database,this.persistenceProfile);
       if(await jobs.finalizeCancellation(row.id)){count++;continue;}
       const quote=await new PostgresGenerationQuoteRepository(this.database).findAcceptedJob(row.id);
       // A system settlement uses the accepted actor even if organization membership was revoked.

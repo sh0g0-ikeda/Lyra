@@ -1,5 +1,7 @@
 import { ConfigurationError } from '../domain/errors/index.js';
-import type { TransactionRunner } from './db.js';
+import type { DatabaseClient, TransactionRunner } from './db.js';
+import { PRODUCTION44_EXPANSION_MIGRATIONS } from './production44ExpandedRuntimeSchemaDescriptor.js';
+import { describeProduction44ExpansionCheckpoint } from './production44ExpandedRuntimeSchemaAttestation.js';
 
 export const CANONICAL_RUNTIME_MIGRATIONS = [
   '001_initial_schema.sql',
@@ -49,6 +51,7 @@ export const CANONICAL_RUNTIME_MIGRATIONS = [
   '045_add_mobile_subscription_scheduled_plan_compatibility.sql',
   '046_bridge_production_schema_lineage.sql',
   '047_add_state_reference_copy_attempts.sql',
+  '048_advance_entity_state_revision_for_legacy_writers.sql',
 ] as const;
 
 export interface RuntimeSchemaCatalog {
@@ -100,7 +103,8 @@ export interface RuntimeSchemaDescription {
   failures: string[];
 }
 
-const CANONICAL_046_MIGRATIONS = CANONICAL_RUNTIME_MIGRATIONS.slice(0, -1);
+const CANONICAL_047_MIGRATIONS = CANONICAL_RUNTIME_MIGRATIONS.slice(0, -1);
+const CANONICAL_046_MIGRATIONS = CANONICAL_RUNTIME_MIGRATIONS.slice(0, -2);
 const EMPTY_RELATIONS = new Set(['schema_migrations', 'schema_migration_locks']);
 const FORBIDDEN_RELATIONS = new Set(['export_jobs', 'export_job_outbox']);
 const FORBIDDEN_PAGE_METADATA_COLUMNS = new Set([
@@ -209,7 +213,8 @@ export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSch
     return { kind: 'empty_fresh', failures: [] };
   }
 
-  const historyKind = sameStrings(catalog.migrationFilenames, CANONICAL_RUNTIME_MIGRATIONS)
+  const hasRevisionGuard = sameStrings(catalog.migrationFilenames, CANONICAL_RUNTIME_MIGRATIONS);
+  const historyKind = hasRevisionGuard || sameStrings(catalog.migrationFilenames, CANONICAL_047_MIGRATIONS)
     ? 'canonical_fresh_v1'
     : sameStrings(catalog.migrationFilenames, CANONICAL_046_MIGRATIONS)
       ? 'canonical_046_pending_047'
@@ -219,6 +224,17 @@ export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSch
   }
 
   const failures = validateCanonicalCatalog(catalog, historyKind === 'canonical_fresh_v1');
+  const revisionTriggers = catalog.triggers.filter(trigger => trigger.name === 'entity_states_monotonic_revision');
+  const revisionFunctions = catalog.functions?.filter(fn => fn.name === 'lyra_advance_entity_state_revision') ?? [];
+  if (hasRevisionGuard) {
+    const trigger = revisionTriggers[0];
+    const fn = revisionFunctions[0];
+    if (revisionTriggers.length !== 1 || trigger?.relation !== 'entity_states' || trigger.functionName !== 'lyra_advance_entity_state_revision' || trigger.enabled !== 'O' || trigger.definitionSha256 !== 'f4ecec84d3f71eb573ea77f0e3f3c54e8c90604aeb80dc9b54910517f66dd040') failures.push('REVISION_TRIGGER_MISMATCH');
+    if (revisionFunctions.length !== 1 || fn?.identityArguments !== '' || fn.returnType !== 'trigger' || fn.language !== 'plpgsql' || fn.securityDefiner !== false || fn.settings.length !== 0 || fn.bodySha256 !== '205cfe9d4f1cdc91c376ee628dd7b4e00ea668a9303b4cdb281f40077442c0c1' || fn.kind !== 'function' || fn.volatility !== 'volatile' || fn.strict !== false || fn.parallel !== 'unsafe' || fn.leakproof !== false) failures.push('REVISION_FUNCTION_MISMATCH');
+    if (!catalog.columns.some(column => column.relation === 'entity_states' && column.name === 'updated_at' && column.type === 'timestamp with time zone')) failures.push('REVISION_COLUMN_MISMATCH');
+  } else if (revisionTriggers.length > 0 || revisionFunctions.length > 0 || catalog.namespaceArtifacts.some(artifact => artifact.name === 'lyra_advance_entity_state_revision()')) {
+    failures.push('UNRECORDED_REVISION_GUARD');
+  }
   return failures.length === 0
     ? { kind: historyKind, failures: [] }
     : { kind: 'unsupported', failures };
@@ -230,6 +246,16 @@ export async function readRuntimeSchemaCatalog(
 ): Promise<RuntimeSchemaCatalog> {
   return database.transaction(async (client) => {
     await client.query('SET TRANSACTION READ ONLY');
+    return readRuntimeSchemaCatalogInTransaction(client, options);
+  });
+}
+
+/** The caller owns the transaction: expansion verifies its uncommitted DDL
+ * before recording a successful checkpoint. Runtime readers use the read-only wrapper. */
+export async function readRuntimeSchemaCatalogInTransaction(
+  client: DatabaseClient,
+  options: ReadRuntimeSchemaCatalogOptions = {},
+): Promise<RuntimeSchemaCatalog> {
     const legacyRelationSelect = options.includeLegacyAttributes
       ? ', relation.relrowsecurity AS "rowSecurity", relation.relforcerowsecurity AS "forceRowSecurity"'
       : '';
@@ -393,12 +419,79 @@ export async function readRuntimeSchemaCatalog(
       triggers: triggers.rows,
     };
     return functions === undefined ? catalog : { ...catalog, functions: functions.rows };
-  });
 }
 
 export interface AttestedCanonicalRuntime {
   readonly descriptor: 'canonical_fresh_v1';
   readonly repositoryProfile: 'canonical';
+}
+
+export type AttestedRuntime = Readonly<{
+  descriptor: 'canonical_fresh_v1';
+  repositoryProfile: 'canonical';
+  capabilities: Readonly<{ entityStateMonotonicRevision: boolean }>;
+} | {
+  descriptor: 'production44_expanded_pg18_v1';
+  repositoryProfile: 'production44_expanded_pg18_v1';
+  capabilities: Readonly<{ entityStateMonotonicRevision: true }>;
+}>;
+
+const verifiedRuntimeProofs = new WeakSet<object>();
+
+/** The frozen proof is issued from catalog evidence, never an environment selection. */
+function runtimeProof(catalog: RuntimeSchemaCatalog): AttestedRuntime | null {
+  const canonical = describeRuntimeSchema(catalog).kind === 'canonical_fresh_v1';
+  if (!canonical && describeProduction44ExpansionCheckpoint(catalog) !== PRODUCTION44_EXPANSION_MIGRATIONS.length) return null;
+  const proof: AttestedRuntime = canonical
+    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql') }) })
+    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true }) });
+  verifiedRuntimeProofs.add(proof);
+  return proof;
+}
+
+export function assertVerifiedRuntimeProof(runtime: AttestedRuntime): void {
+  if (!verifiedRuntimeProofs.has(runtime)) throw new ConfigurationError('Runtime schema attestation failed: UNVERIFIED_RUNTIME_PROOF');
+}
+
+async function readBootCatalog(database: TransactionRunner): Promise<RuntimeSchemaCatalog> {
+  try { return await readRuntimeSchemaCatalog(database, { includeFunctionBodies: true, includeLegacyAttributes: true }); }
+  catch { throw new ConfigurationError('Runtime schema attestation failed: SCHEMA_QUERY_FAILED'); }
+}
+
+export async function attestRuntimeSchema(database: TransactionRunner): Promise<AttestedRuntime> {
+  const proof = runtimeProof(await readBootCatalog(database));
+  if (proof === null) throw new ConfigurationError('Runtime schema attestation failed: SCHEMA_UNSUPPORTED');
+  return proof;
+}
+
+export async function prepareAttestedRuntimeSchema(input: {
+  database: TransactionRunner;
+  autoRunMigrations: boolean;
+  runMigrations: (database: TransactionRunner) => Promise<string[]>;
+}): Promise<{ runtime: AttestedRuntime; appliedMigrations: string[] }> {
+  const catalog = await readBootCatalog(input.database);
+  const proof = runtimeProof(catalog);
+  // Expansion is exclusively the explicit allowlist command, including when an
+  // ordinary canonical AUTO migration flag was accidentally retained at rollout.
+  if (proof?.repositoryProfile === 'production44_expanded_pg18_v1') return { runtime: proof, appliedMigrations: [] };
+  if (!input.autoRunMigrations) {
+    if (proof === null) throw new ConfigurationError('Runtime schema attestation failed: SCHEMA_UNSUPPORTED');
+    return { runtime: proof, appliedMigrations: [] };
+  }
+  if (!['empty_fresh', 'canonical_046_pending_047', 'canonical_fresh_v1'].includes(describeRuntimeSchema(catalog).kind)) {
+    throw new ConfigurationError('Runtime schema attestation failed: SCHEMA_UNSUPPORTED');
+  }
+  const appliedMigrations = await input.runMigrations(input.database);
+  return { runtime: await attestRuntimeSchema(input.database), appliedMigrations };
+}
+
+export async function startAttestedRuntime<T>(input: {
+  attest: () => Promise<AttestedRuntime>;
+  start: (runtime: AttestedRuntime) => T | Promise<T>;
+}): Promise<T> {
+  const runtime = await input.attest();
+  assertVerifiedRuntimeProof(runtime);
+  return input.start(runtime);
 }
 
 /** Spec §11: no writer is constructed before attestation, and its profile is
@@ -418,7 +511,7 @@ export async function startAttestedCanonicalRuntime<T>(input: {
 export async function attestCanonicalRuntimeSchema(database: TransactionRunner): Promise<'canonical_fresh_v1'> {
   let catalog: RuntimeSchemaCatalog;
   try {
-    catalog = await readRuntimeSchemaCatalog(database);
+    catalog = await readRuntimeSchemaCatalog(database, { includeFunctionBodies: true, includeLegacyAttributes: true });
   } catch {
     throw new ConfigurationError('Runtime schema attestation failed: SCHEMA_QUERY_FAILED');
   }
@@ -436,7 +529,7 @@ export async function prepareCanonicalRuntimeSchema(input: {
 }): Promise<{ descriptor: 'canonical_fresh_v1'; appliedMigrations: string[] }> {
   let before: RuntimeSchemaDescription;
   try {
-    before = describeRuntimeSchema(await readRuntimeSchemaCatalog(input.database));
+    before = describeRuntimeSchema(await readRuntimeSchemaCatalog(input.database, { includeFunctionBodies: true, includeLegacyAttributes: true }));
   } catch {
     throw new ConfigurationError('Runtime schema attestation failed: SCHEMA_QUERY_FAILED');
   }

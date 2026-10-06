@@ -17,6 +17,7 @@ import { normalizeNullableText } from '../lib/textEncoding.js';
 import {
   CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   type RepositorySchemaProfile,
+  hasPreVariantEntitySchema,
 } from './RepositorySchemaProfile.js';
 import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
@@ -150,7 +151,7 @@ const readableEntityStateReferenceSql = readableStateReferenceSql({
 });
 
 function entityStateProjection(profile: RepositorySchemaProfile): string {
-  return profile === 'legacy_2debe_v1'
+  return hasPreVariantEntitySchema(profile)
     ? `entity_states.*,
        NULL::text AS name,
        NULL::text AS description,
@@ -488,9 +489,9 @@ export class PostgresSceneRepository implements SceneRepository {
     if (this.schemaProfile === 'legacy_2debe_v1' && userId === undefined) {
       throw new ConfigurationError('Legacy entity state creation requires an authenticated actor');
     }
-    if (this.schemaProfile === 'legacy_2debe_v1'
+    if (hasPreVariantEntitySchema(this.schemaProfile)
       && (input.name !== undefined || input.description !== undefined)) {
-      throw new ConfigurationError('Entity state variants are not supported by legacy_2debe_v1 persistence');
+      throw new ConfigurationError('Entity state variants are not supported by ' + this.schemaProfile + ' persistence');
     }
     const actorUserId = userId ?? '';
     return this.runLegacyPersonalWrite(actorUserId, organizationId, async (client) => {
@@ -504,15 +505,15 @@ export class PostgresSceneRepository implements SceneRepository {
         )) {
         throw new NotFoundError('Entity not found');
       }
-      const insertColumns = this.schemaProfile === 'legacy_2debe_v1'
+      const insertColumns = hasPreVariantEntitySchema(this.schemaProfile)
         ? `entity_id, scene_id, costume_note, costume_ref_id, condition_note,
            hair_note, expression_default, extra_note`
         : `entity_id, scene_id, name, description, costume_note, costume_ref_id,
            condition_note, hair_note, expression_default, extra_note`;
-      const insertValues = this.schemaProfile === 'legacy_2debe_v1'
+      const insertValues = hasPreVariantEntitySchema(this.schemaProfile)
         ? 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8)'
         : 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)';
-      const values: readonly unknown[] = this.schemaProfile === 'legacy_2debe_v1'
+      const values: readonly unknown[] = hasPreVariantEntitySchema(this.schemaProfile)
         ? [
             entityId,
             input.sceneId,
@@ -589,9 +590,9 @@ export class PostgresSceneRepository implements SceneRepository {
     input: UpdateEntityStateInput,
     organizationId: string | null = null,
   ): Promise<EntityState | null> {
-    if (this.schemaProfile === 'legacy_2debe_v1'
+    if (hasPreVariantEntitySchema(this.schemaProfile)
       && (input.name !== undefined || input.description !== undefined)) {
-      throw new ConfigurationError('Entity state variants are not supported by legacy_2debe_v1 persistence');
+      throw new ConfigurationError('Entity state variants are not supported by ' + this.schemaProfile + ' persistence');
     }
     return this.runLegacyPersonalWrite(userId, organizationId, async (client) => {
       if (this.schemaProfile === 'legacy_2debe_v1'
@@ -605,7 +606,7 @@ export class PostgresSceneRepository implements SceneRepository {
         )) {
         return null;
       }
-      const legacyProfile = this.schemaProfile === 'legacy_2debe_v1';
+      const legacyProfile = hasPreVariantEntitySchema(this.schemaProfile);
       const setSql = legacyProfile
         ? `scene_id = CASE WHEN $4::boolean THEN $5 ELSE entity_states.scene_id END,
            costume_note = CASE WHEN $6::boolean THEN $7 ELSE entity_states.costume_note END,

@@ -6,9 +6,12 @@ import { PostgresGenerationQuoteRepository } from '../src/repositories/Generatio
 import { ConfigurationError } from '../src/domain/errors/index.js';
 import { env } from '../src/lib/env.js';
 import { closeDatabasePool, db } from '../src/lib/db.js';
+import { createCancelledGenerationSettlementRecoveryRuntime, type CancelledGenerationSettlementRecoveryRuntime } from '../src/lib/cancelledGenerationSettlementRecoveryRuntime.js';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
-import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
-import { attestCanonicalRuntimeSchema, startAttestedCanonicalRuntime, type AttestedCanonicalRuntime } from '../src/lib/runtimeSchemaAttestation.js';
+import { assertProductionRuntimeConfig, assertAttestedRuntimeCapabilities } from '../src/lib/runtimeGuards.js';
+import { createTerminalGenerationNotificationRecoveryRuntime, type TerminalGenerationNotificationRecoveryRuntime } from '../src/lib/terminalGenerationNotificationRecoveryRuntime.js';
+import { PostgresGenerationJobRepository } from '../src/repositories/GenerationJobRepository.js';
+import { attestRuntimeSchema, startAttestedRuntime, type AttestedRuntime } from '../src/lib/runtimeSchemaAttestation.js';
 import {
   GENERATION_RECOVERY_BATCH_LIMIT,
   ENTITY_GENERATION_STALE_AFTER_MS,
@@ -40,15 +43,22 @@ async function main(): Promise<void> {
     throw new ConfigurationError('SQS_QUEUE_URL_GENERATION is required for generation worker polling');
   }
   const queueUrl = env.SQS_QUEUE_URL_GENERATION;
-  await startAttestedCanonicalRuntime({
-    attest: () => attestCanonicalRuntimeSchema(db),
+  await startAttestedRuntime({
+    attest: () => attestRuntimeSchema(db),
     start: (runtime) => startWorkerRuntime(runtime, queueUrl),
   });
 }
 
-async function startWorkerRuntime(runtime: AttestedCanonicalRuntime, queueUrl: string): Promise<void> {
+async function startWorkerRuntime(runtime: AttestedRuntime, queueUrl: string): Promise<void> {
+  assertAttestedRuntimeCapabilities(runtime, env);
+  const terminalRecovery = await createTerminalGenerationNotificationRecoveryRuntime(db, runtime.repositoryProfile, {
+    enabled: env.PUSH_NOTIFICATIONS_ENABLED,
+    cutover: env.PUSH_TERMINAL_RECOVERY_CUTOVER,
+    intervalMs: GENERATION_RECOVERY_INTERVAL_MS,
+  });
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
-  const recoveryRunner = new GenerationWorkerRecoveryRunner(organizationService, runtime);
+  const cancelledRecovery = await createCancelledGenerationSettlementRecoveryRuntime(db, runtime.repositoryProfile);
+  const recoveryRunner = new GenerationWorkerRecoveryRunner(organizationService, runtime, cancelledRecovery, terminalRecovery);
   await recoveryRunner.run('startup');
 
   const poller = new GenerationQueuePoller(
@@ -64,10 +74,12 @@ async function startWorkerRuntime(runtime: AttestedCanonicalRuntime, queueUrl: s
   process.once('SIGINT', () => {
     console.info('[generation-worker] SIGINT received; stopping after current poll');
     poller.stop();
+    void recoveryRunner.stop();
   });
   process.once('SIGTERM', () => {
     console.info('[generation-worker] SIGTERM received; stopping after current poll');
     poller.stop();
+    void recoveryRunner.stop();
   });
 
   const recoveryTimer = setInterval(() => {
@@ -80,25 +92,47 @@ async function startWorkerRuntime(runtime: AttestedCanonicalRuntime, queueUrl: s
     await poller.run();
   } finally {
     clearInterval(recoveryTimer);
+    await recoveryRunner.stop();
     await closeDatabasePool();
     console.info('[generation-worker] polling stopped');
   }
 }
 
 class GenerationWorkerRecoveryRunner {
-  private inFlight = false;
+  private inFlight: Promise<void> | null = null;
+  private stopped = false;
 
   public constructor(
     private readonly organizationService: OrganizationServicePort,
-    private readonly runtime: AttestedCanonicalRuntime,
+    private readonly runtime: AttestedRuntime,
+    private readonly cancelledRecovery: CancelledGenerationSettlementRecoveryRuntime | null,
+    private readonly terminalRecovery: TerminalGenerationNotificationRecoveryRuntime | null,
   ) {}
 
-  public async run(reason: 'startup' | 'periodic'): Promise<void> {
-    if (this.inFlight) {
-      return;
-    }
+  public run(reason: 'startup' | 'periodic'): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    if (this.inFlight !== null) return this.inFlight;
+    this.inFlight = this.recover(reason).finally(() => { this.inFlight = null; });
+    return this.inFlight;
+  }
 
-    this.inFlight = true;
+  public async stop(): Promise<void> {
+    this.stopped = true;
+    const drained = await Promise.allSettled([this.cancelledRecovery?.stop(), this.terminalRecovery?.stop()]);
+    await this.inFlight;
+    if (drained.some(result => result.status === 'rejected')) {
+      console.error('Generation recovery shutdown failed while draining background work');
+      process.exitCode = 1;
+    }
+  }
+
+  private async recover(reason: 'startup' | 'periodic'): Promise<void> {
+    // This bounded reconciliation remains reachable even if quote/page recovery
+    // fails. Its own runtime isolates failures and retains the same cursor.
+    await this.cancelledRecovery?.run();
+    if (this.stopped) return;
+    await this.terminalRecovery?.run();
+    if (this.stopped) return;
     try {
       const creditService = new CreditService(new PostgresCreditRepository(db, db));
       // Existing accepted quotes remain recoverable even after new admission is disabled.
@@ -110,7 +144,7 @@ class GenerationWorkerRecoveryRunner {
         )).dispatchPending();
       }
       if (quoteSchema.rows[0]?.available === true) {
-        await new PostgresQuotedImportExecutionRepository(db).recoverExpired();
+        await new PostgresQuotedImportExecutionRepository(db,this.runtime.repositoryProfile).recoverExpired();
         await new PostgresGenerationQuoteRepository(db).pruneUnaccepted();
       }
       const recoveredPageCount = await new PageGenerationRecoveryService(
@@ -120,6 +154,7 @@ class GenerationWorkerRecoveryRunner {
         PAGE_GENERATION_STALE_AFTER_MS,
         GENERATION_RECOVERY_BATCH_LIMIT,
         this.organizationService,
+        new PostgresGenerationJobRepository(db, this.runtime.repositoryProfile),
       ).recoverAllStaleJobs();
       const recoveredEntityCount = await new EntityGenerationRecoveryService(
         new PostgresEntityGenerationRecoveryRepository(db),
@@ -128,6 +163,7 @@ class GenerationWorkerRecoveryRunner {
         ENTITY_GENERATION_STALE_AFTER_MS,
         GENERATION_RECOVERY_BATCH_LIMIT,
         this.organizationService,
+        new PostgresGenerationJobRepository(db, this.runtime.repositoryProfile),
       ).recoverAllStaleJobs();
       const recoveredCount = recoveredPageCount + recoveredEntityCount;
 
@@ -141,8 +177,6 @@ class GenerationWorkerRecoveryRunner {
         `[generation-recovery] worker ${reason} recovery failed`,
         sanitizePersistedErrorMessage(error, 'Generation recovery failed'),
       );
-    } finally {
-      this.inFlight = false;
     }
   }
 }

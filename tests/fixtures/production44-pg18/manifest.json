@@ -1,0 +1,320 @@
+{
+  "schema": "c0-catalog-r30/v1",
+  "sourceHead": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+  "oldSource": "2debe8c3c22633ed077e7b189ddcfa8b209a00dc",
+  "productionReceiptSha256": "9cff1cafea5d103ec1cbf9a72e6f1eca6aabd0f93f18349736c9fcd2db5b9125",
+  "actualFingerprint": "e251fbef54b20d70659e207bdc4ee89bcaac66cc48008fe6300144d57ce18e23",
+  "selection": "committed integration file when present; otherwise exact committed 2debe alias; lexical filename order",
+  "artificialOnly": true,
+  "runtimeActivationAuthorized": false,
+  "migrations": [
+    {
+      "filename": "001_initial_schema.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/001_initial_schema.sql",
+      "sha256": "762776ce31613cfc87251547433163d9a6ac07ae6cb32c351f1eec0ce47b94b2",
+      "bytes": 9168
+    },
+    {
+      "filename": "002_add_episode_story_input_mode.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/002_add_episode_story_input_mode.sql",
+      "sha256": "5d9fe6e4194f82e8c30ce0c5853971fe4a42333b0178273d61e95d00a6a94438",
+      "bytes": 333
+    },
+    {
+      "filename": "003_add_generation_active_resource_locks.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/003_add_generation_active_resource_locks.sql",
+      "sha256": "7ab761bc68f2d2567e35cef4c537f9bb9a83fea4a13c0508278c09ac601d0229",
+      "bytes": 519
+    },
+    {
+      "filename": "004_add_rate_limit_buckets.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/004_add_rate_limit_buckets.sql",
+      "sha256": "a4d1581fab343fc5485d56bb85416b77b5513b3d21907afcb77b0509e1bedb2b",
+      "bytes": 303
+    },
+    {
+      "filename": "005_add_billing_idempotency_indexes.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/005_add_billing_idempotency_indexes.sql",
+      "sha256": "2bf686501668a5201dbbdd891b9acad64954b7204974844f50177d7c74ad200c",
+      "bytes": 595
+    },
+    {
+      "filename": "006_add_generation_job_retention_index.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/006_add_generation_job_retention_index.sql",
+      "sha256": "acf38887d1aa6ea0a5169758d34059f344b0f8abc9e0dd475da5d39791e1742a",
+      "bytes": 230
+    },
+    {
+      "filename": "007_add_credit_refund_job_idempotency_index.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/007_add_credit_refund_job_idempotency_index.sql",
+      "sha256": "8bc92137aef8b3253c45391d52d7f4dd2a41d5f40f50877e18d84f0fdfb93aeb",
+      "bytes": 176
+    },
+    {
+      "filename": "008_add_credit_ledger_bucket_deltas.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/008_add_credit_ledger_bucket_deltas.sql",
+      "sha256": "76f4df30d26ae418cf1c6919969ea9e22fcb97578eee83ca838e9c0ef885ef81",
+      "bytes": 656
+    },
+    {
+      "filename": "009_add_generation_job_state_constraints.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/009_add_generation_job_state_constraints.sql",
+      "sha256": "7e7577952b223a188a0f0712f461dd06148b876e8bf11f61892bf141f041f190",
+      "bytes": 722
+    },
+    {
+      "filename": "010_add_billing_state_constraints.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/010_add_billing_state_constraints.sql",
+      "sha256": "ab4299c379c0b2c93763db23e74e9e87ada1c4d73ebb7d918082f8a8f64b7d2b",
+      "bytes": 1569
+    },
+    {
+      "filename": "011_add_core_app_state_constraints.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/011_add_core_app_state_constraints.sql",
+      "sha256": "163fafa06f5c982d85635e03873475a7a9175f7b5f54c76828a3f3b79f65918e",
+      "bytes": 3204
+    },
+    {
+      "filename": "012_add_credit_ledger_amount_sign_constraint.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/012_add_credit_ledger_amount_sign_constraint.sql",
+      "sha256": "50924c33f2eb209a46c38f50ac488057f31c4c1ac8290aee7997f26a47cccf68",
+      "bytes": 324
+    },
+    {
+      "filename": "013_add_subscription_status_constraint.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/013_add_subscription_status_constraint.sql",
+      "sha256": "8e3cf60105a273501cebdc4beb9881fb8fedd2c6ffa7859c2a65df8ad4389e85",
+      "bytes": 341
+    },
+    {
+      "filename": "014_add_payment_record_external_id_constraint.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/014_add_payment_record_external_id_constraint.sql",
+      "sha256": "856dd23a52e4f347ea6cfb581f1c85806159d400503426931977577e495962e5",
+      "bytes": 284
+    },
+    {
+      "filename": "015_add_episode_story_autofill_job_type.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/015_add_episode_story_autofill_job_type.sql",
+      "sha256": "062a2af56c3bba50c235a5529ae22d51e8e353adfe245fc6f1172c5b37b39809",
+      "bytes": 342
+    },
+    {
+      "filename": "016_add_episode_story_autofill_active_lock.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/016_add_episode_story_autofill_active_lock.sql",
+      "sha256": "4baf16e6c1844094a00b615dd9d3081f7c74204ef24dd666f4231618d3610f2b",
+      "bytes": 305
+    },
+    {
+      "filename": "017_add_episode_page_skeleton_job_type.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/017_add_episode_page_skeleton_job_type.sql",
+      "sha256": "6b03d14f53f263e0bf558c320c3d92659158fa3d5e4aaedcefa19987f5aa7871",
+      "bytes": 671
+    },
+    {
+      "filename": "018_allow_enterprise_billing_plan_codes.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/018_allow_enterprise_billing_plan_codes.sql",
+      "sha256": "98d3e6253fad884d8fd961965d787f91a49e815527e7e4401f4369fe48e51c12",
+      "bytes": 654
+    },
+    {
+      "filename": "019_add_organization_workspaces.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/019_add_organization_workspaces.sql",
+      "sha256": "0b15f32a23f97436c84f04d6479f48fb5c926f0c96c81183f0fc7aece9d8e764",
+      "bytes": 6653
+    },
+    {
+      "filename": "020_add_payment_record_invoice_url.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/020_add_payment_record_invoice_url.sql",
+      "sha256": "f0f19363dc748277f265d3b750239ddece7e9b1f27741b06727ec9aa82b23a58",
+      "bytes": 74
+    },
+    {
+      "filename": "021_add_organization_workspace_indexes.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/021_add_organization_workspace_indexes.sql",
+      "sha256": "d916be70a562de34491971288cd6b8e518365451f141270ed76f84ba491801da",
+      "bytes": 1019
+    },
+    {
+      "filename": "022_add_organization_invitation_delivery.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/022_add_organization_invitation_delivery.sql",
+      "sha256": "5c169d42c900bb7e4e427f5e4a6c17917a9fb2fd84f7c45cf3ded0ac5205ac8e",
+      "bytes": 2464
+    },
+    {
+      "filename": "023_merge_creator_role_into_editor.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/023_merge_creator_role_into_editor.sql",
+      "sha256": "8713a26c5d07a7a70b2a7da63acb2c996d7b569c4032a4a5802011fecc8ab923",
+      "bytes": 699
+    },
+    {
+      "filename": "024_add_generation_job_cancellation.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/024_add_generation_job_cancellation.sql",
+      "sha256": "c37fb833768decd572c2c784f060ae0e94e7c4e16951d286584e55b645a7bfbe",
+      "bytes": 569
+    },
+    {
+      "filename": "025_include_cancelled_jobs_in_retention_index.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/025_include_cancelled_jobs_in_retention_index.sql",
+      "sha256": "8661bec76574508e8b071b179ee360f59dd95ec15fb353a175e5b8fe6a4ab7b8",
+      "bytes": 302
+    },
+    {
+      "filename": "026_backfill_legacy_credit_consume_job_links.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/026_backfill_legacy_credit_consume_job_links.sql",
+      "sha256": "ef04c0a0d6b6a67d152fc7dca6c08b7a190fdbaf98319c3dcefbf2a987f55a4f",
+      "bytes": 2956
+    },
+    {
+      "filename": "027_add_account_deletion_requests.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/027_add_account_deletion_requests.sql",
+      "sha256": "cdbe7314e79e2c64afb9083923fa754ebd377e67940e72a066be370ee80466d0",
+      "bytes": 1382
+    },
+    {
+      "filename": "028_add_page_story_metadata_columns.sql",
+      "source": "2debe8c3c22633ed077e7b189ddcfa8b209a00dc",
+      "path": "migrations/028_add_page_story_metadata_columns.sql",
+      "sha256": "996cb9cf07380427c37fc1891354983c870c3fe2e313d58132747ca792a4fa71",
+      "bytes": 799
+    },
+    {
+      "filename": "028_preserve_page_story_metadata_in_layout_config.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/028_preserve_page_story_metadata_in_layout_config.sql",
+      "sha256": "429e4ffa59155905da62dd8f81651404db897af4a6030cf10aa5a03cf5387dfd",
+      "bytes": 364
+    },
+    {
+      "filename": "029_add_mobile_store_purchase_ledger.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/029_add_mobile_store_purchase_ledger.sql",
+      "sha256": "e22d603c3a4384dcb2872bd0cb417bfd91df3372cd9c1a61ca2119d322956e17",
+      "bytes": 5535
+    },
+    {
+      "filename": "030_add_generation_job_management.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/030_add_generation_job_management.sql",
+      "sha256": "0768202e21b8f12da02d428440302983a891110cddded0500e50f06bc783edfc",
+      "bytes": 972
+    },
+    {
+      "filename": "031_add_entity_reference_upload_tokens.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/031_add_entity_reference_upload_tokens.sql",
+      "sha256": "39e99ed1a1b5e1215dc9704330ea3885d4b9417823b43af6ff10445c67eb9e77",
+      "bytes": 1994
+    },
+    {
+      "filename": "032_add_episode_export_jobs.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/032_add_episode_export_jobs.sql",
+      "sha256": "6afe3ea66cd8b45280a5318e5b3f8327f5bd91a6dca413275a0d864b1fa6ab0d",
+      "bytes": 7156
+    },
+    {
+      "filename": "033_add_mobile_push_token_registry.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/033_add_mobile_push_token_registry.sql",
+      "sha256": "b883005f35404f34ef51e629884ce4f2cf7002e024188e1e96da577e1c0a979c",
+      "bytes": 1281
+    },
+    {
+      "filename": "034_add_mobile_push_notification_outbox.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/034_add_mobile_push_notification_outbox.sql",
+      "sha256": "c2db7fcb370325649191a95055913133a51dfbd3211da93f87043fed494c1a2b",
+      "bytes": 3393
+    },
+    {
+      "filename": "035_add_generation_cancellation_contract.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/035_add_generation_cancellation_contract.sql",
+      "sha256": "0410f247542725078700c0639b232d80a7d0f592bee02af9526c0b2e698d4b18",
+      "bytes": 1054
+    },
+    {
+      "filename": "035_add_processing_generation_job_cancellation.sql",
+      "source": "2debe8c3c22633ed077e7b189ddcfa8b209a00dc",
+      "path": "migrations/035_add_processing_generation_job_cancellation.sql",
+      "sha256": "c4b0dbafd580a030d2d1f729021bb7ff3b0d5630a9b2a84b43eea19331315908",
+      "bytes": 974
+    },
+    {
+      "filename": "036_add_episode_export_processing_lease.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/036_add_episode_export_processing_lease.sql",
+      "sha256": "6f071c965d3abcb2b996060934948710f954f09933830144fd1621b2cc0bbdc6",
+      "bytes": 1204
+    },
+    {
+      "filename": "036_fix_push_notification_cancelled_guard.sql",
+      "source": "2debe8c3c22633ed077e7b189ddcfa8b209a00dc",
+      "path": "migrations/036_fix_push_notification_cancelled_guard.sql",
+      "sha256": "8628a497caeddf01a34a54a3a96818fe4e31b5a21f1498aaa54e705efb7ae64d",
+      "bytes": 907
+    },
+    {
+      "filename": "037_connect_account_deletion.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/037_connect_account_deletion.sql",
+      "sha256": "d110d724cfaf94a4e2ec901515da34d15509c6f3bc2ca5451396af23ee268c81",
+      "bytes": 4225
+    },
+    {
+      "filename": "038_connect_generation_job_cancellation.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/038_connect_generation_job_cancellation.sql",
+      "sha256": "bc1f576784e37f51a2694489ef646e6cd948cf50b0dacb1de90b9410d4df9a19",
+      "bytes": 1667
+    },
+    {
+      "filename": "039_connect_generation_terminal_push_outbox.sql",
+      "source": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "path": "migrations/039_connect_generation_terminal_push_outbox.sql",
+      "sha256": "e09673f201523d3517f0e3a8bae932e3e915090f4f331893ae5fb11a242b70e6",
+      "bytes": 2213
+    },
+    {
+      "filename": "040_repair_page_story_metadata_columns.sql",
+      "source": "2debe8c3c22633ed077e7b189ddcfa8b209a00dc",
+      "path": "migrations/040_repair_page_story_metadata_columns.sql",
+      "sha256": "d8848c936a0fbcae3f6feae3d65cdcc0737c92b5afc0e64a55f2c7413b399b38",
+      "bytes": 1066
+    },
+    {
+      "filename": "041_add_mobile_subscription_scheduled_plan.sql",
+      "source": "2debe8c3c22633ed077e7b189ddcfa8b209a00dc",
+      "path": "migrations/041_add_mobile_subscription_scheduled_plan.sql",
+      "sha256": "f34fd13dd52f702c6fe01571ae409fdb89636b9139e4d5dc9aaf5beded15f218",
+      "bytes": 693
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import type { RepositorySchemaProfile } from '../../repositories/RepositorySchemaProfile.js';
 import { assessSavedPageGeneration, type PageGenerationReadinessResult } from './PageGenerationReadiness.js';
 import { randomUUID } from 'node:crypto';
 import { ConflictError, NotFoundError, PageReferenceModelIncompatibleError, PageStaleError, ValidationError } from '../../domain/errors/index.js';
@@ -33,6 +34,7 @@ export interface PageAtomicGenerationServicePort {
 }
 interface Dependencies {
   database: DatabaseClient & TransactionRunner;
+  persistenceProfile?: RepositorySchemaProfile;
   resolver: GenerationQuotePlanResolver;
   generationEnabled: boolean;
   capacityLimits?: GenerationCapacityLimits;
@@ -50,13 +52,13 @@ export class PageAtomicGenerationService implements PageAtomicGenerationServiceP
   public constructor(private readonly dependencies: Dependencies) {}
 
   public async getGenerationReadiness(userId: string, pageId: string, organizationId: string | null = null): Promise<PageGenerationReadinessResult> {
-    return assessSavedPageGeneration(this.dependencies.database, userId, pageId, organizationId, this.dependencies.generationEnabled);
+    return assessSavedPageGeneration(this.dependencies.database, userId, pageId, organizationId, this.dependencies.generationEnabled, true, this.dependencies.persistenceProfile);
   }
 
   public async saveAndGenerate(userId: string, pageId: string, input: SaveAndGeneratePageInput, organizationId: string | null = null): Promise<SaveAndGeneratePageResult> {
     validateInputShape(input);
     const bodyHash = fingerprintQuoteInput(input);
-    const initialPage = await new PostgresPageRepository(this.dependencies.database).findPageByIdAndUserId(pageId, userId, organizationId);
+    const initialPage = await new PostgresPageRepository(this.dependencies.database, this.dependencies.persistenceProfile ?? 'canonical').findPageByIdAndUserId(pageId, userId, organizationId);
     if (!initialPage) throw new NotFoundError('Page not found');
     // A replay never recompiles style or checks the obsolete expected revision.
     const previous = await findReceipt(this.dependencies.database, userId, pageId, organizationId, input.requestId);
@@ -68,7 +70,7 @@ export class PageAtomicGenerationService implements PageAtomicGenerationServiceP
       const bound = bindTransaction(client);
       await new PostgresGenerationQuoteRepository(bound).lockActor(client, userId);
       await requireScope(client, userId, organizationId);
-      const pageRepository = new PostgresPageRepository(bound);
+      const pageRepository = new PostgresPageRepository(bound, this.dependencies.persistenceProfile ?? 'canonical');
       const accessible = await pageRepository.findPageByIdAndUserId(pageId, userId, organizationId);
       if (!accessible) throw new NotFoundError('Page not found');
       const existing = await findReceipt(client, userId, pageId, organizationId, input.requestId);
@@ -78,7 +80,7 @@ export class PageAtomicGenerationService implements PageAtomicGenerationServiceP
       }
       if (!this.dependencies.generationEnabled) throw new ConflictError('Generation is temporarily disabled');
       // Legacy job admission takes capacity -> episode -> page. Preserve this order.
-      await new PostgresGenerationJobRepository(bound).lockCapacityForAtomicAdmission(client, userId, organizationId);
+      await new PostgresGenerationJobRepository(bound, this.dependencies.persistenceProfile ?? 'canonical').lockCapacityForAtomicAdmission(client, userId, organizationId);
       if (organizationId !== null) {
         await client.query('SELECT id FROM organizations WHERE id=$1::uuid FOR SHARE', [organizationId]);
         await client.query('SELECT user_id FROM organization_members WHERE organization_id=$1::uuid AND user_id=$2::uuid FOR SHARE', [organizationId, userId]);
@@ -94,14 +96,14 @@ export class PageAtomicGenerationService implements PageAtomicGenerationServiceP
       if (current.updatedAt.getTime() !== new Date(input.expectedUpdatedAt).getTime()) throw new PageStaleError();
       if (current.status === 'confirmed' || current.status === 'generating') throw new ConflictError('Page must be editable before generation');
       await this.saveDrafts(client, userId, pageId, organizationId, current, {...input, page: pageInput});
-      const readiness = await assessSavedPageGeneration(client, userId, pageId, organizationId, true, false);
+      const readiness = await assessSavedPageGeneration(client, userId, pageId, organizationId, true, false, this.dependencies.persistenceProfile);
       if (readiness.blockers.some((blocker) => blocker.code === 'CHARACTER_REFERENCE_MODEL_INCOMPATIBLE')) {
         throw new PageReferenceModelIncompatibleError();
       }
       if (!readiness.ready) throw new ValidationError(`Page generation is blocked: ${readiness.blockers.map(blocker=>blocker.code).join(', ')}`);
       // The shared substrate performs canonical/state-reference resolution and
       // actual pricing against these transaction-visible saved inputs.
-      const quotes = new GenerationQuoteService({database: bound, resolver: this.dependencies.resolver, enabled: true, capacityLimits: this.dependencies.capacityLimits});
+      const quotes = new GenerationQuoteService({database: bound, persistenceProfile: this.dependencies.persistenceProfile, resolver: this.dependencies.resolver, enabled: true, capacityLimits: this.dependencies.capacityLimits});
       const issued = await quotes.issue(userId, {operation: current.generatedImage === null ? 'page_generate' : 'page_regenerate', targetId: pageId, renderStyle: input.renderStyle}, organizationId);
       const accepted = await quotes.accept(userId, issued.quote.id, issued.quoteToken, randomUUID(), organizationId);
       const jobId = accepted.quote.acceptedJobId;
@@ -127,23 +129,23 @@ export class PageAtomicGenerationService implements PageAtomicGenerationServiceP
 
   private async saveDrafts(client: DatabaseClient, userId: string, pageId: string, organizationId: string | null, current: PageSummary, input: SaveAndGeneratePageInput): Promise<void> {
     const bound = bindTransaction(client);
-    const panels = new PostgresPanelRepository(bound);
-    const frames = new PostgresPanelFrameRepository(bound);
-    const entities = new PostgresEntityRepository(bound);
+    const panels = new PostgresPanelRepository(bound, this.dependencies.persistenceProfile ?? 'canonical');
+    const frames = new PostgresPanelFrameRepository(bound, this.dependencies.persistenceProfile ?? 'canonical');
+    const entities = new PostgresEntityRepository(bound, this.dependencies.persistenceProfile ?? 'canonical');
     const service = new PanelService(panels, entities, frames, new PostgresCompositionGalleryRepository(bound));
     const currentPanels = await panels.findPanelsByPageIdAndUserId(pageId,userId,organizationId);
     const requested = new Set(input.panels.map(panel=>panel.id));
     if (currentPanels.length !== requested.size || currentPanels.some(panel=>!requested.has(panel.id))) throw new ValidationError('Save and generate must include every current panel exactly once');
     const ordered = [...input.panels].sort((a,b)=>a.order-b.order);
     await service.reorderPanels(userId,pageId,ordered.map(panel=>panel.id),organizationId);
-    const assignments = new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(bound));
+    const assignments = new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(bound, this.dependencies.persistenceProfile ?? 'canonical'));
     for (const panel of ordered) {
       const {id,entities: selectedEntities,...fields} = panel;
       await service.updatePanel(userId,id,fields,organizationId);
       await assignments.replacePanelEntityAssignments(userId,id,selectedEntities,organizationId);
     }
     const layoutConfig = buildNextPageLayoutConfig(current,input.page);
-    const saved = await new PostgresPageRepository(bound).updatePageSettings(pageId,userId,{...input.page,...(layoutConfig === undefined ? {} : {layoutConfig})},organizationId);
+    const saved = await new PostgresPageRepository(bound, this.dependencies.persistenceProfile ?? 'canonical').updatePageSettings(pageId,userId,{...input.page,...(layoutConfig === undefined ? {} : {layoutConfig})},organizationId);
     if (!saved) throw new NotFoundError('Page not found');
     await new PanelFrameService(frames).replacePageFrames(userId,pageId,input.frames,organizationId);
   }

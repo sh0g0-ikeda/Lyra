@@ -3,6 +3,10 @@ import { join } from 'node:path';
 import { ConfigurationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from './db.js';
 import { reconcileProductionLineage } from './migrationLineage.js';
+import { createHash } from 'node:crypto';
+import { readRuntimeSchemaCatalogInTransaction } from './runtimeSchemaAttestation.js';
+import { describeProduction44ExpansionCheckpoint } from './production44ExpandedRuntimeSchemaAttestation.js';
+import { PRODUCTION44_EXPANSION_MIGRATIONS } from './production44ExpandedRuntimeSchemaDescriptor.js';
 
 export interface MigrationRunnerPort extends DatabaseClient, TransactionRunner {}
 
@@ -10,6 +14,86 @@ const MIGRATION_LOCK_NAME = 'schema_migrations';
 const DEFAULT_MIGRATION_LOCK_STALE_SECONDS = 15 * 60;
 const DEFAULT_MIGRATION_LOCK_POLL_MS = 250;
 const DEFAULT_MIGRATION_LOCK_MAX_ATTEMPTS = 240;
+
+export interface Production44ExpansionPool {
+  connect(): Promise<DatabaseClient & { release(destroy?: boolean): void }>;
+}
+
+/** Spec 11 C0: explicit forward-only path; ordinary migration behavior is unchanged.
+ * A pinned session owns the advisory lock across file transactions. The existing
+ * migration row excludes ordinary runners too; it is refreshed every checkpoint.
+ * Every SQL file and pre/post catalog is exact. A failed file rolls back atomically.
+ */
+export async function runProduction44Expansion(
+  pool: Production44ExpansionPool,
+  options: { migrationsDir?: string } = {},
+): Promise<string[]> {
+  const sqlFiles: string[] = [];
+  try {
+    for (const item of PRODUCTION44_EXPANSION_MIGRATIONS) {
+      const sql = (await readFile(join(options.migrationsDir ?? join(process.cwd(), 'migrations'), item.filename), 'utf8')).replaceAll('\r\n', '\n');
+      if (createHash('sha256').update(sql).digest('hex') !== item.sha256) throw new Error('mismatch');
+      sqlFiles.push(sql);
+    }
+  } catch {
+    throw new ConfigurationError('Production44 expansion failed: MIGRATION_FILE_MISMATCH');
+  }
+  let session: Awaited<ReturnType<Production44ExpansionPool['connect']>>;
+  try { session = await pool.connect(); }
+  catch { throw new ConfigurationError('Production44 expansion failed: CONNECTION_FAILED'); }
+  let leaseToken: string | null = null;
+  const applied: string[] = [];
+  try {
+    await session.query("SET statement_timeout='30s'; SET lock_timeout='1s'; SET idle_in_transaction_session_timeout='30s'");
+    const lock = await session.query<{ acquired: boolean }>('SELECT pg_try_advisory_lock(1744048, 52) AS acquired');
+    if (lock.rows[0]?.acquired !== true) throw new Error('busy');
+    const readCheckpoint = async (): Promise<number> => {
+      const catalog = await readRuntimeSchemaCatalogInTransaction(session, { includeFunctionBodies: true, includeLegacyAttributes: true });
+      const checkpoint = describeProduction44ExpansionCheckpoint(catalog);
+      if (checkpoint === null) throw new Error('unsupported');
+      return checkpoint;
+    };
+    await session.query('BEGIN READ ONLY');
+    await readCheckpoint();
+    await session.query('COMMIT');
+    const row = await session.query<{ token: string }>("INSERT INTO schema_migration_locks(name) VALUES($1) ON CONFLICT DO NOTHING RETURNING locked_at::text AS token", [MIGRATION_LOCK_NAME]);
+    if (row.rowCount !== 1) throw new Error('busy');
+    leaseToken = row.rows[0]!.token;
+    const deadline = Date.now() + 180_000;
+    for (;;) {
+      if (Date.now() >= deadline) throw new Error('deadline');
+      await session.query('BEGIN');
+      const owned = await session.query('SELECT name FROM schema_migration_locks WHERE name=$1 AND locked_at=$2::timestamptz FOR UPDATE', [MIGRATION_LOCK_NAME, leaseToken]);
+      if (owned.rowCount !== 1) throw new Error('lease lost');
+      const checkpoint = await readCheckpoint();
+      if (checkpoint === PRODUCTION44_EXPANSION_MIGRATIONS.length) {
+        await session.query('COMMIT');
+        return applied;
+      }
+      const migration = PRODUCTION44_EXPANSION_MIGRATIONS[checkpoint]!;
+      await session.query(sqlFiles[checkpoint]!);
+      await session.query('INSERT INTO schema_migrations(filename) VALUES($1)', [migration.filename]);
+      if (await readCheckpoint() !== checkpoint + 1) throw new Error('postcondition');
+      const refreshed = await session.query<{ token: string }>('UPDATE schema_migration_locks SET locked_at=clock_timestamp() WHERE name=$1 RETURNING locked_at::text AS token', [MIGRATION_LOCK_NAME]);
+      await session.query('COMMIT');
+      leaseToken = refreshed.rows[0]!.token;
+      applied.push(migration.filename);
+    }
+  } catch {
+    throw new ConfigurationError('Production44 expansion failed: CHECKPOINT_OR_MIGRATION_REJECTED');
+  } finally {
+    try {
+      await session.query('ROLLBACK');
+      if (leaseToken !== null) await session.query('DELETE FROM schema_migration_locks WHERE name=$1 AND locked_at=$2::timestamptz', [MIGRATION_LOCK_NAME, leaseToken]);
+    } catch {
+      throw new ConfigurationError('Production44 expansion failed: CLEANUP_FAILED');
+    } finally {
+      // Destroying this dedicated session also releases its advisory lock even
+      // after a connection/cleanup failure; never return altered GUCs to the pool.
+      session.release(true);
+    }
+  }
+}
 
 export async function runPendingMigrations(
   db: MigrationRunnerPort,

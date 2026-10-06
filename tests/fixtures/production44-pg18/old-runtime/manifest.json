@@ -1,0 +1,204 @@
+{
+  "sourceCommit": "2debe8c3c22633ed077e7b189ddcfa8b209a00dc",
+  "transpilerVersion": "5.9.3",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "filenameContext": "mts"
+  },
+  "entrypoints": [
+    "src/repositories/CreditRepository.ts",
+    "src/repositories/GenerationJobRepository.ts",
+    "src/repositories/PageRepository.ts",
+    "src/repositories/PushNotificationOutboxRepository.ts",
+    "src/services/credit/CreditService.ts"
+  ],
+  "files": [
+    {
+      "file": "src/domain/constants/credits.ts",
+      "sourcePath": "sources/src/domain/constants/credits.ts.source",
+      "runtimePath": "runtime/src/domain/constants/credits.js",
+      "gitBlob": "32e9fdf4a78929da495ff54aed67e6dd73838e37",
+      "sourceSha256": "a3df9416fb30fa571a894f04037edb163f676f52eed7abef407f51d526fbc352",
+      "runtimeSha256": "a528ebf0dc166fdd4db0f19f2f12584b32d8e5d765bdb165164fc1bb4b756488",
+      "dependencies": [],
+      "selectedImageTokenIdentityRoles": []
+    },
+    {
+      "file": "src/domain/errors/index.ts",
+      "sourcePath": "sources/src/domain/errors/index.ts.source",
+      "runtimePath": "runtime/src/domain/errors/index.js",
+      "gitBlob": "f3ea7b06b296fe34f306e0ac7b5665d81ad6d652",
+      "sourceSha256": "44df7100f6136e72330fd2f7eab8b4c2766d4c32dbaa1b37253f6619a955d656",
+      "runtimeSha256": "bf5a42b7a6dff4e88c787adbc65a91f344234dc6cf88009832e62c8afd386068",
+      "dependencies": [],
+      "selectedImageTokenIdentityRoles": []
+    },
+    {
+      "file": "src/domain/pagination.ts",
+      "sourcePath": "sources/src/domain/pagination.ts.source",
+      "runtimePath": "runtime/src/domain/pagination.js",
+      "gitBlob": "9ccbdfe94f65f2fd1b88e4615423e43082b248c3",
+      "sourceSha256": "f9f1e21d4d9e7b0dbddf3c0b37370e69688b7def1c484df2d07833d999479eea",
+      "runtimeSha256": "d64f02c75d6863effb617a1b63ede44f5ce694f79edcb93c4e58b7ec52f6fa4e",
+      "dependencies": [],
+      "selectedImageTokenIdentityRoles": []
+    },
+    {
+      "file": "src/domain/pushNotification.ts",
+      "sourcePath": "sources/src/domain/pushNotification.ts.source",
+      "runtimePath": "runtime/src/domain/pushNotification.js",
+      "gitBlob": "5dece6cec34a3a189e80be83600a3b040878c8ed",
+      "sourceSha256": "5e54b7f80e7bb1a832b10d3c565044894d23e0e5d92a8c79f80ff4d0afbfcb9f",
+      "runtimeSha256": "32b70f269e0451fa120eeee9f82f98eb3adcacb574f01da379967c7b74c4f195",
+      "dependencies": [],
+      "selectedImageTokenIdentityRoles": []
+    },
+    {
+      "file": "src/domain/types/job.ts",
+      "sourcePath": "sources/src/domain/types/job.ts.source",
+      "runtimePath": "runtime/src/domain/types/job.js",
+      "gitBlob": "a5dd3fef2fae53e578cfcc24d54adbe605cc2789",
+      "sourceSha256": "82208e1173691d815086d5913d4ae8a6f29dfc6cd27c3a5d78a5ac598c0253f3",
+      "runtimeSha256": "db1c6e5146ca17ec4a0fd71888fff527580fa30ee7495ffb95f8a20d93b5cb58",
+      "dependencies": [],
+      "selectedImageTokenIdentityRoles": []
+    },
+    {
+      "file": "src/domain/types/styleReference.ts",
+      "sourcePath": "sources/src/domain/types/styleReference.ts.source",
+      "runtimePath": "runtime/src/domain/types/styleReference.js",
+      "gitBlob": "8c3ee41318b3cef5ca84dd13c2ee5be9cc05e226",
+      "sourceSha256": "18ac80793e0463720b43c481101f686736db721931bc93dda0552bb4bba69849",
+      "runtimeSha256": "af44c76a8952d4376574f7abc155d31ed58c5613fb3ea4c095062d44b4355ab8",
+      "dependencies": [],
+      "selectedImageTokenIdentityRoles": []
+    },
+    {
+      "file": "src/lib/errorSanitizer.ts",
+      "sourcePath": "sources/src/lib/errorSanitizer.ts.source",
+      "runtimePath": "runtime/src/lib/errorSanitizer.js",
+      "gitBlob": "b1ec951861db183f9efa9eee659be449deec7081",
+      "sourceSha256": "b232e915585f13fda319c64ecc94b0df2b121ad74a5b48e5278163bf36665073",
+      "runtimeSha256": "8dd24f9bd16267bc12731b322d99b70e7a3336f24bb12ff53e8020f675ee1437",
+      "dependencies": [],
+      "selectedImageTokenIdentityRoles": []
+    },
+    {
+      "file": "src/lib/textEncoding.ts",
+      "sourcePath": "sources/src/lib/textEncoding.ts.source",
+      "runtimePath": "runtime/src/lib/textEncoding.js",
+      "gitBlob": "462724c13b0caee6112b5d80d8860731c6843941",
+      "sourceSha256": "899bf48d077d6d48b9365b301559fdcf765d9fa36f265389046bbe91c64e927a",
+      "runtimeSha256": "265faa5944ac031bb2980992ca40343666a65d188a81bb5aa8d7d89cd42dd417",
+      "dependencies": [],
+      "selectedImageTokenIdentityRoles": []
+    },
+    {
+      "file": "src/repositories/CreditRepository.ts",
+      "sourcePath": "sources/src/repositories/CreditRepository.ts.source",
+      "runtimePath": "runtime/src/repositories/CreditRepository.js",
+      "gitBlob": "ee82493eb05ce37d6220ba4fc766dad9f6990246",
+      "sourceSha256": "98adfd39066cb08b79c5b9f5489f67b9824bddccf69a655b52d1dc1443025859",
+      "runtimeSha256": "50b2a570910879aebebb6eedce311062b50bc9d48db332012564668d8e6d948c",
+      "dependencies": [],
+      "selectedImageTokenIdentityRoles": [
+        "api",
+        "worker"
+      ]
+    },
+    {
+      "file": "src/repositories/GenerationJobRepository.ts",
+      "sourcePath": "sources/src/repositories/GenerationJobRepository.ts.source",
+      "runtimePath": "runtime/src/repositories/GenerationJobRepository.js",
+      "gitBlob": "dfc6d9e596ca994d1ae6d83d9cdb1b5966e38f1d",
+      "sourceSha256": "6c073aac4298c0e5c5871dc2ec8265672f004a644982e79b89f8ae12cc156fd8",
+      "runtimeSha256": "d1f94c062d49ab433e730f2ac2f6e9dc689a7e9ffa10a7b421b22451136d7378",
+      "dependencies": [
+        "src/domain/types/job.ts",
+        "src/domain/errors/index.ts",
+        "src/lib/errorSanitizer.ts"
+      ],
+      "selectedImageTokenIdentityRoles": [
+        "api",
+        "worker"
+      ]
+    },
+    {
+      "file": "src/repositories/PageRepository.ts",
+      "sourcePath": "sources/src/repositories/PageRepository.ts.source",
+      "runtimePath": "runtime/src/repositories/PageRepository.js",
+      "gitBlob": "2dea47f5e80c22bb833d6aaeefef94e142584bd7",
+      "sourceSha256": "9cf13b93d5f5d2ca195e0435d6cfd9358feb651bf51d82bd5c9dac75af1d64c9",
+      "runtimeSha256": "6245ddd79fd8a656c9a7979e853af20c7d24b088f57c4fa7ec8e7e1fbb5e99bf",
+      "dependencies": [
+        "src/domain/types/styleReference.ts",
+        "src/domain/pagination.ts",
+        "src/lib/textEncoding.ts",
+        "src/domain/errors/index.ts"
+      ],
+      "selectedImageTokenIdentityRoles": [
+        "api",
+        "worker"
+      ]
+    },
+    {
+      "file": "src/repositories/PushNotificationOutboxRepository.ts",
+      "sourcePath": "sources/src/repositories/PushNotificationOutboxRepository.ts.source",
+      "runtimePath": "runtime/src/repositories/PushNotificationOutboxRepository.js",
+      "gitBlob": "b325c64fa2df4c5cc3d2254ab0d9d5bb5fe753ce",
+      "sourceSha256": "29b28f0306850318ac2fca1ffd60c15a1379585155d10eaaa47de0d07635b267",
+      "runtimeSha256": "39653e20cd86b5926b51da71881309552e0e045943ae9eeb339e58cca049f59d",
+      "dependencies": [
+        "src/domain/pushNotification.ts"
+      ],
+      "selectedImageTokenIdentityRoles": [
+        "api",
+        "worker"
+      ]
+    },
+    {
+      "file": "src/services/credit/CreditAmountValidation.ts",
+      "sourcePath": "sources/src/services/credit/CreditAmountValidation.ts.source",
+      "runtimePath": "runtime/src/services/credit/CreditAmountValidation.js",
+      "gitBlob": "89b1ead5e24071a4a4085c929dca7c827b713168",
+      "sourceSha256": "9f7fa4b993b795e4bb9708e61e1f2e6f0c084a48605969a5596740157609da75",
+      "runtimeSha256": "ff22921f996ee2c9be2f472653ae230a7823bc90cc195d96d898002ab4cb5996",
+      "dependencies": [
+        "src/domain/errors/index.ts"
+      ],
+      "selectedImageTokenIdentityRoles": []
+    },
+    {
+      "file": "src/services/credit/CreditBalanceExpiration.ts",
+      "sourcePath": "sources/src/services/credit/CreditBalanceExpiration.ts.source",
+      "runtimePath": "runtime/src/services/credit/CreditBalanceExpiration.js",
+      "gitBlob": "c3254740d7e9dacd24502938ab6f89da3c1703d5",
+      "sourceSha256": "db97841b3d628e1bbe230200e8bc98410e510f8b544d5910e4e292f4f8d38ad1",
+      "runtimeSha256": "08bbdc3175a452a31dc606d0d0ba7c4bda55f5fc7c8c8ee3824bcdb620ec2b41",
+      "dependencies": [],
+      "selectedImageTokenIdentityRoles": []
+    },
+    {
+      "file": "src/services/credit/CreditService.ts",
+      "sourcePath": "sources/src/services/credit/CreditService.ts.source",
+      "runtimePath": "runtime/src/services/credit/CreditService.js",
+      "gitBlob": "c688c87e3e2a934a30270ab6da0f4c5f7dc0317c",
+      "sourceSha256": "fdaed4c6701044a60fd030dda05fb71774479ca9962e164c0fb0aea24e611a22",
+      "runtimeSha256": "7d99571b13b63d31fce3bcf9bf60cabc3cbde401cd7f0d235504585ded37730d",
+      "dependencies": [
+        "src/domain/constants/credits.ts",
+        "src/domain/errors/index.ts",
+        "src/services/credit/CreditBalanceExpiration.ts",
+        "src/services/credit/CreditAmountValidation.ts"
+      ],
+      "selectedImageTokenIdentityRoles": [
+        "api",
+        "worker"
+      ]
+    }
+  ],
+  "sourceComparisonEvidenceSha256": "af5b0cb51261e184585fc91a3252ce2f1870bd67bac863175171a438a8ea339a",
+  "fullSourceOrDependencyIdentityProven": false,
+  "productionReadinessProven": false
+}

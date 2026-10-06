@@ -27,6 +27,7 @@ import { requireOpenAIEntityInputCompatible, requireOpenAIImageInputCompatible }
 import { resolveEntityImageProvenance } from '../services/entity/EntityImageProvenance.js';
 import { PostgresGenerationJobRepository } from './GenerationJobRepository.js';
 import { requireAssignedCharacterPrimariesCompatible } from '../services/page/PageCharacterPrimaryReferencePolicy.js';
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 
 export interface GenerationQuotePlanResolver {
   prepare(client: DatabaseClient,userId:string,organizationId:string|null,request:GenerationQuoteRequest):Promise<PreparedGenerationQuoteSource>;
@@ -34,6 +35,7 @@ export interface GenerationQuotePlanResolver {
   persistAdmission(client:DatabaseClient,quote:GenerationQuote,jobId:string):Promise<void>;
 }
 export interface GenerationQuotePlanResolverOptions {
+  persistenceProfile?: RepositorySchemaProfile;
   imageModel:string; generationEnabled:boolean; stateGenerationEnabled:boolean; importEnabled:boolean;
   pageGenerationEnabled?:boolean; entityGenerationEnabled?:boolean;
   uploadStorage?:EntityReferenceUploadStoragePort;
@@ -41,13 +43,16 @@ export interface GenerationQuotePlanResolverOptions {
 }
 
 export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanResolver {
-  public constructor(private readonly options:GenerationQuotePlanResolverOptions){}
+  private readonly persistenceProfile: RepositorySchemaProfile;
+  public constructor(private readonly options:GenerationQuotePlanResolverOptions){
+    this.persistenceProfile=options.persistenceProfile ?? CANONICAL_REPOSITORY_SCHEMA_PROFILE;
+  }
   public async prepare(client:DatabaseClient,userId:string,organizationId:string|null,request:GenerationQuoteRequest):Promise<PreparedGenerationQuoteSource>{
     if(request.operation==='entity_preview' && request.sourceCandidate!==undefined){
       const candidate=request.sourceCandidate;
       if(candidate.expiresAt<=Date.now() || !this.options.candidateImageLoader) throw new ValidationError('Source candidate expired or is unavailable');
       const entityId=requireTarget(request);
-      if(!await new PostgresEntityRepository(client).findReferenceContextByIdAndUserId(entityId,userId,organizationId)) throw new NotFoundError('Entity not found');
+      if(!await new PostgresEntityRepository(client,this.persistenceProfile).findReferenceContextByIdAndUserId(entityId,userId,organizationId)) throw new NotFoundError('Entity not found');
       ensureAllowedReferenceSourceKey(candidate.s3Key,userId,entityId);
       const image=await this.options.candidateImageLoader.loadByS3Key(candidate.s3Key);
       if((image.mimeType!=='image/png' && image.mimeType!=='image/jpeg' && image.mimeType!=='image/webp') || image.imageData.length===0
@@ -57,7 +62,7 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
     if(request.operation!=='entity_import_analysis') return null;
     if(!this.options.importEnabled || !this.options.uploadStorage) throw new ConflictError('Quoted import analysis is unavailable');
     if(!request.uploadTokenHash || !request.entityType) throw new ValidationError('A verified upload token and entity type are required');
-    const token=await new PostgresEntityReferenceUploadTokenRepository(client).inspect({tokenHash:request.uploadTokenHash,userId,organizationId,purpose:ENTITY_REFERENCE_UPLOAD_PURPOSE});
+    const token=await new PostgresEntityReferenceUploadTokenRepository(client,this.persistenceProfile).inspect({tokenHash:request.uploadTokenHash,userId,organizationId,purpose:ENTITY_REFERENCE_UPLOAD_PURPOSE});
     if(!token || (request.entityId!==undefined && request.entityId!==token.entityId)) throw new NotFoundError('Import upload not found');
     ensureAllowedReferenceSourceKey(token.s3Key,userId,token.entityId ?? '');
     const loaded=await this.options.uploadStorage.loadUploadedImage({s3Key:token.s3Key,mimeType:token.mimeType,sizeBytes:token.sizeBytes});
@@ -95,10 +100,10 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
     await client.query('SELECT id FROM panels WHERE page_id=$1::uuid ORDER BY id FOR UPDATE',[targetId]);
     await client.query('SELECT id FROM panel_frames WHERE page_id=$1::uuid ORDER BY id FOR SHARE',[targetId]);
     await client.query('SELECT id FROM scenes WHERE episode_id=$1::uuid ORDER BY id FOR SHARE',[episodeId]);
-    const bound=bindTransaction(client); const pageRepository=new PostgresPageRepository(bound);
+    const bound=bindTransaction(client); const pageRepository=new PostgresPageRepository(bound,this.persistenceProfile);
     const page=await pageRepository.findGenerationContextByIdAndUserId(targetId,userId,organizationId);
     if(!page) throw new NotFoundError('Page not found');
-    const savedPanels=await new PostgresPanelRepository(bound).findPanelsByPageIdAndUserId(targetId,userId,organizationId);
+    const savedPanels=await new PostgresPanelRepository(bound,this.persistenceProfile).findPanelsByPageIdAndUserId(targetId,userId,organizationId);
     page.panels=savedPanels.map((panel)=>({panelId:panel.id,entities:panel.entities}));
     await this.lockWorkInputs(client,page.workId);
     if(page.status==='generating' || page.status==='confirmed') throw new ConflictError('Page is not editable for generation');
@@ -107,10 +112,10 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
     const active=await client.query(`SELECT id FROM generation_jobs WHERE status IN ('queued','processing') AND
       ((job_type='page_generate' AND params->>'page_id'=$1) OR (job_type IN ('episode_story_autofill','episode_page_skeleton') AND params->>'episode_id'=$2))`,[targetId,episodeId]);
     if(active.rows.length) throw new ConflictError('Page or episode generation is already active');
-    const entities=new PostgresEntityRepository(bound);
+    const entities=new PostgresEntityRepository(bound,this.persistenceProfile);
     const profile=new ModeSelector().selectProfile({entityCount:new Set(page.panels.flatMap((panel)=>panel.entities.map((assignment)=>assignment.entityId))).size,
       panelCount:page.panels.length,requestKind:request.operation==='page_regenerate'?'regenerate':'initial',billableReferenceCount:0});
-    const prompt=await new PromptBuilder(pageRepository,new PostgresPanelRepository(bound),entities,new PostgresCompositionGalleryRepository(bound)).buildPagePrompt({
+    const prompt=await new PromptBuilder(pageRepository,new PostgresPanelRepository(bound,this.persistenceProfile),entities,new PostgresCompositionGalleryRepository(bound)).buildPagePrompt({
       userId,organizationId,pageId:targetId,requestKind:profile.requestKind,generationMode:profile.mode,renderStyle:selection.renderStyle ?? 'color'});
     const references=prompt.inputSnapshot.references ?? [];
     const assignments=Array.from(new Map(page.panels.flatMap((panel)=>panel.entities.map((assignment)=>[
@@ -146,7 +151,7 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
       if(!state.rows[0] || (request.entityId!==undefined && request.entityId!==state.rows[0].entity_id)) throw new NotFoundError('Entity state not found');
       entityId=state.rows[0].entity_id;
     }
-    const bound=bindTransaction(client); const entityRepository=new PostgresEntityRepository(bound);
+    const bound=bindTransaction(client); const entityRepository=new PostgresEntityRepository(bound,this.persistenceProfile);
     const initial=await entityRepository.findReferenceContextByIdAndUserId(entityId,userId,organizationId);
     if(!initial) throw new NotFoundError('Entity not found');
     await this.lockWorkInputs(client,initial.workId);
@@ -158,7 +163,7 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
       if(statePreview || candidate===null || candidate.expiresAt<=Date.now() || candidate.s3Key!==request.sourceCandidate.s3Key) throw new ConflictError('Source candidate changed or expired');
       ensureAllowedReferenceSourceKey(candidate.s3Key,userId,entityId);
       requireOpenAIEntityInputCompatible(await resolveEntityImageProvenance({userId,entityId,organizationId,s3Key:candidate.s3Key,
-        references:entity.referenceSet.images,jobs:new PostgresGenerationJobRepository(bound)}));
+        references:entity.referenceSet.images,jobs:new PostgresGenerationJobRepository(bound,this.persistenceProfile)}));
       return plan(request,selection,{targetId,workId:entity.workId,referenceCount:1,generationMode:null,
         snapshot:{kind:'entity',entity,state:null,sourceS3Key:candidate.s3Key,sourceImage:candidate},
         jobParams:{entity_id:entityId,entity_type:entity.entityType,previous_entity_status:entity.status,source_s3_key:candidate.s3Key}});
@@ -184,11 +189,11 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
   private async resolveImport(client:DatabaseClient,userId:string,organizationId:string|null,request:GenerationQuoteRequest,source:QuotedImportSource|null,selection:Selection):Promise<GenerationQuotePlan>{
     if(!this.options.importEnabled || !source || !request.entityType) throw new ConflictError('Quoted import analysis is unavailable');
     await client.query('SELECT id FROM entity_reference_upload_tokens WHERE id=$1::uuid FOR UPDATE',[source.uploadId]);
-    const upload=await new PostgresEntityReferenceUploadTokenRepository(client).inspect({tokenHash:source.tokenHash,userId,organizationId,purpose:ENTITY_REFERENCE_UPLOAD_PURPOSE});
+    const upload=await new PostgresEntityReferenceUploadTokenRepository(client,this.persistenceProfile).inspect({tokenHash:source.tokenHash,userId,organizationId,purpose:ENTITY_REFERENCE_UPLOAD_PURPOSE});
     if(!upload || upload.id!==source.uploadId || upload.s3Key!==source.s3Key || upload.sizeBytes!==source.sizeBytes || upload.mimeType!==source.mimeType) throw new ConflictError('Import upload changed or expired');
     let workId:string|null=null;
     if(upload.entityId!==null){
-      const entityRepository=new PostgresEntityRepository(bindTransaction(client));
+      const entityRepository=new PostgresEntityRepository(bindTransaction(client),this.persistenceProfile);
       const initial=await entityRepository.findReferenceContextByIdAndUserId(upload.entityId,userId,organizationId);
       if(!initial) throw new NotFoundError('Entity not found');
       await this.lockWorkInputs(client,initial.workId);
@@ -207,7 +212,7 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
       if(result.rows.length!==1) throw new ConflictError('Page state changed during generation admission');
       await client.query(`UPDATE generation_jobs SET result=jsonb_build_object('input_snapshot',$2::jsonb) WHERE id=$1::uuid`,[jobId,JSON.stringify(snapshot.prompt.inputSnapshot)]);
     }else if(snapshot.kind==='import'){
-      const result=await new PostgresEntityReferenceUploadTokenRepository(client).consume({tokenHash:snapshot.source.tokenHash,userId:quote.userId,organizationId:quote.organizationId,purpose:ENTITY_REFERENCE_UPLOAD_PURPOSE});
+      const result=await new PostgresEntityReferenceUploadTokenRepository(client,this.persistenceProfile).consume({tokenHash:snapshot.source.tokenHash,userId:quote.userId,organizationId:quote.organizationId,purpose:ENTITY_REFERENCE_UPLOAD_PURPOSE});
       if(!result || result.id!==snapshot.source.uploadId) throw new ConflictError('Import upload was already consumed');
     }
   }

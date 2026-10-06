@@ -6,7 +6,7 @@ async function main(): Promise<void> {
   const { jobId, userId } = parseRetryPageGenerationArgs(process.argv.slice(2));
   const [
     { closeDatabasePool, db },
-    { attestCanonicalRuntimeSchema, startAttestedCanonicalRuntime },
+    { attestRuntimeSchema, startAttestedRuntime },
     { PostgresCreditRepository },
     { PostgresGenerationJobRepository },
     { PostgresOrganizationRepository },
@@ -27,8 +27,8 @@ async function main(): Promise<void> {
   ]);
 
   try {
-    await startAttestedCanonicalRuntime({
-      attest: () => attestCanonicalRuntimeSchema(db),
+    await startAttestedRuntime({
+      attest: () => attestRuntimeSchema(db),
       start: async (runtime) => {
         const retryService = new PageGenerationRetryService(
           new PostgresGenerationJobRepository(db, runtime.repositoryProfile),

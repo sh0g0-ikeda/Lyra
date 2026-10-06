@@ -1,4 +1,4 @@
-import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, isProduction44RepositorySchemaProfile, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { QueryResultRow } from 'pg';
 import type { GenerationJob, GenerationJobType, GenerationJobStatus, GenerationJobCreditSettlement } from '../domain/types/job.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
@@ -835,13 +835,16 @@ export class PostgresGenerationJobRepository
       return false;
     }
     const candidate = mapGenerationJobRow(candidateRow);
-    if (candidate.status === 'cancelled') {
+    const reconcileCancelled = isProduction44RepositorySchemaProfile(this.schemaProfile);
+    if (candidate.status === 'cancelled' && !reconcileCancelled) {
       return true;
     }
     if (
-      candidate.status !== 'processing'
-      || candidate.cancelRequestedAt === null
-      || candidate.commitStartedAt !== null
+      candidate.status !== 'cancelled' && (
+        candidate.status !== 'processing'
+        || candidate.cancelRequestedAt === null
+        || candidate.commitStartedAt !== null
+      )
     ) {
       return false;
     }
@@ -858,7 +861,26 @@ export class PostgresGenerationJobRepository
         return false;
       }
       const lockedJob = mapGenerationJobRow(lockedRow);
+      // An old writer can finish cancellation without application settlement on
+      // production44. Reconcile only the same observed identity, using the
+      // existing balance -> job lock order and net-ledger refund calculation.
+      if (reconcileCancelled && (
+        lockedJob.userId !== candidate.userId
+        || (lockedJob.organizationId ?? null) !== (candidate.organizationId ?? null)
+        || lockedJob.jobType !== candidate.jobType
+        || lockedJob.retryCount !== candidate.retryCount
+        || lockedJob.creditCost !== candidate.creditCost
+        || (candidate.status === 'cancelled' && lockedJob.status !== 'cancelled')
+      )) return false;
       if (lockedJob.status === 'cancelled') {
+        if (reconcileCancelled) {
+          await this.settleCancelledJob(
+            transactionClient,
+            lockedJob,
+            lockedJob.cancelRequestedBy ?? lockedJob.userId,
+            lockedBalance,
+          );
+        }
         return true;
       }
       if (

@@ -40,7 +40,7 @@ describe('runtime schema attestation', () => {
 
   it('canonical 001..046だけの既知fresh schemaを047 migration候補として識別する', () => {
     const catalog = canonicalCatalog();
-    catalog.migrationFilenames = [...CANONICAL_RUNTIME_MIGRATIONS.slice(0, -1)];
+    catalog.migrationFilenames = [...CANONICAL_RUNTIME_MIGRATIONS.slice(0, -2)];
     catalog.relations = catalog.relations.filter(({ name }) => name !== 'state_reference_copy_attempts');
     catalog.columns = catalog.columns.filter(({ relation }) => relation !== 'state_reference_copy_attempts');
     catalog.constraints = catalog.constraints.filter(({ relation }) => relation !== 'state_reference_copy_attempts');
@@ -204,7 +204,7 @@ describe('runtime schema attestation', () => {
 
   it('既知canonical 046は047適用候補に限ってmigration後のfinal canonicalを要求する', async () => {
     const pending = canonicalCatalog();
-    pending.migrationFilenames = [...CANONICAL_RUNTIME_MIGRATIONS.slice(0, -1)];
+    pending.migrationFilenames = [...CANONICAL_RUNTIME_MIGRATIONS.slice(0, -2)];
     pending.relations = pending.relations.filter(({ name }) => name !== 'state_reference_copy_attempts');
     pending.columns = pending.columns.filter(({ relation }) => relation !== 'state_reference_copy_attempts');
     pending.constraints = pending.constraints.filter(({ relation }) => relation !== 'state_reference_copy_attempts');
@@ -232,6 +232,19 @@ describe('runtime schema attestation', () => {
     })).rejects.toThrow('Runtime schema attestation failed: SCHEMA_UNSUPPORTED');
     expect(runMigrations).not.toHaveBeenCalled();
   });
+});
+
+it('canonical047を維持し048はexact trigger/functionを必須にする', () => {
+  const catalog = canonicalCatalog();
+  expect(describeRuntimeSchema(catalog).kind).toBe('canonical_fresh_v1');
+  catalog.migrationFilenames.push('048_advance_entity_state_revision_for_legacy_writers.sql');
+  expect(describeRuntimeSchema(catalog).kind).toBe('unsupported');
+  catalog.columns.push(column('entity_states', 'updated_at', 'timestamp with time zone'));
+  catalog.triggers.push(trigger('entity_states', 'entity_states_monotonic_revision', 'lyra_advance_entity_state_revision', 'f4ecec84d3f71eb573ea77f0e3f3c54e8c90604aeb80dc9b54910517f66dd040'));
+  catalog.functions = [{ name: 'lyra_advance_entity_state_revision', identityArguments: '', returnType: 'trigger', language: 'plpgsql', securityDefiner: false, settings: [], bodySha256: '205cfe9d4f1cdc91c376ee628dd7b4e00ea668a9303b4cdb281f40077442c0c1', kind: 'function', volatility: 'volatile', strict: false, parallel: 'unsafe', leakproof: false }];
+  expect(describeRuntimeSchema(catalog).kind).toBe('canonical_fresh_v1');
+  catalog.functions[0]!.bodySha256 = '0'.repeat(64);
+  expect(describeRuntimeSchema(catalog).kind).toBe('unsupported');
 });
 
 function canonicalCatalog(): RuntimeSchemaCatalog {
@@ -272,7 +285,7 @@ function canonicalCatalog(): RuntimeSchemaCatalog {
     constraint('state_reference_copy_attempts', 'state_copy_v2_scope_shape'),
   ];
   return {
-    migrationFilenames: [...CANONICAL_RUNTIME_MIGRATIONS],
+    migrationFilenames: CANONICAL_RUNTIME_MIGRATIONS.filter(filename => !filename.startsWith('048')),
     relations,
     namespaceArtifacts: [],
     columns,

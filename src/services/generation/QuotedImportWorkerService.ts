@@ -1,3 +1,4 @@
+import type { RepositorySchemaProfile } from '../../repositories/RepositorySchemaProfile.js';
 import { createHash } from 'node:crypto';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { ENTITY_IMPORT_ANALYSIS_MODEL } from '../../domain/constants/entityReference.js';
@@ -15,11 +16,11 @@ import { ensureAllowedReferenceSourceKey } from '../entity/EntityReferenceSource
 
 export class QuotedImportWorkerService {
   public constructor(private readonly database:DatabaseClient & TransactionRunner,private readonly storage:EntityReferenceUploadStoragePort,
-    private readonly analyzer:EntityImportAnalyzerPort,private readonly enabled=true){}
+    private readonly analyzer:EntityImportAnalyzerPort,private readonly enabled=true,private readonly persistenceProfile:RepositorySchemaProfile='canonical'){}
   public async processJob(jobId:string):Promise<{status:'processed'|'skipped';jobStatus?:'completed'|'failed'|'cancelled'}>{
     if(!this.enabled) throw new ConfigurationError('Import analysis worker is temporarily disabled');
-    const execution=new PostgresQuotedImportExecutionRepository(this.database);
-    const jobs=new PostgresGenerationJobRepository(this.database);
+    const execution=new PostgresQuotedImportExecutionRepository(this.database,this.persistenceProfile);
+    const jobs=new PostgresGenerationJobRepository(this.database,this.persistenceProfile);
     const job=await execution.claim(jobId);
     if(!job) return {status:'skipped'};
     const heartbeat=setInterval(()=>{void execution.touchProgress(jobId).catch(()=>undefined);},60_000);
@@ -31,7 +32,7 @@ export class QuotedImportWorkerService {
       if(snapshot.kind!=='import') throw new ConfigurationError('Import snapshot is invalid');
       const source=snapshot.source;
       if(source.entityId!==null){
-        const entity=await new PostgresEntityRepository(this.database).findReferenceContextByIdAndUserId(source.entityId,job.userId,job.organizationId ?? null);
+        const entity=await new PostgresEntityRepository(this.database,this.persistenceProfile).findReferenceContextByIdAndUserId(source.entityId,job.userId,job.organizationId ?? null);
         if(entity===null || entity.entityType!==snapshot.entityType) throw new ConfigurationError('Quoted import entity changed before execution');
       }
       ensureAllowedReferenceSourceKey(source.s3Key,job.userId,source.entityId ?? '');

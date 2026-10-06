@@ -84,8 +84,8 @@ import { LocalPreviewPageImageRenderer } from '../src/infrastructure/local/Local
 import { LocalPreviewEntityReferenceGenerator } from '../src/infrastructure/local/LocalPreviewEntityReferenceGenerator.js';
 import { resolveLocalAssetConfig } from '../src/infrastructure/local/LocalAssetFiles.js';
 import { env } from '../src/lib/env.js';
-import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
-import { attestCanonicalRuntimeSchema, startAttestedCanonicalRuntime, type AttestedCanonicalRuntime } from '../src/lib/runtimeSchemaAttestation.js';
+import { assertProductionRuntimeConfig, assertAttestedRuntimeCapabilities } from '../src/lib/runtimeGuards.js';
+import { attestRuntimeSchema, startAttestedRuntime, type AttestedRuntime } from '../src/lib/runtimeSchemaAttestation.js';
 import type { RepositorySchemaProfile } from '../src/repositories/RepositorySchemaProfile.js';
 import {
   PageGenerationInputImageBuilder,
@@ -175,17 +175,18 @@ export async function resolveAttestedWorkerDependencies(
   overrides: WorkerDependencyOverrides = {},
 ): Promise<WorkerDependencies> {
   assertProductionRuntimeConfig(env);
-  return startAttestedCanonicalRuntime({
-    attest: () => attestCanonicalRuntimeSchema(db),
+  return startAttestedRuntime({
+    attest: () => attestRuntimeSchema(db),
     start: (runtime) => resolveWorkerDependencies(overrides, runtime),
   });
 }
 
 export function resolveWorkerDependencies(
   overrides: WorkerDependencyOverrides = {},
-  attestedRuntime?: AttestedCanonicalRuntime,
+  attestedRuntime?: AttestedRuntime,
 ): WorkerDependencies {
   assertProductionRuntimeConfig(env);
+  if (attestedRuntime !== undefined) assertAttestedRuntimeCapabilities(attestedRuntime, env);
   const persistenceProfile = attestedRuntime?.repositoryProfile ?? env.LYRA_PERSISTENCE_PROFILE;
   const episodeExportWorkerService = overrides.episodeExportWorkerService ?? resolveConfiguredExportWorker();
 
@@ -312,7 +313,7 @@ export function resolveWorkerDependencies(
 
   const quotedInputs = new QuotedGenerationInputs(
     db, env.OPENAI_API_KEY !== undefined && !env.LOCAL_IMAGE_FALLBACK_ENABLED ? env.OPENAI_IMAGE_MODEL : 'unavailable',
-    storedImageLoader, new LayoutGuideImageRenderer(),
+    storedImageLoader, new LayoutGuideImageRenderer(), persistenceProfile,
   );
   const importClient = buildOpenAIClient();
   const quotedImportWorkerService = overrides.quotedImportWorkerService
@@ -324,6 +325,7 @@ export function resolveWorkerDependencies(
       }),
       new OpenAIEntityImportAnalyzer(importClient),
       env.ENTITY_IMPORT_ANALYSIS_ENABLED,
+      persistenceProfile,
     ) : undefined);
 
   return {

@@ -23,7 +23,7 @@ import { ConfigurationError } from '../domain/errors/index.js';
 import type { PageListCursor } from '../domain/pagination.js';
 import { readStyleReferenceMetadata } from '../domain/types/styleReference.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
-import type { RepositorySchemaProfile } from './RepositorySchemaProfile.js';
+import { usesPhysicalPageStoryMetadata, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignment.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
 import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
@@ -205,7 +205,7 @@ export class PostgresPageRepository
     private readonly mode: PageStoryMetadataStorageMode | RepositorySchemaProfile = 'canonical',
     private readonly transactionRunner?: TransactionRunner,
   ) {
-    this.storyMetadataStorageMode = mode === 'legacyPhysical' || mode === 'legacy_2debe_v1'
+    this.storyMetadataStorageMode = mode === 'legacyPhysical' || usesPhysicalPageStoryMetadata(mode)
       ? 'legacyPhysical'
       : 'canonical';
     this.legacySchemaProfile = mode === 'legacy_2debe_v1';
@@ -234,13 +234,13 @@ export class PostgresPageRepository
   }
 
   private episodeStartingEntityStatesSelect(): string {
-    return this.legacySchemaProfile
+    return this.legacySchemaProfile || this.mode === 'production44_pg18_v1'
       ? `'[]'::jsonb AS starting_entity_states`
       : 'episodes.starting_entity_states';
   }
 
   private stateLibrarySelect(): string {
-    if (this.legacySchemaProfile) {
+    if (this.legacySchemaProfile || this.mode === 'production44_pg18_v1') {
       return `'[]'::jsonb AS state_library`;
     }
     return `(

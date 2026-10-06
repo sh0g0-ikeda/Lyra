@@ -1,3 +1,4 @@
+import type { RepositorySchemaProfile } from '../../repositories/RepositorySchemaProfile.js';
 import { ConfigurationError, NotFoundError } from '../../domain/errors/index.js';
 import { createHash } from 'node:crypto';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
@@ -33,16 +34,16 @@ export interface QuotedGenerationInputsPort {
 /** Accepted quote contents are the execution input, not a hint to reread current drafts. */
 export class QuotedGenerationInputs implements QuotedGenerationInputsPort {
   public constructor(private readonly database:DatabaseClient & TransactionRunner,private readonly imageModel:string,
-    private readonly loader:StoredImageLoaderPort,private readonly layoutRenderer:LayoutGuideImageRendererPort){}
+    private readonly loader:StoredImageLoaderPort,private readonly layoutRenderer:LayoutGuideImageRendererPort,private readonly persistenceProfile:RepositorySchemaProfile='canonical'){}
   public async page(job:GenerationJob):Promise<QuotedPageInputs>{
     const quote=await this.requireQuote(job);
     const snapshot=quote.plan.snapshot;
     if(snapshot.kind!=='page' || job.jobType!=='page_generate') throw new ConfigurationError('Quoted generation operation mismatch');
-    const page=await new PostgresPageRepository(this.database).findGenerationContextByIdAndUserId(quote.plan.targetId,job.userId,job.organizationId ?? null);
+    const page=await new PostgresPageRepository(this.database,this.persistenceProfile).findGenerationContextByIdAndUserId(quote.plan.targetId,job.userId,job.organizationId ?? null);
     if(!page) throw new NotFoundError('Quoted page is no longer available');
     const assignedEntityIds=new Set(snapshot.prompt.inputSnapshot.panels.flatMap((panel)=>panel.entityIds));
     if(assignedEntityIds.size>0){
-      const repository=new PostgresEntityRepository(this.database);
+      const repository=new PostgresEntityRepository(this.database,this.persistenceProfile);
       const entities=await repository.findByWorkIdAndUserId(page.workId,job.userId,job.organizationId ?? null);
       const primaryReferences=await repository.findPrimaryReferenceImagesByEntityIdsAndUserId(
         Array.from(assignedEntityIds),page.workId,job.userId,job.organizationId ?? null,
@@ -70,7 +71,7 @@ export class QuotedGenerationInputs implements QuotedGenerationInputsPort {
   public async entity(job:GenerationJob):Promise<QuotedEntityInputs>{
     const quote=await this.requireQuote(job);const snapshot=quote.plan.snapshot;
     if(snapshot.kind!=='entity' || job.jobType!=='entity_generate') throw new ConfigurationError('Quoted generation operation mismatch');
-    if(!await new PostgresEntityRepository(this.database).findReferenceContextByIdAndUserId(snapshot.entity.entityId,job.userId,job.organizationId ?? null)) throw new NotFoundError('Quoted entity is no longer available');
+    if(!await new PostgresEntityRepository(this.database,this.persistenceProfile).findReferenceContextByIdAndUserId(snapshot.entity.entityId,job.userId,job.organizationId ?? null)) throw new NotFoundError('Quoted entity is no longer available');
     if(snapshot.state!==null){
       const current=await new PostgresEntityStateReferenceRepository(this.database).findContextByIdAndUserId(
         snapshot.entity.entityId,snapshot.state.stateId,job.userId,job.organizationId ?? null,
@@ -83,7 +84,7 @@ export class QuotedGenerationInputs implements QuotedGenerationInputsPort {
     if(snapshot.state!==null) requireOpenAIEntityInputCompatible(snapshot.state.baseReference);
     if(key!==null && snapshot.state===null) requireOpenAIEntityInputCompatible(await resolveEntityImageProvenance({
       userId:job.userId,entityId:snapshot.entity.entityId,organizationId:job.organizationId ?? null,s3Key:key,
-      references:snapshot.entity.referenceSet.images,jobs:new PostgresGenerationJobRepository(this.database),
+      references:snapshot.entity.referenceSet.images,jobs:new PostgresGenerationJobRepository(this.database,this.persistenceProfile),
     }));
     if(snapshot.sourceImage!==undefined){
       const expected=snapshot.sourceImage;

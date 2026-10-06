@@ -28,7 +28,7 @@ describe('worker dependency policy', () => {
   it('runs production runtime guard before worker polling starts', () => {
     const source = readFileSync(join(process.cwd(), 'scripts', 'runGenerationWorker.ts'), 'utf8');
 
-    expect(source).toContain("import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';");
+    expect(source).toContain("import { assertProductionRuntimeConfig, assertAttestedRuntimeCapabilities } from '../src/lib/runtimeGuards.js';");
     expect(source).toContain('assertProductionRuntimeConfig(env);');
     expect(source.indexOf('assertProductionRuntimeConfig(env);')).toBeLessThan(
       source.indexOf("if (env.SQS_QUEUE_URL_GENERATION === undefined)"),

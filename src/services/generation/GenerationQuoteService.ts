@@ -13,9 +13,11 @@ import type { GenerationQuotePlanResolver } from '../../repositories/GenerationQ
 import { CreditService } from '../credit/CreditService.js';
 import { OrganizationService } from '../organization/OrganizationService.js';
 import { DEFAULT_GENERATION_CAPACITY_LIMITS, type GenerationCapacityLimits } from './GenerationCapacityGuard.js';
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from '../../repositories/RepositorySchemaProfile.js';
 
 export interface GenerationQuoteDispatcherPort { dispatchQuote(quoteId: string): Promise<void> }
 export interface GenerationQuoteServiceDependencies {
+  persistenceProfile?: RepositorySchemaProfile;
   database: DatabaseClient & TransactionRunner;
   resolver: GenerationQuotePlanResolver;
   enabled: boolean;
@@ -87,7 +89,7 @@ export class GenerationQuoteService {
       return this.repository.receipt(client,userId,organizationId,quoteId);
     });
     if(result.quote.plan.operation==='entity_import_analysis' && result.quote.acceptedJobId!==null){
-      await new PostgresQuotedImportExecutionRepository(this.dependencies.database).recoverExpired(1,result.quote.acceptedJobId);
+      await new PostgresQuotedImportExecutionRepository(this.dependencies.database,this.dependencies.persistenceProfile ?? 'canonical').recoverExpired(1,result.quote.acceptedJobId);
       result=await this.repository.receipt(this.dependencies.database,userId,organizationId,quoteId);
     }
     if(result.quote.acceptedJobId !== null) await this.dispatchSafely(quoteId);
@@ -98,7 +100,7 @@ export class GenerationQuoteService {
     const plan=quote.plan;
     const jobType=plan.operation === 'entity_import_analysis' ? 'entity_import_analysis'
       : plan.operation === 'page_generate' || plan.operation === 'page_regenerate' ? 'page_generate' : 'entity_generate';
-    const job=await new PostgresGenerationJobRepository(bound).createWithAdmission({
+    const job=await new PostgresGenerationJobRepository(bound,this.dependencies.persistenceProfile ?? CANONICAL_REPOSITORY_SCHEMA_PROFILE).createWithAdmission({
       id:randomUUID(),userId:quote.userId,organizationId:quote.organizationId,jobType,
       generationMode:plan.generationMode,creditCost:plan.amountCredits,
       capacityLimits:this.dependencies.capacityLimits ?? DEFAULT_GENERATION_CAPACITY_LIMITS,

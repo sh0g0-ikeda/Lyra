@@ -79,7 +79,7 @@ import {
 import type { GooglePubSubPushVerifier } from './infrastructure/google/GooglePubSubPushVerifier.js';
 import { db } from './lib/db.js';
 import { env } from './lib/env.js';
-import { assertProductionRuntimeConfig, isDevAuthBypassRuntimeAllowed } from './lib/runtimeGuards.js';
+import { assertProductionRuntimeConfig, assertAttestedRuntimeCapabilities, isDevAuthBypassRuntimeAllowed } from './lib/runtimeGuards.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import type { AuthProvider, CognitoVerifierConfig } from './middleware/auth.js';
 import { createCorsMiddleware, parseCorsAllowedOrigins } from './middleware/cors.js';
@@ -334,7 +334,7 @@ import {
 
 export interface AppDependencies {
   /** Supplied by verified boot entrypoints; omitted by existing isolated test DI. */
-  attestedRuntime?: import('./lib/runtimeSchemaAttestation.js').AttestedCanonicalRuntime;
+  attestedRuntime?: import('./lib/runtimeSchemaAttestation.js').AttestedRuntime;
   aiContentReportService?: AiContentReportServicePort;
   organizationSafetyReportService?: OrganizationSafetyReportServicePort;
   accountDeletionService?: AccountDeletionServicePort;
@@ -400,6 +400,7 @@ export interface AppDependencies {
 
 export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   assertProductionRuntimeConfig(env);
+  if (dependencies.attestedRuntime !== undefined) assertAttestedRuntimeCapabilities(dependencies.attestedRuntime, env);
   resolveFencedStateReferenceConfig(env);
 
   const resolvedDependencies = resolveDependencies(dependencies);
@@ -905,8 +906,10 @@ function resolveDependencies(
   });
   const generationQuoteService = dependencies.generationQuoteService ?? new GenerationQuoteService({
     database: db,
+    persistenceProfile,
     enabled: env.GENERATION_QUOTES_ENABLED,
     resolver: new PostgresGenerationQuotePlanResolver({
+      persistenceProfile,
       imageModel: env.OPENAI_IMAGE_MODEL,
       generationEnabled: env.GENERATION_ENABLED,
       pageGenerationEnabled: env.PAGE_GENERATION_ENABLED,
@@ -1148,10 +1151,12 @@ function resolveDependencies(
     new BalloonService(balloonRepository, entityRepository, panelRepository, panelFrameRepository);
   const pageAtomicGenerationService = dependencies.pageAtomicGenerationService ?? new PageAtomicGenerationService({
     database: db,
+    persistenceProfile,
     // The public quote flag is intentionally irrelevant to the shipped direct endpoint.
     // A durable queue is still required before any paid job can be admitted.
     generationEnabled: env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED && env.OPENAI_IMAGE_MODEL === 'gpt-image-2' && generationQueue !== null,
     resolver: new PostgresGenerationQuotePlanResolver({
+      persistenceProfile,
       imageModel: env.OPENAI_IMAGE_MODEL,
       generationEnabled: env.GENERATION_ENABLED,
       pageGenerationEnabled: env.PAGE_GENERATION_ENABLED,
@@ -1232,7 +1237,7 @@ function resolveDependencies(
       () => Date.now(),
       env.EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED,
       env.GENERATION_JOB_CANCELLATION_ENABLED,
-      new PostgresQuotedImportExecutionRepository(db),
+      new PostgresQuotedImportExecutionRepository(db,persistenceProfile),
     );
   const storyCollaborationService =
     dependencies.storyCollaborationService ??

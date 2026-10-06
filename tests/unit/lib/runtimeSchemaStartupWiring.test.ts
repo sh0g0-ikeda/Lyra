@@ -6,8 +6,8 @@ describe('runtime schema attestation startup wiring', () => {
   it('APIはconfig guard後かつruntime/recovery/maintenance/HTTPより前にschemaを確定する', () => {
     const source = read('src/index.ts');
     const guard = source.indexOf('assertProductionRuntimeConfig(env)');
-    const startup = source.indexOf('await startAttestedCanonicalRuntime(');
-    const attest = source.indexOf('await prepareCanonicalRuntimeSchema(');
+    const startup = source.indexOf('await startAttestedRuntime(');
+    const attest = source.indexOf('await prepareAttestedRuntimeSchema(');
     expect(guard).toBeGreaterThanOrEqual(0);
     expect(startup).toBeGreaterThan(guard);
     expect(attest).toBeGreaterThan(guard);
@@ -28,15 +28,31 @@ describe('runtime schema attestation startup wiring', () => {
     const source = read('scripts/runGenerationWorker.ts');
     const guard = source.indexOf('assertProductionRuntimeConfig(env)');
     const queue = source.indexOf('env.SQS_QUEUE_URL_GENERATION === undefined');
-    const attest = source.indexOf('attest: () => attestCanonicalRuntimeSchema(db)');
+    const attest = source.indexOf('attest: () => attestRuntimeSchema(db)');
     expect(guard).toBeGreaterThanOrEqual(0);
     expect(queue).toBeGreaterThan(guard);
     expect(attest).toBeGreaterThan(queue);
     expect(source.indexOf("recoveryRunner.run('startup')")).toBeGreaterThan(attest);
     expect(source.indexOf('resolveWorkerDependencies({}, runtime)')).toBeGreaterThan(attest);
     expect(source.indexOf('new GenerationQueuePoller(')).toBeGreaterThan(attest);
-    expect(source).toContain('new GenerationWorkerRecoveryRunner(organizationService, runtime)');
+    expect(source).toContain('new GenerationWorkerRecoveryRunner(organizationService, runtime, cancelledRecovery, terminalRecovery)');
     expect(source).toContain('this.runtime.repositoryProfile');
+  });
+
+  it('APIは起動時だけでなく周期処理を保持し停止時に精算の完了を待つ',()=>{
+    const source=read('src/index.ts');
+    expect(source).toContain('await createCancelledGenerationSettlementRecoveryRuntime(db, runtime.repositoryProfile)');
+    expect(source).toContain('await startCancelledGenerationSettlementRecoveryMaintenance(cancelledRecovery)');
+    expect(source).toContain('stopCancelledRecovery(), stopTerminalRecovery(), stopPush(), stopAccountDeletion(), stopExports(), httpClosed,');
+    expect(source).toContain("process.once('SIGTERM'");
+  });
+
+  it('workerは同instanceを周期へ渡しquote例外と独立に処理してDBclose前にawaitする',()=>{
+    const source=read('scripts/runGenerationWorker.ts');
+    expect(source.match(/await createCancelledGenerationSettlementRecoveryRuntime\(/gu)).toHaveLength(1);
+    expect(source).toContain('await this.cancelledRecovery?.run()');
+    expect(source.indexOf('await this.cancelledRecovery?.run()')).toBeLessThan(source.indexOf('const quoteSchema ='));
+    expect(source.indexOf('await recoveryRunner.stop()')).toBeLessThan(source.indexOf('await closeDatabasePool()'));
   });
 
   it('queue handlerは明示dependenciesを維持し省略時だけattested resolverを待つ', () => {
@@ -48,7 +64,7 @@ describe('runtime schema attestation startup wiring', () => {
 
   it('manual retryはrepository/worker serviceを作る前にattestする', () => {
     const source = read('scripts/retryPageGenerationJob.ts');
-    const attest = source.indexOf('attest: () => attestCanonicalRuntimeSchema(db)');
+    const attest = source.indexOf('attest: () => attestRuntimeSchema(db)');
     expect(attest).toBeGreaterThanOrEqual(0);
     expect(source.indexOf('new PageGenerationRetryService(')).toBeGreaterThan(attest);
     expect(source.indexOf('resolveWorkerDependencies({}, runtime)')).toBeGreaterThan(attest);

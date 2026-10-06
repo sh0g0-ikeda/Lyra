@@ -22,6 +22,7 @@ import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import {
   CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   type RepositorySchemaProfile,
+  hasPreVariantEntitySchema,
 } from './RepositorySchemaProfile.js';
 import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
@@ -583,7 +584,7 @@ export class PostgresEntityRepository
     const requestedAssignments = Array.from(new Map(
       assignments.map((assignment) => [referenceAssignmentKey(assignment), assignment]),
     ).values());
-    const legacyStateSelect = this.schemaProfile === 'legacy_2debe_v1'
+    const legacyStateSelect = hasPreVariantEntitySchema(this.schemaProfile)
       ? `NULL::text AS state_name,
               NULL::text AS state_description,
               NULL::jsonb AS state_reference_image`

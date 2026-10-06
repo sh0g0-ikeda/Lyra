@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { Pool, type QueryResultRow } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
@@ -43,7 +44,7 @@ describePostgres('runtime schema attestation PostgreSQL boundary', () => {
       [userId],
     );
 
-    const catalog = await readRuntimeSchemaCatalog(database);
+    const catalog = await readRuntimeSchemaCatalog(database, { includeFunctionBodies: true, includeLegacyAttributes: true });
     expect(describeRuntimeSchema(catalog)).toEqual({ kind: 'canonical_fresh_v1', failures: [] });
     const attested = await attestCanonicalRuntimeSchema(database);
     expect(attested).toBe('canonical_fresh_v1');
@@ -53,6 +54,14 @@ describePostgres('runtime schema attestation PostgreSQL boundary', () => {
         AND column_name IN ('story_source_scene_ids','story_page_purpose','story_continuity_note')
     `);
     expect(physical.rows).toEqual([]);
+    // A staged canonical047 binary remains bootable; a half-recorded048 is not.
+    await pool.query("DELETE FROM schema_migrations WHERE filename='048_advance_entity_state_revision_for_legacy_writers.sql'");
+    await expect(attestCanonicalRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+    await pool.query('DROP TRIGGER entity_states_monotonic_revision ON entity_states; DROP FUNCTION lyra_advance_entity_state_revision()');
+    expect(await attestCanonicalRuntimeSchema(database)).toBe('canonical_fresh_v1');
+    await pool.query(await readFile(join(process.cwd(),'migrations/048_advance_entity_state_revision_for_legacy_writers.sql'),'utf8'));
+    await pool.query("INSERT INTO schema_migrations(filename) VALUES('048_advance_entity_state_revision_for_legacy_writers.sql')");
+    expect(await attestCanonicalRuntimeSchema(database)).toBe('canonical_fresh_v1');
   }, 120_000);
 
   it('2debe production lineage schemaをread-onlyで拒否しmigration receiptを変えない', async () => {

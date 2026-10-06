@@ -44,6 +44,7 @@ import {
 import {
   CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   type RepositorySchemaProfile,
+  hasPreVariantEntitySchema,
 } from './RepositorySchemaProfile.js';
 import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
@@ -1184,6 +1185,7 @@ export class PostgresStoryRepository
     startingEntityStates: EpisodeStartingEntityState[],
     organizationId: string | null = null,
   ): Promise<boolean> {
+    if (hasPreVariantEntitySchema(this.schemaProfile)) return false;
     const result = await this.client.query<{ valid: boolean }>(
       `
       WITH authorized_episode AS (
@@ -1238,8 +1240,8 @@ export class PostgresStoryRepository
     organizationId: string | null = null,
   ): Promise<Episode | null> {
     const startingEntityStates = input.startingEntityStates;
-    if (this.schemaProfile === 'legacy_2debe_v1' && startingEntityStates !== undefined) {
-      throw new ConfigurationError('startingEntityStates is not supported by legacy_2debe_v1 persistence');
+    if (hasPreVariantEntitySchema(this.schemaProfile) && startingEntityStates !== undefined) {
+      throw new ConfigurationError('startingEntityStates is not supported by ' + this.schemaProfile + ' persistence');
     }
     if (this.schemaProfile === 'legacy_2debe_v1') {
       return this.runLegacyPersonalGraphWrite(userId, organizationId, async (client) => {
@@ -1331,7 +1333,7 @@ export class PostgresStoryRepository
             estimated_pages = COALESCE($20, episodes.estimated_pages),
             entities_involved = CASE WHEN $21::boolean THEN $22 ELSE episodes.entities_involved END,
             status = COALESCE($23, episodes.status),
-             ${this.schemaProfile === 'legacy_2debe_v1' ? '' : `starting_entity_states = CASE
+             ${hasPreVariantEntitySchema(this.schemaProfile) ? '' : `starting_entity_states = CASE
               WHEN $24::boolean THEN $25::jsonb
               ELSE episodes.starting_entity_states
              END,`}
@@ -1353,7 +1355,7 @@ export class PostgresStoryRepository
                       'climax', episodes.climax,
                       'ending_hook', episodes.ending_hook,
                       'estimated_pages', episodes.estimated_pages,
-                       'entities_involved', episodes.entities_involved${this.schemaProfile === 'legacy_2debe_v1' ? '' : ",\n                       'starting_entity_states', episodes.starting_entity_states"},
+                       'entities_involved', episodes.entities_involved${hasPreVariantEntitySchema(this.schemaProfile) ? '' : ",\n                       'starting_entity_states', episodes.starting_entity_states"},
                       'status', episodes.status,
                       'updated_at', episodes.updated_at
                     )

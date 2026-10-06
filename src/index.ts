@@ -16,24 +16,26 @@ import { CreditService } from './services/credit/CreditService.js';
 import { EntityGenerationRecoveryService } from './services/entity/EntityGenerationRecoveryService.js';
 import { PageGenerationRecoveryService } from './services/page/PageGenerationRecoveryService.js';
 import { OrganizationService } from './services/organization/OrganizationService.js';
-import { db } from './lib/db.js';
+import { closeDatabasePool, db } from './lib/db.js';
+import { createCancelledGenerationSettlementRecoveryRuntime, startCancelledGenerationSettlementRecoveryMaintenance } from './lib/cancelledGenerationSettlementRecoveryRuntime.js';
 import { env } from './lib/env.js';
 import { runPendingMigrations } from './lib/migrations.js';
-import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
-import { prepareCanonicalRuntimeSchema, startAttestedCanonicalRuntime, type AttestedCanonicalRuntime } from './lib/runtimeSchemaAttestation.js';
+import { assertProductionRuntimeConfig, assertAttestedRuntimeCapabilities } from './lib/runtimeGuards.js';
+import { createTerminalGenerationNotificationRecoveryRuntime, startTerminalGenerationNotificationRecoveryMaintenance } from './lib/terminalGenerationNotificationRecoveryRuntime.js';
+import { prepareAttestedRuntimeSchema, startAttestedRuntime, type AttestedRuntime } from './lib/runtimeSchemaAttestation.js';
 import { sanitizePersistedErrorMessage } from './lib/errorSanitizer.js';
 import { createFencedStateReferenceRuntime } from './infrastructure/state/FencedStateReferenceRuntime.js';
 
 async function main(): Promise<void> {
   assertProductionRuntimeConfig(env);
-  await startAttestedCanonicalRuntime({
+  await startAttestedRuntime({
     attest: prepareRuntimeSchema,
     start: startRuntime,
   });
 }
 
-async function prepareRuntimeSchema(): Promise<'canonical_fresh_v1'> {
-  const schema = await prepareCanonicalRuntimeSchema({
+async function prepareRuntimeSchema(): Promise<AttestedRuntime> {
+  const schema = await prepareAttestedRuntimeSchema({
     database: db,
     autoRunMigrations: env.AUTO_RUN_MIGRATIONS,
     runMigrations: async () => runPendingMigrations(db),
@@ -43,10 +45,15 @@ async function prepareRuntimeSchema(): Promise<'canonical_fresh_v1'> {
   } else if (!env.AUTO_RUN_MIGRATIONS) {
     console.warn('[migrations] startup migration auto-run is disabled');
   }
-  return schema.descriptor;
+  return schema.runtime;
 }
 
-async function startRuntime(runtime: AttestedCanonicalRuntime): Promise<void> {
+async function startRuntime(runtime: AttestedRuntime): Promise<void> {
+  assertAttestedRuntimeCapabilities(runtime, env);
+  const terminalRecovery = await createTerminalGenerationNotificationRecoveryRuntime(db, runtime.repositoryProfile, {
+    enabled: env.PUSH_NOTIFICATIONS_ENABLED, cutover: env.PUSH_TERMINAL_RECOVERY_CUTOVER, intervalMs: env.PUSH_DELIVERY_INTERVAL_MS,
+  });
+  const cancelledRecovery = await createCancelledGenerationSettlementRecoveryRuntime(db, runtime.repositoryProfile);
   const fencedStateReferenceRuntime = createFencedStateReferenceRuntime(env, db);
 
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
@@ -95,11 +102,13 @@ async function startRuntime(runtime: AttestedCanonicalRuntime): Promise<void> {
     );
   }
 
-  startPushNotificationMaintenance(createPushNotificationDeliveryRuntime(env, db));
-  startAccountDeletionRecovery(createAccountDeletionRecoveryRuntime(env, db, fencedStateReferenceRuntime));
-  startEpisodeExportMaintenance(createEpisodeExportMaintenanceRuntime(env, db));
+  const stopPush = startPushNotificationMaintenance(createPushNotificationDeliveryRuntime(env, db));
+  const stopAccountDeletion = startAccountDeletionRecovery(createAccountDeletionRecoveryRuntime(env, db, fencedStateReferenceRuntime));
+  const stopExports = startEpisodeExportMaintenance(createEpisodeExportMaintenanceRuntime(env, db));
+  const stopCancelledRecovery = await startCancelledGenerationSettlementRecoveryMaintenance(cancelledRecovery);
+  const stopTerminalRecovery = await startTerminalGenerationNotificationRecoveryMaintenance(terminalRecovery);
 
-  serve(
+  const server = serve(
     {
       fetch: createApp({ fencedStateReferenceRuntime, attestedRuntime: runtime }).fetch,
       port: env.PORT,
@@ -108,6 +117,35 @@ async function startRuntime(runtime: AttestedCanonicalRuntime): Promise<void> {
       console.log(`Lyra API listening on http://localhost:${info.port}`);
     },
   );
+  let shutdown: Promise<void> | null = null;
+  const stop = (): Promise<void> => {
+    if (shutdown !== null) return shutdown;
+    const httpClosed = new Promise<void>((resolve, reject) => {
+      server.close(error => { if (error) reject(error); else resolve(); });
+    });
+    shutdown = (async () => {
+      // Stop scheduling before draining HTTP and recovery. No DB close can
+      // overtake this reconciliation or an in-flight push dispatch.
+      const drained = await Promise.allSettled([
+        stopCancelledRecovery(), stopTerminalRecovery(), stopPush(), stopAccountDeletion(), stopExports(), httpClosed,
+      ]);
+      await closeDatabasePool();
+      if (drained.some(result => result.status === 'rejected')) {
+        console.error('API shutdown could not confirm all background work stopped');
+        process.exitCode = 1;
+      }
+    })().catch(() => {
+      console.error('API shutdown failed while draining background work');
+      process.exitCode = 1;
+    });
+    return shutdown;
+  };
+  process.once('SIGINT', () => { void stop(); });
+  process.once('SIGTERM', () => { void stop(); });
 }
 
-void main();
+void main().catch(async (error: unknown) => {
+  console.error(sanitizePersistedErrorMessage(error, 'API startup failed'));
+  await closeDatabasePool();
+  process.exitCode = 1;
+});

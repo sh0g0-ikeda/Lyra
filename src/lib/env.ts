@@ -225,6 +225,7 @@ const envSchema = z.object({
   GOOGLE_PLAY_PRODUCT_CREDITS_1000: z.string().min(1).max(255).optional(),
   GOOGLE_PLAY_PRODUCT_CREDITS_3000: z.string().min(1).max(255).optional(),
   PUSH_NOTIFICATIONS_ENABLED: z.string().optional().transform((value) => value === 'true'),
+  PUSH_TERMINAL_RECOVERY_CUTOVER: z.string().optional(),
   PUSH_TOKEN_ENCRYPTION_KEY_BASE64: z.string().min(1).optional(),
   PUSH_TOKEN_HASH_KEY_BASE64: z.string().min(1).optional(),
   PUSH_TOKEN_ENCRYPTION_KEY_ID: z.string().min(1).max(64).optional(),

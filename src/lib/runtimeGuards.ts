@@ -1,4 +1,16 @@
 import { ConfigurationError } from '../domain/errors/index.js';
+import { assertVerifiedRuntimeProof, type AttestedRuntime } from './runtimeSchemaAttestation.js';
+
+export function assertAttestedRuntimeCapabilities(runtime: AttestedRuntime, config: {
+  ENTITY_STATE_REFERENCE_GENERATION_ENABLED?: boolean;
+  STATE_REFERENCE_COPY_V2_ADMISSION_ENABLED?: boolean;
+}): void {
+  assertVerifiedRuntimeProof(runtime);
+  if (!runtime.capabilities.entityStateMonotonicRevision
+    && (config.ENTITY_STATE_REFERENCE_GENERATION_ENABLED === true || config.STATE_REFERENCE_COPY_V2_ADMISSION_ENABLED === true)) {
+    throw new ConfigurationError('Entity state generation admission requires attested migration 048');
+  }
+}
 import {
   MAX_PRODUCTION_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS,
   MAX_PRODUCTION_GENERATION_ACTIVE_JOB_LIMITS,

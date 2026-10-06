@@ -1,0 +1,78 @@
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+
+export class AppError extends Error {
+  public constructor(
+    public readonly code: string,
+    message: string,
+    public readonly statusCode: ContentfulStatusCode,
+  ) {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
+export class UnauthorizedError extends AppError {
+  public constructor(message = 'Unauthorized') {
+    super('UNAUTHORIZED', message, 401);
+  }
+}
+
+export class ValidationError extends AppError {
+  public constructor(message = 'Validation failed') {
+    super('VALIDATION_ERROR', message, 422);
+  }
+}
+
+export class PayloadTooLargeError extends AppError {
+  public constructor(message = 'Payload too large') {
+    super('PAYLOAD_TOO_LARGE', message, 413);
+  }
+}
+
+export class RateLimitError extends AppError {
+  public constructor(bucket: string, retryAfterSeconds: number) {
+    super('RATE_LIMITED', `Rate limit exceeded for ${bucket}. Retry after ${retryAfterSeconds} seconds`, 429);
+  }
+}
+
+export class NotFoundError extends AppError {
+  public constructor(message = 'Not found') {
+    super('NOT_FOUND', message, 404);
+  }
+}
+
+export class ForbiddenError extends AppError {
+  public constructor(message = 'Forbidden') {
+    super('FORBIDDEN', message, 403);
+  }
+}
+
+export class ConflictError extends AppError {
+  public constructor(message = 'Conflict') {
+    super('CONFLICT', message, 409);
+  }
+}
+
+export class PageStaleError extends AppError {
+  public constructor() {
+    super('PAGE_STALE', 'The page was changed by another edit. Reload before generating.', 409);
+  }
+}
+
+export class ResourceStaleError extends AppError {
+  public constructor() {
+    super('RESOURCE_STALE', 'The resource was changed by another edit. Reload and review the latest state.', 409);
+  }
+}
+
+export class InsufficientCreditsError extends AppError {
+  public constructor() {
+    super('INSUFFICIENT_CREDITS', 'Credit balance is insufficient', 402);
+  }
+}
+
+export class ConfigurationError extends AppError {
+  public constructor(message: string) {
+    super('CONFIGURATION_ERROR', message, 500);
+  }
+}
