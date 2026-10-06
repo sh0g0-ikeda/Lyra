@@ -16,11 +16,11 @@ interface ProviderRecord {
   i: number; u: number; o: number; e: string[]; r: Array<string | null>;
   a: number[]; c: Array<string | null>; z: boolean[]; x: string[]; q: string[];
 }
-function locator(source: string, value: string): string {
-  const start = source.indexOf(value);
-  if (start < 0 || value.length === 0) throw new Error('Invalid test span');
-  const first = [...source.slice(0, start)].length + 1;
-  return String(first) + '-' + String(first + [...value].length - 1);
+function fragmentId(unit: EpisodeSourceRequirementExtraction['units'][number], value: string): string {
+  const fragment = unit.fragmentCatalog.find((candidate) =>
+    unit.text.slice(candidate.start, candidate.end) === value);
+  if (fragment === undefined) throw new Error(`Missing test fragment: ${value}`);
+  return fragment.id;
 }
 function prepare(story: string): EpisodeSourceRequirementExtraction {
   const result = prepareEpisodeSourceRequirementExtraction({
@@ -38,7 +38,7 @@ function rowsFor(extraction: EpisodeSourceRequirementExtraction): ProviderRecord
     orders.set(unit.pageId ?? 'global', order);
     return [{
       i: index + 1, u: index + 1, o: order,
-      e: unit.scope === 'global' ? [] : [locator(unit.text, text)],
+      e: unit.scope === 'global' ? [] : [fragmentId(unit, text)],
       r: unit.scope === 'global' ? [] : [null], a: [],
       c: unit.scope === 'global' ? [] : [null],
       z: unit.scope === 'global' ? [] : [true], x: [], q: [],
@@ -58,36 +58,36 @@ async function compile(
   return new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({ extraction, language: 'ja' });
 }
 
-// Spec §6: displayed IDs and restored literals share one code-point catalog;
+// Spec §6: globally unique fragment IDs resolve only through their owning unit;
 // all packs are bounded before payment, while semantic quality is checked separately.
-describe('原文文字ID v3の受入契約', () => {
-  it('日本語・絵文字・改行・引用符のcatalogが元文字列とUTF16境界を完全保持する', () => {
-    const original = '1ページ目：😀が「はい」と言う。\n次の行は\\"引用\\"。\n';
+describe('原文fragment ID v4の受入契約', () => {
+  it('日本語・絵文字・改行・引用符のfragmentが元UTF16 spanを完全保持する', () => {
+    const original = '1ページ目：😀が「はい」と言う。\n次の行は"引用"、“確認”と続ける。\n';
     const extraction = prepare(original);
     expect(extraction.units.map(unit => unit.text).join('')).toBe(original);
-    for (const unit of extraction.units) {
-      expect(unit.locatorCatalog.map(entry => entry.char).join('')).toBe(unit.text);
-      expect(unit.locatorCatalog.map(entry => unit.text.slice(entry.start, entry.end)).join('')).toBe(unit.text);
-      expect(unit.locatorCatalog.map(entry => entry.id)).toEqual(
-        Array.from({ length: [...unit.text].length }, (_value, index) => index + 1),
-      );
-    }
-    const emoji = extraction.units.flatMap(unit => unit.locatorCatalog).find(entry => entry.char === '😀');
-    expect(emoji!.end - emoji!.start).toBe(2);
+    const fragments = extraction.units.flatMap(unit => unit.fragmentCatalog.map(fragment => ({ unit, fragment })));
+    expect(new Set(fragments.map(({ fragment }) => fragment.id)).size).toBe(fragments.length);
+    const emojiUnit = extraction.units.find(unit => unit.text.includes('😀'))!;
+    const emojiFragment = emojiUnit.fragmentCatalog.find(fragment =>
+      emojiUnit.text.slice(fragment.start, fragment.end).includes('😀'))!;
+    expect(emojiUnit.text.slice(emojiFragment.start, emojiFragment.end)).toContain('😀');
+    expect(emojiUnit.text.slice(emojiFragment.start, emojiFragment.end)).not.toContain('\uFFFD');
+    expect(fragments.some(({ unit, fragment }) =>
+      unit.text.slice(fragment.start, fragment.end) === 'はい')).toBe(true);
+    expect(fragments.some(({ unit, fragment }) =>
+      unit.text.slice(fragment.start, fragment.end) === '引用')).toBe(true);
+    expect(fragments.some(({ unit, fragment }) =>
+      unit.text.slice(fragment.start, fragment.end) === '確認')).toBe(true);
   });
 
-  it('単一codepointのeventと結果・条件・引用を正確に復元し元UTF16範囲を使う', async () => {
-    const extraction = prepare('1ページ目：😀が動いて止まり、「はい」と言う前は待つ。');
+  it('eventと結果・条件・引用を列挙済みfragmentから正確に復元する', async () => {
+    const extraction = prepare('1ページ目：😀、止まり、言う前は待つ、「はい」。');
     const unit = extraction.units[0]!;
     const row = rowsFor(extraction)[0]!;
-    row.e = [locator(unit.text, '😀')];
-    row.r = [locator(unit.text, '止まり')];
-    row.c = [locator(unit.text, '言う前は待つ')];
-    row.q = [locator(unit.text, 'はい')];
-    // The source text is authoritative even if a display character is stale.
-    extraction.units[0] = { ...unit, locatorCatalog: unit.locatorCatalog.map(
-      entry => entry.char === '😀' ? { ...entry, char: '別' } : entry,
-    ) };
+    row.e = [fragmentId(unit, '😀')];
+    row.r = [fragmentId(unit, '止まり')];
+    row.c = [fragmentId(unit, '言う前は待つ')];
+    row.q = [fragmentId(unit, 'はい')];
     const result = await compile(extraction, [row]);
     expect(result.requirements.requirements[0]).toMatchObject({
       events: ['😀'], results: ['止まり'], quotedText: ['はい'],
@@ -99,11 +99,11 @@ describe('原文文字ID v3の受入契約', () => {
   });
 
   it('5種類の属性は同じunitの原文spanからすべて正確に復元する', async () => {
-    const extraction = prepare('1ページ目：😀を見て驚き、理由を確かめ、近景から引く。');
+    const extraction = prepare('1ページ目：😀、驚き、理由を確かめ、近景、引く。');
     const unit = extraction.units[0]!;
     const row = rowsFor(extraction)[0]!;
     row.x = ['😀', '驚き', '理由を確かめ', '近景', '引く'].map(
-      (value, index) => String(index + 1) + ':' + locator(unit.text, value),
+      (value, index) => String(index + 1) + ':' + fragmentId(unit, value),
     );
     const result = await compile(extraction, [row]);
     expect(result.requirements.requirements[0]).toMatchObject({
@@ -111,14 +111,13 @@ describe('原文文字ID v3の受入契約', () => {
     });
   });
   it.each([
-    ['未表示ID', (row: ProviderRecord) => { row.e = ['9998-9999']; }],
-    ['ゼロID', (row: ProviderRecord) => { row.e = ['0-1']; }],
-    ['逆順ID', (row: ProviderRecord) => { row.e = ['3-2']; }],
-    ['旧colon', (row: ProviderRecord) => { row.e = ['6:1']; }],
-    ['結果の範囲外', (row: ProviderRecord) => { row.r = ['1-9999']; }],
-    ['条件の範囲外', (row: ProviderRecord) => { row.c = ['1-9999']; }],
-    ['属性の範囲外', (row: ProviderRecord) => { row.x = ['5:1-9999']; }],
-    ['引用の範囲外', (row: ProviderRecord) => { row.q = ['1-9999']; }],
+    ['unknown ID', (row: ProviderRecord) => { row.e = ['f9999']; }],
+    ['旧numeric range', (row: ProviderRecord) => { row.e = ['1-2']; }],
+    ['旧colon', (row: ProviderRecord) => { row.e = ['1:f1']; }],
+    ['結果のunknown ID', (row: ProviderRecord) => { row.r = ['f9999']; }],
+    ['条件のunknown ID', (row: ProviderRecord) => { row.c = ['f9999']; }],
+    ['属性のunknown ID', (row: ProviderRecord) => { row.x = ['5:f9999']; }],
+    ['引用のunknown ID', (row: ProviderRecord) => { row.q = ['f9999']; }],
     ['obligation配列の不一致', (row: ProviderRecord) => { row.r = []; }],
   ])('%sの場合に不正な原文を保存せず拒否する', async (_label, change) => {
     const extraction = prepare('1ページ目：😀が進む。');
@@ -127,9 +126,30 @@ describe('原文文字ID v3の受入契約', () => {
     await expect(compile(extraction, rows)).rejects.toThrow();
   });
 
+  it('別unitに属するfragment IDの場合に不正な原文を保存せず拒否する', async () => {
+    const extraction = prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: '1ページ目：扉を開く。\n2ページ目：窓を閉じる。',
+      pages: [
+        { pageId: PAGE_1, pageNumber: 1 },
+        { pageId: PAGE_2, pageNumber: 2 },
+      ],
+    })!;
+    const firstUnit = extraction.units.find((unit) =>
+      unit.pageNumber === 1 && unit.text.trim().length > 0)!;
+    const secondUnitIndex = extraction.units.findIndex((unit) =>
+      unit.pageNumber === 2 && unit.text.trim().length > 0);
+    const rows = rowsFor(extraction);
+    const secondRow = rows.find((row) => row.u === secondUnitIndex + 1)!;
+    secondRow.e = [firstUnit.fragmentCatalog[0]!.id];
+
+    await expect(compile(extraction, rows)).rejects.toThrow(
+      'Source requirement referenced an invalid source span',
+    );
+  });
+
   it('JSON escape後だけ32KiBを超える原文を全pack事前判定で拒否する', () => {
     let found: EpisodeSourceRequirementExtraction | undefined;
-    for (let count = 200; count <= 3_000; count += 20) {
+    for (let count = 200; count <= 7_900; count += 20) {
       const extraction = prepare('1ページ目：' + String.fromCharCode(92).repeat(count) + '。');
       const raw = Buffer.byteLength(extraction.compilerBrief, 'utf8');
       const escaped = Buffer.byteLength(JSON.stringify(extraction.compilerBrief), 'utf8');
@@ -144,13 +164,13 @@ describe('原文文字ID v3の受入契約', () => {
     const first = prepare('1ページ目：開始。');
     expect(buildEpisodeSourceRequirementExtractionPacks(first, [first.pages])).not.toBeNull();
     const extraction = prepareEpisodeSourceRequirementExtraction({
-      storyFullDraft: '1ページ目：開始。\n2ページ目：' + 'あ'.repeat(3_000) + '。', pages,
+      storyFullDraft: '1ページ目：開始。\n2ページ目：' + String.fromCharCode(92).repeat(7_000) + '。', pages,
     })!;
     expect(extraction).not.toBeNull();
     expect(buildEpisodeSourceRequirementExtractionPacks(extraction, [pages.slice(0, 1), pages.slice(1)])).toBeNull();
   });
 
-  it('人工15ページ137unitを53+54件の2packに収め実postJson全体も64KiB内に収める', async () => {
+  it('人工15ページ137unitを54+53件の2packに収め実postJson全体も64KiB内に収める', async () => {
     const pages = Array.from({ length: 15 }, (_value, index) => ({
       pageId: String(index + 1).padStart(8, '0') + '-1111-4111-8111-111111111111',
       pageNumber: index + 1,
@@ -160,7 +180,7 @@ describe('原文文字ID v3の受入契約', () => {
     expect(extraction.units.filter(unit => unit.text.trim().length > 0)).toHaveLength(107);
     const packs = buildEpisodeSourceRequirementExtractionPacks(extraction, [pages.slice(0, 8), pages.slice(8)])!;
     expect(packs).toHaveLength(2);
-    expect(packs.map(pack => rowsFor(pack).length)).toEqual([53, 54]);
+    expect(packs.map(pack => rowsFor(pack).length)).toEqual([54, 53]);
     const requests: Array<Record<string, unknown>> = [];
     for (const pack of packs) {
       await compile(pack, rowsFor(pack), requests);
@@ -174,20 +194,20 @@ describe('原文文字ID v3の受入契約', () => {
     });
   });
 
-  it('最大56件の全出力serializerが408係数と固定reserveの予算内に収まる', () => {
-    const span = '9999-9999';
+  it('最大56件の全出力serializerがv4係数と固定reserveの予算内に収まる', () => {
+    const span = 'f9999';
     const row: ProviderRecord = {
       i: 512, u: 256, o: 10_000,
       e: Array(5).fill(span), r: Array(5).fill(span),
       a: [512, 512, 512, 512], c: Array(5).fill(span), z: Array(5).fill(false),
       x: ['1:', '2:', '3:', '4:', '5:'].map(kind => kind + span), q: Array(4).fill(span),
     };
-    expect(Buffer.byteLength(JSON.stringify(row), 'utf8')).toBe(413);
+    expect(Buffer.byteLength(JSON.stringify(row), 'utf8')).toBe(317);
     expect(Buffer.byteLength(JSON.stringify(row), 'utf8')).toBeLessThanOrEqual(
       EPISODE_SOURCE_REQUIREMENT_LIMITS.maxProviderBytesPerRequirement,
     );
     const bytes = Buffer.byteLength(JSON.stringify({ requirements: Array(56).fill(row) }), 'utf8');
-    expect(bytes).toBeLessThanOrEqual(408 * 56 + 2_048);
+    expect(bytes).toBeLessThanOrEqual(317 * 56 + 2_048);
     expect(bytes).toBeLessThanOrEqual(EPISODE_SOURCE_REQUIREMENT_LIMITS.maxProviderOutputBytes);
   });
 });

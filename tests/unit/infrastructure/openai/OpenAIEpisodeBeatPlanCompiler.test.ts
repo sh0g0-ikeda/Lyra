@@ -1,8 +1,5 @@
-import { STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY } from '../../../../src/infrastructure/openai/StoryEditorialPrompts.js';
 import { describe, expect, it } from 'vitest';
-
-// v3 design: provider IDs address Unicode code points; the adapter restores UTF-16 spans.
-const locatorFor = (source: string, text: string): string => { const start = source.indexOf(text); const prefix = [...source.slice(0, start)].length + 1; return `${prefix}-${prefix + [...text].length - 1}`; };
+import { STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY } from '../../../../src/infrastructure/openai/StoryEditorialPrompts.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEpisodeBeatPlanCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
 import { EpisodeBeatPlanOutputLimitError } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
@@ -10,7 +7,15 @@ import {
   buildEpisodeSourceRequirementExtractionPacks,
   EPISODE_SOURCE_REQUIREMENT_LIMITS,
   prepareEpisodeSourceRequirementExtraction,
+  type EpisodeSourceUnit,
 } from '../../../../src/services/page/EpisodeSourceRequirements.js';
+
+const fragmentFor = (unit: EpisodeSourceUnit, text: string): string => {
+  const fragment = unit.fragmentCatalog.find((candidate) =>
+    unit.text.slice(candidate.start, candidate.end) === text);
+  if (fragment === undefined) throw new Error(`Missing test fragment: ${text}`);
+  return fragment.id;
+};
 
 describe('OpenAIEpisodeBeatPlanCompiler', () => {
   it('全話のページ所有権と入出状態を strict JSON で作る', async () => {
@@ -262,11 +267,11 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
   it('原文requirement extractorはsource spanだけを受け取り複合requirementへ復元する', async () => {
     const pageId = '11111111-1111-4111-8111-111111111111';
     const extraction = prepareEpisodeSourceRequirementExtraction({
-      storyFullDraft: '1ページ目：扉が開く前は内部へ入らず、扉を押すが動かないため、小石を除き、再び押して中へ入る。',
+      storyFullDraft: '1ページ目：扉が開く前は内部へ入らず、扉を押す、動かない、小石を除く。',
       pages: [{ pageId, pageNumber: 1 }],
     })!;
     const unit = extraction.units[0]!;
-    const locator = (text: string): string => locatorFor(unit.text, text);
+    const fragment = (text: string): string => fragmentFor(unit, text);
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -274,10 +279,10 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         return {
           body: { output_text: JSON.stringify({ requirements: [{
             i: 1, u: 1, o: 1,
-            e: [locator('扉を押す'), locator('小石を除き'), locator('再び押して')],
-            r: [locator('動かない'), null, locator('中へ入る')],
-            a: [], c: [locator('扉が開く前は内部へ入らず'), null, null],
-            z: [false, false, true], x: [], q: [],
+            e: [fragment('扉を押す'), fragment('小石を除く')],
+            r: [fragment('動かない'), null],
+            a: [], c: [fragment('扉が開く前は内部へ入らず'), null],
+            z: [false, true], x: [], q: [],
           }] }) },
           requestId: 'req-source-requirements',
         };
@@ -292,16 +297,15 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     expect(result.requirements.requirements[0]).toMatchObject({
       requirementId: 'p1-u1-r1',
       scope: 'page',
-      events: ['扉を押す', '小石を除き', '再び押して'],
-      results: ['動かない', '中へ入る'],
+      events: ['扉を押す', '小石を除く'],
+      results: ['動かない'],
       requiredByEnd: true,
       obligations: [
         { event: '扉を押す', result: '動かない', conditionalUntil: '扉が開く前は内部へ入らず', requiredByEnd: false },
-        { event: '小石を除き', result: null, conditionalUntil: null, requiredByEnd: false },
-        { event: '再び押して', result: '中へ入る', conditionalUntil: null, requiredByEnd: true },
+        { event: '小石を除く', result: null, conditionalUntil: null, requiredByEnd: true },
       ],
     });
-    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v3');
+    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v4');
     const requestInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
     expect(requestInput[0]?.content[0]?.text).toContain('extraction only');
     expect(requestInput[1]?.content[0]?.text).toContain(unit.text);
@@ -319,18 +323,18 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       unit.scope === 'global' && unit.text.includes('全頁同じ衣装')) + 1;
     const pageOrdinal = extraction.units.findIndex((unit) =>
       unit.scope === 'page' && unit.text.includes('開始する')) + 1;
-    const globalText = extraction.units[globalOrdinal - 1]!.text;
-    const pageText = extraction.units[pageOrdinal - 1]!.text;
-    const locator = (source: string, text: string): string => locatorFor(source, text);
+    const globalUnit = extraction.units[globalOrdinal - 1]!;
+    const pageUnit = extraction.units[pageOrdinal - 1]!;
+    const globalText = globalUnit.text;
     const requests: Array<Record<string, unknown>> = [];
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
         requests.push(payload);
         return { body: { output_text: JSON.stringify({ requirements: [{
           i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
-          x: [`1:${locator(globalText, globalText.trim())}`], q: [],
+          x: [`1:${fragmentFor(globalUnit, globalText.trim())}`], q: [],
         }, {
-          i: 2, u: pageOrdinal, o: 1, e: [locator(pageText, '開始する')], r: [null],
+          i: 2, u: pageOrdinal, o: 1, e: [fragmentFor(pageUnit, '開始する')], r: [null],
           a: [], c: [null], z: [true], x: [], q: [],
         }] }) }, requestId: 'req-global-source' };
       },
@@ -351,7 +355,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     expect(input[0]?.content[0]?.text).toContain(
       'injects the complete trimmed global unit deterministically',
     );
-    expect(input[1]?.content[0]?.text).toContain('scope=global');
+    expect(input[1]?.content[0]?.text).toContain('"scope":"global"');
   });
 
   it.each([
@@ -365,16 +369,16 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     })!;
     const globalOrdinal = extraction.units.findIndex((unit) => unit.scope === 'global') + 1;
     const pageOrdinal = extraction.units.findIndex((unit) => unit.scope === 'page') + 1;
-    const globalText = extraction.units[globalOrdinal - 1]!.text;
-    const pageText = extraction.units[pageOrdinal - 1]!.text;
-    const locator = (source: string, text: string): string => locatorFor(source, text);
+    const globalUnit = extraction.units[globalOrdinal - 1]!;
+    const pageUnit = extraction.units[pageOrdinal - 1]!;
+    const globalText = globalUnit.text;
     const client = {
       postJson: async () => ({
         body: { output_text: JSON.stringify({ requirements: [{
           i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
-          x: contextText === null ? [] : [`1:${locator(globalText, contextText)}`], q: [],
+          x: contextText === null ? [] : [`1:${fragmentFor(globalUnit, contextText)}`], q: [],
         }, {
-          i: 2, u: pageOrdinal, o: 1, e: [locator(pageText, '開始する')], r: [null],
+          i: 2, u: pageOrdinal, o: 1, e: [fragmentFor(pageUnit, '開始する')], r: [null],
           a: [], c: [null], z: [true], x: [], q: [],
         }] }) },
         requestId: 'req-incomplete-global-source',
@@ -404,15 +408,15 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     })!;
     const globalOrdinal = extraction.units.findIndex((unit) => unit.scope === 'global') + 1;
     const pageOrdinal = extraction.units.findIndex((unit) => unit.scope === 'page') + 1;
-    const pageText = extraction.units[pageOrdinal - 1]!.text;
+    const pageUnit = extraction.units[pageOrdinal - 1]!;
     const client = {
       postJson: async () => ({
         body: { output_text: JSON.stringify({ requirements: [{
           i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
-          x: ['1:1-9999'], q: [],
+          x: ['1:f9999'], q: [],
         }, {
           i: 2, u: pageOrdinal, o: 1,
-          e: [locatorFor(pageText, '開始する')], r: [null],
+          e: [fragmentFor(pageUnit, '開始する')], r: [null],
           a: [], c: [null], z: [true], x: [], q: [],
         }] }) },
         requestId: 'req-invalid-global-locator',
@@ -457,7 +461,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
                     }
                   : {
                       i: requirementIndex + 1, u: unitIndex + 1, o: 1,
-                      e: [locatorFor(unit.text, trimmed)], r: [null],
+                      e: [fragmentFor(unit, trimmed)], r: [null],
                       a: [], c: [null], z: [true], x: [], q: [],
                     };
               }),
@@ -491,20 +495,20 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
   it('source requirement schemaの最大field payload全体は固定reserveを含むpreflight上限内に収まる', () => {
     const maximumRecord = {
       i: 512, u: 256, o: 10_000,
-      e: ['9999-9999', '9999-9999', '9999-9999', '9999-9999', '9999-9999'],
-      r: ['9999-9999', '9999-9999', '9999-9999', '9999-9999', '9999-9999'],
+      e: ['f9999', 'f9999', 'f9999', 'f9999', 'f9999'],
+      r: ['f9999', 'f9999', 'f9999', 'f9999', 'f9999'],
       a: [512, 512, 512, 512],
-      c: ['9999-9999', '9999-9999', '9999-9999', '9999-9999', '9999-9999'],
+      c: ['f9999', 'f9999', 'f9999', 'f9999', 'f9999'],
       z: [false, false, false, false, false],
-      x: ['1:9999-9999', '2:9999-9999', '3:9999-9999', '4:9999-9999', '5:9999-9999'],
-      q: ['9999-9999', '9999-9999', '9999-9999', '9999-9999'],
+      x: ['1:f9999', '2:f9999', '3:f9999', '4:f9999', '5:f9999'],
+      q: ['f9999', 'f9999', 'f9999', 'f9999'],
     };
     const maximumPackPayload = {
       requirements: Array.from({ length: 56 }, () => maximumRecord),
     };
 
     expect(Buffer.byteLength(JSON.stringify(maximumRecord), 'utf8'))
-      .toBe(413);
+      .toBe(317);
     expect(Buffer.byteLength(JSON.stringify(maximumPackPayload), 'utf8'))
       .toBeLessThanOrEqual(EPISODE_SOURCE_REQUIREMENT_LIMITS.maxProviderOutputBytes);
   });

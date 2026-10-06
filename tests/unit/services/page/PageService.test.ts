@@ -48,6 +48,8 @@ import type {
   EpisodePlanPersistencePort,
   EpisodePlanPersistenceResources,
 } from '../../../../src/services/page/EpisodePlanPersistence.js';
+import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
+import { OpenAIEpisodeBeatPlanCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
 import type { CompileEpisodeStateTransitionInput } from '../../../../src/services/page/EpisodeStateTransitionCompiler.js';
 import {
@@ -520,6 +522,104 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
       compilerPromptVersion: 'episode_source_requirements_v1',
     };
   }
+}
+
+class ActualSourceV4EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler {
+  public sourceProviderCalls = 0;
+  public invalidFragment = false;
+  private readonly actualSourceCompiler: OpenAIEpisodeBeatPlanCompiler;
+
+  public constructor() {
+    super();
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        this.sourceProviderCalls += 1;
+        const sourceRows = parseSourceV4BriefRows(payload);
+        const ordersByOwner = new Map<string, number>();
+        let invalidFragmentInjected = false;
+        const foreignFragment = sourceRows.find((row) => row.fragments.length > 0)?.fragments[0]?.id;
+        const requirements = sourceRows.flatMap((row) => {
+          const sourceFragment = row.fragments[0]?.id;
+          if (sourceFragment === undefined) return [];
+          const owner = row.scope === 'global' ? 'global' : row.pageId;
+          const order = (ordersByOwner.get(owner) ?? 0) + 1;
+          ordersByOwner.set(owner, order);
+          const eventFragment = this.invalidFragment && row.scope === 'page' && !invalidFragmentInjected &&
+              foreignFragment !== undefined && !row.fragments.some((fragment) => fragment.id === foreignFragment)
+            ? foreignFragment
+            : sourceFragment;
+          if (eventFragment === foreignFragment && eventFragment !== sourceFragment) invalidFragmentInjected = true;
+          return [{
+            i: row.unitOrdinal,
+            u: row.unitOrdinal,
+            o: order,
+            e: row.scope === 'global' ? [] : [eventFragment],
+            r: row.scope === 'global' ? [] : [null],
+            a: [],
+            c: row.scope === 'global' ? [] : [null],
+            z: row.scope === 'global' ? [] : [true],
+            x: [],
+            q: [],
+          }];
+        });
+        return {
+          body: { output_text: JSON.stringify({ requirements }) },
+          requestId: 'req-source-v4-page-service',
+        };
+      },
+    } as unknown as OpenAIClient;
+    this.actualSourceCompiler = new OpenAIEpisodeBeatPlanCompiler(client);
+  }
+
+  public override async compileSourceRequirements(
+    input: CompileEpisodeSourceRequirementsInput,
+  ): Promise<CompiledEpisodeSourceRequirements> {
+    this.sourceRequirementInputs.push(input);
+    return this.actualSourceCompiler.compileSourceRequirements(input);
+  }
+}
+
+interface SourceV4BriefRow {
+  unitOrdinal: number;
+  scope: 'global' | 'page';
+  pageId: string;
+  fragments: Array<{ id: string; text: string }>;
+}
+
+function parseSourceV4BriefRows(payload: Record<string, unknown>): SourceV4BriefRow[] {
+  const input = payload.input;
+  if (!Array.isArray(input) || !isRecord(input[1])) {
+    throw new Error('Source v4 request omitted user input');
+  }
+  const content = input[1].content;
+  if (!Array.isArray(content) || !isRecord(content[0]) || typeof content[0].text !== 'string') {
+    throw new Error('Source v4 request omitted compiler brief');
+  }
+  return content[0].text.split('\n').flatMap((line) => {
+    if (!line.startsWith('{')) return [];
+    const parsed: unknown = JSON.parse(line);
+    if (!isRecord(parsed) || !Number.isSafeInteger(parsed.u) ||
+        (parsed.scope !== 'global' && parsed.scope !== 'page') ||
+        typeof parsed.page_id !== 'string' || !Array.isArray(parsed.fragments)) {
+      throw new Error('Source v4 compiler brief row is invalid');
+    }
+    const fragments = parsed.fragments.map((fragment) => {
+      if (!isRecord(fragment) || typeof fragment.id !== 'string' || typeof fragment.text !== 'string') {
+        throw new Error('Source v4 compiler brief fragment is invalid');
+      }
+      return { id: fragment.id, text: fragment.text };
+    });
+    return [{
+      unitOrdinal: parsed.u as number,
+      scope: parsed.scope,
+      pageId: parsed.page_id,
+      fragments,
+    }];
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 class FakeEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerPort {
@@ -1980,6 +2080,106 @@ describe('PageService', () => {
     expect(episodeCompiler.inputs).toHaveLength(0);
     expect(auditCompiler.inputs).toHaveLength(0);
     expect(pageRepository.updatedInputs).toHaveLength(0);
+  });
+
+  it('source v4実compilerは15ページ60コマをfake providerから原子的に保存する', async () => {
+    const context = buildSourceV4FifteenPageContext();
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPageRepository = new FakePageRepository();
+    transactionPageRepository.episodePlanningContext = context;
+    const transactionPanelRepository = new FakePanelRepository();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: transactionPageRepository,
+      panelRepository: transactionPanelRepository,
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+    });
+    const sourceCompiler = new ActualSourceV4EpisodeBeatPlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      new FourPanelEpisodePagePlanCompiler(),
+      undefined,
+      sourceCompiler,
+      new FakeEpisodePlanAuditCompiler(),
+      true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+      persistence,
+    );
+    let beginCommitCount = 0;
+
+    const result = await service.autofillEpisodeFromStory(
+      'user-1',
+      'episode-1',
+      'ja',
+      undefined,
+      null,
+      {
+        checkpoint: async () => undefined,
+        beginCommit: async () => { beginCommitCount += 1; },
+      },
+    );
+
+    expect(result.compilerUsed).toBe(true);
+    expect(sourceCompiler.sourceProviderCalls).toBeGreaterThan(0);
+    expect(sourceCompiler.sourceRequirementInputs.every((input) =>
+      input.extraction.compilerBrief.includes('"fragments"'))).toBe(true);
+    expect(beginCommitCount).toBe(1);
+    expect(persistence.calls).toHaveLength(1);
+    expect(transactionPageRepository.updatedInputs).toHaveLength(15);
+    expect(transactionPanelRepository.updatedPanels).toHaveLength(60);
+  });
+
+  it('source v4実compilerが別unit fragmentを拒否した場合はcommitと保存を開始しない', async () => {
+    const context = buildSourceV4FifteenPageContext();
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPageRepository = new FakePageRepository();
+    transactionPageRepository.episodePlanningContext = context;
+    const transactionPanelRepository = new FakePanelRepository();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: transactionPageRepository,
+      panelRepository: transactionPanelRepository,
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+    });
+    const sourceCompiler = new ActualSourceV4EpisodeBeatPlanCompiler();
+    sourceCompiler.invalidFragment = true;
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      new FourPanelEpisodePagePlanCompiler(),
+      undefined,
+      sourceCompiler,
+      new FakeEpisodePlanAuditCompiler(),
+      true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+      persistence,
+    );
+    let beginCommitCount = 0;
+
+    const result = await service.autofillEpisodeFromStory(
+      'user-1',
+      'episode-1',
+      'ja',
+      undefined,
+      null,
+      {
+        checkpoint: async () => undefined,
+        beginCommit: async () => { beginCommitCount += 1; },
+      },
+    );
+
+    expect(result.compilerUsed).toBe(false);
+    expect(result.compilerError).toContain('invalid source span');
+    expect(sourceCompiler.sourceProviderCalls).toBe(1);
+    expect(beginCommitCount).toBe(0);
+    expect(persistence.calls).toHaveLength(0);
+    expect(transactionPageRepository.updatedInputs).toHaveLength(0);
+    expect(transactionPanelRepository.updatedPanels).toHaveLength(0);
   });
 
   it('continuity v3 OFFはsource requirementを呼ばず既存v2 detail経路を保つ', async () => {
@@ -5059,6 +5259,38 @@ function buildMultiPageEpisodePlanningContext(pageCount: number): EpisodePagePla
         ],
       };
     }),
+  };
+}
+
+function buildSourceV4FifteenPageContext(): EpisodePagePlanContext {
+  const context = buildMultiPageEpisodePlanningContext(15);
+  return {
+    ...context,
+    episode: {
+      ...context.episode,
+      storyFullDraft: [
+        '全15ページで主人公の姿と道具を保つ。',
+        ...context.pages.map((page) => [
+          `${page.pageNumber}ページ目：場面${page.pageNumber}を始める。`,
+          `道具${page.pageNumber}を確認する。`,
+          `進路${page.pageNumber}を選ぶ。`,
+          `障害${page.pageNumber}へ近づく。`,
+          `手順${page.pageNumber}を実行する。`,
+          `結果${page.pageNumber}を確かめる。`,
+          `次の場面${page.pageNumber + 1}へ進む。`,
+        ].join('')),
+      ].join('\n'),
+    },
+    pages: context.pages.map((page) => ({
+      ...page,
+      frameCount: 4,
+      layoutConfig: { type: 'template', template_id: 'standard_4', panel_count: 4 },
+      panels: Array.from({ length: 4 }, (_value, index) => ({
+        ...buildAutofillPanelContext(),
+        id: `panel-${page.pageNumber}-${index + 1}`,
+        order: index + 1,
+      })),
+    })),
   };
 }
 

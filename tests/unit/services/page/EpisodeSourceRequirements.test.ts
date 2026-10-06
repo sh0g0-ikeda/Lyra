@@ -33,8 +33,8 @@ describe('EpisodeSourceRequirements', () => {
     expect(prepared?.pages.map((page) => page.pageId)).toEqual([PAGE_1, PAGE_2]);
     expect(prepared?.units.map((unit) => unit.text).join('')).toBe(original);
     expect(prepared?.compilerBrief).toContain('[ORIGINAL SOURCE UNITS - ONLY AUTHORITY]');
-    expect(prepared?.units[0]?.locatorCatalog[0]).toMatchObject({ id: 1, start: 0, end: 1 });
-    expect(prepared?.compilerBrief).toContain('locator_catalog=1:');
+    expect(prepared?.units[0]?.fragmentCatalog[0]).toMatchObject({ id: 'f1', start: 0 });
+    expect(prepared?.compilerBrief).toContain('"fragments"');
     expect(prepared?.compilerBrief).not.toContain('page_purpose');
     expect(prepared?.compilerBrief).not.toContain('continuity');
     expect(prepared?.compilerBrief).not.toContain('handoff');
@@ -98,10 +98,10 @@ describe('EpisodeSourceRequirements', () => {
     ]);
 
     expect(packs).not.toBeNull();
-    expect(packs?.map((pack) => pack.estimatedWorstCaseOutputBytes)).toEqual([23_672, 23_952]);
+    expect(packs?.map((pack) => pack.estimatedWorstCaseOutputBytes)).toEqual([19_166, 18_721]);
     expect(packs?.map((pack) => pack.units.filter((unit) =>
       unit.scope === 'global' && unit.text.trim().length > 0).length))
-      .toEqual([3, 6]);
+      .toEqual([4, 5]);
     expect(packs?.flatMap((pack) => pack.units).map((unit) => unit.unitId)).toHaveLength(
       new Set(prepared.units.map((unit) => unit.unitId)).size,
     );

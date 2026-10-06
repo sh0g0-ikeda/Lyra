@@ -18,10 +18,12 @@ const MAX_SOURCE_DISPLAY_CHARS = 8_000;
 // One record per nonblank lossless sentence unit. Each record carries up to five ordered
 // obligations, so page frame counts never cap source extraction.
 // The per-record coefficient is combined with 1024 + 128 * pageCount reserve.
-// A maximal compact record is 413 bytes (414 with its separator); every pack
-// accepted below 24k has at most 56 records, so the reserve covers that difference.
+// A maximal compact fragment record is bounded independently below. The same
+// coefficient is used for pack admission so every response fits before paid work.
 // This is a bound for compact JSON, not provider whitespace or reasoning tokens.
-const REQUIREMENT_PROVIDER_WORST_CASE_BYTES = 408;
+const REQUIREMENT_PROVIDER_WORST_CASE_BYTES = EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES;
+const MAX_SOURCE_FRAGMENTS = 9_999;
+const SOURCE_FRAGMENT_BOUNDARY_PATTERN = /[、,，;；:：。！？!?]/u;
 
 export interface EpisodeSourceRequirementPageRef {
   pageId: string;
@@ -34,14 +36,13 @@ export interface EpisodeSourceUnit {
   pageId: string | null;
   pageNumber: number | null;
   text: string;
-  locatorCatalog: readonly EpisodeSourceLocator[];
+  fragmentCatalog: readonly EpisodeSourceFragment[];
 }
 
-export interface EpisodeSourceLocator {
-  id: number;
+export interface EpisodeSourceFragment {
+  id: string;
   start: number;
   end: number;
-  char: string;
 }
 
 export interface EpisodeSourceRequirementExtraction {
@@ -145,6 +146,9 @@ export function prepareEpisodeSourceRequirementExtraction(input: {
       units.map((unit) => unit.text).join('') !== input.storyFullDraft ||
       units.some((unit) => countExplicitQuotedSegments(unit.text) > 4 ||
         countPotentialOrderedSpans(unit.text) > 5)) {
+    return null;
+  }
+  if (!assignGloballyUniqueSourceFragments(units)) {
     return null;
   }
 
@@ -388,22 +392,73 @@ function splitLosslessSourceUnits(
     pageId,
     pageNumber,
     text: chunk,
-    locatorCatalog: buildLocatorCatalog(chunk),
+    fragmentCatalog: [],
   }));
 }
 
-// Code-point IDs keep provider locators stable while start/end preserve exact UTF-16 slicing.
-function buildLocatorCatalog(text: string): EpisodeSourceLocator[] {
-  const catalog: EpisodeSourceLocator[] = [];
-  let start = 0;
-  let id = 1;
-  for (const char of text) {
-    const end = start + char.length;
-    catalog.push({ id, start, end, char });
-    start = end;
-    id += 1;
+function assignGloballyUniqueSourceFragments(units: EpisodeSourceUnit[]): boolean {
+  let nextId = 1;
+  for (const unit of units) {
+    const spans = buildSourceFragmentSpans(unit.text);
+    if (nextId + spans.length - 1 > MAX_SOURCE_FRAGMENTS) {
+      return false;
+    }
+    unit.fragmentCatalog = spans.map((span) => ({ id: `f${nextId++}`, ...span }));
   }
-  return catalog;
+  return true;
+}
+
+function buildSourceFragmentSpans(text: string): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  const seen = new Set<string>();
+  const addTrimmedSpan = (rawStart: number, rawEnd: number): void => {
+    let start = rawStart;
+    let end = rawEnd;
+    while (start < end && /\s/u.test(text[start]!)) start += 1;
+    while (end > start && /\s/u.test(text[end - 1]!)) end -= 1;
+    if (start >= end) return;
+    const key = `${start}:${end}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      spans.push({ start, end });
+    }
+  };
+
+  addTrimmedSpan(0, text.length);
+  let segmentStart = 0;
+  for (let index = 0; index < text.length;) {
+    const codePoint = text.codePointAt(index);
+    if (codePoint === undefined) break;
+    const char = String.fromCodePoint(codePoint);
+    if (SOURCE_FRAGMENT_BOUNDARY_PATTERN.test(char)) {
+      addTrimmedSpan(segmentStart, index);
+      segmentStart = index + char.length;
+    }
+    index += char.length;
+  }
+  addTrimmedSpan(segmentStart, text.length);
+  addQuotedFragmentSpans(text, '「', '」', addTrimmedSpan);
+  addQuotedFragmentSpans(text, '“', '”', addTrimmedSpan);
+  addQuotedFragmentSpans(text, '"', '"', addTrimmedSpan);
+  return spans;
+}
+
+function addQuotedFragmentSpans(
+  text: string,
+  opening: string,
+  closing: string,
+  addSpan: (start: number, end: number) => void,
+): void {
+  let cursor = 0;
+  while (cursor < text.length) {
+    const openingIndex = text.indexOf(opening, cursor);
+    if (openingIndex < 0) return;
+    const contentStart = openingIndex + opening.length;
+    const closingIndex = text.indexOf(closing, contentStart);
+    if (closingIndex < 0) return;
+    addSpan(contentStart, closingIndex);
+    cursor = closingIndex + closing.length;
+  }
 }
 
 function estimateRequirementOutputBytes(pageCount: number, nonblankUnitCount: number): number {
@@ -459,7 +514,16 @@ function formatExtractionBrief(
     '[ALLOWED PAGE OWNERS]',
     ...pages.map((page) => `Page ${page.pageNumber} (${page.pageId})`),
     '[ORIGINAL SOURCE UNITS - ONLY AUTHORITY]',
-    ...units.map((unit, index) => `${index + 1} | unit_id=${unit.unitId} | scope=${unit.scope} | page_id=${unit.scope === 'global' ? 'global' : unit.pageId} | ${JSON.stringify(unit.text)} | locator_catalog=${unit.locatorCatalog.map((locator) => `${locator.id}:${JSON.stringify(locator.char)}`).join(',')}`),
+    ...units.map((unit, index) => JSON.stringify({
+      u: index + 1,
+      unit_id: unit.unitId,
+      scope: unit.scope,
+      page_id: unit.scope === 'global' ? 'global' : unit.pageId,
+      fragments: unit.fragmentCatalog.map((fragment) => ({
+        id: fragment.id,
+        text: unit.text.slice(fragment.start, fragment.end),
+      })),
+    })),
     '[END ORIGINAL SOURCE UNITS]',
   ].join('\n');
 }

@@ -213,13 +213,21 @@ when it fits the safe output budget.
 
 For a complete original-page mapping without character-state opt-in, bounded
 original-source requirement extraction replaces the existing beat-plan pack calls.
-It preserves source-unit locators as a shared displayed Unicode-code-point catalog with 1-based inclusive endpoints and exact UTF-16 restoration, authored quotes, ordered prerequisite/result
-obligations and page completion boundaries. Global meaning ownership remains
+It assigns globally unique opaque fragment IDs across all lossless source units.
+Each nonblank unit lists its complete trimmed text first, followed by deterministic
+exact clause and quoted-body fragments derived from trusted UTF-16 spans. Provider
+output may select only a fragment listed for that same unit; unknown IDs, IDs owned
+by another unit, legacy numeric ranges and legacy colon locators are rejected.
+The server restores the trusted span exactly and does not clamp, combine or fall
+back to another fragment. Extraction preserves authored quotes, ordered
+prerequisite/result obligations and page completion boundaries. Global meaning ownership remains
 global; extraction pack assignment does not make it a page-visible event. Every
 global requirement carries its complete trimmed original unit in context. Empty
 or partial context is rejected before detail or saving. This checks literal
 transport only, not semantic fidelity, and remains inside the existing continuity
-V3 gate with its default OFF. Detail
+V3 gate with its default OFF. Every extraction pack's escaped input brief is
+checked against the 32 KiB source-input bound before the first paid call, and the
+compact response record and envelope bounds are checked independently. Detail
 output allocates page-owned requirements to panels before writing panel fields.
 Placement validation checks structural coverage and prerequisite order, not semantic
 fidelity. Normal and repair detail calls retain the same complete requirements.
