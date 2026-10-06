@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-06T19:58:33.319Z",
+  "kind": "staging-progress-r68",
+  "sourceSha": "6309887c84a4a8d4a15adfaa5d1c5e9cca9728ff",
+  "stageSha": "03bc182b18686808cfba1f29c101c4e1b4deef48",
+  "productionReady": false,
+  "productionChanges": 0,
+  "mainMerges": 0,
+  "storeSubmissions": 0,
+  "approvalWait": false,
+  "source": {
+    "status": "FAIL",
+    "executionProvenance": "real_provider_execution",
+    "finishedAt": "2026-10-06T19:46:43.452Z",
+    "httpCalls": 6,
+    "sourcePacks": 2,
+    "totalUnits": 137,
+    "nonblankRequirements": 107,
+    "detailLogicalCalls": 3,
+    "detailHttpCalls": 4,
+    "auditCalls": 0,
+    "beginCommitCalls": 0,
+    "creditMutationCalls": 0,
+    "error": "Detail plan source requirement relation contradicts panel order",
+    "diagnosis": "two spanning depiction summaries incorrectly classified as after-events; both attempts also omit P9 entry completion; correction in progress",
+    "resultSha256": "abf9506e5dbe6ac788e2450ddeef0a996d6f666ff124795b0ac79d70d188de67"
+  },
+  "dbLocal": {
+    "step1Tests": 124,
+    "step2UnitTests": 223,
+    "step2NativeTests": 42,
+    "independentReviews": "Step1/Step2 GO; actual clone and handover pending",
+    "releaseUnitTests": 25,
+    "releaseNativeTests": 7,
+    "releaseReview": "GO",
+    "buildExit": 0,
+    "buildLogSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "artificialDatabaseStopped": true,
+    "initialHarnessFailures": [
+      "r63 and r63b before tests: empty native output null.Trim"
+    ],
+    "initialBuildFailure": "new test readonly args/generic fixture cast; corrected without product/SQL/expectation changes"
+  },
+  "frontend": {
+    "receiptSha256": "3fbcc8695af035cc643dc27e9b4cbcd5f2fe6193fae2cda23eb94bb490669028",
+    "mobileTests": 1059,
+    "webLint": "PASS",
+    "webBuild": "PASS",
+    "mobileTypecheck": "PASS",
+    "mobileLint": "PASS",
+    "mobileContracts": "PASS",
+    "mobileMojibake": "PASS",
+    "androidOfflineExport": "PASS",
+    "iosOfflineExport": "PASS",
+    "initialMobileFailure": "two i18n AST scans 5s timeout under concurrent load; first log retained, fresh full serial run PASS",
+    "playwright": "NOT_RUN"
+  },
+  "auth": {
+    "webNormalAndGoogle": "prior real acceptance PASS, not rerun on latest code",
+    "stagingCognitoMetadata": "Android/iOS shared custom callback/logout matches; separate web callback; COGNITO+Google/code flows configured",
+    "metadataReceiptSha256": "c553b5d8d603685ca929453e8e3fe45ba2f55dad016d3ca62b1d7bb3a3799de8",
+    "iosGoogleEffectiveFlag": false,
+    "appleEquivalentIdentity": "not implemented; policy decision is unresolved, no silent Apple addition"
+  },
+  "remaining": [
+    "source classification and full real 15-page semantic/durable acceptance",
+    "actual isolated clone expansion/preservation/invariants/mixed writer and rollback",
+    "candidate consumer-first handover and shutdown/DB drain",
+    "whole final backend Vitest/Bun/native gates",
+    "latest stage and PR image/source plus nonsecret effective story selector equivalence",
+    "real billing update/refund notification acceptance",
+    "iOS Google staged capability and identity policy",
+    "Android/iOS physical acceptance"
+  ]
+}

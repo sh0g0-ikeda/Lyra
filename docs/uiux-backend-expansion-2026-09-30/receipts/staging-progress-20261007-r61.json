@@ -1,0 +1,74 @@
+{
+  "schema": "lyra.staging-progress-r61/v1",
+  "at": "2026-10-06T19:25:28.549Z",
+  "sourceSha": "6309887c84a4a8d4a15adfaa5d1c5e9cca9728ff",
+  "stagingAndPrSha": "03bc182b18686808cfba1f29c101c4e1b4deef48",
+  "productionReady": false,
+  "approvalWait": false,
+  "originalProtectedPaths": 28,
+  "originalProtectedPathsChanged": 0,
+  "source": {
+    "real15": {
+      "sourceSha": "50b6053e8d75268732b8378f3b31e4c5694e2dc5",
+      "status": "REJECTED",
+      "httpCalls": 5,
+      "completedPages": 6,
+      "failedPages": [
+        7,
+        8,
+        9
+      ],
+      "auditCalls": 0,
+      "durableDbWrites": 0,
+      "creditMutations": 0
+    },
+    "singleChunkDiagnosis": {
+      "scope": "r55",
+      "status": "accepted",
+      "full15Acceptance": false
+    },
+    "repair": {
+      "sourceSha": "6309887c84a4a8d4a15adfaa5d1c5e9cca9728ff",
+      "tests": 171,
+      "typecheck": "PASS_FROZEN_SOURCE_ONLY",
+      "logicalAttemptLimit": 2,
+      "freshReal15": "PENDING_R58"
+    }
+  },
+  "db": {
+    "localStep1": {
+      "status": "PASS_ARTIFICIAL_PG18_ONLY",
+      "tests": 124,
+      "checkpoints": 9,
+      "historyRows": 52,
+      "bridge046": false,
+      "lockTimeoutRollback": true,
+      "artificialGenerationRows": 20000,
+      "artificialMigration043Ms": 10,
+      "productionDurationEstimate": false,
+      "latestExpectationFilesNotRerun": 6,
+      "receiptSha256": "4eb42fe3ea798fb031c5ab7c61e7b94c29a29cbb70af12133d51c2710a44207d"
+    },
+    "profileFactoryAdmission": "IN_PROGRESS_STEP2",
+    "representativeCloneMigration": "NOT_EXECUTED",
+    "mixedDeployedWritersAndRollback": "NOT_PASSED"
+  },
+  "auth": {
+    "webNativeAndGoogle": "PASS_PRIOR_REAL_R23",
+    "stagingGoogleFlags": "EFFECTIVE_TRUE_R34",
+    "androidPhysical": "NOT_EXECUTED",
+    "iosPhysicalAndGooglePolicy": "NOT_COMPLETED"
+  },
+  "remaining": [
+    "Fresh real 15-page semantic acceptance and staging durable saving",
+    "Expanded profile factory/startup and mixed-writer regressions",
+    "Representative clone expansion, data invariants and rollback",
+    "Safe consumer handover and database drain",
+    "Billing notification acceptance",
+    "Final whole-code gates and latest staging/PR update",
+    "Android/iOS physical acceptance and iOS Google policy/client"
+  ],
+  "productionChanges": 0,
+  "mainMerges": 0,
+  "storeSubmissions": 0
+}

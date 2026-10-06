@@ -608,8 +608,8 @@ behavior while retaining candidate deletion/refund/ownership protections. Applie
 001–041 migrations are immutable. The existing 046 bridge requires a full
 write freeze, so it is not an eligible first rollout under the uninterrupted
 operation requirement. The first legacy compatibility phase must retain the
-physical schema, old settlement and terminal-push ownership, existing billing
-and deletion workflows, old export relation and old-worker job contracts.
+physical schema, the attested settlement and terminal-push ownership, existing
+billing and deletion workflows, actual export relations and old-worker job contracts.
 An explicit, read-only validated persistence profile must be injected before
 HTTP admission, queue consumption or recovery. Candidate startup attests the
 required canonical migration, relation, column and definition signatures in a
@@ -624,6 +624,64 @@ remain gated; existing published capabilities must continue. Mixed old/new
 writers and rollback with candidate-created records must pass on a representative
 copy before production readiness. The 046 rename is a separate later proposal;
 its old-image rollback restriction must not be applied to this first phase.
+
+The observed PostgreSQL 18 production lineage contains 44 migration filenames,
+including historical aliases, and is distinct from the artificial 38-migration
+`legacy_2debe_v1` reference. The candidate `production44_pg18_v1` descriptor compares
+all catalog rows and attributes (including function bodies, enabled triggers,
+column defaults, namespace artifacts and migration history) against the locally
+reproduced immutable 44-file fixture. This candidate retains physical page story
+metadata and pre-variant entity states, while using canonical-named
+`episode_export_*` relations, connected deletion and scheduled billing, and
+application-owned refund and per-retry terminal notification paths. The legacy
+38 trigger-owned notification and late-consume refund branches must not be selected.
+Starting entity states and named state variants are rejected before their SQL.
+Catalog equality and fixture repository tests do not attest the deployed binary,
+all factory/query paths, mixed deployed writers, rollback or device behavior.
+This profile remains unavailable through environment selection and production
+startup; activation requires explicit admission/factory propagation, unavailable
+capability rejection, and the representative-copy compatibility gates above.
+For this candidate only, cancellation finalization may reconcile a job already
+cancelled by the old writer. It locks balance before job, revalidates user,
+organization, job type, retry count and cost, and applies only the remaining
+ledger refund. Changed active/failed jobs are not settled. Direct reconciliation
+tests do not establish runtime reachability: a bounded recurring scan for
+cancelled jobs with outstanding debit is still required for mixed writers.
+The pinned old consumer also remains incompatible with the observed uppercase
+push error-code constraint and does not fence stale retry-generation deliveries;
+these are separate activation blockers, not permissions to weaken constraints.
+
+### Forward expansion of the observed production44 lineage
+
+The production44_expanded_pg18_v1 persistence profile retains the original
+physical page metadata and applies only the pinned forward files 040, 041, 042,
+043, 044, 045, 047 and 048 to the exact observed 44-file lineage. The resulting
+52-file history and all physical catalog definitions must match checkpoint 8.
+File 046 is excluded. No table/column rename, removal, data rewrite or automatic
+legacy admission is part of this expansion. The explicit
+scripts/expandProduction44Schema.ts command verifies a known checkpoint,
+uses a pinned-session advisory lock and owned migration lease, commits each file
+with exact catalog re-attestation, and fails closed on unknown/partial artifacts.
+Automatic runtime migration does not select or execute this expansion.
+
+Runtime admission issues one frozen, internally verified proof before API
+listeners, providers, recovery timers or queue consumption. The same profile is
+propagated through page, entity, scene, story, quote/import and job factories.
+The unexpanded44 profile is not an admitted runtime. Canonical047 can still boot;
+048-dependent state capabilities require an explicit capability check. Migration
+048 advances legacy entity-state write revisions monotonically without replacing
+the existing named/reference fields, preserving candidate confirmation CAS.
+
+Cancelled debit recovery and per-retry terminal-notification recovery run on
+bounded recurring scans. One active maintenance instance owns each run, and API
+shutdown awaits cancelled recovery, terminal recovery, push delivery, account
+deletion, export maintenance and HTTP completion before database close. Worker
+shutdown also drains its recovery runner. The pinned old push consumer must be
+replaced before admitting new job types or retry payloads; old-core rollback
+retains the compatible candidate consumer until those records settle. Local
+factory/native tests and shutdown tests do not prove real consumer handover,
+representative-copy preservation, deployed dependency identity or device results.
+Those remain mandatory before production readiness.
 
 The release Mobile navigation has four primary tabs and nested creation steps.
 All editing capabilities and stored values remain available; simple display
@@ -723,11 +781,14 @@ back reuses the candidate without another analysis.
 Run `bun run release:check --profile backend-only` for staged backend work,
 or `bun run release:check --profile new-mobile` before distributing the new
 Mobile client. The compiled artifact uses `release:check:prod`. The checker
-requires exact migration 001–047 history and evaluates existing data invariants
-and v2 journal presence in one bounded repeatable-read, read-only transaction.
+requires the exact current canonical 001–048 inventory, or an attested
+production44-expanded52 catalog and history, and evaluates existing data
+invariants and v2 journal presence in one bounded repeatable-read, read-only
+transaction. A supplied profile label cannot replace catalog attestation.
 Malformed or missing database results fail closed. It never applies a migration
 or changes feature flags. Historical 026 and 039/041 preflights remain specific
-to their older schema boundaries and must not be run against schema 047.
+to their older schema boundaries and must not be run against current canonical
+048 or the distinct production44-expanded52 lineage.
 
 Backend-only permits quotes OFF; new-mobile requires quotes and the existing
 paid page/entity/import operations, direct uploads, durable queue, GPT Image 2

@@ -1,0 +1,91 @@
+{
+  "schema": "lyra.staging-progress-r53/v1",
+  "at": "2026-10-06T18:54:11.869Z",
+  "localHead": "ae838acbd673983b88b8163ce0891dc8775f56cc",
+  "productionReady": false,
+  "productionChanges": 0,
+  "decodedBudget": {
+    "commit": "ae838ac",
+    "rootTests": 145,
+    "rootTestFiles": 6,
+    "rootLogSha256": "6c1593734a4963f5d56a250beecce7efec0ca978e59063a0ab5ddd3052b1865c",
+    "absoluteDecodedMaximumBytes": 2097152,
+    "providerCompactLimitUnchanged": true
+  },
+  "real15": {
+    "result": "FAILED_DETAIL_PLACEMENT_AFTER_SOURCE_MERGE_PASSED",
+    "httpCalls": 6,
+    "compiledChunks": 3,
+    "failingChunkPages": [
+      10,
+      11,
+      12
+    ],
+    "auditCalls": 0,
+    "commitCalls": 0,
+    "lyraCreditMutations": 0,
+    "resultSha256": "b626e5e20aacb2ffdc808cbd2c2302775aeeb9f53e76c4d7aa1691249dcca403"
+  },
+  "diagnostic": {
+    "httpCalls": 1,
+    "maxCalls": 1,
+    "status": "rejected",
+    "primaryError": "Detail plan source requirement relation contradicts panel order",
+    "contradictions": [
+      {
+        "predecessorId": "p10-u5-r20",
+        "requirementId": "p10-u6-r21",
+        "pageId": "0000000a-0000-4000-8000-00000000000a",
+        "predecessorPanelOrders": [
+          4
+        ],
+        "panelOrders": [
+          2,
+          3,
+          4
+        ]
+      }
+    ],
+    "resultSha256": "f97442c8116103c2905acb8f7a12e3a25c2116f101c08beafb62a9188dba51c9",
+    "artificialOnly": true,
+    "realDatabaseConnections": 0,
+    "lyraCreditMutations": 0,
+    "sourceSentencePositionIsNotTemporalProof": true
+  },
+  "maintenanceDrain": {
+    "tests": 13,
+    "files": 3,
+    "logSha256": "5426ff426316e11aa93dbddf92d890158242429b552ae2d18cece9ac22bb0bd7",
+    "inFlightTimerOverwriteRegressionCovered": true,
+    "dispatchAndCleanupBothAwaited": true
+  },
+  "reviewedReportedChecks": {
+    "cancellationRuntime": {
+      "targetedTests": 66,
+      "backendBuild": "PASS",
+      "activation": false
+    },
+    "terminalRecovery": {
+      "unitTests": 21,
+      "localPgIntegrationTests": 3,
+      "backendBuild": "PASS",
+      "runtimeWiring": false
+    },
+    "expandedMigration": {
+      "artificialPg18Apply": "PASS_REPORTED",
+      "finalHistoryCount": 52,
+      "checkpointCount": 9,
+      "resumeAndLockRollback": "IN_PROGRESS",
+      "realCloneMigration": "NOT_EXECUTED"
+    }
+  },
+  "remaining": [
+    "source temporal relation extraction and real15 semantic/durable acceptance",
+    "exact expanded checkpoint resume/locks/rollback and legacy mixed-writer admission",
+    "terminal notification recovery runtime and safe consumer handover",
+    "real clone migration/invariants/rollback proof",
+    "final whole-code gates/latest staging/PR",
+    "DB safety drain and billing notification acceptance",
+    "Android/iOS physical checks and iOS Google policy/client"
+  ]
+}

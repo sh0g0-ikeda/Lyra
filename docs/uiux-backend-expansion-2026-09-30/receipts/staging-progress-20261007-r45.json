@@ -1,0 +1,64 @@
+{
+  "schema": "lyra.staging-progress-r45/v1",
+  "at": "2026-10-06T18:22:48.156Z",
+  "sourceV4Sha": "ca6fd8cef72339e95d3a52d0fc583792db01eea6",
+  "productionReady": false,
+  "productionChanges": 0,
+  "sourceV4": {
+    "targetedTests": 143,
+    "offlineHarnessTests": 31,
+    "actualHttpCalls": 2,
+    "actualResult": "FAILED_MERGED_RESOLVED_REQUIREMENT_BUDGET",
+    "sourcePacksComplete": true,
+    "detailCalls": 0,
+    "auditCalls": 0,
+    "commitCalls": 0,
+    "lyraCreditMutations": 0,
+    "resultSha256": "4e30bdabfabbd3fd16ffac5da19f177bfdd1705d261c8a4a329d233a80517a90"
+  },
+  "cancellationRecovery": {
+    "receiptSha256": "a899e74cd43bdefaaeea8aef48fc8098ba429e12c11d9ea7ef855d77c89f265a",
+    "sliceStatus": "PASS_LOCAL_RECOVERY_SLICE_RECURRING_ACTIVATION_BLOCKED",
+    "localPgAndUnitTests": 136,
+    "additionalUnitTests": 25,
+    "backendBuild": "PASS_REPORTED_AND_REVIEWED",
+    "runtimeWiring": "IN_PROGRESS",
+    "activation": false
+  },
+  "pushDrain": {
+    "redFailures": 2,
+    "greenTests": 6,
+    "redLogSha256": "d65d02b3c80b81976e37b798791c9ac1229f7772799df5bcb6272b63f5aa501e",
+    "greenLogSha256": "f7d7754683c7e275de972e2c5bebf3f2bb83e820dc593411500d4eedad524d0e",
+    "stopsFutureClaims": true,
+    "awaitsInFlightBatch": true,
+    "consumerHandoverActual": "NOT_EXECUTED"
+  },
+  "production44Pending": [
+    "040_add_entity_state_variants.sql",
+    "041_add_episode_starting_entity_states.sql",
+    "042_add_generation_quotes.sql",
+    "043_add_quoted_import_analysis_jobs.sql",
+    "044_add_google_identity_link_challenges.sql",
+    "045_add_mobile_subscription_scheduled_plan_compatibility.sql",
+    "046_bridge_production_schema_lineage.sql",
+    "047_add_state_reference_copy_attempts.sql"
+  ],
+  "correctedFinding": "Old source has no entity-state delete/reinsert replacement; old SceneRepository updates preserve newly added variant fields. updated_at revision behavior requires a separate regression.",
+  "excludedInitialMigration": "046 bridge renames/reworks data and triggers; not admitted for uninterrupted rollout",
+  "originalProtection": {
+    "head": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "baselinePaths": 28,
+    "unchanged": true,
+    "checkedAt": "2026-10-06T18:21:43.470Z"
+  },
+  "remaining": [
+    "resolved requirement finite budget and actual 15-page durable save",
+    "runtime periodic settlement wiring",
+    "push consumer handover and old writer terminal recovery",
+    "additive migration admission/expanded physical profile/old-new and rollback proof",
+    "final full gates and latest staging artifacts",
+    "DB safety drain and billing notification acceptance",
+    "Android/iOS physical acceptance and iOS Google policy/client"
+  ]
+}
