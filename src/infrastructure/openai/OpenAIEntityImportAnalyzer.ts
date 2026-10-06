@@ -99,20 +99,167 @@ const ENTITY_IMPORT_FIELD_PATHS = [
 type EntityImportFieldPath = (typeof ENTITY_IMPORT_FIELD_PATHS)[number];
 type FieldSuggestionValue = string | string[];
 
+type ImportFieldValueRule =
+  | {
+      kind: 'string';
+      paths: readonly EntityImportFieldPath[];
+      maxLength: number;
+    }
+  | {
+      kind: 'string_array';
+      paths: readonly EntityImportFieldPath[];
+      maxItems: number;
+      itemMaxLength: number;
+    }
+  | {
+      kind: 'enum';
+      paths: readonly EntityImportFieldPath[];
+      values: readonly string[];
+    };
+
 const CHARACTER_IMPORT_FIELD_PATH_SET = new Set<string>(CHARACTER_IMPORT_FIELD_PATHS);
 const NONHUMAN_IMPORT_FIELD_PATH_SET = new Set<string>(NONHUMAN_IMPORT_FIELD_PATHS);
 const OBJECT_IMPORT_FIELD_PATH_SET = new Set<string>(OBJECT_IMPORT_FIELD_PATHS);
-const ARRAY_FIELD_PATH_SET = new Set<string>([
-  'character_identity.aliases',
-  'character_identity.silhouette_keywords',
-]);
+const CHARACTER_IMPORT_FIELD_VALUE_RULES = [
+  {
+    kind: 'string',
+    paths: [
+      'gender_expression',
+      'age_range',
+      'skin_tone',
+      'face_shape',
+      'eyebrow_shape',
+      'nose_shape',
+      'mouth_shape',
+      'height',
+      'build',
+      'hair.color',
+      'hair.length',
+      'hair.style',
+      'hair.bangs',
+      'eyes.color',
+      'eyes.shape',
+      'eyes.eyelid_type',
+      'clothing.main_color',
+      'proportions.head_to_body_ratio',
+      'proportions.shoulder_width',
+      'proportions.leg_length',
+      'face_detail.eye_size',
+      'face_detail.eye_angle',
+      'face_detail.pupil_style',
+      'outfit_detail.sleeve_length',
+      'art_style',
+    ],
+    maxLength: 100,
+  },
+  {
+    kind: 'string',
+    paths: [
+      'first_impression',
+      'standing_style',
+      'default_expression',
+      'hair.arrangement',
+      'clothing.category',
+      'clothing.impression',
+      'proportions.posture_axis',
+      'face_detail.under_eye_detail',
+      'face_detail.mouth_default',
+      'hair_detail.front_shape',
+      'hair_detail.side_hair',
+      'hair_detail.back_shape',
+      'outfit_detail.collar_shape',
+      'outfit_detail.skirt_or_pants_shape',
+      'outfit_detail.shoes',
+      'outfit_detail.socks_or_legwear',
+    ],
+    maxLength: 150,
+  },
+  {
+    kind: 'string',
+    paths: ['character_identity.visual_anchor', 'character_identity.signature_feature'],
+    maxLength: 300,
+  },
+  {
+    kind: 'string',
+    paths: ['clothing.description', 'distinguishing_features'],
+    maxLength: 500,
+  },
+  {
+    kind: 'string_array',
+    paths: ['character_identity.aliases'],
+    maxItems: 12,
+    itemMaxLength: 100,
+  },
+  {
+    kind: 'string_array',
+    paths: ['character_identity.silhouette_keywords'],
+    maxItems: 6,
+    itemMaxLength: 100,
+  },
+] as const satisfies readonly ImportFieldValueRule[];
+
+const NONHUMAN_IMPORT_FIELD_VALUE_RULES = [
+  {
+    kind: 'enum',
+    paths: ['base_form'],
+    values: ['dragon', 'wolf', 'spirit', 'robot', 'zombie', 'deity', 'custom'],
+  },
+  {
+    kind: 'enum',
+    paths: ['size'],
+    values: ['tiny', 'small', 'human_scale', 'large', 'enormous'],
+  },
+  {
+    kind: 'enum',
+    paths: ['movement'],
+    values: ['bipedal', 'quadruped', 'flying', 'floating', 'slithering', 'custom'],
+  },
+  {
+    kind: 'string',
+    paths: ['distinctive_features'],
+    maxLength: 500,
+  },
+  {
+    kind: 'enum',
+    paths: ['threat_level'],
+    values: ['harmless', 'low', 'medium', 'high', 'catastrophic'],
+  },
+  {
+    kind: 'enum',
+    paths: ['art_style'],
+    values: ['anime', 'semi_realistic', 'manga', 'painterly'],
+  },
+] as const satisfies readonly ImportFieldValueRule[];
+
+const OBJECT_IMPORT_FIELD_VALUE_RULES = [
+  {
+    kind: 'enum',
+    paths: ['category'],
+    values: ['weapon', 'tool', 'vehicle', 'structure', 'consumable', 'magical', 'custom'],
+  },
+  {
+    kind: 'enum',
+    paths: ['material'],
+    values: ['metal', 'wood', 'stone', 'crystal', 'organic', 'energy', 'custom'],
+  },
+  {
+    kind: 'enum',
+    paths: ['size'],
+    values: ['small', 'medium', 'large', 'enormous'],
+  },
+  {
+    kind: 'string',
+    paths: ['distinctive_features'],
+    maxLength: 500,
+  },
+] as const satisfies readonly ImportFieldValueRule[];
 
 const fieldSuggestionValueSchema = z.union([
   z.string().trim().min(1).max(500),
   z.array(z.string().trim().min(1).max(100)).min(1).max(12),
 ]);
 
-const entityImportAnalysisResponseSchema = z
+const entityImportAnalysisResponseBaseSchema = z
   .object({
     field_suggestions: z
       .array(
@@ -143,8 +290,8 @@ export class OpenAIEntityImportAnalyzer implements EntityImportAnalyzerPort {
       model: this.model,
       maxOutputTokens: ENTITY_IMPORT_ANALYSIS_MAX_TOKENS,
       schemaName: 'entity_import_analysis',
-      jsonSchema: entityImportAnalysisJsonSchema,
-      responseSchema: entityImportAnalysisResponseSchema,
+      jsonSchema: buildEntityImportAnalysisJsonSchema(input.entityType),
+      responseSchema: buildEntityImportAnalysisResponseSchema(input.entityType),
       errorLabel: 'OpenAI entity import analyzer',
       input: [
         {
@@ -164,7 +311,7 @@ export class OpenAIEntityImportAnalyzer implements EntityImportAnalyzerPort {
     });
 
     return {
-      suggestedFields: buildSuggestedFields(input.entityType, response.field_suggestions),
+      suggestedFields: buildSuggestedFields(response.field_suggestions),
       promptSupplement: response.prompt_supplement,
     };
   }
@@ -172,13 +319,14 @@ export class OpenAIEntityImportAnalyzer implements EntityImportAnalyzerPort {
 
 function buildAnalysisPrompt(entityType: EntityType): string {
   const allowedPaths = getAllowedFieldPaths(entityType);
+  const valueContracts = getImportFieldValueRules(entityType).map(describeImportFieldValueRule).join('; ');
 
   return [
     `Analyze this ${entityType} design image and return JSON only.`,
     'Output concise field suggestions as path/value pairs using only the allowed paths listed below.',
     'Omit uncertain fields instead of inventing them.',
     `Allowed paths for this entity type: ${Array.from(allowedPaths).join(', ')}.`,
-    'Use enum-compatible values when the UI field expects an enum.',
+    `Value contracts: ${valueContracts}.`,
     'For character_identity.aliases and character_identity.silhouette_keywords, value may be an array of short strings.',
     'prompt_supplement must be one concise English visual description usable for later full-body image generation.',
     'When the source image is cropped or partial, infer only stable full-body details visually supported by the image.',
@@ -186,22 +334,12 @@ function buildAnalysisPrompt(entityType: EntityType): string {
 }
 
 function buildSuggestedFields(
-  entityType: EntityType,
   suggestions: Array<{ path: EntityImportFieldPath; value: FieldSuggestionValue }>,
 ): Record<string, unknown> {
-  const allowedPaths = getAllowedFieldPaths(entityType);
   const fields: Record<string, unknown> = {};
 
   for (const suggestion of suggestions) {
-    if (!allowedPaths.has(suggestion.path)) {
-      continue;
-    }
-
-    const value = normalizeFieldSuggestionValue(suggestion.path, suggestion.value);
-    if (value === null) {
-      continue;
-    }
-
+    const value = normalizeFieldSuggestionValue(suggestion.value);
     assignFieldPath(fields, suggestion.path, value);
   }
 
@@ -219,24 +357,12 @@ function getAllowedFieldPaths(entityType: EntityType): ReadonlySet<string> {
   }
 }
 
-function normalizeFieldSuggestionValue(path: string, value: FieldSuggestionValue): string | string[] | null {
-  const expectsArray = ARRAY_FIELD_PATH_SET.has(path);
-
+function normalizeFieldSuggestionValue(value: FieldSuggestionValue): string | string[] {
   if (Array.isArray(value)) {
-    const values = value.map((item) => item.trim()).filter((item) => item.length > 0);
-    if (values.length === 0) {
-      return null;
-    }
-
-    return expectsArray ? values : values.join(', ');
+    return value.map((item) => item.trim());
   }
 
-  const normalized = value.trim();
-  if (normalized.length === 0) {
-    return null;
-  }
-
-  return expectsArray ? [normalized] : normalized;
+  return value.trim();
 }
 
 function assignFieldPath(target: Record<string, unknown>, path: string, value: string | string[]): void {
@@ -261,46 +387,150 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-const stringValueJsonSchema = {
-  type: 'string',
-  maxLength: 500,
-} as const;
+function getImportFieldValueRules(entityType: EntityType): readonly ImportFieldValueRule[] {
+  switch (entityType) {
+    case 'character':
+      return CHARACTER_IMPORT_FIELD_VALUE_RULES;
+    case 'nonhuman':
+      return NONHUMAN_IMPORT_FIELD_VALUE_RULES;
+    case 'object':
+      return OBJECT_IMPORT_FIELD_VALUE_RULES;
+  }
+}
 
-const stringArrayValueJsonSchema = {
-  type: 'array',
-  maxItems: 12,
-  items: {
-    type: 'string',
-    maxLength: 100,
-  },
-} as const;
+function findImportFieldValueRule(
+  entityType: EntityType,
+  path: EntityImportFieldPath,
+): ImportFieldValueRule | undefined {
+  return getImportFieldValueRules(entityType).find((rule) => rule.paths.some((candidate) => candidate === path));
+}
 
-const entityImportAnalysisJsonSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['field_suggestions', 'prompt_supplement'],
-  properties: {
-    field_suggestions: {
-      type: 'array',
-      maxItems: 60,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['path', 'value'],
-        properties: {
-          path: {
-            type: 'string',
-            enum: ENTITY_IMPORT_FIELD_PATHS,
-          },
-          value: {
-            anyOf: [stringValueJsonSchema, stringArrayValueJsonSchema],
-          },
+function buildEntityImportAnalysisResponseSchema(entityType: EntityType): typeof entityImportAnalysisResponseBaseSchema {
+  return entityImportAnalysisResponseBaseSchema.superRefine((response, context) => {
+    const seenPaths = new Set<EntityImportFieldPath>();
+
+    response.field_suggestions.forEach((suggestion, index) => {
+      const rule = findImportFieldValueRule(entityType, suggestion.path);
+      if (rule === undefined) {
+        context.addIssue({
+          code: 'custom',
+          message: `Path ${suggestion.path} is not valid for ${entityType}`,
+          path: ['field_suggestions', index, 'path'],
+        });
+        return;
+      }
+
+      if (seenPaths.has(suggestion.path)) {
+        context.addIssue({
+          code: 'custom',
+          message: `Path ${suggestion.path} must not be repeated`,
+          path: ['field_suggestions', index, 'path'],
+        });
+      }
+      seenPaths.add(suggestion.path);
+
+      const valueError = validateImportFieldSuggestionValue(rule, suggestion.value);
+      if (valueError !== null) {
+        context.addIssue({
+          code: 'custom',
+          message: valueError,
+          path: ['field_suggestions', index, 'value'],
+        });
+      }
+    });
+  });
+}
+
+function validateImportFieldSuggestionValue(
+  rule: ImportFieldValueRule,
+  value: FieldSuggestionValue,
+): string | null {
+  switch (rule.kind) {
+    case 'string':
+      return typeof value === 'string' && value.length <= rule.maxLength
+        ? null
+        : `Value must be a string with at most ${rule.maxLength} characters`;
+    case 'string_array':
+      return Array.isArray(value)
+        && value.length <= rule.maxItems
+        && value.every((item) => item.length <= rule.itemMaxLength)
+        ? null
+        : `Value must be an array of at most ${rule.maxItems} strings`;
+    case 'enum':
+      return typeof value === 'string' && rule.values.some((candidate) => candidate === value)
+        ? null
+        : `Value must be one of: ${rule.values.join(', ')}`;
+  }
+}
+
+function describeImportFieldValueRule(rule: ImportFieldValueRule): string {
+  const paths = rule.paths.join(', ');
+  switch (rule.kind) {
+    case 'string':
+      return `${paths} = non-empty string up to ${rule.maxLength} characters`;
+    case 'string_array':
+      return `${paths} = array of 1-${rule.maxItems} non-empty strings`;
+    case 'enum':
+      return `${paths} = one of ${rule.values.join('|')}`;
+  }
+}
+
+function buildEntityImportAnalysisJsonSchema(entityType: EntityType): Record<string, unknown> {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['field_suggestions', 'prompt_supplement'],
+    properties: {
+      field_suggestions: {
+        type: 'array',
+        maxItems: 60,
+        items: {
+          anyOf: getImportFieldValueRules(entityType).map((rule) => ({
+            type: 'object',
+            additionalProperties: false,
+            required: ['path', 'value'],
+            properties: {
+              path: {
+                type: 'string',
+                enum: rule.paths,
+              },
+              value: buildImportFieldValueJsonSchema(rule),
+            },
+          })),
         },
       },
+      prompt_supplement: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 2000,
+      },
     },
-    prompt_supplement: {
-      type: 'string',
-      maxLength: 2000,
-    },
-  },
-} as const;
+  };
+}
+
+function buildImportFieldValueJsonSchema(rule: ImportFieldValueRule): Record<string, unknown> {
+  switch (rule.kind) {
+    case 'string':
+      return {
+        type: 'string',
+        minLength: 1,
+        maxLength: rule.maxLength,
+      };
+    case 'string_array':
+      return {
+        type: 'array',
+        minItems: 1,
+        maxItems: rule.maxItems,
+        items: {
+          type: 'string',
+          minLength: 1,
+          maxLength: rule.itemMaxLength,
+        },
+      };
+    case 'enum':
+      return {
+        type: 'string',
+        enum: rule.values,
+      };
+  }
+}

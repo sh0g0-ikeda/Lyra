@@ -1,3 +1,6 @@
+import { googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStatus } from './googleIdentityLink';
+import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
+import { pageImageDeliveryPath, entityReferenceImageDeliveryPath, entityReferenceCandidateDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
 import type {
   BalloonRecord,
   BillingBalanceRecord,
@@ -21,6 +24,7 @@ import type {
   OrganizationUsageSummaryRecord,
   OrganizationWorkspaceRecord,
   PageRecord,
+  PageGenerationReadinessRecord,
   PanelFrameRecord,
   PanelRecord,
   SceneRecord,
@@ -77,6 +81,19 @@ export class LyraApiClient {
     this.tokenProvider = tokenProvider;
     const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL;
     this.baseUrl = typeof configuredBaseUrl === 'string' ? configuredBaseUrl : '';
+  }
+
+  public async getGoogleAuthCapabilities(): Promise<GoogleAuthCapabilities> {
+    return googleAuthCapabilitiesV2Schema.parse(await this.request('/api/auth/capabilities?version=2'));
+  }
+
+  public async startGoogleIdentityLink(body: { platform: 'mobile' | 'web'; request_key: string }): Promise<GoogleLinkStart> {
+    return googleLinkStartSchema.parse(await this.request('/api/auth/identity-links/google/start', { method: 'POST', body: googleLinkStartBodySchema.parse(body) }));
+  }
+
+  public async getGoogleIdentityLinkStatus(id: string): Promise<GoogleLinkStatus> {
+    const parsedId = googleLinkStartSchema.shape.challenge_id.parse(id);
+    return googleLinkStatusSchema.parse(await this.request(`/api/auth/identity-links/google/${parsedId}`));
   }
 
   public getOrganizationWorkspaces(): Promise<{ organizations: OrganizationWorkspaceRecord[] }> {
@@ -382,6 +399,12 @@ export class LyraApiClient {
     return this.request(`/api/entities/import-image${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
+  public bindEntityReferenceCandidate(entityId: string, candidateToken: string, organizationId?: string | null): Promise<{candidate_token: string}> {
+    return this.request('/api/entities/' + entityId + '/reference-candidate/bind' + organizationQuery(organizationId), {
+      method: 'POST', body: {candidate_token: candidateToken},
+    });
+  }
+
   public generateEntityReference(entityId: string, body?: Record<string, unknown>, organizationId?: string | null): Promise<{ job_id: string }> {
     return this.request(`/api/entities/${entityId}/generate-reference${organizationQuery(organizationId)}`, {
       method: 'POST',
@@ -446,8 +469,19 @@ export class LyraApiClient {
     });
   }
 
-  public generatePage(pageId: string, organizationId?: string | null): Promise<{ job_id: string }> {
-    return this.request(`/api/pages/${pageId}/generate${organizationQuery(organizationId)}`, { method: 'POST' });
+  public getPageGenerationReadiness(pageId: string, organizationId?: string | null): Promise<PageGenerationReadinessRecord> {
+    return this.request(`/api/pages/${pageId}/generation-readiness${organizationQuery(organizationId)}`);
+  }
+
+  public generatePage(
+    pageId: string,
+    organizationId?: string | null,
+    renderStyle?: 'monochrome',
+  ): Promise<{ job_id: string }> {
+    return this.request(`/api/pages/${pageId}/generate${organizationQuery(organizationId)}`, {
+      method: 'POST',
+      body: renderStyle === 'monochrome' ? { render_style: 'monochrome' } : undefined,
+    });
   }
 
   public confirmPage(pageId: string, organizationId?: string | null): Promise<void> {
@@ -547,14 +581,14 @@ export class LyraApiClient {
     return this.request(`/api/compositions${query.length > 0 ? `?${query}` : ''}`);
   }
 
-  public getJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
-    return this.request(`/api/jobs/${jobId}${organizationQuery(organizationId)}`);
+  public async getJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
+    return normalizeGenerationJobRecord(await this.request<GenerationJobWireRecord>(`/api/jobs/${jobId}${jobContractQuery(organizationId)}`));
   }
 
-  public cancelJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
-    return this.request(`/api/jobs/${jobId}/cancel${organizationQuery(organizationId)}`, {
+  public async cancelJob(jobId: string, organizationId?: string | null): Promise<GenerationJobRecord> {
+    return normalizeGenerationJobRecord(await this.request<GenerationJobWireRecord>(`/api/jobs/${jobId}/cancel${jobContractQuery(organizationId)}`, {
       method: 'POST',
-    });
+    }));
   }
 
   public getBalance(): Promise<BillingBalanceRecord> {
@@ -583,9 +617,9 @@ export class LyraApiClient {
     return this.request('/api/billing/customer-portal', { method: 'POST', timeoutMs: billingRedirectTimeoutMs });
   }
 
-  public async exportPageImage(pageId: string, organizationId?: string | null): Promise<BlobResponse> {
+  public async exportPageImage(pageId: string, organizationId?: string | null, image?: ImageDeliveryMetadata | null, webDeliveryEnabled = false): Promise<BlobResponse> {
     const response = await fetch(
-      this.toUrl(`/api/pages/${pageId}/export-image${organizationQuery(organizationId)}`),
+      this.toUrl(`${pageImageDeliveryPath(pageId, image, webDeliveryEnabled)}${organizationQuery(organizationId)}`),
       this.buildRequest({ method: 'GET' }),
     );
     if (!response.ok) {
@@ -602,9 +636,11 @@ export class LyraApiClient {
     entityId: string,
     refId: string,
     organizationId?: string | null,
+    image?: ImageDeliveryMetadata | null,
+    webDeliveryEnabled?: boolean,
   ): Promise<BlobResponse> {
     const response = await fetch(
-      this.toUrl(`/api/entities/${entityId}/reference/${encodeURIComponent(refId)}/image${organizationQuery(organizationId)}`),
+      this.toUrl(`${entityReferenceImageDeliveryPath(entityId, refId, image, webDeliveryEnabled)}${organizationQuery(organizationId)}`),
       this.buildRequest({ method: 'GET' }),
     );
     if (!response.ok) {
@@ -621,13 +657,15 @@ export class LyraApiClient {
     entityId: string,
     candidateToken: string,
     organizationId?: string | null,
+    image?: ImageDeliveryMetadata | null,
+    webDeliveryEnabled?: boolean,
   ): Promise<BlobResponse> {
     const params = new URLSearchParams({ candidate_token: candidateToken });
     if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
       params.set('organization_id', organizationId);
     }
     const response = await fetch(
-      this.toUrl(`/api/entities/${entityId}/reference-candidate-image?${params.toString()}`),
+      this.toUrl(`${entityReferenceCandidateDeliveryPath(entityId, image, webDeliveryEnabled)}?${params.toString()}`),
       this.buildRequest({ method: 'GET' }),
     );
     if (!response.ok) {
@@ -820,6 +858,12 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | null 
   } catch {
     return null;
   }
+}
+
+function jobContractQuery(organizationId: string | null | undefined): string {
+  const params = new URLSearchParams(organizationQuery(organizationId));
+  params.set('job_contract', 'v2');
+  return `?${params.toString()}`;
 }
 
 function organizationQuery(organizationId: string | null | undefined): string {

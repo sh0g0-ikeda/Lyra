@@ -7,6 +7,7 @@ import type { UiLanguage } from '@/domain/types';
 import { t } from '@/lib/i18n';
 
 interface StoryGenerationControlsProps {
+  visibleAction?: 'skeleton' | 'autofill' | 'both';
   canGenerate: boolean;
   estimatedPagesInvalid: boolean;
   hasActiveJob?: boolean;
@@ -22,6 +23,7 @@ interface StoryGenerationControlsProps {
 }
 
 export function StoryGenerationControls({
+  visibleAction = 'both',
   canGenerate,
   estimatedPagesInvalid,
   hasActiveJob = false,
@@ -86,7 +88,9 @@ export function StoryGenerationControls({
         />
       ) : null}
       <View style={styles.actions}>
-        <PrimaryButton
+        {visibleAction === 'autofill' ? null : <PrimaryButton
+          variant={overwrite ? 'secondary' : 'primary'}
+          testID="page-skeleton-action"
           disabled={commonDisabled || pagesLoading}
           disabledReason={
             commonDisabledReason ??
@@ -101,14 +105,16 @@ export function StoryGenerationControls({
           }
           loading={skeletonLoading}
           onPress={onGenerateSkeleton}
-        />
-        <PrimaryButton
+        />}
+        {visibleAction === 'skeleton' ? null : <PrimaryButton
+          variant="secondary"
+          testID="page-story-autofill-action"
           disabled={commonDisabled}
           disabledReason={commonDisabledReason}
           label={t(language, 'component.storyGenerationControls.autofillAction')}
           loading={storyApplyLoading}
           onPress={onApplyStory}
-        />
+        />}
       </View>
     </View>
   );

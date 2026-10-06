@@ -1,0 +1,71 @@
+{
+  "sourceCommit": "c3431926b5d2222aa50b6bf225066042d3f6be46",
+  "observedAt": "2026-10-05T13:30:16.650Z",
+  "productionReady": false,
+  "productionChanged": false,
+  "web": {
+    "receipt": "c343192-frontend-r3-receipt.json",
+    "sha256": "15face054365d939fa1f575b15236db6f72b74bc426e3abf6faafcfd7b858f0c",
+    "checks": [
+      "typecheck",
+      "lint warnings=0",
+      "production build"
+    ]
+  },
+  "webSmoke": {
+    "receipt": "c343192-web-smoke-r1-receipt.json",
+    "sha256": "97c8680839e86ae586aa699d43517264b69bbf9c8d6370db11b1637bddb4bd57",
+    "tests": 78,
+    "unexpected": 0,
+    "flaky": 0,
+    "skipped": 0
+  },
+  "unchangedModules": {
+    "receipt": "c343192-unchanged-modules-r1.json",
+    "sha256": "28ba05aea0be414bbbe6290be4f81cc4410b7fc5a4c5c14d0ab81dec94503cf6",
+    "executedSourceCommit": "d02535c2567540634b9c9c280405cae1c70fbfde",
+    "comparedSourceCommit": "c3431926b5d2222aa50b6bf225066042d3f6be46",
+    "backendTests": 3545,
+    "mobileTests": 1042,
+    "retested": false
+  },
+  "originalProtection": {
+    "checkedAt": "2026-10-05T13:30:16.637Z",
+    "baselineHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "currentHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "baselinePaths": 28,
+    "changedBaselinePaths": [],
+    "unrelatedAdditionalPath": "store-assets/google-play",
+    "discardedChanges": false
+  },
+  "runtime": {
+    "file": "oci-runtime-image-c343192-r2-status-2026-10-05T13-24-02-925Z.json",
+    "sha256": "891262816cfb662f1a1a4cf0bba08abf20f28e0e54bc12d0d3df8c6631343f75",
+    "status": "passed",
+    "sourceCommit": "c3431926b5d2222aa50b6bf225066042d3f6be46",
+    "imageDigest": "sha256:6754dce8fab618e66a43d6181ebd572f5a776adf1ed2b73e53be09eb05f9e095"
+  },
+  "balanceManualQa": {
+    "file": "c343192-web-balance-manual-qa-r1.json",
+    "sha256": "0da41a3d135e94196fdba57a715ac0b5de94dddd59f44b7cca85f26c68d73282",
+    "status": "passed"
+  },
+  "tddEvidence": {
+    "file": "web-balance-precommit-r5-receipt.json",
+    "sha256": "78f8399483a8ec9e7479f58719b136ee4167a612d0496e42636e2e5b738177c1",
+    "priorAgentRawUnavailable": true,
+    "validatedBeforeIntegrationCommit": true
+  },
+  "executionFailures": [
+    "agent reported missing raw results and existing dist EPERM; these were not accepted as final evidence",
+    "precommit r1 test location excluded by preserved testIgnore; r2 own occupied port; r3 sandbox teardown interrupted; r4 PC navigation selector failed; all raw results were retained and not marked PASS"
+  ],
+  "knownUnresolved": [
+    "organization generation terminal balance refresh is outside this import fix",
+    "legacy writer consent intent recovery inventory and rollback compatibility remain unresolved",
+    "M2 production snapshot copy was refused; no bypass",
+    "P9 designated long-story acceptance remains failed/refused; no replacement proof",
+    "Google linking billing restore refund acceptance and physical APK acceptance remain unverified",
+    "public GitHub update was refused; local review packet only"
+  ]
+}

@@ -21,6 +21,11 @@ import {
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ValidationError } from '../domain/errors/index.js';
 import {
+  decodeOrganizationCollectionCursor,
+  type OrganizationCollectionKind,
+  type OrganizationCollectionPageRequest,
+} from '../domain/organizationPagination.js';
+import {
   decodeOrganizationListCursor,
   encodeOrganizationListCursor,
   type OrganizationListCursor,
@@ -33,6 +38,7 @@ import type {
   OrganizationInvitation,
   OrganizationMember,
   OrganizationUsageEvent,
+  OrganizationUsageSummary,
   OrganizationWorkspaceSummary,
 } from '../domain/types/organization.js';
 import {
@@ -159,6 +165,12 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
   app.get('/organizations/:organizationId/members', async (c) => {
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
+    const page = parseOrganizationCollectionPage(c, 'organization-members');
+    if (page !== null) {
+      const result = await dependencies.organizationService.listMembersPage(user.id, organizationId, page);
+      const payload = { members: result.items.map(toMemberResponse), next_cursor: result.nextCursor };
+      return c.json(assertMobileResponseContract(organizationMembersResponseSchema, payload));
+    }
     const members = await dependencies.organizationService.listMembers(user.id, organizationId);
     const payload = { members: members.map(toMemberResponse) };
     return c.json(assertMobileResponseContract(organizationMembersResponseSchema, payload));
@@ -191,6 +203,15 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
   app.get('/organizations/:organizationId/invitations', async (c) => {
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
+    const page = parseOrganizationCollectionPage(c, 'organization-invitations');
+    if (page !== null) {
+      const result = await dependencies.organizationService.listInvitationsPage(user.id, organizationId, page);
+      const payload = {
+        invitations: result.items.map(toInvitationResponse),
+        next_cursor: result.nextCursor,
+      };
+      return c.json(assertMobileResponseContract(organizationInvitationsResponseSchema, payload));
+    }
     const invitations = await dependencies.organizationService.listInvitations(user.id, organizationId);
     const payload = { invitations: invitations.map(toInvitationResponse) };
     return c.json(assertMobileResponseContract(organizationInvitationsResponseSchema, payload));
@@ -372,10 +393,23 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
   app.get('/organizations/:organizationId/usage', async (c) => {
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
-    const events = await dependencies.organizationService.listUsageEvents(user.id, organizationId);
+    const page = parseOrganizationCollectionPage(c, 'organization-usage');
+    if (page !== null) {
+      const result = await dependencies.organizationService.listUsageEventsPage(user.id, organizationId, page);
+      const payload = {
+        usage_events: result.page.items.map(toUsageEventResponse),
+        next_cursor: result.page.nextCursor,
+        summary: toUsageSummaryResponse(result.summary),
+      };
+      return c.json(assertMobileResponseContract(organizationUsageResponseSchema, payload));
+    }
+    const [events, summary] = await Promise.all([
+      dependencies.organizationService.listUsageEvents(user.id, organizationId),
+      dependencies.organizationService.getUsageSummary(user.id, organizationId),
+    ]);
     const payload = {
       usage_events: events.map(toUsageEventResponse),
-      summary: summarizeUsageEvents(events),
+      summary: toUsageSummaryResponse(summary),
     };
     return c.json(assertMobileResponseContract(organizationUsageResponseSchema, payload));
   });
@@ -393,6 +427,15 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
   app.get('/organizations/:organizationId/audit-logs', async (c) => {
     const user = c.get('user');
     const organizationId = parseOrganizationId(c);
+    const page = parseOrganizationCollectionPage(c, 'organization-audit-logs');
+    if (page !== null) {
+      const result = await dependencies.organizationService.listAuditLogsPage(user.id, organizationId, page);
+      const payload = {
+        audit_logs: result.items.map(toAuditLogResponse),
+        next_cursor: result.nextCursor,
+      };
+      return c.json(assertMobileResponseContract(organizationAuditLogsResponseSchema, payload));
+    }
     const logs = await dependencies.organizationService.listAuditLogs(user.id, organizationId);
     const payload = { audit_logs: logs.map(toAuditLogResponse) };
     return c.json(assertMobileResponseContract(organizationAuditLogsResponseSchema, payload));
@@ -647,32 +690,29 @@ function isSensitiveOrganizationMetadataKey(normalizedKey: string): boolean {
   );
 }
 
-function summarizeUsageEvents(events: OrganizationUsageEvent[]): Record<string, unknown> {
-  const now = new Date();
-  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const monthlyEvents = events.filter((event) => event.createdAt >= monthStart);
+function toUsageSummaryResponse(summary: OrganizationUsageSummary): Record<string, unknown> {
   return {
-    current_month_total_credits: sumCredits(monthlyEvents),
-    by_member: groupCredits(monthlyEvents, (event) => event.userId ?? 'unknown'),
-    by_work: groupCredits(monthlyEvents, (event) => event.workId ?? 'unknown'),
-    by_generation_type: groupCredits(monthlyEvents, (event) => event.eventType),
+    current_month_total_credits: summary.currentMonthTotalCredits,
+    by_member: summary.byMember,
+    by_work: summary.byWork,
+    by_generation_type: summary.byGenerationType,
   };
 }
 
-function sumCredits(events: OrganizationUsageEvent[]): number {
-  return events.reduce((sum, event) => sum + event.creditAmount, 0);
-}
-
-function groupCredits(
-  events: OrganizationUsageEvent[],
-  keyOf: (event: OrganizationUsageEvent) => string,
-): Array<{ key: string; credits: number }> {
-  const totals = new Map<string, number>();
-  for (const event of events) {
-    const key = keyOf(event);
-    totals.set(key, (totals.get(key) ?? 0) + event.creditAmount);
+function parseOrganizationCollectionPage(
+  c: Context<AppEnv>,
+  kind: OrganizationCollectionKind,
+): OrganizationCollectionPageRequest | null {
+  const rawLimit = c.req.query('limit');
+  const rawCursor = c.req.query('cursor');
+  if (rawLimit === undefined && rawCursor === undefined) return null;
+  if (rawLimit === undefined) throw new ValidationError('limit is required when cursor is provided');
+  if (!/^(?:[1-9]|[1-9][0-9]|100)$/u.test(rawLimit) || (c.req.queries('limit')?.length ?? 0) > 1) {
+    throw new ValidationError('limit must be an integer between 1 and 100');
   }
-  return Array.from(totals.entries())
-    .map(([key, credits]) => ({ key, credits }))
-    .sort((a, b) => b.credits - a.credits || a.key.localeCompare(b.key));
+  if ((c.req.queries('cursor')?.length ?? 0) > 1) throw new ValidationError('cursor must be provided once');
+  return {
+    limit: Number(rawLimit),
+    cursor: rawCursor === undefined ? null : decodeOrganizationCollectionCursor(rawCursor, kind),
+  };
 }

@@ -225,6 +225,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }
 
     const work = await dependencies.storyService.updateWork(user.id, workId, {
+      expectedUpdatedAt: body.data.expected_updated_at,
       title: body.data.title,
       genre: body.data.genre,
       worldSetting: body.data.world_setting,
@@ -293,6 +294,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }
 
     const chapter = await dependencies.storyService.updateChapter(user.id, chapterId, {
+      expectedUpdatedAt: body.data.expected_updated_at,
       order: body.data.order,
       title: body.data.title,
       purpose: body.data.purpose,
@@ -395,6 +397,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }
 
     const episode = await dependencies.storyService.updateEpisode(user.id, episodeId, {
+      expectedUpdatedAt: body.data.expected_updated_at,
       order: body.data.order,
       title: body.data.title,
       purpose: body.data.purpose,
@@ -406,6 +409,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       endingHook: body.data.ending_hook,
       estimatedPages: body.data.estimated_pages,
       entitiesInvolved: body.data.entities_involved,
+      startingEntityStates: body.data.starting_entity_states?.map((state) => ({
+        entityId: state.entity_id,
+        stateId: state.state_id,
+      })),
       status: body.data.status,
     }, organizationId);
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.updated', 'episode', episodeId);
@@ -481,7 +488,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         parsedEpisodeId.data,
         {
           overwriteExisting: body.data.overwrite_existing,
-          applyStoryPlan: body.data.apply_story_plan,
+          applyStoryPlan: false,
           language: body.data.language,
         },
         organizationId,
@@ -496,14 +503,14 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         {
           job_id: queued.jobId,
           overwrite_existing: body.data.overwrite_existing,
-          apply_story_plan: body.data.apply_story_plan,
+          apply_story_plan: false,
         },
       );
 
       const payload = {
         job_id: queued.jobId,
         queued: true as const,
-        story_plan_applied: body.data.apply_story_plan,
+        story_plan_applied: false,
       };
       return c.json(assertMobileResponseContract(pageSkeletonResponseSchema, payload), 202);
     }
@@ -513,23 +520,10 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       language: body.data.language,
     }, organizationId);
 
-    let storyPlanApplied = false;
-    let storyPlanJobId: string | null = null;
+    // Skeleton and explicit autofill are separate user actions, including old clients.
+    const storyPlanApplied = false;
+    const storyPlanJobId = null;
 
-    if (body.data.apply_story_plan) {
-      if (dependencies.episodeStoryAutofillService === undefined) {
-        throw new ValidationError('Page service is not configured for story plan autofill');
-      }
-
-      const applied = await dependencies.episodeStoryAutofillService.enqueueEpisodeStoryAutofill(
-        user.id,
-        parsedEpisodeId.data,
-        body.data.language,
-        organizationId,
-      );
-      storyPlanApplied = true;
-      storyPlanJobId = applied.jobId;
-    }
     await recordOrganizationAudit(
       dependencies,
       organizationId,
@@ -659,6 +653,10 @@ function toEpisodeResponse(episode: Episode): Record<string, unknown> {
     ending_hook: episode.endingHook,
     estimated_pages: episode.estimatedPages,
     entities_involved: episode.entitiesInvolved,
+    starting_entity_states: (episode.startingEntityStates ?? []).map((state) => ({
+      entity_id: state.entityId,
+      state_id: state.stateId,
+    })),
     page_skeleton_generated: episode.pageSkeletonGenerated,
     version: episode.version,
     status: episode.status,

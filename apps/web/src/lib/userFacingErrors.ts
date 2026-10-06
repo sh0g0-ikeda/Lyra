@@ -1,4 +1,6 @@
-﻿export type UserFacingErrorLanguage = 'ja' | 'en';
+import type { GenerationJobRecord } from '../types/api.js';
+
+export type UserFacingErrorLanguage = 'ja' | 'en';
 
 interface UserFacingErrorInput {
   message?: string | null;
@@ -33,6 +35,10 @@ const messages = {
     en: 'Email verification is not complete. Open the verification email, then sign in again.',
     ja: 'メール確認が完了していません。確認メールのリンクを開いてから、もう一度ログインしてください。',
   },
+  accountLinkRequired: {
+    en: 'This email address is already registered. Sign in with your existing method. To use Google sign-in, link Google from your account.',
+    ja: 'このメールアドレスは登録済みです。これまでの方法でログインしてください。Googleログインを使うには、アカウント画面から連携する必要があります。',
+  },
   forbidden: {
     en: 'This account cannot perform that operation. Check that you are signed in with the correct account.',
     ja: 'このアカウントではその操作を実行できません。正しいアカウントでログインしているか確認してください。',
@@ -52,6 +58,10 @@ const messages = {
   conflict: {
     en: 'This operation cannot be completed in the current state. Reload the page, check the latest state, then try again.',
     ja: '現在の状態ではこの操作を完了できません。ページを再読み込みし、最新の状態を確認してからもう一度お試しください。',
+  },
+  referenceModelIncompatible: {
+    en: 'These references cannot be sent to the standard image model. Generate and confirm a standard preview to use standard page generation again.',
+    ja: 'この参照画像は通常生成の画像モデルへ送信できません。通常生成したプレビューを確定し直すと、通常のページ生成に戻れます。',
   },
   credits: {
     en: 'Credits are insufficient. Add credits, then try again.',
@@ -108,6 +118,14 @@ const messages = {
   skeletonFailed: {
     en: 'The page skeleton could not be created from the story. Shorten or split the story, then try again.',
     ja: 'ストーリーからページ骨格を作成できませんでした。文章を短くするか話を分けてから、もう一度お試しください。',
+  },
+  storyAutofillFailed: {
+    en: 'Story settings autofill could not be completed. Check the saved settings and job status, then try again.',
+    ja: 'ストーリーからの設定自動入力を完了できませんでした。保存済みの設定とジョブの状態を確認してから、もう一度お試しください。',
+  },
+  skeletonJobFailed: {
+    en: 'Page skeleton creation could not be completed. Check the saved content and job status, then try again.',
+    ja: 'ページ骨格の作成を完了できませんでした。保存済みの内容とジョブの状態を確認してから、もう一度お試しください。',
   },
   storyTooLarge: {
     en: 'The story input is too large. Shorten the text or split it into smaller episodes, then try again.',
@@ -191,6 +209,20 @@ const messages = {
   },
 } satisfies Record<string, LocalizedMessage>;
 
+export function formatGenerationJobFailureMessage(
+  job: Pick<GenerationJobRecord, 'job_type' | 'error_message'>,
+  language: UserFacingErrorLanguage = 'en',
+): string {
+  if (job.job_type !== 'episode_story_autofill' && job.job_type !== 'episode_page_skeleton') {
+    return formatUserFacingErrorMessage({ message: job.error_message }, language);
+  }
+  const cause = findMessageBySpecificCause(normalizeErrorText(job.error_message ?? ''), '');
+  if (cause !== null && cause !== messages.generationFailed && cause !== messages.skeletonFailed) {
+    return localize(cause, language);
+  }
+  return localize(job.job_type === 'episode_story_autofill' ? messages.storyAutofillFailed : messages.skeletonJobFailed, language);
+}
+
 export function formatUserFacingError(error: unknown, language: UserFacingErrorLanguage = 'en'): string {
   if (isErrorWithApiFields(error)) {
     return formatUserFacingErrorMessage(
@@ -236,6 +268,15 @@ export function formatUserFacingErrorMessage(
 }
 
 function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: string): LocalizedMessage | null {
+  if (
+    normalizedCode === 'ACCOUNT_LINK_REQUIRED' ||
+    normalizedMessage.includes('use the existing sign in method and link this provider from your account.')
+  ) {
+    return messages.accountLinkRequired;
+  }
+  if (normalizedCode === 'PAGE_REFERENCE_MODEL_INCOMPATIBLE' || normalizedCode === 'ENTITY_REFERENCE_MODEL_INCOMPATIBLE') {
+    return messages.referenceModelIncompatible;
+  }
   if (normalizedCode === 'BILLING_TIMEOUT') {
     return messages.billingTimeout;
   }
@@ -472,6 +513,9 @@ function shouldKeepBackendMessage(
   normalizedMessage: string,
   language: UserFacingErrorLanguage,
 ): boolean {
+  if (containsEmailAddress(rawMessage)) {
+    return false;
+  }
   if (language !== 'ja') {
     return !looksLikeDeveloperMessage(normalizedMessage);
   }
@@ -492,6 +536,7 @@ function looksLikeDeveloperMessage(normalizedMessage: string): boolean {
     'json',
     'openai',
     'postgres',
+    'provider',
     'runtime',
     'schema',
     'sqs',
@@ -500,6 +545,10 @@ function looksLikeDeveloperMessage(normalizedMessage: string): boolean {
     'undefined',
     'uuid',
   ]);
+}
+
+function containsEmailAddress(value: string): boolean {
+  return /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/u.test(value);
 }
 
 function isErrorWithApiFields(error: unknown): error is ErrorWithApiFields {

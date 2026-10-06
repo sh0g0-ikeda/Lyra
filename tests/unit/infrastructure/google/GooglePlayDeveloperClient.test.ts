@@ -26,6 +26,34 @@ describe('GooglePlayDeveloperClient', () => {
     });
   });
 
+  it('deferred replacement keeps the current entitlement and records the next product', async () => {
+    const api = new FakeGooglePlayApi();
+    api.getSubscriptionPurchase = async () => ({ subscriptionState: 'SUBSCRIPTION_STATE_ACTIVE', latestOrderId: 'order-old', lineItems: [
+      { productId: 'premium', latestSuccessfulOrderId: 'order-old', expiryTime: '2026-08-31T00:00:00Z', deferredItemReplacement: { productId: 'standard' } },
+      { productId: 'standard' },
+    ] });
+    const result = await new GooglePlayDeveloperClient(api, () => new Date('2026-07-31T00:00:00Z')).verifyPurchase({ purchaseToken: 'token' });
+    expect(result).toMatchObject({ productId: 'premium', renewalProductId: 'standard', transactionId: 'order-old', providerCompletion: 'acknowledge' });
+  });
+
+  it('after deferred renewal, chooses the new active line rather than an expired historical line', async () => {
+    const api = new FakeGooglePlayApi();
+    api.getSubscriptionPurchase = async () => ({ subscriptionState: 'SUBSCRIPTION_STATE_ACTIVE', lineItems: [
+      { productId: 'premium', latestSuccessfulOrderId: 'old', expiryTime: '2026-07-30T00:00:00Z' },
+      { productId: 'standard', latestSuccessfulOrderId: 'new', expiryTime: '2026-08-31T00:00:00Z', autoRenewingPlan: { autoRenewEnabled: true } },
+    ] });
+    const result = await new GooglePlayDeveloperClient(api, () => new Date('2026-07-31T00:00:00Z')).verifyPurchase({ purchaseToken: 'token' });
+    expect(result).toMatchObject({ productId: 'standard', renewalProductId: null, transactionId: 'new' });
+  });
+
+  it('ambiguous simultaneous entitlements are rejected rather than granting an arbitrary plan', async () => {
+    const api = new FakeGooglePlayApi();
+    api.getSubscriptionPurchase = async () => ({ subscriptionState: 'SUBSCRIPTION_STATE_ACTIVE', lineItems: [
+      { productId: 'premium', expiryTime: '2026-08-31T00:00:00Z' }, { productId: 'standard', expiryTime: '2026-08-31T00:00:00Z' },
+    ] });
+    await expect(new GooglePlayDeveloperClient(api, () => new Date('2026-07-31T00:00:00Z')).verifyPurchase({ purchaseToken: 'token' })).rejects.toThrow();
+  });
+
   it('subscriptionが404の場合だけone-time product APIへfallbackする', async () => {
     const api = new FakeGooglePlayApi({ subscriptionNotFound: true });
     const client = new GooglePlayDeveloperClient(api);

@@ -29,6 +29,7 @@ interface ProbeValue {
   hasDirtyEditors: boolean;
   hasNavigationBlockingEditors: boolean;
   resolve: () => Promise<boolean>;
+  resolveAll: () => Promise<boolean>;
   saveWithoutPrompt: () => Promise<boolean>;
 }
 
@@ -62,6 +63,7 @@ function Probe({
       hasDirtyEditors: dirtyState.hasDirtyEditors,
       hasNavigationBlockingEditors: dirtyState.hasNavigationBlockingEditors,
       resolve: () => dirtyState.resolveDirtyEditors('ja'),
+      resolveAll: () => dirtyState.resolveDirtyEditors('ja', { includeNonBlocking: true }),
       saveWithoutPrompt: dirtyState.saveDirtyEditors
     });
   }, [dirtyState, onValue]);
@@ -535,4 +537,19 @@ describe('DirtyStateProvider', () => {
 
     await expect(pending).resolves.toBe(false);
   });
+  it('別ページの有料操作では非blocking draftも明示確認しキャンセルで保存しない', async () => {
+    let value: ProbeValue | null = null; let renderer: ReactTestRenderer;
+    const save = vi.fn().mockResolvedValue(undefined); const discard = vi.fn();
+    await act(async () => { renderer = create(<DirtyStateProvider><Probe dirty blocksNavigation={false} discard={discard} save={save} onValue={(next) => { value = next; }} /></DirtyStateProvider>); });
+    let result: Promise<boolean> | undefined;
+    await act(async () => { result = value?.resolveAll(); });
+    expect(renderer!.root.findByType('dirty-resolution-dialog').props.visible).toBe(true);
+    await act(async () => renderer!.root.findByType('dirty-resolution-dialog').props.onSelect('cancel'));
+    await expect(result).resolves.toBe(false); expect(save).not.toHaveBeenCalled(); expect(discard).not.toHaveBeenCalled();
+    await act(async () => { result = value?.resolveAll(); });
+    await act(async () => renderer!.root.findByType('dirty-resolution-dialog').props.onSelect('save'));
+    await expect(result).resolves.toBe(true); expect(save).toHaveBeenCalledOnce();
+    await act(async () => renderer!.unmount());
+  });
+
 });

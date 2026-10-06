@@ -12,6 +12,7 @@ import {
 } from '../../domain/constants/entityReferenceUpload.js';
 import {
   ConfigurationError,
+  ConflictError,
   NotFoundError,
   ValidationError,
 } from '../../domain/errors/index.js';
@@ -23,6 +24,7 @@ import type {
 import type {
   EntityReferenceUploadTokenRepository,
 } from '../../repositories/EntityReferenceUploadTokenRepository.js';
+import type { RepositorySchemaProfile } from '../../repositories/RepositorySchemaProfile.js';
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import type { EntityReferenceServicePort } from './EntityReferenceService.js';
@@ -74,6 +76,7 @@ export interface EntityReferenceUploadServiceDependencies {
   organizationService?: Pick<OrganizationServicePort, 'requireMembership'>;
   now?: () => Date;
   tokenGenerator?: () => string;
+  persistenceProfile?: RepositorySchemaProfile;
 }
 
 export class EntityReferenceUploadService implements EntityReferenceUploadServicePort {
@@ -118,37 +121,81 @@ export class EntityReferenceUploadService implements EntityReferenceUploadServic
       throw new ConfigurationError('Entity reference upload token generator is invalid');
     }
 
-    const expiresAt = new Date(
-      this.now().getTime() + ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS * 1000,
-    );
     const s3Key = buildTemporaryUploadKey(userId, input.mimeType);
+    if (this.dependencies.persistenceProfile !== 'legacy_2debe_v1') {
+      const uploadUrl = await this.dependencies.uploadStorage.createPresignedPutUrl({
+        s3Key,
+        mimeType: input.mimeType,
+        sizeBytes: input.sizeBytes,
+        expiresInSeconds: ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS,
+      });
+      const expiresAt = new Date(
+        this.now().getTime() + ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS * 1000,
+      );
+      await this.persistUploadToken({
+        uploadToken,
+        userId,
+        organizationId,
+        entityId,
+        mimeType: input.mimeType,
+        sizeBytes: input.sizeBytes,
+        s3Key,
+        expiresAt,
+      });
+      return buildPresignedUploadResult(uploadUrl, uploadToken, expiresAt, input.mimeType);
+    }
+
+    const signingDate = new Date(this.now().getTime());
+    const expiresAt = new Date(
+      signingDate.getTime() + ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS * 1000,
+    );
+    await this.persistUploadToken({
+      uploadToken,
+      userId,
+      organizationId,
+      entityId,
+      mimeType: input.mimeType,
+      sizeBytes: input.sizeBytes,
+      s3Key,
+      expiresAt,
+    });
+    if (this.now().getTime() >= expiresAt.getTime()) {
+      throw new ConflictError('Entity reference upload token expired before signing');
+    }
     const uploadUrl = await this.dependencies.uploadStorage.createPresignedPutUrl({
       s3Key,
       mimeType: input.mimeType,
       sizeBytes: input.sizeBytes,
       expiresInSeconds: ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS,
+      signingDate,
     });
+    if (this.now().getTime() >= expiresAt.getTime()) {
+      throw new ConflictError('Entity reference upload token expired before delivery');
+    }
+    return buildPresignedUploadResult(uploadUrl, uploadToken, expiresAt, input.mimeType);
+  }
+
+  private async persistUploadToken(input: {
+    uploadToken: string;
+    userId: string;
+    organizationId: string | null;
+    entityId: string | null;
+    mimeType: EntityReferenceUploadMimeType;
+    sizeBytes: number;
+    s3Key: string;
+    expiresAt: Date;
+  }): Promise<void> {
     await this.dependencies.uploadTokenRepository.create({
-      tokenHash: hashUploadToken(uploadToken),
-      userId,
-      organizationId,
-      entityId,
+      tokenHash: hashUploadToken(input.uploadToken),
+      userId: input.userId,
+      organizationId: input.organizationId,
+      entityId: input.entityId,
       purpose: ENTITY_REFERENCE_UPLOAD_PURPOSE,
       mimeType: input.mimeType,
       sizeBytes: input.sizeBytes,
-      s3Key,
-      expiresAt,
+      s3Key: input.s3Key,
+      expiresAt: input.expiresAt,
     });
-
-    return {
-      uploadUrl,
-      uploadToken,
-      expiresAt,
-      uploadHeaders: {
-        'Content-Type': input.mimeType,
-        'x-amz-server-side-encryption': 'AES256',
-      },
-    };
   }
 
   public async importUploadedImage(
@@ -271,6 +318,31 @@ export class EntityReferenceUploadService implements EntityReferenceUploadServic
     }
     return entity;
   }
+}
+
+function buildPresignedUploadResult(
+  uploadUrl: string,
+  uploadToken: string,
+  expiresAt: Date,
+  mimeType: EntityReferenceUploadMimeType,
+): {
+  uploadUrl: string;
+  uploadToken: string;
+  expiresAt: Date;
+  uploadHeaders: {
+    'Content-Type': EntityReferenceUploadMimeType;
+    'x-amz-server-side-encryption': 'AES256';
+  };
+} {
+  return {
+    uploadUrl,
+    uploadToken,
+    expiresAt,
+    uploadHeaders: {
+      'Content-Type': mimeType,
+      'x-amz-server-side-encryption': 'AES256',
+    },
+  };
 }
 
 function assertUploadMetadata(

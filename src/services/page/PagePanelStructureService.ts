@@ -57,9 +57,12 @@ export class PagePanelStructureService implements PagePanelStructureServicePort 
     }
 
     const currentCount = input.expectedPanelIds.length;
-    if (input.operation.type === 'append') {
+    if (input.operation.type === 'append' || input.operation.type === 'insert_after') {
       if (currentCount >= MAX_PANELS_PER_PAGE) {
         throw new ValidationError('A page can contain at most eight panels');
+      }
+      if (input.operation.type === 'insert_after' && !input.expectedPanelIds.includes(input.operation.panelId)) {
+        throw new ValidationError('The selected panel is not in the expected page structure');
       }
       return buildReplacementLayout(currentCount + 1);
     }

@@ -234,8 +234,17 @@ export class CreditService implements CreditServicePort {
         return null;
       }
 
-      const amount = Math.min(requestedAmount, refundableAmount);
-      const monthlyDelta = Math.min(remainingMonthly, amount);
+      // Expired monthly refunds may return through purchased credits. Cap by
+      // total settlement so bucket conversion cannot make a retry refund twice.
+      const unsettledAmount = Math.max(0,
+        -consumedDeltas.monthlyDelta - consumedDeltas.purchasedDelta
+        - refundedDeltas.monthlyDelta - refundedDeltas.purchasedDelta);
+      const amount = Math.min(requestedAmount, refundableAmount, unsettledAmount);
+      if (amount <= 0) return null;
+      // A purchased refund while monthly usage is still unsettled proves an
+      // earlier bucket conversion. Partial recovery must continue that choice.
+      const monthlyDelta = refundedDeltas.purchasedDelta > 0 && remainingMonthly > 0
+        ? 0 : Math.min(remainingMonthly, amount);
       return {
         amount,
         monthlyDelta,

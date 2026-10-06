@@ -8,7 +8,7 @@ describe('page image download feedback contract', () => {
     const source = readFileSync(
       resolve(process.cwd(), 'src/screens/PagesScreen.tsx'),
       'utf8'
-    );
+    ).replace(/\r\n?/gu, '\n'); // Git may use CRLF on Windows.
 
     expect(source).toContain('setPageImageDownloadSuccess(false)');
     expect(source).toContain('onSuccess: () => {\n      setPageImageDownloadSuccess(true);');

@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 
 interface NoticeProps {
+  announce?: boolean;
   actionLabel?: string;
   actionTestID?: string;
   message: string;
@@ -11,6 +12,7 @@ interface NoticeProps {
 }
 
 export function Notice({
+  announce = false,
   actionLabel,
   actionTestID,
   message,
@@ -33,7 +35,11 @@ export function Notice({
         visualTone === 'success' ? styles.success : null
       ]}
     >
-      <Text style={[styles.text, textToneStyle]}>{message}</Text>
+      <Text
+        accessibilityLiveRegion={announce ? 'polite' : undefined}
+        accessibilityRole={announce ? 'alert' : undefined}
+        style={[styles.text, textToneStyle]}
+      >{message}</Text>
       {actionLabel !== undefined && onAction !== undefined ? (
         <Pressable
           accessibilityLabel={actionLabel}

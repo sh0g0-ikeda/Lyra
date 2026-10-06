@@ -1,6 +1,15 @@
+import { resolveEpisodeOpenAIModelProfile } from '../src/infrastructure/openai/EpisodeOpenAIModelProfile.js';
+import { resolveEpisodeExportWorkerDependencies } from './episodeExportDependencies.js';
+import type { EpisodeExportWorkerPort } from './episodeExport.js';
 import { db } from '../src/lib/db.js';
+import { QuotedGenerationInputs } from '../src/services/generation/QuotedGenerationInputs.js';
+import { QuotedImportWorkerService } from '../src/services/generation/QuotedImportWorkerService.js';
+import { OpenAIEntityImportAnalyzer } from '../src/infrastructure/openai/OpenAIEntityImportAnalyzer.js';
+import { S3EntityReferenceUploadStorage } from '../src/infrastructure/aws/S3EntityReferenceUploadStorage.js';
+import { ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS } from '../src/domain/constants/entityReferenceUpload.js';
 import { PostgresCreditRepository } from '../src/repositories/CreditRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from '../src/repositories/EntityGenerationExecutionRepository.js';
+import { PostgresEntityStateReferenceRepository } from '../src/repositories/EntityStateReferenceRepository.js';
 import { PostgresEpisodePageSkeletonExecutionRepository } from '../src/repositories/EpisodePageSkeletonExecutionRepository.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from '../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
 import { PostgresEpisodePlanPersistenceRepository } from '../src/repositories/EpisodePlanPersistenceRepository.js';
@@ -58,6 +67,7 @@ import { OpenAIPageImageRenderer } from '../src/infrastructure/openai/OpenAIPage
 import { OpenAIPagePromptCompiler } from '../src/infrastructure/openai/OpenAIPagePromptCompiler.js';
 import { OpenAIEpisodeBeatPlanCompiler } from '../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
 import { OpenAIEpisodePlanAuditCompiler } from '../src/infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
+import { OpenAIEpisodeStateTransitionCompiler } from '../src/infrastructure/openai/OpenAIEpisodeStateTransitionCompiler.js';
 import { OpenAIPageEpisodePlanCompiler } from '../src/infrastructure/openai/OpenAIPageEpisodePlanCompiler.js';
 import { OpenAIStoryAiClient } from '../src/infrastructure/openai/OpenAIStoryAiClient.js';
 import { OpenAIEntityReferencePromptCompiler } from '../src/infrastructure/openai/OpenAIEntityReferencePromptCompiler.js';
@@ -75,6 +85,7 @@ import { LocalPreviewEntityReferenceGenerator } from '../src/infrastructure/loca
 import { resolveLocalAssetConfig } from '../src/infrastructure/local/LocalAssetFiles.js';
 import { env } from '../src/lib/env.js';
 import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
+import { attestCanonicalRuntimeSchema } from '../src/lib/runtimeSchemaAttestation.js';
 import {
   PageGenerationInputImageBuilder,
   type PageGenerationInputImageBuilderPort,
@@ -85,6 +96,7 @@ import { PanelEntityAssignmentService } from '../src/services/page/PanelEntityAs
 import type { EpisodePagePlanCompilerPort } from '../src/services/page/EpisodePagePlanCompiler.js';
 import type { EpisodeBeatPlanCompilerPort } from '../src/services/page/EpisodeBeatPlanCompiler.js';
 import type { EpisodePlanAuditCompilerPort } from '../src/services/page/EpisodePlanAuditCompiler.js';
+import type { EpisodeStateTransitionCompilerPort } from '../src/services/page/EpisodeStateTransitionCompiler.js';
 import {
   EpisodeStoryAutofillWorkerService,
   type EpisodeStoryAutofillWorkerPort,
@@ -122,6 +134,8 @@ export interface StoryPageSkeletonWorkerPort {
 }
 
 export interface WorkerDependencies {
+  episodeExportWorkerService?: EpisodeExportWorkerPort;
+  quotedImportWorkerService?: Pick<QuotedImportWorkerService, 'processJob'>;
   pageGenerationWorkerService: PageGenerationWorkerPort;
   entityGenerationWorkerService: EntityGenerationWorkerPort;
   episodeStoryAutofillWorkerService: StoryAutofillWorkerPort;
@@ -129,6 +143,8 @@ export interface WorkerDependencies {
 }
 
 export interface WorkerDependencyOverrides {
+  episodeExportWorkerService?: EpisodeExportWorkerPort;
+  quotedImportWorkerService?: Pick<QuotedImportWorkerService, 'processJob'>;
   creditService?: CreditServicePort;
   promptBuilder?: PromptBuilderPort;
   pagePromptCompiler?: PagePromptCompilerPort;
@@ -146,6 +162,7 @@ export interface WorkerDependencyOverrides {
   episodePagePlanCompiler?: EpisodePagePlanCompilerPort;
   episodeBeatPlanCompiler?: EpisodeBeatPlanCompilerPort;
   episodePlanAuditCompiler?: EpisodePlanAuditCompilerPort;
+  episodeStateTransitionCompiler?: EpisodeStateTransitionCompilerPort;
   organizationService?: OrganizationServicePort;
   pageGenerationWorkerService?: PageGenerationWorkerPort;
   entityGenerationWorkerService?: EntityGenerationWorkerPort;
@@ -153,14 +170,26 @@ export interface WorkerDependencyOverrides {
   episodePageSkeletonWorkerService?: EpisodePageSkeletonWorkerPort;
 }
 
+export async function resolveAttestedWorkerDependencies(
+  overrides: WorkerDependencyOverrides = {},
+): Promise<WorkerDependencies> {
+  assertProductionRuntimeConfig(env);
+  await attestCanonicalRuntimeSchema(db);
+  return resolveWorkerDependencies(overrides);
+}
+
 export function resolveWorkerDependencies(
   overrides: WorkerDependencyOverrides = {},
 ): WorkerDependencies {
   assertProductionRuntimeConfig(env);
+  const persistenceProfile = env.LYRA_PERSISTENCE_PROFILE;
+  const episodeExportWorkerService = overrides.episodeExportWorkerService ?? resolveConfiguredExportWorker();
 
-  if (overrides.pageGenerationWorkerService !== undefined) {
+  if (overrides.pageGenerationWorkerService !== undefined || overrides.episodeExportWorkerService !== undefined || overrides.quotedImportWorkerService !== undefined) {
     return {
-      pageGenerationWorkerService: overrides.pageGenerationWorkerService,
+      episodeExportWorkerService,
+      quotedImportWorkerService: overrides.quotedImportWorkerService,
+      pageGenerationWorkerService: overrides.pageGenerationWorkerService ?? new UnconfiguredPageGenerationWorker(),
       entityGenerationWorkerService:
         overrides.entityGenerationWorkerService ?? new UnconfiguredEntityGenerationWorker(),
       episodeStoryAutofillWorkerService:
@@ -172,6 +201,8 @@ export function resolveWorkerDependencies(
 
   if (overrides.entityGenerationWorkerService !== undefined) {
     return {
+      episodeExportWorkerService,
+      quotedImportWorkerService: overrides.quotedImportWorkerService,
       pageGenerationWorkerService:
         overrides.pageGenerationWorkerService ?? new UnconfiguredPageGenerationWorker(),
       entityGenerationWorkerService: overrides.entityGenerationWorkerService,
@@ -184,6 +215,8 @@ export function resolveWorkerDependencies(
 
   if (overrides.episodeStoryAutofillWorkerService !== undefined) {
     return {
+      episodeExportWorkerService,
+      quotedImportWorkerService: overrides.quotedImportWorkerService,
       pageGenerationWorkerService:
         overrides.pageGenerationWorkerService ?? new UnconfiguredPageGenerationWorker(),
       entityGenerationWorkerService:
@@ -196,6 +229,8 @@ export function resolveWorkerDependencies(
 
   if (overrides.episodePageSkeletonWorkerService !== undefined) {
     return {
+      episodeExportWorkerService,
+      quotedImportWorkerService: overrides.quotedImportWorkerService,
       pageGenerationWorkerService:
         overrides.pageGenerationWorkerService ?? new UnconfiguredPageGenerationWorker(),
       entityGenerationWorkerService:
@@ -214,9 +249,9 @@ export function resolveWorkerDependencies(
   const promptBuilder =
     overrides.promptBuilder ??
     new PromptBuilder(
-      new PostgresPageRepository(db),
-      new PostgresPanelRepository(db),
-      new PostgresEntityRepository(db),
+      new PostgresPageRepository(db, persistenceProfile),
+      new PostgresPanelRepository(db, persistenceProfile),
+      new PostgresEntityRepository(db, persistenceProfile),
       new PostgresCompositionGalleryRepository(db),
     );
   const pagePromptCompiler =
@@ -229,13 +264,13 @@ export function resolveWorkerDependencies(
     overrides.pageImageRenderer ?? resolvePageImageRenderer();
   const pageImageStorage =
     overrides.pageImageStorage ?? resolvePageImageStorage();
-  const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db);
-  const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db);
+  const pageGenerationExecutionRepository = new PostgresPageGenerationExecutionRepository(db, persistenceProfile);
+  const entityGenerationExecutionRepository = new PostgresEntityGenerationExecutionRepository(db, persistenceProfile);
   const episodeStoryAutofillExecutionRepository =
-    new PostgresEpisodeStoryAutofillExecutionRepository(db);
+    new PostgresEpisodeStoryAutofillExecutionRepository(db, persistenceProfile);
   const episodePageSkeletonExecutionRepository =
-    new PostgresEpisodePageSkeletonExecutionRepository(db);
-  const generationJobCancellationControl = new PostgresGenerationJobRepository(db);
+    new PostgresEpisodePageSkeletonExecutionRepository(db, persistenceProfile);
+  const generationJobCancellationControl = new PostgresGenerationJobRepository(db, persistenceProfile);
   const entityReferencePromptBuilder =
     overrides.entityReferencePromptBuilder ?? new EntityReferencePromptBuilder();
   const entityReferencePromptCompiler =
@@ -248,9 +283,9 @@ export function resolveWorkerDependencies(
   const pageService =
     overrides.pageService ??
     new PageService(
-      new PostgresPageRepository(db),
-      new PostgresPanelRepository(db),
-      new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db)),
+      new PostgresPageRepository(db, persistenceProfile),
+      new PostgresPanelRepository(db, persistenceProfile),
+      new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db, persistenceProfile)),
       undefined,
       overrides.episodePagePlanCompiler ?? resolveEpisodePagePlanCompiler(),
       undefined,
@@ -261,16 +296,35 @@ export function resolveWorkerDependencies(
         adaptivePackingEnabled: env.EPISODE_PAGE_PLAN_ADAPTIVE_PACKING_ENABLED,
         inlineRepairEnabled: env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
       },
-      new PostgresEpisodePlanPersistenceRepository(db),
+      new PostgresEpisodePlanPersistenceRepository(db, persistenceProfile),
+      overrides.episodeStateTransitionCompiler ?? resolveEpisodeStateTransitionCompiler(),
     );
   const pageSkeletonService =
     overrides.pageSkeletonService ??
     new PageSkeletonService(
-      new PostgresStoryRepository(db, db),
+      new PostgresStoryRepository(db, db, persistenceProfile),
       overrides.storyAiClient ?? resolveStoryAiClient(),
     );
 
+  const quotedInputs = new QuotedGenerationInputs(
+    db, env.OPENAI_API_KEY !== undefined && !env.LOCAL_IMAGE_FALLBACK_ENABLED ? env.OPENAI_IMAGE_MODEL : 'unavailable',
+    storedImageLoader, new LayoutGuideImageRenderer(),
+  );
+  const importClient = buildOpenAIClient();
+  const quotedImportWorkerService = overrides.quotedImportWorkerService
+    ?? (env.S3_BUCKET_IMAGES !== undefined && importClient !== null ? new QuotedImportWorkerService(
+      db,
+      new S3EntityReferenceUploadStorage(createPageImageStorageClient(env.AWS_REGION), {
+        bucketName: env.S3_BUCKET_IMAGES, cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+        uploadUrlTtlSeconds: ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS,
+      }),
+      new OpenAIEntityImportAnalyzer(importClient),
+      env.ENTITY_IMPORT_ANALYSIS_ENABLED,
+    ) : undefined);
+
   return {
+    episodeExportWorkerService,
+    quotedImportWorkerService,
     pageGenerationWorkerService: new PageGenerationWorkerService(
       pageGenerationExecutionRepository,
       promptBuilder,
@@ -283,10 +337,12 @@ export function resolveWorkerDependencies(
       env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED,
       organizationService,
       generationJobCancellationControl,
+      quotedInputs,
+      env.OPENAI_API_KEY !== undefined && !env.LOCAL_IMAGE_FALLBACK_ENABLED ? env.OPENAI_IMAGE_MODEL : undefined,
     ),
     entityGenerationWorkerService: new EntityGenerationWorkerService(
       entityGenerationExecutionRepository,
-      new PostgresEntityRepository(db),
+      new PostgresEntityRepository(db, persistenceProfile),
       entityReferencePromptBuilder,
       entityReferencePromptCompiler,
       entityReferenceGenerator,
@@ -297,17 +353,22 @@ export function resolveWorkerDependencies(
       env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
       organizationService,
       generationJobCancellationControl,
+      new PostgresEntityStateReferenceRepository(db),
+      quotedInputs,
+      generationJobCancellationControl,
     ),
     episodeStoryAutofillWorkerService: new EpisodeStoryAutofillWorkerService(
       episodeStoryAutofillExecutionRepository,
       pageService,
       env.EPISODE_STORY_AUTOFILL_CANCELLATION_ENABLED,
+      persistenceProfile === 'legacy_2debe_v1' ? episodeStoryAutofillExecutionRepository : undefined,
     ),
     episodePageSkeletonWorkerService: new EpisodePageSkeletonWorkerService(
       episodePageSkeletonExecutionRepository,
       pageSkeletonService,
       pageService,
       generationJobCancellationControl,
+      persistenceProfile === 'legacy_2debe_v1' ? episodePageSkeletonExecutionRepository : undefined,
     ),
   };
 }
@@ -329,8 +390,8 @@ function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuild
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
   if (localAssetConfig !== null) {
     return new PageGenerationInputImageBuilder(
-      new PostgresPageRepository(db),
-      new PostgresEntityRepository(db),
+      new PostgresPageRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+      new PostgresEntityRepository(db, env.LYRA_PERSISTENCE_PROFILE),
       new LocalFileStoredImageLoader(localAssetConfig),
       new LayoutGuideImageRenderer(),
     );
@@ -341,8 +402,8 @@ function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuild
   }
 
   return new PageGenerationInputImageBuilder(
-    new PostgresPageRepository(db),
-    new PostgresEntityRepository(db),
+    new PostgresPageRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+    new PostgresEntityRepository(db, env.LYRA_PERSISTENCE_PROFILE),
     new S3StoredImageLoader(createPageImageStorageClient(env.AWS_REGION), env.S3_BUCKET_IMAGES),
     new LayoutGuideImageRenderer(),
   );
@@ -460,7 +521,8 @@ function resolveEpisodePagePlanCompiler(): EpisodePagePlanCompilerPort {
     };
   }
 
-  return new OpenAIPageEpisodePlanCompiler(client);
+  const profile = resolveEpisodeOpenAIModelProfile(env.OPENAI_EPISODE_TEXT_PROFILE).detail;
+  return new OpenAIPageEpisodePlanCompiler(client, profile.model, profile.reasoningEffort);
 }
 
 function resolveEpisodeBeatPlanCompiler(): EpisodeBeatPlanCompilerPort {
@@ -473,7 +535,8 @@ function resolveEpisodeBeatPlanCompiler(): EpisodeBeatPlanCompilerPort {
     };
   }
 
-  return new OpenAIEpisodeBeatPlanCompiler(client);
+  const profile = resolveEpisodeOpenAIModelProfile(env.OPENAI_EPISODE_TEXT_PROFILE).beat;
+  return new OpenAIEpisodeBeatPlanCompiler(client, profile.model, profile.reasoningEffort);
 }
 
 function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
@@ -486,7 +549,20 @@ function resolveEpisodePlanAuditCompiler(): EpisodePlanAuditCompilerPort {
     };
   }
 
-  return new OpenAIEpisodePlanAuditCompiler(client);
+  const profile = resolveEpisodeOpenAIModelProfile(env.OPENAI_EPISODE_TEXT_PROFILE).audit;
+  return new OpenAIEpisodePlanAuditCompiler(client, profile.model, profile.reasoningEffort);
+}
+
+function resolveEpisodeStateTransitionCompiler(): EpisodeStateTransitionCompilerPort {
+  const client = buildOpenAIClient();
+  if (client === null) {
+    return {
+      async compileStateTransitions(): Promise<never> {
+        throw new ConfigurationError('OpenAI episode state transition compiler is not configured');
+      },
+    };
+  }
+  return new OpenAIEpisodeStateTransitionCompiler(client);
 }
 
 function resolveStoryAiClient(): StoryAiClientPort {
@@ -536,6 +612,10 @@ function resolveS3ImageStorageCdnBaseUrl(): string | undefined {
 }
 
 class UnconfiguredPageGenerationInputImageBuilder implements PageGenerationInputImageBuilderPort {
+  public async assertRenderableState(): Promise<void> {
+    return;
+  }
+
   public async buildInputImages(): Promise<[]> {
     return [];
   }
@@ -661,4 +741,10 @@ class UnconfiguredStoredImageLoader implements StoredImageLoaderPort {
   public async loadByS3Key(): Promise<never> {
     throw new ConfigurationError('Stored image loader is not configured');
   }
+}
+
+function resolveConfiguredExportWorker(): EpisodeExportWorkerPort | undefined {
+  if (!env.EPISODE_EXPORT_ENABLED) return undefined;
+  try { return resolveEpisodeExportWorkerDependencies().episodeExportWorkerService; }
+  catch { return undefined; } // Known export envelopes stay retryable until configuration recovers.
 }

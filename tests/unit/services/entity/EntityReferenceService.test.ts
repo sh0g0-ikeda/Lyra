@@ -94,6 +94,7 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   public activeEntityJob: GenerationJob | null = null;
   public activeForUser = 0;
   public activeGlobally = 0;
+  public resolvedJob: GenerationJob | null = null;
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
     if (input.capacityLimits !== undefined) {
@@ -117,7 +118,7 @@ class FakeGenerationJobRepository implements GenerationJobRepository {
   }
 
   public async findByIdAndUserId(): Promise<GenerationJob | null> {
-    return null;
+    return this.resolvedJob;
   }
 
   public async findActivePageGenerationJob(): Promise<GenerationJob | null> {
@@ -485,6 +486,32 @@ describe('EntityReferenceService', () => {
     });
   });
 
+  it('Hy4 candidateを明示sourceに使う場合はjob作成と課金前に409を返す', async () => {
+    const sourceJobId = '00000000-0000-4000-8000-000000000099';
+    const sourceS3Key = `session/user-1/entities/entity-1/${sourceJobId}-1.png`;
+    const jobs = new FakeGenerationJobRepository();
+    jobs.resolvedJob = buildJob({
+      id: sourceJobId,
+      status: 'completed',
+      params: {
+        entity_id: 'entity-1',
+        image_model: 'hy4-preview',
+        provider_model_id: 'hy4-preview',
+        provider: 'tencent',
+      },
+      result: { candidates: [{ s3_key: sourceS3Key }] },
+    });
+    const creditService = new FakeCreditService();
+    const service = buildService({ generationJobRepository: jobs, creditService });
+
+    await expect(service.enqueueReferenceGeneration('user-1', 'entity-1', {
+      sourceS3Key,
+    })).rejects.toMatchObject({ code: 'ENTITY_REFERENCE_MODEL_INCOMPATIBLE', statusCode: 409 });
+
+    expect(jobs.createdInput).toBeNull();
+    expect(creditService.consumed).toBeNull();
+  });
+
   it('停止要求がcredit consumeに勝った場合はqueueへ送らず再課金しない', async () => {
     const jobs = new FakeGenerationJobRepository();
     const creditService = new FakeCreditService();
@@ -575,6 +602,38 @@ describe('EntityReferenceService', () => {
     expect(repository.savedInput?.primaryRefId).toBe(repository.savedInput?.images[0]?.refId);
     expect(repository.savedInput?.promptSupplement).toBe('anime heroine');
     expect(result.status).toBe('partial');
+  });
+
+  it('Hy4 candidateのconfirmは認証済みWeb audienceだけ許可する', async () => {
+    const sourceJobId = '00000000-0000-4000-8000-000000000088';
+    const sourceS3Key = `session/user-1/entities/entity-1/${sourceJobId}-1.png`;
+    const jobs = new FakeGenerationJobRepository();
+    jobs.resolvedJob = buildJob({
+      id: sourceJobId,
+      status: 'completed',
+      params: {
+        entity_id: 'entity-1',
+        image_model: 'hy4-preview',
+        provider_model_id: 'hy4-preview',
+        provider: 'tencent',
+      },
+      result: { candidates: [{ s3_key: sourceS3Key }] },
+    });
+    const mobileService = buildService({ generationJobRepository: jobs });
+    await expect(mobileService.confirmReferences('user-1', 'entity-1', {
+      selectedS3Keys: [sourceS3Key],
+    })).rejects.toMatchObject({ code: 'IMAGE_WEB_ONLY', statusCode: 403 });
+
+    const storage = new FakeEntityImageStorage();
+    const webService = buildService({ generationJobRepository: jobs, storage });
+    const confirmed = await webService.confirmReferences('user-1', 'entity-1', {
+      selectedS3Keys: [sourceS3Key],
+    }, null, 'authorized_web');
+
+    expect(storage.finalizedKeys).toEqual([sourceS3Key]);
+    expect(confirmed.images[0]).toMatchObject({
+      imageModel: 'hy4-preview', providerModelId: 'hy4-preview', provider: 'tencent',
+    });
   });
 
   it('confirm は他ユーザーの S3 key を拒否する', async () => {

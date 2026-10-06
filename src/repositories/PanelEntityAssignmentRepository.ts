@@ -12,6 +12,11 @@ import type {
   PanelEntityStateReference,
 } from '../domain/types/panelEntityAssignment.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 export type { PanelEntityAssignment, PanelEntityStateReference };
 
@@ -101,7 +106,26 @@ interface EntityStatePairRow extends QueryResultRow {
 }
 
 export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssignmentRepository {
-  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
+  public constructor(
+    private readonly client: DatabaseClient & TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
+
+  private async runLegacyWrite<T>(
+    userId: string,
+    organizationId: string | null,
+    operation: (client: DatabaseClient) => Promise<T>,
+  ): Promise<T> {
+    if (this.schemaProfile !== 'legacy_2debe_v1') {
+      return operation(this.client);
+    }
+    return this.client.transaction(async (transactionClient) => {
+      if (organizationId === null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      }
+      return operation(transactionClient);
+    });
+  }
 
   public async findPanelContextByIdAndUserId(
     panelId: string,
@@ -218,7 +242,8 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
     assignments: PanelEntityAssignment[],
     organizationId: string | null = null,
   ): Promise<PanelEntityAssignment[] | null> {
-    const result = await this.client.query<PanelEntitiesRow>(
+    return this.runLegacyWrite(userId, organizationId, async (client) => {
+      const result = await client.query<PanelEntitiesRow>(
       `
       UPDATE panels
       SET entities = $3::jsonb,
@@ -248,8 +273,9 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
       [panelId, userId, JSON.stringify(assignments.map(toPanelEntityAssignmentJson)), organizationId],
     );
 
-    const row = result.rows[0];
-    return row === undefined ? null : toLegacyPanelEntityAssignments(row.entities);
+      const row = result.rows[0];
+      return row === undefined ? null : toLegacyPanelEntityAssignments(row.entities);
+    });
   }
 
   public async replacePanelEntityAssignmentsConditionally(
@@ -260,6 +286,9 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
     organizationId: string | null = null,
   ): Promise<ConditionalPanelEntityAssignmentResult> {
     return this.client.transaction(async (transactionClient) => {
+      if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      }
       const pageResult = await transactionClient.query<ConditionalPageContextRow>(
         `
         SELECT pages.id AS page_id,
@@ -320,11 +349,9 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
 
       const assignedEntityIds = new Set(assignments.map((assignment) => assignment.entityId));
       const speakerEntityIds = toPanelSpeakerEntityIds(panel.dialogue);
-      if (speakerEntityIds.some((entityId) => !assignedEntityIds.has(entityId))) {
-        return { status: 'dialogue_speaker_not_assigned' };
-      }
-
-      const entityIds = [...assignedEntityIds].sort();
+      // Off-panel speakers are valid, but every visible subject and voice must
+      // still belong to this authorized work under the same transaction lock.
+      const entityIds = [...new Set([...assignedEntityIds, ...speakerEntityIds])].sort();
       if (entityIds.length > 0) {
         const entityResult = await transactionClient.query<EntityIdRow>(
           `

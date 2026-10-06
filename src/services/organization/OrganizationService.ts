@@ -14,6 +14,10 @@ import {
   ValidationError,
 } from '../../domain/errors/index.js';
 import type {
+  OrganizationCollectionPage,
+  OrganizationCollectionPageRequest,
+} from '../../domain/organizationPagination.js';
+import type {
   Organization,
   OrganizationAuditLog,
   OrganizationCapability,
@@ -23,6 +27,7 @@ import type {
   OrganizationMemberRole,
   OrganizationStatus,
   OrganizationUsageEvent,
+  OrganizationUsageSummary,
   OrganizationWorkspaceSummary,
 } from '../../domain/types/organization.js';
 import { roleHasCapability } from '../../domain/types/organization.js';
@@ -30,6 +35,7 @@ import type { DatabaseClient } from '../../lib/db.js';
 import type {
   OrganizationListCursor,
   OrganizationRepository,
+  OrganizationCollectionPaginationRepository,
   OrganizationWorkspacePage,
   OrganizationWorkspacePaginationRepository,
 } from '../../repositories/OrganizationRepository.js';
@@ -110,7 +116,18 @@ export interface RecordOrganizationAuditEventRequest {
   metadata?: Record<string, unknown>;
 }
 
+export interface OrganizationUsagePageResult {
+  page: OrganizationCollectionPage<OrganizationUsageEvent>;
+  summary: OrganizationUsageSummary;
+}
+
 export interface OrganizationServicePort {
+  listMembersPage(userId: string, organizationId: string, page: OrganizationCollectionPageRequest): Promise<OrganizationCollectionPage<OrganizationMember>>;
+  listInvitationsPage(userId: string, organizationId: string, page: OrganizationCollectionPageRequest): Promise<OrganizationCollectionPage<OrganizationInvitation>>;
+  listUsageEventsPage(userId: string, organizationId: string, page: OrganizationCollectionPageRequest): Promise<OrganizationUsagePageResult>;
+  listAuditLogsPage(userId: string, organizationId: string, page: OrganizationCollectionPageRequest): Promise<OrganizationCollectionPage<OrganizationAuditLog>>;
+  getUsageSummary(userId: string, organizationId: string): Promise<OrganizationUsageSummary>;
+
   listWorkspaces(userId: string): Promise<OrganizationWorkspaceSummary[]>;
   listWorkspacesPage(
     userId: string,
@@ -189,7 +206,7 @@ export interface OrganizationServicePort {
 export class OrganizationService implements OrganizationServicePort {
   public constructor(
     private readonly organizationRepository:
-      OrganizationRepository & Partial<OrganizationWorkspacePaginationRepository>,
+      OrganizationRepository & Partial<OrganizationWorkspacePaginationRepository & OrganizationCollectionPaginationRepository>,
     private readonly invitationEmailService?: OrganizationInvitationEmailServicePort,
     private readonly invitationUrlBuilder: InvitationUrlBuilder = new InvitationUrlBuilder('http://localhost:5173'),
   ) {}
@@ -937,11 +954,17 @@ export class OrganizationService implements OrganizationServicePort {
       if (refundDeltas === null) {
         return balance;
       }
+      const monthlyExpired = balance.monthlyExpiresAt !== null
+        && balance.monthlyExpiresAt.getTime() <= Date.now();
+      const refundMonthlyDelta = monthlyExpired ? 0 : refundDeltas.monthlyDelta;
+      const refundPurchasedDelta = refundDeltas.purchasedDelta
+        + (monthlyExpired ? refundDeltas.monthlyDelta : 0);
       const next = await this.organizationRepository.updateCreditBalance(
         {
           ...balance,
-          monthlyCredits: balance.monthlyCredits + refundDeltas.monthlyDelta,
-          purchasedCredits: balance.purchasedCredits + refundDeltas.purchasedDelta,
+          monthlyCredits: (monthlyExpired ? 0 : balance.monthlyCredits) + refundMonthlyDelta,
+          purchasedCredits: balance.purchasedCredits + refundPurchasedDelta,
+          monthlyExpiresAt: monthlyExpired ? null : balance.monthlyExpiresAt,
         },
         client,
       );
@@ -950,8 +973,8 @@ export class OrganizationService implements OrganizationServicePort {
         organizationId: input.organizationId,
         type: 'refund',
         amount: refundDeltas.amount,
-        monthlyDelta: refundDeltas.monthlyDelta,
-        purchasedDelta: refundDeltas.purchasedDelta,
+        monthlyDelta: refundMonthlyDelta,
+        purchasedDelta: refundPurchasedDelta,
         monthlyAfter: next.monthlyCredits,
         purchasedAfter: next.purchasedCredits,
         description: input.description,
@@ -985,8 +1008,8 @@ export class OrganizationService implements OrganizationServicePort {
           targetId: input.jobId ?? null,
           metadata: {
             amount: refundDeltas.amount,
-            monthly_delta: refundDeltas.monthlyDelta,
-            purchased_delta: refundDeltas.purchasedDelta,
+            monthly_delta: refundMonthlyDelta,
+            purchased_delta: refundPurchasedDelta,
             monthly_after: next.monthlyCredits,
             purchased_after: next.purchasedCredits,
             stripe_event_id: input.stripeEventId ?? null,
@@ -1037,8 +1060,13 @@ export class OrganizationService implements OrganizationServicePort {
     if (refundableAmount <= 0) {
       return null;
     }
-    const amount = Math.min(requestedAmount, refundableAmount);
-    const monthlyDelta = Math.min(remainingMonthly, amount);
+    // The immutable old late-cancel trigger can move monthly refunds into
+    // purchased credits; a bucket mismatch must not exceed the debit total.
+    const unsettledAmount = Math.max(0, Math.abs(consumed.amount) - refunded.amount);
+    const amount = Math.min(requestedAmount, refundableAmount, unsettledAmount);
+    if (amount <= 0) return null;
+    const monthlyDelta = refunded.purchasedDelta > 0 && remainingMonthly > 0
+      ? 0 : Math.min(remainingMonthly, amount);
     return { amount, monthlyDelta, purchasedDelta: amount - monthlyDelta };
   }
 
@@ -1168,6 +1196,61 @@ export class OrganizationService implements OrganizationServicePort {
       );
     }
     throw new ForbiddenError('You do not have permission for this organization action');
+  }
+
+  public async listMembersPage(
+    userId: string,
+    organizationId: string,
+    page: OrganizationCollectionPageRequest,
+  ): Promise<OrganizationCollectionPage<OrganizationMember>> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    return requireCollectionPaginationRepository(this.organizationRepository).listMembersPage(organizationId, page);
+  }
+
+  public async listInvitationsPage(
+    userId: string,
+    organizationId: string,
+    page: OrganizationCollectionPageRequest,
+  ): Promise<OrganizationCollectionPage<OrganizationInvitation>> {
+    await this.requireMembership(organizationId, userId, 'manage_members');
+    return requireCollectionPaginationRepository(this.organizationRepository).listInvitationsPage(organizationId, page);
+  }
+
+  public async listUsageEventsPage(
+    userId: string,
+    organizationId: string,
+    page: OrganizationCollectionPageRequest,
+  ): Promise<OrganizationUsagePageResult> {
+    await this.requireMembership(organizationId, userId, 'view_usage');
+    const [pagedEvents, summary] = await Promise.all([
+      requireCollectionPaginationRepository(this.organizationRepository).listUsageEventsPage(organizationId, page),
+      requireCollectionPaginationRepository(this.organizationRepository).summarizeUsageEvents(organizationId),
+    ]);
+    return { page: pagedEvents, summary };
+  }
+
+  public async listAuditLogsPage(
+    userId: string,
+    organizationId: string,
+    page: OrganizationCollectionPageRequest,
+  ): Promise<OrganizationCollectionPage<OrganizationAuditLog>> {
+    const member = await this.requireMembership(organizationId, userId);
+    if (roleHasCapability(member.role, 'view_audit_logs')) {
+      return requireCollectionPaginationRepository(this.organizationRepository).listAuditLogsPage(organizationId, page);
+    }
+    if (roleHasCapability(member.role, 'view_billing')) {
+      return requireCollectionPaginationRepository(this.organizationRepository).listAuditLogsByActionPrefixesPage(
+        organizationId,
+        BILLING_AUDIT_ACTION_PREFIXES,
+        page,
+      );
+    }
+    throw new ForbiddenError('You do not have permission for this organization action');
+  }
+
+  public async getUsageSummary(userId: string, organizationId: string): Promise<OrganizationUsageSummary> {
+    await this.requireMembership(organizationId, userId, 'view_usage');
+    return requireCollectionPaginationRepository(this.organizationRepository).summarizeUsageEvents(organizationId);
   }
 
   public async recordGenerationCompleted(input: RecordOrganizationGenerationRequest): Promise<void> {
@@ -1477,4 +1560,15 @@ function emptyOrgBalance(organizationId: string): OrganizationCreditBalance {
     monthlyExpiresAt: null,
     updatedAt: new Date(0),
   };
+}
+
+function requireCollectionPaginationRepository(
+  repository: OrganizationRepository & Partial<OrganizationCollectionPaginationRepository>,
+): OrganizationCollectionPaginationRepository {
+  if (repository.listMembersPage === undefined || repository.listInvitationsPage === undefined ||
+      repository.listUsageEventsPage === undefined || repository.listAuditLogsPage === undefined ||
+      repository.listAuditLogsByActionPrefixesPage === undefined || repository.summarizeUsageEvents === undefined) {
+    throw new ConfigurationError('Organization collection pagination is not configured');
+  }
+  return repository as OrganizationRepository & OrganizationCollectionPaginationRepository;
 }

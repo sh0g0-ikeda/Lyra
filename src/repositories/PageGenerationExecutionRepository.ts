@@ -1,5 +1,7 @@
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 ﻿import type { QueryResultRow } from 'pg';
 import type { PageStatus } from '../domain/types/page.js';
+import { toImageProvenanceRecord, type ImageProvenance } from '../domain/generation/ImageAccessPolicy.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { PageGenerationInputSnapshot, PageGenerationMode } from '../domain/types/pageGeneration.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
@@ -14,7 +16,7 @@ import type {
   PagePromptCompilationMetadata,
 } from '../services/page/PageGenerationWorkerService.js';
 
-export interface CompletePageGenerationInput {
+export interface CompletePageGenerationInput extends ImageProvenance {
   jobId: string;
   userId: string;
   organizationId?: string | null;
@@ -93,7 +95,10 @@ interface PageUpdateRow extends QueryResultRow {
 }
 
 export class PostgresPageGenerationExecutionRepository implements PageGenerationExecutionRepository {
-  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
+  public constructor(
+    private readonly client: DatabaseClient & TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async claimQueuedPageGenerationJob(jobId: string): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
@@ -155,13 +160,38 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
       UPDATE generation_jobs
       SET result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
             'input_snapshot', $3::jsonb,
-            'input_snapshot_saved_at', $4::text
+            'input_snapshot_saved_at', $4::text,
+            -- Retries replace the diagnostic snapshot, but must not erase the
+            -- sole deletion inventory for an earlier reference. Keep only the
+            -- distinct entity/key pairs, never old prompts, names or dialogue.
+            'retained_input_references', (
+              SELECT COALESCE(jsonb_agg(reference_record
+                ORDER BY reference_record->>'entityId', reference_record->>'s3Key'), '[]'::jsonb)
+              FROM (
+                SELECT DISTINCT jsonb_build_object(
+                  'entityId', reference_image->>'entityId',
+                  's3Key', reference_image->>'s3Key'
+                ) AS reference_record
+                FROM jsonb_array_elements(
+                  CASE WHEN jsonb_typeof(result->'retained_input_references') = 'array'
+                    THEN result->'retained_input_references' ELSE '[]'::jsonb END
+                  || CASE WHEN jsonb_typeof(result->'input_snapshot'->'references') = 'array'
+                    THEN result->'input_snapshot'->'references' ELSE '[]'::jsonb END
+                  || CASE WHEN jsonb_typeof($3::jsonb->'references') = 'array'
+                    THEN $3::jsonb->'references' ELSE '[]'::jsonb END
+                ) AS reference_image
+                WHERE jsonb_typeof(reference_image->'entityId') = 'string'
+                  AND jsonb_typeof(reference_image->'s3Key') = 'string'
+              ) AS reference_records
+            )
           )
       WHERE id = $1
         AND user_id = $2
         AND job_type = 'page_generate'
         AND status = 'processing'
         AND cancel_requested_at IS NULL
+        AND COALESCE(jsonb_typeof(result->'retained_input_references'), 'null') IN ('null', 'array')
+        AND COALESCE(jsonb_typeof(result->'input_snapshot'->'references'), 'null') IN ('null', 'array')
       RETURNING *
       `,
       [input.jobId, input.userId, JSON.stringify(input.snapshot), input.savedAt],
@@ -181,7 +211,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
               'cdn_url', $4::text,
               'generation_mode', $5::text,
               'generated_at', $6::text
-            ),
+            ) || $8::jsonb,
             generation_mode = $5::text,
             status = 'generated',
             updated_at = NOW()
@@ -214,6 +244,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
           input.generationMode,
           input.generatedAt,
           input.organizationId ?? null,
+          JSON.stringify(toImageProvenanceRecord(input)),
         ],
       );
 
@@ -245,6 +276,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
             generation_mode: input.generationMode,
             request_kind: input.requestKind,
             cost_usd: input.costUsd,
+            ...toImageProvenanceRecord(input),
             ...buildPromptMetadataDiagnostics(input.promptMetadata),
             compiled_prompt_used: input.promptMetadata.compiledPromptUsed,
             prompt_compiler_provider: input.promptMetadata.promptCompilerProvider,
@@ -266,6 +298,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         transactionClient,
         completedJob,
         'completed',
+        this.schemaProfile,
       );
 
       return true;
@@ -362,6 +395,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
         transactionClient,
         failedJob,
         'failed',
+        this.schemaProfile,
       );
 
       return true;

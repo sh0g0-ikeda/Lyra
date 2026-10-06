@@ -6,6 +6,8 @@ async function main(): Promise<void> {
   const { jobId, userId } = parseRetryPageGenerationArgs(process.argv.slice(2));
   const [
     { closeDatabasePool, db },
+    { env },
+    { attestCanonicalRuntimeSchema },
     { PostgresCreditRepository },
     { PostgresGenerationJobRepository },
     { PostgresOrganizationRepository },
@@ -15,6 +17,8 @@ async function main(): Promise<void> {
     { resolveWorkerDependencies },
   ] = await Promise.all([
     import('../src/lib/db.js'),
+    import('../src/lib/env.js'),
+    import('../src/lib/runtimeSchemaAttestation.js'),
     import('../src/repositories/CreditRepository.js'),
     import('../src/repositories/GenerationJobRepository.js'),
     import('../src/repositories/OrganizationRepository.js'),
@@ -25,8 +29,9 @@ async function main(): Promise<void> {
   ]);
 
   try {
+    await attestCanonicalRuntimeSchema(db);
     const retryService = new PageGenerationRetryService(
-      new PostgresGenerationJobRepository(db),
+      new PostgresGenerationJobRepository(db, env.LYRA_PERSISTENCE_PROFILE),
       resolveWorkerDependencies().pageGenerationWorkerService,
       new CreditService(new PostgresCreditRepository(db, db)),
       undefined,

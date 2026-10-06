@@ -1,8 +1,12 @@
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
 import type { UiLanguage } from '@/domain/types';
+import { commonGuidanceMessages } from '@/lib/commonGuidanceMessages';
+import { confirmStaleDraftReload } from '@/lib/confirmStaleDraftReload';
 import { ApiError } from '@/lib/api';
+import type { OperationErrorContext } from '@/lib/operationErrorContext';
 
 interface PageErrorRecoveryNoticeProps {
+  context?: OperationErrorContext | undefined;
   error: unknown;
   language: UiLanguage;
   onAccount: () => void;
@@ -14,6 +18,7 @@ interface PageErrorRecoveryNoticeProps {
 }
 
 export function PageErrorRecoveryNotice({
+  context,
   error,
   language,
   onAccount,
@@ -23,9 +28,11 @@ export function PageErrorRecoveryNotice({
   onReloadStale,
   onRetry
 }: PageErrorRecoveryNoticeProps): React.JSX.Element {
+  const stale = error instanceof ApiError && error.code === 'PAGE_STALE';
+  const copy = commonGuidanceMessages(language);
   const retry =
-    error instanceof ApiError && error.code === 'PAGE_STALE'
-      ? onReloadStale
+    stale
+      ? () => confirmStaleDraftReload({ language, scope: 'page', onConfirm: onReloadStale })
       : onRetry;
 
   return (
@@ -40,7 +47,11 @@ export function PageErrorRecoveryNotice({
         workspace: onAccount
       }}
       error={error}
+      context={context}
       language={language}
+      retryMode="refresh"
+      recoveryActionLabel={stale ? copy.reloadPageAction : undefined}
+      recoveryMessage={stale ? `${copy.reloadWarning}\n${copy.reloadFields.page}` : undefined}
     />
   );
 }

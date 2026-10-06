@@ -162,3 +162,10 @@ export interface OrganizationWorkspaceSummary {
   membership: OrganizationMember;
   balance: OrganizationCreditBalance | null;
 }
+
+export interface OrganizationUsageSummary {
+  currentMonthTotalCredits: number;
+  byMember: Array<{ key: string; credits: number }>;
+  byWork: Array<{ key: string; credits: number }>;
+  byGenerationType: Array<{ key: string; credits: number }>;
+}

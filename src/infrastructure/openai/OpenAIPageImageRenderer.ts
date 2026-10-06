@@ -1,3 +1,4 @@
+import { assemblePageRenderPrompt } from '../../services/page/PageGenerationLayoutControl.js';
 import type {
   PageImageRendererPort,
   RenderPageImageInput,
@@ -20,9 +21,17 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
   ) {}
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
-    const prompt = input.internalPlan === null
+    if (input.layoutControl != null && input.inputImages.at(-1)?.role !== 'layout_reference') {
+      throw new ConfigurationError('Resolved layout requires its guide as the last image input');
+    }
+    const plannedPrompt = input.internalPlan === null
       ? input.prompt
       : `${input.prompt}\n\nInternal generation plan:\n${input.internalPlan}`;
+    const styledPrompt = input.renderStyle === 'monochrome'
+      ? `${plannedPrompt}\n\nFinal rendering constraint: black-and-white manga ink with grayscale screentones only; no colored fills.`
+      : plannedPrompt;
+    const prompt = input.panelCount === undefined ? styledPrompt
+      : assemblePageRenderPrompt(styledPrompt, null, input.layoutControl ?? null, input.panelCount);
 
     const response = input.inputImages.length === 0
       ? await this.client.postJson<OpenAIImageGenerationResponse>('/images/generations', {
@@ -56,6 +65,9 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
       mimeType: 'image/png',
       openaiRequestId: response.requestId,
       costUsd: null,
+      imageModel: this.model,
+      providerModelId: this.model,
+      provider: 'openai',
     };
   }
 }

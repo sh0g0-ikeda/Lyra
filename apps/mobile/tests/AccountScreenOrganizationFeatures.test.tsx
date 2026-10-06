@@ -35,7 +35,7 @@ vi.mock('@tanstack/react-query', () => ({
 
 vi.mock('react-native', () => ({
   AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
-  Linking: { canOpenURL: mocks.canOpenUrl, openURL: mocks.openUrl },
+  Linking: { canOpenURL: mocks.canOpenUrl, openURL: mocks.openUrl, getInitialURL: vi.fn().mockResolvedValue(null), addEventListener: () => ({ remove: vi.fn() }) },
   Modal: ({ children, visible }: { children: React.ReactNode; visible: boolean }) =>
     visible ? React.createElement('modal', null, children) : null,
   Platform: { OS: 'android' },
@@ -46,9 +46,13 @@ vi.mock('react-native', () => ({
 }));
 
 vi.mock('@react-navigation/native', () => ({ useFocusEffect: vi.fn() }));
-vi.mock('@/lib/config', () => ({ config: mocks.config }));
+vi.mock('@/lib/config', () => ({ config: mocks.config, isAuthConfigured: () => true }));
+vi.mock('expo-crypto', () => ({ randomUUID: () => 'bb1a66da-a1a1-4b4a-8a8a-6b906a785493' }));
+vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
+vi.mock('@/lib/auth', () => ({ reauthenticateWithCognito: vi.fn() }));
 vi.mock('@/lib/download', () => ({ downloadAuthenticatedFile: vi.fn() }));
-vi.mock('@/lib/i18n', () => ({
+vi.mock('@/lib/i18n', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/i18n')>(),
   t: (_language: string, key: string) => ({
     'generated.screens.AccountScreen.create.organization.2c93e462': 'Create organization',
     'generated.screens.AccountScreen.organization.name.74237aeb': 'Organization name'
@@ -131,6 +135,7 @@ describe('AccountScreen organization feature guard', () => {
       mutationFn: () => Promise<unknown>;
       onSuccess?: (result: unknown) => void | Promise<void>;
     }) => ({
+      reset: vi.fn(),
       isError: false,
       isPending: false,
       mutateAsync: vi.fn(async () => {
@@ -154,6 +159,40 @@ describe('AccountScreen organization feature guard', () => {
       }
       return { data: undefined, isError: false, isFetching: false, isLoading: false, refetch: vi.fn() };
     });
+  });
+
+  it.each([
+    ['cancelJob', 'Cancel job', 'Cancellation is unconfirmed'],
+    ['hideJob', 'Hide job history', 'history visibility only'],
+    ['retryGenerationJob', 'Retry job', 'Charge/refund status is unconfirmed']
+  ])('identifies %s and its exact job while recovery refreshes without replaying it', async (method, label, guidance) => {
+    const refetch = vi.fn().mockResolvedValue(undefined);
+    mocks.useInfiniteQuery.mockReturnValue({ data: { pages: [{ jobs: [] }] }, refetch });
+    const replay = vi.fn();
+    mocks.useMutation.mockImplementation((options: { mutationFn: unknown }) => ({
+      isError: String(options.mutationFn).includes(method),
+      error: String(options.mutationFn).includes(method) ? new ApiError('private backend detail', 0, 'REQUEST_TIMEOUT') : null,
+      variables: { id: 'job-target-42' },
+      mutateAsync: replay,
+      isPending: false,
+      reset: vi.fn()
+    }));
+    mocks.useAppState.mockReturnValue({
+      api: {}, language: 'en', logout: vi.fn(), selection: { organizationId: null },
+      session: refreshedSession, sessionKey: 'user-1', setLanguage: vi.fn(),
+      setSession: vi.fn(), updateSelection: mocks.updateSelection
+    });
+    let renderer: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<AccountScreen />); });
+    const notice = renderer!.root.findAllByType('notice').find(node => String(node.props.message).includes(label));
+    expect(notice).toBeDefined();
+    expect(notice!.props.message).toContain('job-target-42');
+    expect(notice!.props.message).toContain(guidance);
+    expect(notice!.props.message).not.toContain('private backend detail');
+    expect(notice!.props.actionLabel).toBe('Refresh status');
+    await act(async () => notice!.props.onAction());
+    expect(refetch).toHaveBeenCalledOnce();
+    expect(replay).not.toHaveBeenCalled();
   });
 
   it('updates the session and opens the new workspace with an empty production selection after creation', async () => {

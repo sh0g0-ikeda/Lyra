@@ -178,6 +178,28 @@ describe('PostgresGenerationJobRepository cancellation settlement', () => {
     expect(database.queries.some((query) => query.text.includes('INSERT INTO organization_audit_logs'))).toBe(true);
   });
 
+  it('旧triggerで購入枠へ全額返還済みの場合に取り消しても残高と台帳を増やさない', async () => {
+    const database=new RecordingTransactionDatabase();
+    const queued=jobRow({job_type:'entity_generate'});
+    database.responses.push([queued],[personalBalanceRow()],[queued],[jobRow({job_type:'entity_generate',status:'cancelled'})],[ledgerSummaryRow({refunded_amount:'3',refunded_monthly_delta:'0',refunded_purchased_delta:'3',refunded_entry_count:'1',refunded_complete_entry_count:'1'})]);
+    expect((await new PostgresGenerationJobRepository(database).requestCancellation(jobId,userId))?.status).toBe('cancelled');
+    expect(database.queries.some(query=>query.text.includes('INSERT INTO credit_ledger'))).toBe(false);
+    expect(database.queries.some(query=>query.text.includes('UPDATE credit_balances'))).toBe(false);
+  });
+
+  it.each(['canonical','legacy_2debe_v1'] as const)('%sの法人job取消は期限切れ月次を復活させず購入枠へ返す', async(profile) => {
+    const organizationId='44444444-4444-4444-8444-444444444444';
+    const database=new RecordingTransactionDatabase();
+    const queued=jobRow({job_type:'entity_generate',organization_id:organizationId});
+    database.responses.push([queued],[{...personalBalanceRow(),monthly_expired:true}],[queued],[jobRow({job_type:'entity_generate',organization_id:organizationId,status:'cancelled'})],[ledgerSummaryRow()],[],[],[],[]);
+    expect((await new PostgresGenerationJobRepository(database,profile).requestCancellation(jobId,userId,organizationId))?.status).toBe('cancelled');
+    const balanceLock=database.queries.find(query=>query.text.includes('FROM organization_credit_balances')&&query.text.includes('FOR UPDATE'));
+    expect(balanceLock?.text).toContain('monthly_expires_at <= NOW()');
+    expect(database.queries.find(query=>query.text.includes('UPDATE organization_credit_balances'))?.values).toEqual([organizationId,0,9,null]);
+    const refund=database.queries.find(query=>query.text.includes('INSERT INTO credit_ledger'));
+    expect(refund?.values?.slice(2,7)).toEqual([3,0,3,0,9]);
+  });
+
   it('既にcancelledのjobをworkerが再確認してもrefundを重ねない', async () => {
     const database = new RecordingTransactionDatabase();
     database.responses.push([

@@ -1,3 +1,6 @@
+import { assertImageDeliveryAllowed, type ImageDeliveryAudience } from '../../domain/generation/ImageAccessPolicy.js';
+import { requireOpenAIEntityInputCompatible } from '../../domain/generation/ImageInputProviderPolicy.js';
+import { resolveEntityImageProvenance } from './EntityImageProvenance.js';
 import { randomUUID } from 'node:crypto';
 import { CREDIT_COSTS } from '../../domain/constants/credits.js';
 import {
@@ -82,6 +85,7 @@ export interface EntityReferenceServicePort {
     entityId: string,
     input: ConfirmEntityReferencesRequest,
     organizationId?: string | null,
+    audience?: ImageDeliveryAudience,
   ): Promise<EntityReferenceSet>;
   deleteReference(
     userId: string,
@@ -198,6 +202,14 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     const sourceS3Key = input?.sourceS3Key ?? null;
     if (sourceS3Key !== null) {
       ensureAllowedReferenceSourceKey(sourceS3Key, userId, entityId);
+      requireOpenAIEntityInputCompatible(await resolveEntityImageProvenance({
+        userId,
+        entityId,
+        organizationId,
+        s3Key: sourceS3Key,
+        references: entity.referenceSet.images,
+        jobs: this.generationJobRepository,
+      }));
     }
 
     await this.recoveryService.recoverStaleJobsForEntity(userId, entity.entityId, organizationId);
@@ -317,6 +329,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     entityId: string,
     input: ConfirmEntityReferencesRequest,
     organizationId: string | null = null,
+    audience: ImageDeliveryAudience = 'mobile',
   ): Promise<EntityReferenceSet> {
     const entity = await this.entityRepository.findReferenceContextByIdAndUserId(entityId, userId, organizationId);
     if (entity === null) {
@@ -337,6 +350,13 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     }
     const finalizedImages: EntityReferenceImage[] = [];
 
+    const provenanceByKey = new Map(await Promise.all(selectedS3Keys.map(async (s3Key) => {
+      const provenance = await resolveEntityImageProvenance({ userId, entityId, organizationId, s3Key,
+        references: entity.referenceSet.images, jobs: this.generationJobRepository });
+      assertImageDeliveryAllowed(provenance, audience);
+      return [s3Key, provenance] as const;
+    })));
+
     for (const sourceS3Key of selectedS3Keys) {
       ensureAllowedReferenceSourceKey(sourceS3Key, userId, entityId);
 
@@ -349,6 +369,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
       });
 
       finalizedImages.push({
+        ...provenanceByKey.get(sourceS3Key),
         refId,
         s3Key: storedImage.s3Key,
         cdnUrl: storedImage.cdnUrl,

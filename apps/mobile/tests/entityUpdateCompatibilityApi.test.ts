@@ -100,4 +100,12 @@ describe('entity update API compatibility', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+  it('stale競合ではtimestampを外して再試行しない', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({error:{code:'RESOURCE_STALE',message:'Reload'}}),{status:409}));
+    vi.stubGlobal('fetch',fetchMock);
+    const client = new LyraMobileApiClient(()=>'token');
+    await expect(client.updateEntity(updatedEntity.id,{expected_updated_at:'2026-07-29T00:00:00.000Z',name:'new'})).rejects.toMatchObject({code:'RESOURCE_STALE',status:409});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
 });

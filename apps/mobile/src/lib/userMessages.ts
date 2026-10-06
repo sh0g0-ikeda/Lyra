@@ -20,6 +20,9 @@ export const userErrorMessage = (error: unknown, language: UiLanguage): string =
   if (error instanceof ApiError) {
     const normalizedMessage = error.message.trim().toLowerCase();
     const normalizedCode = error.code?.trim().toLowerCase() ?? '';
+    if (normalizedCode === 'account_link_required') {
+      return t(language, 'accountLinkRequired');
+    }
     if (normalizedCode === 'network_offline') {
       return t(language, 'shared.error.offline');
     }
@@ -94,6 +97,13 @@ export const userErrorMessage = (error: unknown, language: UiLanguage): string =
   }
 
   if (error instanceof Error) {
+    if (
+      error.name === 'AuthError' &&
+      'code' in error &&
+      error.code === 'ACCOUNT_LINK_REQUIRED'
+    ) {
+      return t(language, 'accountLinkRequired');
+    }
     if (error.name === 'AbortError') {
       return t(language, 'shared.error.timeout');
     }

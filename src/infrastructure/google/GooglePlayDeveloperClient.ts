@@ -124,6 +124,7 @@ const subscriptionPurchaseSchema = z.object({
         productId: z.string().min(1),
         latestSuccessfulOrderId: z.string().min(1).nullish(),
         expiryTime: z.string().min(1).nullish(),
+        deferredItemReplacement: z.object({ productId: z.string().min(1) }).nullish(),
         autoRenewingPlan: z
           .object({
             autoRenewEnabled: z.boolean().optional(),
@@ -131,7 +132,7 @@ const subscriptionPurchaseSchema = z.object({
           .nullish(),
       }),
     )
-    .length(1),
+    .min(1).max(20),
   externalAccountIdentifiers: z
     .object({
       obfuscatedExternalAccountId: z.string().min(1).optional(),
@@ -171,7 +172,7 @@ function parseSubscriptionPurchase(
   if (!parsed.success) {
     throw new ValidationError('Store purchase could not be verified');
   }
-  const item = parsed.data.lineItems[0];
+  const item = selectCurrentSubscriptionItem(parsed.data.lineItems, observedAt);
   const state = googleSubscriptionState(parsed.data.subscriptionState);
 
   return {
@@ -187,6 +188,7 @@ function parseSubscriptionPurchase(
     observedAt,
     expiresAt: parseGoogleTimestamp(item.expiryTime ?? undefined),
     autoRenewEnabled: item.autoRenewingPlan?.autoRenewEnabled ?? null,
+    renewalProductId: item.deferredItemReplacement?.productId ?? null,
     accountBinding:
       parsed.data.externalAccountIdentifiers?.obfuscatedExternalAccountId ?? null,
     isTestPurchase: parsed.data.testPurchase != null,
@@ -197,6 +199,27 @@ function parseSubscriptionPurchase(
         ? 'acknowledge'
         : 'none',
   };
+}
+
+function selectCurrentSubscriptionItem(
+  items: z.infer<typeof subscriptionPurchaseSchema>['lineItems'], observedAt: Date,
+): z.infer<typeof subscriptionPurchaseSchema>['lineItems'][number] {
+  if (items.length === 1) return items[0];
+  const current = items.filter(item => {
+    const expiry = parseGoogleTimestamp(item.expiryTime ?? undefined);
+    return expiry !== null && expiry.getTime() > observedAt.getTime();
+  });
+  if (current.length === 1) return current[0];
+  if (current.length > 1) throw new ValidationError('Store purchase could not be verified');
+  const purchased = items.filter(item => item.latestSuccessfulOrderId != null);
+  if (purchased.length === 1) return purchased[0];
+  // Terminal notifications may contain multiple historical line items. Choose a
+  // unique latest expiration; ambiguous overlapping plans remain unsupported.
+  const dated = items.map(item => ({ item, expiry: parseGoogleTimestamp(item.expiryTime ?? undefined)?.getTime() ?? null }))
+    .filter((entry): entry is { item: typeof items[number]; expiry: number } => entry.expiry !== null)
+    .sort((a, b) => b.expiry - a.expiry);
+  if (dated.length > 0 && (dated.length === 1 || dated[0].expiry > dated[1].expiry)) return dated[0].item;
+  throw new ValidationError('Store purchase could not be verified');
 }
 
 function parseOneTimePurchase(

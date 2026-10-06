@@ -1,4 +1,4 @@
 - tapOn:
-    id: tab-characters
+    id: tab-assets
 - assertVisible:
-    id: tab-characters
+    id: tab-assets

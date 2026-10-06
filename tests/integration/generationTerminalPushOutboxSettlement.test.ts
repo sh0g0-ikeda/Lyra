@@ -30,7 +30,8 @@ describePostgres('generation terminal push outbox settlement', () => {
         migrationLockMaxAttempts: 10,
       },
     ));
-    expect(applied.at(-1)).toBe('039_connect_generation_terminal_push_outbox.sql');
+    expect(applied).toContain('046_bridge_production_schema_lineage.sql');
+    expect(applied.at(-1)).toBe('047_add_state_reference_copy_attempts.sql');
   }, 120_000);
 
   afterAll(async () => {
@@ -52,21 +53,21 @@ describePostgres('generation terminal push outbox settlement', () => {
     try {
       await insertFixture(pool, ids);
 
-      await expect(repository.markFailed(ids.jobId, 'first failure')).resolves.toBe(true);
-      await expect(repository.markFailed(ids.jobId, 'duplicate failure')).resolves.toBe(false);
+      expect(await (repository.markFailed(ids.jobId, 'first failure'))).toBe(true);
+      expect(await (repository.markFailed(ids.jobId, 'duplicate failure'))).toBe(false);
 
       let events = await readEvents(pool, ids.jobId);
       expect(events).toEqual([
         { generation_retry_count: 0, terminal_status: 'failed', delivery_status: 'pending' },
       ]);
 
-      await expect(repository.prepareRetry(ids.jobId, 3)).resolves.toBe(true);
+      expect(await (repository.prepareRetry(ids.jobId, 3))).toBe(true);
       events = await readEvents(pool, ids.jobId);
       expect(events).toEqual([
         { generation_retry_count: 0, terminal_status: 'failed', delivery_status: 'canceled' },
       ]);
 
-      await expect(repository.markFailed(ids.jobId, 'second failure')).resolves.toBe(true);
+      expect(await (repository.markFailed(ids.jobId, 'second failure'))).toBe(true);
       events = await readEvents(pool, ids.jobId);
       expect(events).toEqual([
         { generation_retry_count: 0, terminal_status: 'failed', delivery_status: 'canceled' },
@@ -115,7 +116,7 @@ describePostgres('generation terminal push outbox settlement', () => {
       });
 
       expect(completed).toBe(true);
-      await expect(readEvents(pool, ids.jobId)).resolves.toEqual([
+      expect(await (readEvents(pool, ids.jobId))).toEqual([
         { generation_retry_count: 0, terminal_status: 'completed', delivery_status: 'pending' },
       ]);
     } finally {
@@ -131,8 +132,8 @@ describePostgres('generation terminal push outbox settlement', () => {
 
     try {
       await insertFixture(pool, ids);
-      await expect(jobRepository.markFailed(ids.jobId, 'failure before success')).resolves.toBe(true);
-      await expect(jobRepository.prepareRetry(ids.jobId, 3)).resolves.toBe(true);
+      expect(await (jobRepository.markFailed(ids.jobId, 'failure before success'))).toBe(true);
+      expect(await (jobRepository.prepareRetry(ids.jobId, 3))).toBe(true);
       await pool.query(
         `UPDATE generation_jobs
          SET job_type = 'entity_generate',
@@ -164,7 +165,7 @@ describePostgres('generation terminal push outbox settlement', () => {
       });
 
       expect(completed).toBe(true);
-      await expect(readEvents(pool, ids.jobId)).resolves.toEqual([
+      expect(await (readEvents(pool, ids.jobId))).toEqual([
         { generation_retry_count: 0, terminal_status: 'failed', delivery_status: 'canceled' },
         { generation_retry_count: 1, terminal_status: 'completed', delivery_status: 'pending' },
       ]);
@@ -241,7 +242,7 @@ describePostgres('generation terminal push outbox settlement', () => {
 
       const retryPromise = repository.prepareRetry(ids.jobId, 3);
       await deliveryClient.query('COMMIT');
-      await expect(retryPromise).resolves.toBe(true);
+      expect(await (retryPromise)).toBe(true);
 
       const staleSent = await pool.query(
         `UPDATE mobile_push_notification_deliveries
@@ -257,7 +258,7 @@ describePostgres('generation terminal push outbox settlement', () => {
         [claimed.rows[0]?.id, leaseToken],
       );
       expect(staleSent.rowCount).toBe(0);
-      await expect(readEvents(pool, ids.jobId)).resolves.toEqual([
+      expect(await (readEvents(pool, ids.jobId))).toEqual([
         { generation_retry_count: 0, terminal_status: 'failed', delivery_status: 'canceled' },
       ]);
     } finally {
@@ -284,7 +285,7 @@ describePostgres('generation terminal push outbox settlement', () => {
         [ids.jobId, ids.userId],
       );
 
-      await expect(repository.markFailed(ids.jobId, 'late failure')).resolves.toBe(false);
+      expect(await (repository.markFailed(ids.jobId, 'late failure'))).toBe(false);
       const state = await pool.query<{ status: string; event_count: string }>(
         `SELECT generation_jobs.status,
                 COUNT(outbox.id)::text AS event_count
@@ -328,8 +329,8 @@ describePostgres('generation terminal push outbox settlement', () => {
       expect(scrubbed.rowCount).toBe(1);
       await deletionClient.query('COMMIT');
 
-      await expect(terminalPromise).resolves.toBe(true);
-      await expect(readEvents(pool, ids.jobId)).resolves.toEqual([
+      expect(await (terminalPromise)).toBe(true);
+      expect(await (readEvents(pool, ids.jobId))).toEqual([
         { generation_retry_count: 0, terminal_status: 'failed', delivery_status: 'pending' },
       ]);
     } finally {

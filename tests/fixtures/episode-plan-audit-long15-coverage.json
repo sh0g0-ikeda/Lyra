@@ -1,0 +1,326 @@
+{
+  "schemaVersion": 1,
+  "kind": "long15-source-output-coverage-regression-fixture",
+  "sourceSha": "3f5e2899e5d9e3bcf26650acdc441696324947ad",
+  "traceArtifacts": [
+    "04-detail-output.json",
+    "06-detail-output.json",
+    "08-detail-output.json",
+    "09-audit-input.json"
+  ],
+  "scope": "Six source-to-output cases only. No API metadata, request IDs, credentials, or user data.",
+  "auditObserved": {
+    "artifact": "09-audit-output.json",
+    "accepted": true,
+    "issueCount": 0
+  },
+  "cases": [
+    {
+      "id": "p1_returning_ships_role",
+      "source": {
+        "artifact": "09-audit-input.json",
+        "section": "FULL STORY DRAFT - SOURCE DATA",
+        "pageNumber": 1,
+        "charOffset": 1340,
+        "exactQuote": "絵本には、灯台の光が港に帰る船の目印になると書かれている。"
+      },
+      "ledger": {
+        "artifact": "09-audit-input.json",
+        "section": "GLOBAL EPISODE LEDGER",
+        "charOffset": 8502,
+        "exactQuote": "Page 1 (0000000a-0000-4000-8000-000000000001): | beats=ベンチで絵本の灯台の絵に目を止める / 遠景の同じ灯台が朝なのに消灯 / 絵本を丁寧に閉じて胸に抱える / 灯台の方向を見定め小さく独白する | entry=朝の公園、ベンチで絵本を読むココ | exit=灯台の消灯に気づき、向かう決意を固める | new=朝なのに灯台の光が消えている / 灯台は船の道標と絵本に記載 | dialogue=異変に気づき目的を独白で示す | required_text=「あの光、どうしたんだろう」 | visual_only=遠景に同じ灯台、朝なのに無灯 / 絵本の灯台絵と実景の対比 / 灯台の方向を見定め胸に抱く | density_reason=独白1つ＋導入描写、余白を多めに確保 | handoff=地図で道を確かめに坂へ向かう"
+      },
+      "actualPanels": [
+        {
+          "artifact": "04-detail-output.json",
+          "pageNumber": 1,
+          "panelOrder": 1,
+          "fields": {
+            "situationText": "ベンチでココが絵本を開き、灯台の絵に見入っている。"
+          }
+        }
+      ],
+      "status": "missing",
+      "missingReason": "required ship-return relationship absent from all P1 panel fields",
+      "repairCandidate": {
+        "pageNumber": 1,
+        "panelOrder": 1,
+        "changedFields": [
+          "situationText"
+        ],
+        "requiredSourceCitation": "returning-ships-role"
+      }
+    },
+    {
+      "id": "p9_second_push_after_pebble",
+      "source": {
+        "artifact": "09-audit-input.json",
+        "section": "FULL STORY DRAFT - SOURCE DATA",
+        "pageNumber": 9,
+        "charOffset": 2735,
+        "exactQuote": "再び扉を押すと隙間から暗い内部が見える。"
+      },
+      "ledger": {
+        "artifact": "09-audit-input.json",
+        "section": "GLOBAL EPISODE LEDGER",
+        "charOffset": 11449,
+        "exactQuote": "Page 9 (0000000a-0000-4000-8000-000000000009): | beats=岩の通路の出口から灯台の白壁が近い / 古い扉を押すが動かない / 扉下の小石に気づき、取り除く / 扉が開き、暗い内部が見える | entry=狭い通路を抜け灯台目前 | exit=扉を開け灯台内部へ入る | new=扉の下に小石が挟まっている / 内部は暗い | dialogue=到達の安堵を短く示す | required_text=「やっと、入口まで来た」 | visual_only=白い外壁が画面大に迫る / 押しても動かない重い扉 / 小石を摘み取る手元 / 開いた隙間の闇 | density_reason=短い一言＋動作中心で4コマ | handoff=薄暗い階段を上る"
+      },
+      "actualPanels": [
+        {
+          "artifact": "06-detail-output.json",
+          "pageNumber": 9,
+          "panelOrder": 4,
+          "fields": {
+            "situationText": "軋む音とともに扉が開き、ココは暗い内部へそっと一歩踏み入れる。",
+            "entities": [
+              {
+                "entityId": "11111111-1111-4111-8111-111111111111",
+                "role": "primary",
+                "expression": "calm",
+                "customExpression": null,
+                "action": "standing_firm",
+                "customAction": null,
+                "position": "right",
+                "facingDirection": null,
+                "effectNote": null,
+                "stateId": null
+              }
+            ]
+          }
+        }
+      ],
+      "status": "missing",
+      "missingReason": "opening and entry remain but second push after pebble removal is absent",
+      "repairCandidate": {
+        "pageNumber": 9,
+        "panelOrder": 4,
+        "changedFields": [
+          "situationText",
+          "entities"
+        ],
+        "requiredSourceCitation": "second-push-after-pebble"
+      }
+    },
+    {
+      "id": "p15_sufficient_charge_before_release",
+      "source": {
+        "artifact": "09-audit-input.json",
+        "section": "FULL STORY DRAFT - SOURCE DATA",
+        "pageNumber": 15,
+        "charOffset": 3671,
+        "exactQuote": "手回し発電機の装置が十分に充電され、ハンドルから手を離しても光が続く。"
+      },
+      "ledger": {
+        "artifact": "09-audit-input.json",
+        "section": "GLOBAL EPISODE LEDGER",
+        "charOffset": 13672,
+        "exactQuote": "Page 15 (0000000a-0000-4000-8000-00000000000f): | beats=手を離しても光が続くことを確認 / マフラー端をほどき絵本を開く / 絵本の灯台と窓外の光を見比べる / 絵本を閉じ窓辺に座り夕景で締める | entry=充電完了し光継続を確認中 | exit=夕暮れの灯台で旅を完結 | new=手を離しても点灯が続く / 絵本の絵と実景が重なる瞬間 | dialogue=旅の総括を静かに結ぶ | required_text=「一歩ずつでも、光にたどり着ける」 | visual_only=ハンドルから離れた手と安定した光 / マフラー端で留めた本をほどく / 絵本の絵と窓外の光の対比 / 窓辺のココと夕暮れの海 | density_reason=締めの一言＋静かな余韻重視 | handoff=おわり"
+      },
+      "actualPanels": [
+        {
+          "artifact": "08-detail-output.json",
+          "pageNumber": 15,
+          "panelOrder": 1,
+          "fields": {
+            "situationText": "ココがハンドルから手を離しても、レンズの光は安定して灯り続けている。",
+            "entities": [
+              {
+                "entityId": "11111111-1111-4111-8111-111111111111",
+                "role": "primary",
+                "expression": "calm",
+                "customExpression": null,
+                "action": "custom",
+                "customAction": "手を離す",
+                "position": "right",
+                "facingDirection": "left",
+                "effectNote": null,
+                "stateId": null
+              }
+            ]
+          }
+        }
+      ],
+      "status": "missing",
+      "missingReason": "continued light remains but sufficient-charge prerequisite is absent",
+      "repairCandidate": {
+        "pageNumber": 15,
+        "panelOrder": 1,
+        "changedFields": [
+          "situationText"
+        ],
+        "requiredSourceCitation": "sufficient-charge-before-release"
+      }
+    },
+    {
+      "id": "p15_close_book_before_sitting",
+      "source": {
+        "artifact": "09-audit-input.json",
+        "section": "FULL STORY DRAFT - SOURCE DATA",
+        "pageNumber": 15,
+        "charOffset": 3771,
+        "exactQuote": "ココは絵本を閉じ、満足して窓辺に座る。"
+      },
+      "ledger": {
+        "artifact": "09-audit-input.json",
+        "section": "GLOBAL EPISODE LEDGER",
+        "charOffset": 13672,
+        "exactQuote": "Page 15 (0000000a-0000-4000-8000-00000000000f): | beats=手を離しても光が続くことを確認 / マフラー端をほどき絵本を開く / 絵本の灯台と窓外の光を見比べる / 絵本を閉じ窓辺に座り夕景で締める | entry=充電完了し光継続を確認中 | exit=夕暮れの灯台で旅を完結 | new=手を離しても点灯が続く / 絵本の絵と実景が重なる瞬間 | dialogue=旅の総括を静かに結ぶ | required_text=「一歩ずつでも、光にたどり着ける」 | visual_only=ハンドルから離れた手と安定した光 / マフラー端で留めた本をほどく / 絵本の絵と窓外の光の対比 / 窓辺のココと夕暮れの海 | density_reason=締めの一言＋静かな余韻重視 | handoff=おわり"
+      },
+      "actualPanels": [
+        {
+          "artifact": "08-detail-output.json",
+          "pageNumber": 15,
+          "panelOrder": 4,
+          "fields": {
+            "situationText": "ココが窓辺に腰掛け、満足そうに海と灯台の光を静かに眺める。",
+            "entities": [
+              {
+                "entityId": "11111111-1111-4111-8111-111111111111",
+                "role": "primary",
+                "expression": "calm",
+                "customExpression": null,
+                "action": "custom",
+                "customAction": "窓辺に座る",
+                "position": "right",
+                "facingDirection": "left",
+                "effectNote": null,
+                "stateId": null
+              }
+            ]
+          }
+        }
+      ],
+      "status": "missing",
+      "missingReason": "sitting remains but book-close action is absent",
+      "repairCandidate": {
+        "pageNumber": 15,
+        "panelOrder": 4,
+        "changedFields": [
+          "situationText",
+          "entities"
+        ],
+        "requiredSourceCitation": "close-book-before-sitting"
+      }
+    },
+    {
+      "id": "p14_rotation_visible_panels",
+      "source": {
+        "artifact": "09-audit-input.json",
+        "section": "FULL STORY DRAFT - SOURCE DATA",
+        "pageNumber": 14,
+        "charOffset": 3521,
+        "exactQuote": "ココはハンドルを回しながら、窓の外にゆっくり港へ戻る小さな船の影を見る。"
+      },
+      "ledger": {
+        "artifact": "09-audit-input.json",
+        "section": "GLOBAL EPISODE LEDGER",
+        "charOffset": 13305,
+        "exactQuote": "Page 14 (0000000a-0000-4000-8000-00000000000e): | beats=ランプが安定発光しレンズから光が伸びる / 回しながら窓外の小さな船影を見つける / 雨雲の下でも光が道を示す / 外観の灯台と港の広い景—短い一言 | entry=光が安定し始める | exit=十分充電し最終確認へ | new=遠景に港へ戻る小さな船影 / レンズの光が港へ届いている | dialogue=到達の確認を短く告げる | required_text=「届いた」 | visual_only=レンズに走る明るい帯 / 海面に伸びる光路 / 船のシルエットが向きを変える / 外からの灯台と港の俯瞰 | density_reason=短い一言＋外景で成果を強調 | handoff=充電後も光が続くか確認へ"
+      },
+      "actualPanels": [
+        {
+          "artifact": "08-detail-output.json",
+          "pageNumber": 14,
+          "panelOrder": 1,
+          "fields": {
+            "situationText": "ランプが安定して明るくなり、レンズから強い光帯が外へ伸びる。",
+            "entities": [
+              {
+                "entityId": "11111111-1111-4111-8111-111111111111",
+                "role": "primary",
+                "expression": "determined",
+                "customExpression": null,
+                "action": "custom",
+                "customAction": "回し続ける",
+                "position": "right",
+                "facingDirection": "left",
+                "effectNote": null,
+                "stateId": null
+              }
+            ]
+          }
+        },
+        {
+          "artifact": "08-detail-output.json",
+          "pageNumber": 14,
+          "panelOrder": 2,
+          "fields": {
+            "situationText": "ココはハンドルを回しながら、窓の外に小さな船のシルエットを見つける。",
+            "entities": [
+              {
+                "entityId": "11111111-1111-4111-8111-111111111111",
+                "role": "primary",
+                "expression": "calm",
+                "customExpression": null,
+                "action": "custom",
+                "customAction": "回しながら外を見る",
+                "position": "right",
+                "facingDirection": "left",
+                "effectNote": null,
+                "stateId": null
+              }
+            ]
+          }
+        }
+      ],
+      "status": "present",
+      "missingReason": null,
+      "repairCandidate": null
+    },
+    {
+      "id": "p14_exterior_panels_entity_free",
+      "source": {
+        "artifact": "09-audit-input.json",
+        "section": "FULL STORY DRAFT - SOURCE DATA",
+        "pageNumber": 14,
+        "charOffset": 3624,
+        "exactQuote": "ページの最後には外から見た灯台と港を入れ、物語の到達点を大きく見せる。"
+      },
+      "ledger": {
+        "artifact": "09-audit-input.json",
+        "section": "GLOBAL EPISODE LEDGER",
+        "charOffset": 13305,
+        "exactQuote": "Page 14 (0000000a-0000-4000-8000-00000000000e): | beats=ランプが安定発光しレンズから光が伸びる / 回しながら窓外の小さな船影を見つける / 雨雲の下でも光が道を示す / 外観の灯台と港の広い景—短い一言 | entry=光が安定し始める | exit=十分充電し最終確認へ | new=遠景に港へ戻る小さな船影 / レンズの光が港へ届いている | dialogue=到達の確認を短く告げる | required_text=「届いた」 | visual_only=レンズに走る明るい帯 / 海面に伸びる光路 / 船のシルエットが向きを変える / 外からの灯台と港の俯瞰 | density_reason=短い一言＋外景で成果を強調 | handoff=充電後も光が続くか確認へ"
+      },
+      "actualPanels": [
+        {
+          "artifact": "08-detail-output.json",
+          "pageNumber": 14,
+          "panelOrder": 3,
+          "fields": {
+            "situationText": "雨雲の下、海面に伸びた光の道筋が港の方角へ静かに続く。",
+            "entities": []
+          }
+        },
+        {
+          "artifact": "08-detail-output.json",
+          "pageNumber": 14,
+          "panelOrder": 4,
+          "fields": {
+            "situationText": "外から見た岬の灯台が港と海に向けて光を放ち、岸辺をうっすら照らす。",
+            "entities": [],
+            "panelNotes": "ココのオフ画台詞。キャラクターは画面外。"
+          }
+        }
+      ],
+      "status": "present",
+      "missingReason": null,
+      "repairCandidate": null
+    }
+  ],
+  "summary": {
+    "missingCaseIds": [
+      "p1_returning_ships_role",
+      "p9_second_push_after_pebble",
+      "p15_sufficient_charge_before_release",
+      "p15_close_book_before_sitting"
+    ],
+    "presentCaseIds": [
+      "p14_rotation_visible_panels",
+      "p14_exterior_panels_entity_free"
+    ],
+    "sourceQuotesVerified": 6,
+    "actualFieldBindingsVerified": 8
+  }
+}

@@ -5,6 +5,7 @@ import {
 } from '../src/infrastructure/aws/SqsEpisodeExportQueue.js';
 import { closeDatabasePool } from '../src/lib/db.js';
 import { env } from '../src/lib/env.js';
+import { resolveEpisodeExportQueueConfig } from '../src/lib/episodeExportRuntime.js';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
 import {
@@ -35,6 +36,10 @@ async function main(): Promise<void> {
     throw new ConfigurationError(
       'SQS_QUEUE_URL_EXPORT is required for episode export worker polling',
     );
+  }
+
+  if (resolveEpisodeExportQueueConfig(env)?.shared === true) {
+    throw new ConfigurationError('Use the combined worker for a shared queue; the dedicated export worker requires its own queue');
   }
 
   const sqsClient = new SQSClient(

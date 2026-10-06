@@ -114,7 +114,9 @@ export function WorkspaceHierarchyNavigator({
             }
           }}
           error={context.error}
+          context={{ operation: 'loadHierarchy' }}
           language={language}
+          retryMode="refresh"
         />
       )}
       <StoryHierarchySheet

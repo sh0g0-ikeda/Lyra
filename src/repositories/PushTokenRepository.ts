@@ -4,7 +4,7 @@ import type {
   MobilePushPlatform,
 } from '../domain/constants/mobilePush.js';
 import { MOBILE_PUSH_TOKEN_REGISTRY_LOCK_KEY } from '../domain/constants/mobilePush.js';
-import { ConfigurationError } from '../domain/errors/index.js';
+import { ConfigurationError, ConflictError } from '../domain/errors/index.js';
 import type { PushTokenRegistration } from '../domain/types/mobilePush.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 
@@ -37,6 +37,11 @@ export class PostgresPushTokenRepository implements PushTokenRepository {
 
   public async upsertForUser(input: UpsertPushTokenInput): Promise<PushTokenRegistration> {
     return this.transactionRunner.transaction(async (transaction) => {
+      // Same user -> token-registry lock order as account deletion. A trigger
+      // alone can observe an older MVCC row and admit a late registration.
+      const active = await transaction.query(`SELECT id FROM users WHERE id=$1::uuid
+        AND account_deletion_started_at IS NULL AND account_deleted_at IS NULL FOR UPDATE`, [input.userId]);
+      if (active.rows.length !== 1) throw new ConflictError('Account is unavailable for push registration');
       await lockPushTokenRegistry(transaction);
 
       await transaction.query(

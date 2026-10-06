@@ -16,9 +16,11 @@ import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
 import { PostgresAccountDeletionRepository } from '../src/repositories/AccountDeletionRepository.js';
 import { AccountDeletionService } from '../src/services/account/AccountDeletionService.js';
+import { createFencedStateReferenceRuntime } from '../src/infrastructure/state/FencedStateReferenceRuntime.js';
 
 async function main(): Promise<void> {
   assertProductionRuntimeConfig(env);
+  const fencedStateReferenceRuntime = createFencedStateReferenceRuntime(env, db);
   const config = resolveAccountDeletionConfig(env);
   if (config === null) {
     throw new Error(
@@ -39,6 +41,7 @@ async function main(): Promise<void> {
       bucket: config.bucket,
     }),
     config.identityHashSecret,
+    { stateReferenceFencing: fencedStateReferenceRuntime },
   );
   const runner = new AccountDeletionRecoveryRunner(
     service,

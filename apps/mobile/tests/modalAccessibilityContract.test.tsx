@@ -47,6 +47,7 @@ vi.mock('react-native', () => {
 });
 
 vi.mock('react-native-safe-area-context', () => ({
+  SafeAreaProvider: ({children}: {children:React.ReactNode}) => children,
   SafeAreaView: ({ children, ...props }: { children: React.ReactNode; [key: string]: unknown }) =>
     React.createElement('safe-area', props, children)
 }));

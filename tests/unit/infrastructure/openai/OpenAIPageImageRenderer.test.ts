@@ -2,9 +2,39 @@ import { describe, expect, it, vi } from 'vitest';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../../../src/domain/constants/imageInput.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
+import { resolvePageGenerationLayoutControl } from '../../../../src/services/page/PageGenerationLayoutControl.js';
 import { OpenAIPageImageRenderer } from '../../../../src/infrastructure/openai/OpenAIPageImageRenderer.js';
 
 describe('OpenAIPageImageRenderer', () => {
+  it('binds saved geometry after compiler, planner and monochrome instructions', async () => {
+    const postJson = vi.fn().mockResolvedValue({body:{data:[{b64_json:Buffer.from('png').toString('base64')}]},requestId:'fixture'});
+    const control = resolvePageGenerationLayoutControl({type:'template',template_id:'splash_1'},1)!;
+    const postFormData=vi.fn().mockImplementation(async (_path:string,build:()=>FormData)=>{const form=build();postJson('fixture',{prompt:form.get('prompt')});return {body:{data:[{b64_json:Buffer.from('png').toString('base64')}]},requestId:'fixture'};});
+    const renderer = new OpenAIPageImageRenderer({postJson,postFormData} as unknown as OpenAIClient);
+    await renderer.render({jobId:'job',userId:'user',pageId:'page',requestKind:'initial',generationMode:'thinking',quality:'medium',prompt:'compiled',internalPlan:'mirror the page',inputImages:[{role:'layout_reference',label:'guide',dataUrl:'data:image/png;base64,cG5n'}],renderStyle:'monochrome',layoutControl:control,panelCount:1});
+    const prompt = postJson.mock.calls[0]?.[1]?.prompt as string;
+    expect(prompt.endsWith(control.finalSuffix)).toBe(true);
+    expect(prompt.indexOf('black-and-white manga')).toBeLessThan(prompt.indexOf('FINAL AUTHORITATIVE'));
+  });
+  it('白黒生成の場合にplannerの後へ白黒制約を付けてproviderへ渡す', async () => {
+    const postJson = vi.fn().mockResolvedValue({
+      body: { data: [{ b64_json: Buffer.from('png-bytes').toString('base64') }] },
+      requestId: 'req-mono',
+    });
+    const renderer = new OpenAIPageImageRenderer({ postJson, postFormData: vi.fn() } as unknown as OpenAIClient);
+
+    await renderer.render({
+      jobId: 'job-1', userId: 'user-1', pageId: 'page-1',
+      requestKind: 'initial', generationMode: 'thinking', quality: 'medium',
+      prompt: 'compiled prompt', internalPlan: 'use bright colors',
+      inputImages: [], renderStyle: 'monochrome',
+    });
+
+    const prompt = postJson.mock.calls[0]?.[1]?.prompt as string;
+    expect(prompt).toContain('Internal generation plan:\nuse bright colors');
+    expect(prompt.indexOf('Internal generation plan:')).toBeLessThan(prompt.lastIndexOf('black-and-white manga'));
+    expect(prompt).toMatch(/no colored fills\.$/u);
+  });
   it('input image がない場合は /images/generations の base64 を Buffer に変換する', async () => {
     const postJson = vi.fn().mockResolvedValue({
       body: {
@@ -39,6 +69,9 @@ describe('OpenAIPageImageRenderer', () => {
       mimeType: 'image/png',
       openaiRequestId: 'req-1',
       costUsd: null,
+      imageModel: 'gpt-image-2',
+      providerModelId: 'gpt-image-2',
+      provider: 'openai',
     });
     expect(postJson).toHaveBeenCalledWith(
       '/images/generations',

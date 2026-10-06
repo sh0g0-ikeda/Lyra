@@ -86,7 +86,7 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
         params: {
           episode_id: episodeId,
           overwrite_existing: input.overwriteExisting,
-          apply_story_plan: input.applyStoryPlan,
+          apply_story_plan: false,
           language: input.language,
           organization_id: organizationId,
         },

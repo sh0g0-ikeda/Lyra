@@ -371,3 +371,23 @@ describe('cognitoAuth', () => {
     expect(config?.apiTokenUse).toBe('id');
   });
 });
+
+
+describe('Google and isolated native reauthentication PKCE', () => {
+ it('adds Google only on the requested normal sign-in and native fresh proof separately', () => {
+  const google = new URL(buildCognitoAuthorizeUrl(cognitoConfig,'state','pkce',{identityProvider:'Google'}));
+  expect(google.searchParams.get('identity_provider')).toBe('Google');
+  const native = new URL(buildCognitoAuthorizeUrl(cognitoConfig,'state','pkce',{identityProvider:'COGNITO',freshLogin:true}));
+  expect(native.searchParams.get('identity_provider')).toBe('COGNITO'); expect(native.searchParams.get('prompt')).toBe('login'); expect(native.searchParams.get('max_age')).toBe('0');
+ });
+ it('never exchanges a code on the Google link return path', async () => {
+  let exchanged=false;
+  const result=await completeCognitoRedirectIfPresent(cognitoConfig,new FakeStorage(),{...createCallbackLocation(),pathname:'/auth/identity-link'},createHistory([]),async()=>{exchanged=true;throw new Error('no');});
+  expect(result.handled).toBe(false);expect(exchanged).toBe(false);
+ });
+ it('returns fresh proof without touching the original session or normal PKCE', async () => {
+  const storage=new FakeStorage({'lyra:web:cognito-session':'original-session','lyra:web:cognito-pkce':'original-pkce','lyra:web:cognito-reauth-pkce':JSON.stringify({state:'state-1',verifier:'v',createdAt:1})});
+  const result=await completeCognitoRedirectIfPresent(cognitoConfig,storage,createCallbackLocation(),createHistory([]),async()=>({ok:true,status:200,json:async()=>({access_token:'fresh',id_token:createIdToken(),expires_in:3600})}),10000,{mode:'reauthentication',persistSession:false});
+  expect(result.session?.accessToken).toBe('fresh');expect(storage.getItem('lyra:web:cognito-session')).toBe('original-session');expect(storage.getItem('lyra:web:cognito-pkce')).toBe('original-pkce');expect(storage.getItem('lyra:web:cognito-reauth-pkce')).toBeNull();
+ });
+});

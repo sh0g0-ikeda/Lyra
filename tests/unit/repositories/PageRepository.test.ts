@@ -5,6 +5,7 @@ import { PostgresPageRepository } from '../../../src/repositories/PageRepository
 
 class QueryCapturingClient implements DatabaseClient {
   public queries: string[] = [];
+  public hasVariantState = false;
   public valueHistory: Array<readonly unknown[] | undefined> = [];
   public values: readonly unknown[] | undefined;
 
@@ -157,6 +158,7 @@ class QueryCapturingClient implements DatabaseClient {
               ],
             },
           ],
+          has_variant_state: this.hasVariantState,
           created_at: new Date('2026-05-01T00:00:00.000Z'),
           updated_at: new Date('2026-05-01T00:00:00.000Z'),
         },
@@ -181,6 +183,18 @@ describe('PostgresPageRepository', () => {
       frameCount: 4,
       panels: [{ panelId: 'panel-1' }],
     });
+  });
+
+  it('状態IDが設定されている場合は存在しないIDも課金前検証へ送る', async () => {
+    const client = new QueryCapturingClient();
+    client.hasVariantState = true;
+    const repository = new PostgresPageRepository(client);
+
+    const page = await repository.findGenerationContextByIdAndUserId('page-1', 'user-1');
+
+    expect(page?.hasVariantState).toBe(true);
+    expect(client.queries[0]).toContain("jsonb_typeof(state_panels.entities) = 'array'");
+    expect(client.queries[0]).toContain("assigned.value->>'state_id' IS NOT NULL");
   });
 
   it('status と generation_mode を更新する', async () => {
@@ -327,6 +341,7 @@ describe('PostgresPageRepository', () => {
       'standard',
       '2026-04-24T00:00:00.000Z',
       null,
+      '{}',
     ]);
   });
 });

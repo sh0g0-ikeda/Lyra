@@ -1,6 +1,10 @@
 import type { QueryResultRow } from 'pg';
 import type { AuthenticatedUser } from '../domain/types/user.js';
 import type { DatabaseClient } from '../lib/db.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
 
 interface UserRow extends QueryResultRow {
   id: string;
@@ -15,11 +19,13 @@ export interface UserRepository {
   findByEmail(email: string): Promise<AuthenticatedUser | null>;
   insertSupabaseUser(supabaseId: string, email: string): Promise<AuthenticatedUser>;
   updateEmail(supabaseId: string, email: string): Promise<AuthenticatedUser>;
-  linkSupabaseIdByEmail(email: string, supabaseId: string): Promise<AuthenticatedUser>;
 }
 
 export class PostgresUserRepository implements UserRepository {
-  public constructor(private readonly client: DatabaseClient) {}
+  public constructor(
+    private readonly client: DatabaseClient,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async findBySupabaseId(supabaseId: string): Promise<AuthenticatedUser | null> {
     const result = await this.client.query<UserRow>(
@@ -27,7 +33,7 @@ export class PostgresUserRepository implements UserRepository {
       SELECT id, supabase_id, email, display_name, plan_code
       FROM users
       WHERE supabase_id = $1
-        AND account_deletion_started_at IS NULL
+        AND ${activeAccountSql(this.schemaProfile)}
       `,
       [supabaseId],
     );
@@ -41,7 +47,7 @@ export class PostgresUserRepository implements UserRepository {
       SELECT id, supabase_id, email, display_name, plan_code
       FROM users
       WHERE lower(email) = lower($1)
-        AND account_deletion_started_at IS NULL
+        AND ${activeAccountSql(this.schemaProfile)}
       `,
       [email],
     );
@@ -54,11 +60,13 @@ export class PostgresUserRepository implements UserRepository {
       `
       INSERT INTO users (supabase_id, email, plan_code)
       VALUES ($1, $2, 'free')
+      ON CONFLICT DO NOTHING
       RETURNING id, supabase_id, email, display_name, plan_code
       `,
       [supabaseId, email],
     );
 
+    if (result.rows[0] === undefined) throw Object.assign(new Error('Concurrent user provisioning conflict'), { code: '23505' });
     return mapUserRow(result.rows[0]);
   }
 
@@ -69,7 +77,7 @@ export class PostgresUserRepository implements UserRepository {
       SET email = $2,
           updated_at = NOW()
       WHERE supabase_id = $1
-        AND account_deletion_started_at IS NULL
+        AND ${activeAccountSql(this.schemaProfile)}
       RETURNING id, supabase_id, email, display_name, plan_code
       `,
       [supabaseId, email],
@@ -78,22 +86,16 @@ export class PostgresUserRepository implements UserRepository {
     return mapUserRow(result.rows[0]);
   }
 
-  public async linkSupabaseIdByEmail(email: string, supabaseId: string): Promise<AuthenticatedUser> {
-    const result = await this.client.query<UserRow>(
-      `
-      UPDATE users
-      SET supabase_id = $2,
-          email = $1,
-          updated_at = NOW()
-      WHERE lower(email) = lower($1)
-        AND account_deletion_started_at IS NULL
-      RETURNING id, supabase_id, email, display_name, plan_code
-      `,
-      [email, supabaseId],
-    );
+}
 
-    return mapUserRow(result.rows[0]);
-  }
+function activeAccountSql(profile: RepositorySchemaProfile): string {
+  return profile === 'legacy_2debe_v1'
+    ? `NOT EXISTS (
+          SELECT 1 FROM account_deletion_requests deletion_request
+          WHERE deletion_request.user_id = users.id
+            AND deletion_request.status IN ('processing', 'pending_external_action', 'completed')
+        )`
+    : 'account_deletion_started_at IS NULL';
 }
 
 export function isUniqueViolation(error: unknown): boolean {

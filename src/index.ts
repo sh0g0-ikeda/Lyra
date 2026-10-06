@@ -1,3 +1,8 @@
+import { createAccountDeletionRecoveryRuntime, startAccountDeletionRecovery } from './infrastructure/account/AccountDeletionRuntime.js';
+import { createEpisodeExportMaintenanceRuntime } from './lib/episodeExportMaintenanceRuntime.js';
+import { startEpisodeExportMaintenance } from './lib/episodeExportMaintenance.js';
+import { createPushNotificationDeliveryRuntime } from './infrastructure/push/PushNotificationRuntime.js';
+import { startPushNotificationMaintenance } from './lib/pushNotificationMaintenance.js';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
@@ -15,28 +20,32 @@ import { db } from './lib/db.js';
 import { env } from './lib/env.js';
 import { runPendingMigrations } from './lib/migrations.js';
 import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
+import { prepareCanonicalRuntimeSchema } from './lib/runtimeSchemaAttestation.js';
 import { sanitizePersistedErrorMessage } from './lib/errorSanitizer.js';
+import { createFencedStateReferenceRuntime } from './infrastructure/state/FencedStateReferenceRuntime.js';
 
 async function main(): Promise<void> {
   assertProductionRuntimeConfig(env);
-
-  if (env.AUTO_RUN_MIGRATIONS) {
-    const appliedMigrations = await runPendingMigrations(db);
-    if (appliedMigrations.length > 0) {
-      console.warn(`[migrations] applied ${appliedMigrations.join(', ')}`);
-    }
-  } else {
+  const schema = await prepareCanonicalRuntimeSchema({
+    database: db,
+    autoRunMigrations: env.AUTO_RUN_MIGRATIONS,
+    runMigrations: async () => runPendingMigrations(db),
+  });
+  if (schema.appliedMigrations.length > 0) {
+    console.warn(`[migrations] applied ${schema.appliedMigrations.join(', ')}`);
+  } else if (!env.AUTO_RUN_MIGRATIONS) {
     console.warn('[migrations] startup migration auto-run is disabled');
   }
+  const fencedStateReferenceRuntime = createFencedStateReferenceRuntime(env, db);
 
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
-  const generationJobCancellationControl = new PostgresGenerationJobRepository(db);
+  const generationJobCancellationControl = new PostgresGenerationJobRepository(db, env.LYRA_PERSISTENCE_PROFILE);
 
   try {
     const creditService = new CreditService(new PostgresCreditRepository(db, db));
     const recoveredCount = await new PageGenerationRecoveryService(
       new PostgresPageGenerationRecoveryRepository(db),
-      new PostgresPageGenerationExecutionRepository(db),
+      new PostgresPageGenerationExecutionRepository(db, env.LYRA_PERSISTENCE_PROFILE),
       creditService,
       undefined,
       undefined,
@@ -57,7 +66,7 @@ async function main(): Promise<void> {
   try {
     const recoveredCount = await new EntityGenerationRecoveryService(
       new PostgresEntityGenerationRecoveryRepository(db),
-      new PostgresEntityGenerationExecutionRepository(db),
+      new PostgresEntityGenerationExecutionRepository(db, env.LYRA_PERSISTENCE_PROFILE),
       new CreditService(new PostgresCreditRepository(db, db)),
       undefined,
       undefined,
@@ -75,9 +84,13 @@ async function main(): Promise<void> {
     );
   }
 
+  startPushNotificationMaintenance(createPushNotificationDeliveryRuntime(env, db));
+  startAccountDeletionRecovery(createAccountDeletionRecoveryRuntime(env, db, fencedStateReferenceRuntime));
+  startEpisodeExportMaintenance(createEpisodeExportMaintenanceRuntime(env, db));
+
   serve(
     {
-      fetch: createApp().fetch,
+      fetch: createApp({ fencedStateReferenceRuntime }).fetch,
       port: env.PORT,
     },
     (info) => {

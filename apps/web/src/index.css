@@ -2877,6 +2877,21 @@ a {
   order: 4;
 }
 
+.page-section-generate .section-header {
+  flex-wrap: wrap;
+}
+
+.page-section-generate .section-toggle {
+  flex: 1 1 170px;
+}
+
+.page-section-generate .section-toggle-actions {
+  flex: 1 1 420px;
+  min-width: 0;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .page-section-export {
   order: 6;
 }

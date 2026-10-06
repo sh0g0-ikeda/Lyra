@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,13 +9,15 @@ import {
 } from 'react-native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
-import * as ImagePicker from 'expo-image-picker';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
+import { CharacterChoiceField as ChoiceField } from '@/components/CharacterChoiceField';
+import { editorMessage } from '@/lib/editorUiMessages';
 import { CharacterOutfitField } from '@/components/CharacterOutfitField';
 import { EntityGenerationBlockers } from '@/components/EntityGenerationBlockers';
-import { EntityReferenceUploadStatus } from '@/components/EntityReferenceUploadStatus';
+import { AssetGenerationQuoteDialog } from '@/components/AssetGenerationQuoteDialog';
+import { QuotedEntityImport } from '@/components/QuotedEntityImport';
 import { FormField } from '@/components/FormField';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { JobStatusCard } from '@/components/JobStatusCard';
@@ -55,18 +56,18 @@ import {
   type EntityReferenceGenerationBlockerCode
 } from '@/domain/entityReferencePolicy';
 import type { CompatibleGenerationJobRecord } from '@/domain/generationJobCompatibility';
-import type { EntityReferenceUploadMimeType } from '@/domain/payloads';
-import type { EntityStateRecord, EntityType, SceneRecord } from '@/domain/types';
+import type { AssetQuoteTarget } from '@/domain/assetGenerationQuote';
+import { useAssetGenerationQuote } from '@/hooks/useAssetGenerationQuote';
+import { assetQuoteMessages } from '@/lib/assetQuoteMessages';
+import { pageWorkflowMessage } from '@/lib/pageWorkflowMessages';
+import { collectOperationFailures, operationFailure } from '@/lib/operationErrorContext';
+import { canDisplayMobileImage, imageAccessNotice } from '@/domain/imageAccess';
+import type { EntityRecord, EntityStateRecord, EntityType, SceneRecord } from '@/domain/types';
 import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
+import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
 import { config } from '@/lib/config';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
 import { appendAiProviderDisclosure } from '@/lib/aiProviderDisclosure';
-import {
-  DirectEntityUploadError,
-  uploadAndImportEntityReference,
-  type BinaryUploadSource,
-  type DirectEntityUploadStage
-} from '@/lib/directEntityReferenceUpload';
 import {
   entitiesInfiniteQueryKey,
   entitiesQueryKey,
@@ -82,7 +83,6 @@ import {
   entityGenerationBlockerRecoveryTarget
 } from '@/lib/errorRecovery';
 import { appendOrganizationQuery, downloadAuthenticatedFile } from '@/lib/download';
-import { createExpoBinaryUploadFile } from '@/lib/expoBinaryUpload';
 import { ApiError } from '@/lib/api';
 import {
   flattenUniqueRecords,
@@ -90,6 +90,10 @@ import {
   nextCursorFromPage,
 } from '@/lib/listPagination';
 import type { MobileTabParamList } from '@/navigation/tabs';
+import { EntityStateEditor } from '@/components/EntityStateEditor';
+import type { InitialStateCandidate } from '@/domain/entityStateEditor';
+import { reloadCharacterSnapshot } from '@/domain/characterReload';
+import { confirmStaleDraftReload } from '@/lib/confirmStaleDraftReload';
 import { useAppState } from '@/state/appState';
 import { useDirtyEditorRegistration, useDirtyState } from '@/state/dirtyState';
 
@@ -110,16 +114,6 @@ interface EntityStateSceneOption {
   label: string;
 }
 
-interface PendingEntityReferenceUpload {
-  entityId: string | null;
-  entityType: EntityType;
-  mimeType: EntityReferenceUploadMimeType;
-  sizeBytes: number;
-  source: BinaryUploadSource;
-  uploadToken: string | null;
-}
-
-const MAX_IMPORT_IMAGE_BYTES = 5 * 1024 * 1024;
 const NEW_ENTITY_PICKER_ID = 'new-entity';
 const isResourceStaleError = (error: unknown): boolean =>
   error instanceof ApiError && error.code === 'RESOURCE_STALE';
@@ -161,24 +155,6 @@ const sceneLabel = (scene: SceneRecord, language: 'ja' | 'en'): string => {
   const details = [scene.location, scene.time, scene.atmosphere].filter((value): value is string => value !== null);
   const fallback = t(language, "generated.screens.CharactersScreen.scene.38cab595");
   return `${scene.order}. ${details.join(' · ') || fallback}`;
-};
-
-const resolveAllowedMimeType = (asset: ImagePicker.ImagePickerAsset): EntityReferenceUploadMimeType | null => {
-  const sourceName = `${asset.uri} ${asset.fileName ?? ''}`.toLowerCase();
-  if (asset.mimeType === 'image/png' || sourceName.includes('.png')) {
-    return 'image/png';
-  }
-  if (asset.mimeType === 'image/webp' || sourceName.includes('.webp')) {
-    return 'image/webp';
-  }
-  if (
-    asset.mimeType === 'image/jpeg' ||
-    sourceName.includes('.jpg') ||
-    sourceName.includes('.jpeg')
-  ) {
-    return 'image/jpeg';
-  }
-  return null;
 };
 
 const readString = (record: Record<string, unknown>, key: string): string =>
@@ -264,6 +240,7 @@ const extractGeneratedReferenceCandidates = (
   if (
     job === undefined ||
     job.job_type !== 'entity_generate' ||
+    job.params.target === 'entity_state' ||
     job.status !== 'completed' ||
     job.result === null ||
     !Array.isArray(job.result.candidates)
@@ -285,6 +262,7 @@ const extractGeneratedReferenceCandidates = (
       return [];
     }
 
+    if (!canDisplayMobileImage(candidate)) return [];
     return [
       {
         candidate_token: (candidate as { candidate_token: string }).candidate_token,
@@ -537,6 +515,23 @@ const genericFieldKeys = [
   'visual_anchor'
 ];
 
+// Adopted new-person form defaults (front-end design §2/§6, reference §4.4).
+// Never use these when hydrating a saved record or applying imported suggestions.
+const newCharacterDefaults: Readonly<DraftRecord> = {
+  gender_expression: 'male',
+  age_range: 'twenties',
+  skin_tone: 'fair',
+  first_impression: 'bright_friendly',
+  standing_style: 'upright_neat',
+  default_expression: 'soft_smile',
+};
+
+const newStructuredDraft = (entityType: EntityType): DraftRecord =>
+  draftFromRecord(
+    entityType === 'character' ? newCharacterDefaults : {},
+    entityType === 'character' ? characterFieldKeys : genericFieldKeys,
+  );
+
 const genericFieldLabels: Record<string, ScreenTranslationKey> = {
   category: 'screen.characters.genericField.category',
   shape: 'screen.characters.genericField.shape',
@@ -550,23 +545,6 @@ const genericFieldLabels: Record<string, ScreenTranslationKey> = {
   movement: 'screen.characters.genericField.movement',
   visual_anchor: 'screen.characters.genericField.visualAnchor'
 };
-
-const recommendedCharacterKeys = [
-  'gender_expression',
-  'age_range',
-  'first_impression',
-  'default_expression',
-  'height',
-  'build',
-  'visual_anchor',
-  'signature_feature',
-  'hair_color',
-  'hair_length',
-  'hair_style',
-  'clothing_category',
-  'clothing_main_color',
-  'clothing_description'
-];
 
 const nonhumanBaseForms = ['dragon', 'wolf', 'spirit', 'robot', 'zombie', 'deity', 'custom'] as const;
 const nonhumanSizes = ['tiny', 'small', 'human_scale', 'large', 'enormous'] as const;
@@ -733,10 +711,15 @@ const toCharacterStructuredFieldsPayload = (draft: DraftRecord, extras: string):
   assignRecordOrDelete(structuredFields, 'clothing', clothing);
 
   const characterIdentity = { ...toRecord(structuredFields.character_identity) };
-  assignArrayOrDelete(characterIdentity, 'aliases', draft.aliases ?? '', 12);
+  // Aliases are now hidden: do not split a saved name containing commas or trim its identity.
+  if (!Array.isArray(characterIdentity.aliases)) {
+    assignArrayOrDelete(characterIdentity, 'aliases', draft.aliases ?? '', 12);
+  }
   assignOrDelete(characterIdentity, 'visual_anchor', draft.visual_anchor ?? '');
   assignOrDelete(characterIdentity, 'signature_feature', draft.signature_feature ?? '');
-  assignArrayOrDelete(characterIdentity, 'silhouette_keywords', draft.silhouette_keywords ?? '', 6);
+  if (!Array.isArray(characterIdentity.silhouette_keywords)) {
+    assignArrayOrDelete(characterIdentity, 'silhouette_keywords', draft.silhouette_keywords ?? '', 6);
+  }
   assignRecordOrDelete(
     structuredFields,
     'character_identity',
@@ -1625,125 +1608,6 @@ const clothingImpressionOptions = optionSet([
   ['custom', 'Custom']
 ]);
 
-interface ChoiceFieldProps {
-  label: string;
-  value: string;
-  options: LabelOption<string>[];
-  language: 'ja' | 'en';
-  maxLength?: number;
-  onChange: (value: string) => void;
-}
-
-function ChoiceField({
-  label,
-  value,
-  options,
-  language,
-  maxLength = 100,
-  onChange,
-}: ChoiceFieldProps): React.JSX.Element {
-  const renderOptions = useMemo(
-    () => (options.some((option) => option.value === 'custom') ? options : [...options, { value: 'custom', labelJa: '自由入力', labelEn: 'Custom' }]),
-    [options]
-  );
-  const concreteOptionValues = useMemo(
-    () => new Set(renderOptions.map((option) => option.value).filter((optionValue) => optionValue !== '' && optionValue !== 'custom')),
-    [renderOptions]
-  );
-  const inferredValue = value === '' ? '' : concreteOptionValues.has(value) ? value : 'custom';
-  const [customMode, setCustomMode] = useState(inferredValue === 'custom');
-  const [optionsOpen, setOptionsOpen] = useState(false);
-  const selectedOption = renderOptions.find((option) => option.value === (customMode ? 'custom' : inferredValue));
-  const selectedLabel = customMode && value.trim().length > 0
-    ? value
-    : selectedOption === undefined
-      ? '-'
-      : language === 'ja'
-        ? selectedOption.labelJa
-        : selectedOption.labelEn;
-
-  useEffect(() => {
-    if (value !== '') {
-      setCustomMode(!concreteOptionValues.has(value));
-    }
-  }, [concreteOptionValues, value]);
-
-  const selectValue = (nextValue: string): void => {
-    if (nextValue === 'custom') {
-      setCustomMode(true);
-      onChange(concreteOptionValues.has(value) ? '' : value);
-      setOptionsOpen(false);
-      return;
-    }
-
-    setCustomMode(false);
-    onChange(nextValue);
-    setOptionsOpen(false);
-  };
-
-  return (
-    <View style={styles.choiceField}>
-      <Text style={styles.label}>{label}</Text>
-      <Pressable accessibilityRole="button" onPress={() => setOptionsOpen((current) => !current)} style={styles.choiceTrigger}>
-        <Text numberOfLines={1} style={styles.choiceValue}>{selectedLabel}</Text>
-        <Text style={styles.choiceChevron}>{optionsOpen ? '^' : 'v'}</Text>
-      </Pressable>
-      <Modal animationType="fade" onRequestClose={() => setOptionsOpen(false)} transparent visible={optionsOpen}>
-        <Pressable
-          accessibilityLabel={t(language, "generated.screens.CharactersScreen.close.603bc62f")}
-          accessibilityRole="button"
-          onPress={() => setOptionsOpen(false)}
-          style={styles.choiceModalBackdrop}
-        >
-          <View
-            accessibilityLabel={label}
-            accessibilityViewIsModal
-            onAccessibilityEscape={() => setOptionsOpen(false)}
-            onStartShouldSetResponder={() => true}
-            style={styles.choiceModalSheet}
-          >
-            <View style={styles.choiceModalHeader}>
-              <Text style={styles.groupTitle}>{label}</Text>
-              <Pressable accessibilityLabel={t(language, "generated.screens.CharactersScreen.close.603bc62f")} accessibilityRole="button" onPress={() => setOptionsOpen(false)} style={styles.choiceModalClose}>
-                <Text style={styles.choiceModalCloseText}>x</Text>
-              </Pressable>
-            </View>
-            <ScrollView accessibilityRole="radiogroup" contentContainerStyle={styles.choiceMenu} style={styles.choiceModalScroll}>
-              {renderOptions.map((option) => {
-                const selected = option.value === inferredValue || (customMode && option.value === 'custom');
-                return (
-                  <Pressable
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected }}
-                    key={option.value}
-                    onPress={() => selectValue(option.value)}
-                    style={[styles.choiceOption, selected ? styles.choiceOptionSelected : null]}
-                  >
-                    <View style={[styles.choiceRadioOuter, selected ? styles.choiceRadioOuterSelected : null]}>
-                      {selected ? <View style={styles.choiceRadioInner} /> : null}
-                    </View>
-                    <Text style={[styles.choiceOptionText, selected ? styles.choiceOptionTextSelected : null]}>
-                      {language === 'ja' ? option.labelJa : option.labelEn}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </Pressable>
-      </Modal>
-      {customMode ? (
-        <FormField
-          label={t(language, "generated.screens.CharactersScreen.custom.value.75dadf38")}
-          maxLength={maxLength}
-          onChangeText={onChange}
-          value={value}
-        />
-      ) : null}
-    </View>
-  );
-}
-
 interface CollapsibleGroupProps {
   title: string;
   defaultCollapsed?: boolean;
@@ -1755,7 +1619,7 @@ function CollapsibleGroup({ title, defaultCollapsed = false, children }: Collaps
 
   return (
     <View style={styles.group}>
-      <Pressable accessibilityRole="button" onPress={() => setCollapsed((current) => !current)} style={styles.groupHeader}>
+      <Pressable accessibilityLabel={title} accessibilityRole="button" accessibilityState={{ expanded: !collapsed }} onPress={() => setCollapsed((current) => !current)} style={styles.groupHeader}>
         <Text style={styles.groupTitle}>{title}</Text>
         <Text style={styles.groupChevron}>{collapsed ? 'v' : '^'}</Text>
       </Pressable>
@@ -1764,7 +1628,13 @@ function CollapsibleGroup({ title, defaultCollapsed = false, children }: Collaps
   );
 }
 
-export function CharactersScreen(): React.JSX.Element {
+export interface CharactersScreenProps {
+  secondaryActions?: boolean;
+  initialStateCandidate?: InitialStateCandidate;
+  onReturnToPages?: () => void;
+}
+
+export function CharactersScreen({ initialStateCandidate, onReturnToPages, secondaryActions = false }: CharactersScreenProps = {}): React.JSX.Element {
   const navigation = useNavigation<BottomTabNavigationProp<MobileTabParamList>>();
   const queryClient = useQueryClient();
   const { api, hasCapability, language, logout, selection, session, sessionKey, tokens, trackJob, updateSelection } = useAppState();
@@ -1778,17 +1648,17 @@ export function CharactersScreen(): React.JSX.Element {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [promptSupplement, setPromptSupplement] = useState('');
-  const [structuredDraft, setStructuredDraft] = useState<DraftRecord>(() => draftFromRecord({}, characterFieldKeys));
+  const [structuredDraft, setStructuredDraft] = useState<DraftRecord>(() =>
+    selection.entityId === null
+      ? newStructuredDraft('character')
+      : draftFromRecord({}, characterFieldKeys));
   const [structuredExtras, setStructuredExtras] = useState('');
+  const [draftResetVersion, setDraftResetVersion] = useState(0);
   const [candidateToken, setCandidateToken] = useState('');
   const [importResult, setImportResult] = useState<string | null>(null);
   const [lastImportedCandidateToken, setLastImportedCandidateToken] = useState<string | null>(null);
   const [lastImportedCandidateEntityId, setLastImportedCandidateEntityId] = useState<string | null>(null);
-  const [pendingEntityReferenceUpload, setPendingEntityReferenceUpload] =
-    useState<PendingEntityReferenceUpload | null>(null);
-  const [entityReferenceUploadProgress, setEntityReferenceUploadProgress] = useState(0);
-  const [entityReferenceUploadStage, setEntityReferenceUploadStage] =
-    useState<DirectEntityUploadStage | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
   const [localJob, setLocalJob] = useState<{
     id: string;
     resourceId: string;
@@ -1798,14 +1668,18 @@ export function CharactersScreen(): React.JSX.Element {
   const [selectedEntityStateId, setSelectedEntityStateId] = useState<string | null>(null);
   const [entityStateDraft, setEntityStateDraft] = useState<EntityStateDraft>(emptyEntityStateDraft);
   const lastSyncedEntityId = useRef<string | null>(null);
+  const lastSyncedDraftScope = useRef<string | null>(null);
   const lastSyncedEntityStateId = useRef<string | null>(null);
   const [entityStale, setEntityStale] = useState(false);
+  const [stateEditorResetVersion, setStateEditorResetVersion] = useState(0);
+  const [discardedStateCandidate, setDiscardedStateCandidate] = useState<InitialStateCandidate | undefined>(undefined);
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
-  const entityReferenceUploadAbortController = useRef<AbortController | null>(null);
+  const [reloadError, setReloadError] = useState<Error | null>(null);
   const screenScrollRef = useRef<ScrollView | null>(null);
   const [sectionOffsets, setSectionOffsets] = useState({ editor: 0, import: 0 });
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
+  const draftScope = JSON.stringify([sessionKey, organizationId, activeWorkId, selection.entityId]);
 
   const activeFieldKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
 
@@ -1852,21 +1726,6 @@ export function CharactersScreen(): React.JSX.Element {
       ? localJob.id
       : activeServerJobId;
 
-  useEffect(
-    () => () => {
-      entityReferenceUploadAbortController.current?.abort();
-    },
-    []
-  );
-
-  useEffect(() => {
-    entityReferenceUploadAbortController.current?.abort();
-    entityReferenceUploadAbortController.current = null;
-    setPendingEntityReferenceUpload(null);
-    setEntityReferenceUploadProgress(0);
-    setEntityReferenceUploadStage(null);
-  }, [entityType, organizationId, selectedEntity?.id, sessionKey]);
-
   const visibleEntityDraft: EntityVisibleDraft = {
     entityType,
     freeDescription: nullable(description),
@@ -1874,6 +1733,13 @@ export function CharactersScreen(): React.JSX.Element {
     promptSupplement: nullable(promptSupplement),
     structuredFields: toStructuredFieldsPayload(entityType, structuredDraft, structuredExtras),
   };
+  const quoteCopy = assetQuoteMessages(language);
+  const entityDraftRevision = JSON.stringify([
+    draftScope, draftResetVersion, visibleEntityDraft, lastImportedCandidateToken,
+  ]);
+  const entityDraftRevisionRef = useRef(entityDraftRevision);
+  useLayoutEffect(() => { entityDraftRevisionRef.current = entityDraftRevision; }, [entityDraftRevision]);
+
   const structuredFieldsChanged =
     selectedEntity !== null &&
     (
@@ -1900,11 +1766,15 @@ export function CharactersScreen(): React.JSX.Element {
         });
   const entityDirty =
     selectedEntity === null
-      ? name.trim().length > 0 ||
-        description.trim().length > 0 ||
-        promptSupplement.trim().length > 0 ||
-        structuredExtras.trim().length > 0 ||
-        Object.values(structuredDraft).some((value) => value.trim().length > 0)
+      ? selection.entityId === null && (
+          name.trim().length > 0 ||
+          description.trim().length > 0 ||
+          promptSupplement.trim().length > 0 ||
+          structuredExtras.trim().length > 0 ||
+          activeFieldKeys.some((key) =>
+            (structuredDraft[key] ?? '').trim() !==
+            (entityType === 'character' ? newCharacterDefaults[key] ?? '' : ''))
+        )
       : pendingEntityUpdatePayload !== null &&
         hasEntityUpdateChanges(pendingEntityUpdatePayload);
 
@@ -1987,6 +1857,7 @@ export function CharactersScreen(): React.JSX.Element {
     [jobQuery.data, lastImportedCandidateToken]
   );
 
+  const blockedPreviewCandidates = Array.isArray(jobQuery.data?.result?.candidates) && jobQuery.data.result.candidates.some((candidate) => typeof candidate === 'object' && candidate !== null && !canDisplayMobileImage(candidate));
   const candidateTokenIsImported = lastImportedCandidateToken !== null && candidateToken.trim() === lastImportedCandidateToken;
   const importedCandidateMatchesEntity =
     selectedEntity !== null && lastImportedCandidateEntityId !== null && lastImportedCandidateEntityId === selectedEntity.id;
@@ -2014,21 +1885,18 @@ export function CharactersScreen(): React.JSX.Element {
     setPreviewImageUri(null);
   };
 
-  useEffect(() => {
-    const nextId = selectedEntity?.id ?? null;
-    if (lastSyncedEntityId.current === nextId && entityDirty) {
-      return;
-    }
-    lastSyncedEntityId.current = nextId;
-    if (selectedEntity !== null) {
-      setEntityEditorMode('edit');
-    }
-    setEntityType(selectedEntity?.entity_type ?? 'character');
-    setName(selectedEntity?.name ?? '');
-    setDescription(selectedEntity?.free_description ?? '');
-    setPromptSupplement(selectedEntity?.prompt_supplement ?? '');
-    setStructuredDraft(structuredDraftFromRecord(selectedEntity?.structured_fields ?? {}, selectedEntity?.entity_type ?? 'character'));
-    setStructuredExtras(extrasFromRecord(selectedEntity?.structured_fields ?? {}, selectedEntity?.entity_type === 'character' ? characterFieldKeys : genericFieldKeys));
+  const applyEntitySnapshot = useCallback((snapshot: EntityRecord | null): void => {
+    setDraftResetVersion((version) => version + 1);
+    lastSyncedEntityId.current = snapshot?.id ?? null;
+    setEntityEditorMode(snapshot !== null || selection.entityId !== null ? 'edit' : 'create');
+    setEntityType(snapshot?.entity_type ?? 'character');
+    setName(snapshot?.name ?? '');
+    setDescription(snapshot?.free_description ?? '');
+    setPromptSupplement(snapshot?.prompt_supplement ?? '');
+    setStructuredDraft(snapshot === null && selection.entityId === null
+      ? newStructuredDraft('character')
+      : structuredDraftFromRecord(snapshot?.structured_fields ?? {}, snapshot?.entity_type ?? 'character'));
+    setStructuredExtras(extrasFromRecord(snapshot?.structured_fields ?? {}, snapshot?.entity_type === 'character' ? characterFieldKeys : genericFieldKeys));
     setImportResult(null);
     setLastImportedCandidateToken(null);
     setLastImportedCandidateEntityId(null);
@@ -2037,7 +1905,24 @@ export function CharactersScreen(): React.JSX.Element {
     setSelectedEntityStateId(null);
     setEntityStateDraft(emptyEntityStateDraft());
     lastSyncedEntityStateId.current = null;
-  }, [entityDirty, selectedEntity]);
+  }, [selection.entityId, setDraftResetVersion, setEntityEditorMode, setEntityType, setName, setDescription, setPromptSupplement,
+    setStructuredDraft, setStructuredExtras, setImportResult, setLastImportedCandidateToken,
+    setLastImportedCandidateEntityId, setCandidateToken, setLocalJob, setSelectedEntityStateId,
+    setEntityStateDraft]);
+
+  useEffect(() => {
+    // A null snapshot in the same scope is an existing local draft, not a new
+    // initialization request. In particular, clearing defaults must stay cleared.
+    if (lastSyncedDraftScope.current === draftScope &&
+      lastSyncedEntityId.current === (selectedEntity?.id ?? null) &&
+      (selectedEntity === null || entityDirty)) return;
+    lastSyncedDraftScope.current = draftScope;
+    applyEntitySnapshot(selectedEntity);
+  }, [applyEntitySnapshot, draftScope, entityDirty, selectedEntity]);
+
+  const entityReloadScope = JSON.stringify([sessionKey, organizationId, activeWorkId, selectedEntity?.id ?? null]);
+  const entityReloadScopeRef = useRef(entityReloadScope);
+  useLayoutEffect(() => { entityReloadScopeRef.current = entityReloadScope; }, [entityReloadScope]);
 
   useEffect(() => {
     setEntityStale(false);
@@ -2051,12 +1936,16 @@ export function CharactersScreen(): React.JSX.Element {
     setEntityStateDraft(entityStateDraftFromRecord(selectedEntityState));
   }, [selectedEntityState, selectedEntityStateId]);
 
-  useEffect(() => {
+  const changeEntityType = (nextEntityType: EntityType): void => {
+    setEntityType(nextEntityType);
     setStructuredDraft((current) => {
-      const nextKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
-      return Object.fromEntries(nextKeys.map((key) => [key, current[key] ?? '']));
+      const nextKeys = nextEntityType === 'character' ? characterFieldKeys : genericFieldKeys;
+      const nextDraft = Object.fromEntries(nextKeys.map((key) => [key, current[key] ?? '']));
+      // A type round trip within a new form retains edits, including explicit
+      // blanks. Payload builders still select only the active entity type's keys.
+      return selection.entityId === null ? { ...current, ...nextDraft } : nextDraft;
     });
-  }, [entityType]);
+  };
 
   useEffect(() => {
     const nextCandidateToken = activeReferenceCandidate?.candidate_token ?? '';
@@ -2122,6 +2011,7 @@ export function CharactersScreen(): React.JSX.Element {
       await invalidateEntities();
     },
     onError: (error) => {
+      if (entityReloadScopeRef.current !== entityReloadScope) return;
       if (isResourceStaleError(error)) {
         setEntityStale(true);
       }
@@ -2140,16 +2030,19 @@ export function CharactersScreen(): React.JSX.Element {
   const saveExistingEntityMutation = updateEntityMutation.mutateAsync;
 
   const discardEntityDraft = useCallback((): void => {
+    setDraftResetVersion((version) => version + 1);
     setEntityEditorMode(selectedEntity === null ? 'create' : 'edit');
     setEntityType(selectedEntity?.entity_type ?? 'character');
     setName(selectedEntity?.name ?? '');
     setDescription(selectedEntity?.free_description ?? '');
     setPromptSupplement(selectedEntity?.prompt_supplement ?? '');
     setStructuredDraft(
-      structuredDraftFromRecord(
-        selectedEntity?.structured_fields ?? {},
-        selectedEntity?.entity_type ?? 'character'
-      )
+      selectedEntity === null && selection.entityId === null
+        ? newStructuredDraft('character')
+        : structuredDraftFromRecord(
+            selectedEntity?.structured_fields ?? {},
+            selectedEntity?.entity_type ?? 'character'
+          )
     );
     setStructuredExtras(
       extrasFromRecord(
@@ -2166,6 +2059,8 @@ export function CharactersScreen(): React.JSX.Element {
     setDirtySaveError(null);
   }, [
     selectedEntity,
+    selection.entityId,
+    setDraftResetVersion,
     setCandidateToken,
     setDescription,
     setDirtySaveError,
@@ -2204,16 +2099,19 @@ export function CharactersScreen(): React.JSX.Element {
       }
       await saveExistingEntityMutation();
     } catch (error) {
-      setDirtySaveError(
-        error instanceof Error
-          ? error
-          : new Error(t(language, "generated.screens.CharactersScreen.unsaved.changes.could.not.be.saved.88963a72"))
-      );
+      if (entityReloadScopeRef.current === entityReloadScope) {
+        setDirtySaveError(
+          error instanceof Error
+            ? error
+            : new Error(t(language, "generated.screens.CharactersScreen.unsaved.changes.could.not.be.saved.88963a72"))
+        );
+      }
       throw error;
     }
   }, [
     activeWorkId,
     entityDirty,
+    entityReloadScope,
     language,
     name,
     saveExistingEntityMutation,
@@ -2243,112 +2141,9 @@ export function CharactersScreen(): React.JSX.Element {
     onSuccess: invalidateEntityStates,
   });
 
-  const importImageMutation = useMutation({
-    mutationFn: async (mode: 'select' | 'retry') => {
-      let pendingUpload = pendingEntityReferenceUpload;
-      if (mode === 'select') {
-        setPendingEntityReferenceUpload(null);
-        const result = await ImagePicker.launchImageLibraryAsync({
-          allowsEditing: false,
-          base64: false,
-          mediaTypes: ['images'],
-          quality: 1
-        });
-        if (result.canceled) {
-          return null;
-        }
-
-        const asset = result.assets[0];
-        if (asset === undefined) {
-          throw new Error(t(language, "generated.screens.CharactersScreen.the.selected.image.could.not.be.read.859c11bf"));
-        }
-        const mimeType = resolveAllowedMimeType(asset);
-        if (mimeType === null) {
-          throw new Error(t(language, "generated.screens.CharactersScreen.select.a.jpeg.png.or.webp.image.aa36e2b9"));
-        }
-        const uploadFile = createExpoBinaryUploadFile(asset.uri);
-        if (!uploadFile.exists || uploadFile.sizeBytes <= 0) {
-          throw new Error(t(language, "generated.screens.CharactersScreen.the.selected.image.could.not.be.read.859c11bf"));
-        }
-        if (uploadFile.sizeBytes > MAX_IMPORT_IMAGE_BYTES) {
-          throw new Error(t(language, "generated.screens.CharactersScreen.the.image.must.be.5.mb.or.smaller.f810b162"));
-        }
-
-        pendingUpload = {
-          entityId: selectedEntity?.id ?? null,
-          entityType,
-          mimeType,
-          sizeBytes: uploadFile.sizeBytes,
-          source: uploadFile.source,
-          uploadToken: null
-        };
-        setPendingEntityReferenceUpload(pendingUpload);
-      }
-
-      if (pendingUpload === null) {
-        throw new Error(t(language, "generated.screens.CharactersScreen.there.is.no.image.to.retry.a75c5e5a"));
-      }
-      const activeUpload = pendingUpload;
-
-      entityReferenceUploadAbortController.current?.abort();
-      const abortController = new AbortController();
-      entityReferenceUploadAbortController.current = abortController;
-      setEntityReferenceUploadProgress(0);
-
-      try {
-        return await uploadAndImportEntityReference({
-          source: activeUpload.source,
-          mimeType: activeUpload.mimeType,
-          sizeBytes: activeUpload.sizeBytes,
-          entityType: activeUpload.entityType,
-          entityId: activeUpload.entityId,
-          resumeFinalizeToken: mode === 'retry' ? activeUpload.uploadToken : null,
-          signal: abortController.signal,
-          createPresignedUpload: (payload) => api.createEntityReferenceUpload(payload, organizationId),
-          finalizeImport: (uploadToken) =>
-            api.importEntityImage(
-              {
-                entity_type: activeUpload.entityType,
-                ...(activeUpload.entityId === null ? {} : { entity_id: activeUpload.entityId }),
-                upload_token: uploadToken
-              },
-              organizationId
-            ),
-          onProgress: setEntityReferenceUploadProgress,
-          onFinalizeTokenReady: (uploadToken) => {
-            setPendingEntityReferenceUpload({ ...activeUpload, uploadToken });
-          },
-          onStageChange: setEntityReferenceUploadStage
-        });
-      } finally {
-        if (entityReferenceUploadAbortController.current === abortController) {
-          entityReferenceUploadAbortController.current = null;
-        }
-      }
-    },
-    onSuccess: (result) => {
-      if (result === null) {
-        setEntityReferenceUploadStage(null);
-        setEntityReferenceUploadProgress(0);
-        return;
-      }
-      setPendingEntityReferenceUpload(null);
-      setEntityReferenceUploadStage(null);
-      setEntityReferenceUploadProgress(0);
-      const nextKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
-      setStructuredDraft(structuredDraftFromRecord(result.suggested_fields, entityType));
-      setStructuredExtras(extrasFromRecord(result.suggested_fields, nextKeys));
-      setPromptSupplement(result.prompt_supplement);
-      setCandidateToken(result.tmp_image_token);
-      setLastImportedCandidateToken(result.tmp_image_token);
-      setLastImportedCandidateEntityId(selectedEntity?.id ?? null);
-      setLocalJob(null);
-      setImportResult(JSON.stringify(result.suggested_fields, null, 2));
-    }
-  });
-
   const generateReferenceMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (target: AssetQuoteTarget) => {
+      if (selectedEntity === null || target.request.target_id !== selectedEntity.id || target.revision !== entityDraftRevisionRef.current || entityStale || !canGenerate) throw new Error('Quote target changed');
       const updatePayload = toEntityUpdatePayload();
       if (
         selectedEntity !== null &&
@@ -2365,21 +2160,22 @@ export function CharactersScreen(): React.JSX.Element {
           throw error;
         }
       }
-      return api.generateEntityReference(
-        selectedEntity?.id ?? '',
-        lastImportedCandidateToken === null || !importedCandidateMatchesEntity ? {} : { source_candidate_token: lastImportedCandidateToken },
-        organizationId
-      );
-    },
-    onSuccess: async (result) => {
-      setLocalJob({
-        id: result.job_id,
-        resourceId: selectedEntity?.id ?? '',
-      });
-      await trackJob(result.job_id);
-      await invalidateEntities();
+      return target;
     }
   });
+  const assetQuote = useAssetGenerationQuote({
+    api, contextKey: entityReloadScope, organizationId,
+    enabled: session?.capabilities?.generation_quotes === true && canGenerate,
+    revision: entityDraftRevision,
+    prepare: (target) => generateReferenceMutation.mutateAsync(target),
+    onAccepted: async (receipt, target, originKey) => {
+      if (receipt.job_id === null || originKey !== entityReloadScopeRef.current || target.request.target_id === undefined) return;
+      setLocalJob({ id: receipt.job_id, resourceId: target.request.target_id });
+      await trackJob(receipt.job_id).catch(() => undefined);
+      await Promise.all([invalidateEntities(), queryClient.invalidateQueries({ queryKey: ['session', sessionKey] })]);
+    }
+  });
+  const previewBusy = generateReferenceMutation.isPending || assetQuote.state.phase === 'quoting' || assetQuote.state.phase === 'accepting';
 
   const confirmReferenceMutation = useMutation({
     mutationFn: () => {
@@ -2425,24 +2221,6 @@ export function CharactersScreen(): React.JSX.Element {
       })
   });
 
-  const downloadCandidateMutation = useMutation({
-    mutationFn: () => {
-      if (!candidateTokenUsable) {
-        throw new Error('Candidate token is not valid for the selected entity.');
-      }
-      const params = new URLSearchParams({ candidate_token: candidateToken.trim() });
-      if (organizationId !== null && organizationId.trim().length > 0) {
-        params.set('organization_id', organizationId);
-      }
-      return downloadAuthenticatedFile({
-        path: `/api/entities/${encodeURIComponent(selectedEntity?.id ?? '')}/reference-candidate-image?${params.toString()}`,
-        filename: `lyra-candidate-${selectedEntity?.id ?? 'image'}.png`,
-        tokens,
-        mimeType: 'image/png'
-      });
-    }
-  });
-
   const generationBlockers = buildEntityReferenceGenerationBlockers({
     availableCredits,
     canGenerate,
@@ -2452,7 +2230,7 @@ export function CharactersScreen(): React.JSX.Element {
         ? null
         : generationAvailabilityQuery.data.enabled,
     hasActiveJob: hasActivePreviewJob,
-    importPending: importImageMutation.isPending,
+    importPending: importBusy,
     name,
     selectedEntityId: selectedEntity?.id ?? null
   });
@@ -2545,12 +2323,13 @@ export function CharactersScreen(): React.JSX.Element {
 
   const beginNewEntityDraft = (): void => {
     const reset = (): void => {
+      setDraftResetVersion((version) => version + 1);
       setEntityEditorMode('create');
       setEntityType('character');
       setName('');
       setDescription('');
       setPromptSupplement('');
-      setStructuredDraft(draftFromRecord({}, characterFieldKeys));
+      setStructuredDraft(newStructuredDraft('character'));
       setStructuredExtras('');
       setCandidateToken('');
       setImportResult(null);
@@ -2577,18 +2356,23 @@ export function CharactersScreen(): React.JSX.Element {
   };
 
   const reloadStaleEntity = async (): Promise<void> => {
-    if (selectedEntity === null || activeWorkId === null) {
-      return;
-    }
-    await queryClient.fetchQuery({
-      queryKey: entityDetailQueryKey(sessionKey, selectedEntity.id, organizationId),
-      queryFn: () => api.getEntity(selectedEntity.id, organizationId),
+    if (selectedEntity === null || activeWorkId === null) return;
+    const applied = await reloadCharacterSnapshot({
+      scope: entityReloadScope,
+      getCurrentScope: () => entityReloadScopeRef.current,
+      load: () => queryClient.fetchQuery({
+        queryKey: entityDetailQueryKey(sessionKey, selectedEntity.id, organizationId),
+        queryFn: () => api.getEntity(selectedEntity.id, organizationId),
+        staleTime: 0
+      }),
+      apply: (fresh) => {
+        applyEntitySnapshot(fresh);
+        setStateEditorResetVersion((version) => version + 1);
+        setDiscardedStateCandidate(initialStateCandidate);
+        setEntityStale(false);
+      }
     });
-    await queryClient.invalidateQueries({
-      queryKey: entitiesQueryKey(sessionKey, activeWorkId, organizationId),
-    });
-    lastSyncedEntityId.current = null;
-    setEntityStale(false);
+    if (applied) await queryClient.invalidateQueries({ queryKey: entitiesQueryKey(sessionKey, activeWorkId, organizationId) });
   };
 
   const beginNewEntityStateDraft = (): void => {
@@ -2598,69 +2382,60 @@ export function CharactersScreen(): React.JSX.Element {
   };
 
   const confirmGenerateReference = (): void => {
-    confirmAction({
-      language,
-      title: t(language, "generated.screens.CharactersScreen.generate.reference.preview.dddf055c"),
-      message: appendAiProviderDisclosure(
-        `${t(language, "generated.screens.CharactersScreen.character.details.will.be.saved.before.g.119135cb")}\n\n${t(language, 'component.jobStatusCard.imageDurationEstimate')}`,
-        language,
-        'text'
-      ),
-      confirmLabel: t(language, 'generateReference'),
-      onConfirm: () => generateReferenceMutation.mutate()
+    if (selectedEntity === null || entityStale || generationBlockers.length > 0) return;
+    const target: AssetQuoteTarget = { label: selectedEntity.name, revision: entityDraftRevision, request: {
+      operation: 'entity_preview', target_id: selectedEntity.id,
+      ...(lastImportedCandidateToken !== null && importedCandidateMatchesEntity ? { source_candidate_token: lastImportedCandidateToken } : {})
+    } };
+    confirmAction({ language, title: quoteCopy.reviewPreview,
+      message: appendAiProviderDisclosure(pageWorkflowMessage(language, 'quoteSaving'), language, 'text'),
+      confirmLabel: quoteCopy.title,
+      onConfirm: () => { if (entityDraftRevisionRef.current === target.revision) void assetQuote.controller.open(target); }
     });
   };
 
-  const confirmImportImage = (): void => {
-    confirmAction({
-      language,
-      title: t(language, 'imageImport'),
-      message: appendAiProviderDisclosure(
-        t(language, 'component.aiProvider.imageImportDescription'),
-        language,
-        'image'
-      ),
-      confirmLabel: t(language, 'imageImport'),
-      onConfirm: () => importImageMutation.mutate('select')
-    });
-  };
-
-  const characterErrors = [
-    entitiesQuery.error,
-    generationAvailabilityQuery.error,
-    referenceQuery.error,
-    entityStatesQuery.error,
-    scenesQuery.error,
-    jobQuery.error,
-    createEntityMutation.error,
-    updateEntityMutation.error,
-    deleteEntityMutation.error,
-    importImageMutation.error,
-    generateReferenceMutation.error,
-    confirmReferenceMutation.error,
-    deleteReferenceMutation.error,
-    downloadReferenceMutation.error,
-    downloadCandidateMutation.error,
-    createEntityStateMutation.error,
-    updateEntityStateMutation.error,
-    dirtySaveError,
-  ].filter(
-    (error): error is Error =>
-      error instanceof Error && !(error instanceof DirectEntityUploadError)
-  );
+  useResetOnScopeChange(JSON.stringify([entityReloadScope, selectedEntityStateId]), [
+    createEntityMutation.reset,
+    updateEntityMutation.reset,
+    deleteEntityMutation.reset,
+    generateReferenceMutation.reset,
+    confirmReferenceMutation.reset,
+    deleteReferenceMutation.reset,
+    downloadReferenceMutation.reset,
+    createEntityStateMutation.reset,
+    updateEntityStateMutation.reset,
+    () => setDirtySaveError(null),
+    () => setReloadError(null)
+  ]);
+  const entityStateDirty = JSON.stringify(entityStateDraft) !== JSON.stringify(entityStateDraftFromRecord(selectedEntityState));
+  const characterErrors = collectOperationFailures([
+    operationFailure('loadCharacters', entitiesQuery.error),
+    operationFailure('loadCharacters', selectedEntityQuery.error),
+    operationFailure('loadGenerationAvailability', generationAvailabilityQuery.error),
+    operationFailure('loadReference', referenceQuery.error),
+    operationFailure('loadCharacterStates', entityStatesQuery.error),
+    operationFailure('loadScenes', scenesQuery.error),
+    operationFailure('loadJob', jobQuery.error),
+    operationFailure('createCharacter', createEntityMutation.error, entityDirty ? 'character' : undefined),
+    operationFailure('saveCharacter', updateEntityMutation.error, entityDirty ? 'character' : undefined),
+    operationFailure('deleteCharacter', deleteEntityMutation.error, entityDirty ? 'character' : undefined),
+    operationFailure('prepareReference', generateReferenceMutation.error, entityDirty ? 'character' : undefined),
+    operationFailure('confirmReference', confirmReferenceMutation.error),
+    operationFailure('deleteReference', deleteReferenceMutation.error),
+    operationFailure('downloadReference', downloadReferenceMutation.error),
+    operationFailure('createCharacterState', createEntityStateMutation.error, entityStateDirty ? 'characterState' : undefined),
+    operationFailure('saveCharacterState', updateEntityStateMutation.error, entityStateDirty ? 'characterState' : undefined),
+    operationFailure('loadCharacters', reloadError, entityDirty ? 'character' : undefined),
+    operationFailure('saveCharacter', dirtySaveError, entityDirty ? 'character' : undefined)
+  ]);
 
   const typeOptions = entityTypes.map((option) => ({
     value: option.value,
     label: language === 'ja' ? option.labelJa : option.labelEn
   }));
-  const filledStructuredCount = activeFieldKeys.filter((key) => (structuredDraft[key] ?? '').trim().length > 0).length;
-  const filledRecommendedCount =
-    entityType === 'character'
-      ? recommendedCharacterKeys.filter((key) => (structuredDraft[key] ?? '').trim().length > 0).length
-      : filledStructuredCount;
-  const recommendedTotal = entityType === 'character' ? recommendedCharacterKeys.length : activeFieldKeys.length;
   const refreshCharacters = (): void => {
     void invalidateEntities();
+    if (selection.entityId !== null) void selectedEntityQuery.refetch();
     void invalidateReference();
     void invalidateEntityStates();
     void scenesQuery.refetch();
@@ -2673,8 +2448,7 @@ export function CharactersScreen(): React.JSX.Element {
       onRefresh={refreshCharacters}
       refreshing={entitiesQuery.isFetching || referenceQuery.isFetching}
       scrollViewRef={screenScrollRef}
-      subtitle={t(language, "generated.screens.CharactersScreen.create.characters.import.visual.traits.a.bae42b0d")}
-      title={t(language, 'characters')}
+      title={editorMessage(language, 'charactersTitle')}
     >
       <WorkspaceHierarchyNavigator context={workspaceContext} />
       {!canEdit ? (
@@ -2684,8 +2458,9 @@ export function CharactersScreen(): React.JSX.Element {
         />
       ) : null}
       {activeWorkId === null ? <Notice message={t(language, 'selectWorkFirst')} tone="warning" /> : null}
-      {characterErrors.length === 0 ? null : (
+      {characterErrors.map((failure, index) => (
         <ActionableErrorNotice
+          key={`${failure.context.operation}-${index}`}
           actions={{
             characters: () => scrollToCharacterSection('editor'),
             credits: () => {
@@ -2718,10 +2493,12 @@ export function CharactersScreen(): React.JSX.Element {
               });
             }
           }}
-          error={characterErrors[0]}
+          context={failure.context}
+          error={failure.error}
           language={language}
+          retryMode="refresh"
         />
-      )}
+      ))}
       {entityStale ? (
         <View style={styles.buttonRow}>
           <Notice
@@ -2731,13 +2508,21 @@ export function CharactersScreen(): React.JSX.Element {
           <PrimaryButton
             label={t(language, "generated.screens.CharactersScreen.reload.latest.state.327b1d0e")}
             onPress={() => {
-              void reloadStaleEntity();
+              confirmStaleDraftReload({
+                language, scope: 'character',
+                onConfirm: () => {
+                  setReloadError(null);
+                  void reloadStaleEntity().catch((cause: unknown) => {
+                    if (entityReloadScopeRef.current === entityReloadScope) setReloadError(cause instanceof Error ? cause : new Error('Character reload failed'));
+                  });
+                }
+              });
             }}
             variant="secondary"
           />
         </View>
       ) : null}
-      <Section collapsible persistKey="characters:list" title={t(language, "generated.screens.CharactersScreen.character.list.ea7139da")}>
+      <Section collapsible persistKey="characters:list" title={editorMessage(language, 'characterList')}>
         <RecordPicker
           emptyLabel={t(language, 'emptyCharacters')}
           hasNextPage={entitiesQuery.hasNextPage}
@@ -2768,83 +2553,43 @@ export function CharactersScreen(): React.JSX.Element {
       </Section>
 
       <View onLayout={recordSectionOffset('editor')}>
-        <Section collapsible persistKey="characters:editor" subtitle={t(language, "generated.screens.CharactersScreen.fill.only.what.you.know.and.save.before.1a296e88")} title={entityEditorMode === 'create' ? t(language, "generated.screens.CharactersScreen.create.character.20818b4a") : t(language, "generated.screens.CharactersScreen.character.editor.669746e4")}>
-        <Notice
-          message={
-            entityEditorMode === 'create'
-              ? t(language, "generated.screens.CharactersScreen.creating.a.new.character.existing.charac.3dc75fb0")
-              : t(language, "generated.screens.CharactersScreen.editing.the.selected.character.9454ccd6")
-          }
-          tone="info"
-        />
+        <Section collapsible persistKey="characters:editor" subtitle={editorMessage(language, 'optionalFields')} title={entityEditorMode === 'create' ? editorMessage(language, 'createCharacter') : t(language, "generated.screens.CharactersScreen.character.editor.669746e4")}>
+        {selection.entityId !== null && selectedEntity === null ? (
+          <Notice
+            announce
+            message={editorMessage(language, selectedEntityQuery.error == null ? 'characterLoading' : 'characterLoadRequired')}
+            tone={selectedEntityQuery.error == null ? 'info' : 'warning'}
+          />
+        ) : (
+        <>
         <FormField label={t(language, 'name')} maxLength={100} onChangeText={setName} value={name} />
-        <SegmentedControl onChange={setEntityType} options={typeOptions} value={entityType} />
+        <SegmentedControl onChange={changeEntityType} options={typeOptions} value={entityType} />
         <View
           onLayout={recordSectionOffset('import')}
           style={styles.inlineImport}
         >
           <Text style={styles.groupTitle}>{t(language, 'imageImport')}</Text>
           <Text style={styles.caption}>
-            {t(language, "generated.screens.CharactersScreen.import.a.character.image.so.its.appearan.ed76afc3")}
+            {editorMessage(language, 'importHelp')}
           </Text>
-          <Notice
-            message={t(language, "generated.screens.CharactersScreen.choose.jpeg.png.or.webp.large.images.can.2bf9c35d")}
-            tone="info"
-          />
-          <PrimaryButton
-            disabled={!canGenerate || activeWorkId === null}
-            disabledReason={
-              !canGenerate
-                ? t(language, "generated.screens.CharactersScreen.generation.permission.is.required.1bc5b7af")
-                : activeWorkId === null
-                  ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f")
-                  : undefined
-            }
-            label={t(language, 'imageImport')}
-            loading={importImageMutation.isPending}
-            onPress={confirmImportImage}
-          />
-          <EntityReferenceUploadStatus
-            error={
-              importImageMutation.error instanceof DirectEntityUploadError
-                ? importImageMutation.error
-                : null
-            }
-            isPending={importImageMutation.isPending}
-            language={language}
-            onCancel={() => entityReferenceUploadAbortController.current?.abort()}
-            onRetry={() => importImageMutation.mutate('retry')}
-            progress={entityReferenceUploadProgress}
-            stage={entityReferenceUploadStage}
-          />
+          <QuotedEntityImport entityId={selectedEntity?.id ?? null} entityType={entityType} entityName={name} workId={activeWorkId}
+            draftRevision={entityDraftRevision} onBusyChange={setImportBusy} parentBusy={previewBusy || hasActivePreviewJob}
+            onApply={(result, expectedRevision) => {
+              if (entityDraftRevisionRef.current !== expectedRevision) return;
+              const nextKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
+              setStructuredDraft(structuredDraftFromRecord(result.suggested_fields, entityType));
+              setStructuredExtras(extrasFromRecord(result.suggested_fields, nextKeys));
+              setPromptSupplement(result.prompt_supplement); setCandidateToken(result.tmp_image_token);
+              setLastImportedCandidateToken(result.tmp_image_token); setLastImportedCandidateEntityId(selectedEntity?.id ?? null);
+              setLocalJob(null); setImportResult(JSON.stringify(result.suggested_fields, null, 2));
+            }} />
           {importResult === null ? null : (
             <Notice message={t(language, "generated.screens.CharactersScreen.suggested.fields.were.applied.to.the.for.1570bad8")} tone="info" />
           )}
         </View>
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.required.64cf5d7a")}</Text>
-            <Text style={styles.metric}>{name.trim().length > 0 ? t(language, "generated.screens.CharactersScreen.name.ok.9d30f555") : t(language, "generated.screens.CharactersScreen.name.required.4b1380a3")}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.recommended.655b10bd")}</Text>
-            <Text style={styles.metric}>{filledRecommendedCount}/{recommendedTotal}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, 'referenceSet')}</Text>
-            <Text style={styles.metric}>{formatReferenceStatus(referenceQuery.data?.status, language)}</Text>
-          </View>
-        </View>
         {entityType === 'character' ? (
           <>
             <CollapsibleGroup title={t(language, "generated.screens.CharactersScreen.identity.90859a65")}>
-              <FormField
-                help={t(language, "generated.screens.CharactersScreen.separate.multiple.aliases.with.commas.or.2ab505cd")}
-                label={t(language, "generated.screens.CharactersScreen.aliases.658c65b6")}
-                maxLength={500}
-                onChangeText={(value) => setStructuredValue('aliases', value)}
-                value={structuredDraft.aliases ?? ''}
-              />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.gender.cbf7a6be")} language={language} onChange={(value) => setStructuredValue('gender_expression', value)} options={genderOptions} value={structuredDraft.gender_expression ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.age.range.3bfd3fb9")} language={language} onChange={(value) => setStructuredValue('age_range', value)} options={ageOptions} value={structuredDraft.age_range ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.skin.tone.a4e7759d")} language={language} onChange={(value) => setStructuredValue('skin_tone', value)} options={skinToneOptions} value={structuredDraft.skin_tone ?? ''} />
@@ -2856,7 +2601,7 @@ export function CharactersScreen(): React.JSX.Element {
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.art.style.3dbfd980")} language={language} onChange={(value) => setStructuredValue('art_style', value)} options={artStyleOptions} value={structuredDraft.art_style ?? ''} />
             </CollapsibleGroup>
 
-            <CollapsibleGroup title={t(language, "generated.screens.CharactersScreen.face.f4d8eb6a")}>
+            <CollapsibleGroup defaultCollapsed title={t(language, "generated.screens.CharactersScreen.face.f4d8eb6a")}>
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.face.shape.129e8c22")} language={language} onChange={(value) => setStructuredValue('face_shape', value)} options={faceShapeOptions} value={structuredDraft.face_shape ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.eyebrow.shape.0e2aaabf")} language={language} onChange={(value) => setStructuredValue('eyebrow_shape', value)} options={eyebrowShapeOptions} value={structuredDraft.eyebrow_shape ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.nose.shape.aa0c3304")} language={language} onChange={(value) => setStructuredValue('nose_shape', value)} options={noseShapeOptions} value={structuredDraft.nose_shape ?? ''} />
@@ -2871,7 +2616,7 @@ export function CharactersScreen(): React.JSX.Element {
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.mouth.default.4bde6546")} language={language} onChange={(value) => setStructuredValue('mouth_default', value)} options={mouthDefaultOptions} value={structuredDraft.mouth_default ?? ''} />
             </CollapsibleGroup>
 
-            <CollapsibleGroup title={t(language, "generated.screens.CharactersScreen.hair.d1fbc0ef")}>
+            <CollapsibleGroup defaultCollapsed title={t(language, "generated.screens.CharactersScreen.hair.d1fbc0ef")}>
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.hair.color.71cf2ed1")} language={language} onChange={(value) => setStructuredValue('hair_color', value)} options={hairColorOptions} value={structuredDraft.hair_color ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.hair.length.210757f7")} language={language} onChange={(value) => setStructuredValue('hair_length', value)} options={hairLengthOptions} value={structuredDraft.hair_length ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.hair.style.746c37e2")} language={language} onChange={(value) => setStructuredValue('hair_style', value)} options={hairStyleOptions} value={structuredDraft.hair_style ?? ''} />
@@ -2882,8 +2627,8 @@ export function CharactersScreen(): React.JSX.Element {
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.back.shape.a85f5892")} language={language} onChange={(value) => setStructuredValue('hair_back_shape', value)} options={hairBackShapeOptions} value={structuredDraft.hair_back_shape ?? ''} />
             </CollapsibleGroup>
 
-            <CollapsibleGroup title={t(language, "generated.screens.CharactersScreen.outfit.c6a8820c")}>
-              <ChoiceField label={t(language, "generated.screens.CharactersScreen.category.da912e83")} language={language} onChange={(value) => setStructuredValue('clothing_category', value)} options={clothingOptions} value={structuredDraft.clothing_category ?? ''} />
+            <CollapsibleGroup defaultCollapsed title={t(language, "generated.screens.CharactersScreen.outfit.c6a8820c")}>
+              <ChoiceField label={t(language, "generated.screens.CharactersScreen.category.da912e83")} language={language} onChange={(value) => setStructuredValue('clothing_category', value)} searchable options={clothingOptions} value={structuredDraft.clothing_category ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.main.color.250a10a8")} language={language} onChange={(value) => setStructuredValue('clothing_main_color', value)} options={clothingColorOptions} value={structuredDraft.clothing_main_color ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.impression.811cb717")} language={language} onChange={(value) => setStructuredValue('clothing_impression', value)} options={clothingImpressionOptions} value={structuredDraft.clothing_impression ?? ''} />
               <CharacterOutfitField
@@ -2897,24 +2642,15 @@ export function CharactersScreen(): React.JSX.Element {
           </>
         ) : (
           <>
-            <Text style={styles.groupTitle}>{t(language, "generated.screens.CharactersScreen.generic.traits.9f53c262")}</Text>
+            <Text style={styles.groupTitle}>{editorMessage(language, 'genericTraits')}</Text>
             {activeFieldKeys.map((key) => (
               <FormField key={key} label={genericFieldLabels[key] === undefined ? key.replace(/_/g, ' ') : t(language, genericFieldLabels[key])} onChangeText={(value) => setStructuredValue(key, value)} value={structuredDraft[key] ?? ''} />
             ))}
           </>
         )}
-        </Section>
-      </View>
-
-      <Section
-        collapsible
-        persistKey="characters:description-save"
-        subtitle={t(language, "generated.screens.CharactersScreen.you.do.not.need.to.fill.every.field.c49dd414")}
-        title={t(language, "generated.screens.CharactersScreen.description.and.save.19130ad8")}
-      >
         <FormField
-          help={t(language, "generated.screens.CharactersScreen.describe.traits.not.covered.by.the.choic.a92e98e3")}
-          label={t(language, 'description')}
+          help={editorMessage(language, 'additionalHelp')}
+          label={editorMessage(language, 'additionalDetails')}
           maxLength={2000}
           multiline
           onChangeText={setDescription}
@@ -2922,7 +2658,7 @@ export function CharactersScreen(): React.JSX.Element {
         />
         <View style={styles.buttonRow}>
           {entityEditorMode === 'create' ? (
-            <PrimaryButton disabled={!canEdit || activeWorkId === null || name.trim().length === 0} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : activeWorkId === null ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'create')} loading={createEntityMutation.isPending} onPress={() => createEntityMutation.mutate()} />
+            <PrimaryButton disabled={!canEdit || activeWorkId === null || name.trim().length === 0} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : activeWorkId === null ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'create')} loading={createEntityMutation.isPending} onPress={() => createEntityMutation.mutate()} variant={secondaryActions ? 'secondary' : 'primary'} />
           ) : (
             <>
               <PrimaryButton disabled={!canEdit || entityStale || selectedEntity === null || name.trim().length === 0 || !entityDirty} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'save')} loading={updateEntityMutation.isPending} onPress={() => updateEntityMutation.mutate()} variant="secondary" />
@@ -2930,9 +2666,13 @@ export function CharactersScreen(): React.JSX.Element {
             </>
           )}
         </View>
-      </Section>
+        </>
+        )}
+        </Section>
+      </View>
 
-      <Section collapsible persistKey="characters:reference-set" subtitle={t(language, "generated.screens.CharactersScreen.page.generation.uses.confirmed.reference.6e2b8447")} title={t(language, 'referenceSet')}>
+
+      <Section collapsible persistKey="characters:reference-set" subtitle={editorMessage(language, 'characterPreviewHelp')} title={editorMessage(language, 'characterPreview')}>
         <View style={styles.metricsGrid}>
           <View style={styles.metricCard}>
             <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.status.bd826326")}</Text>
@@ -2951,12 +2691,7 @@ export function CharactersScreen(): React.JSX.Element {
             <Text style={styles.metric}>{referenceQuery.data?.reference_images.length ?? 0}</Text>
           </View>
         </View>
-        {activeReferenceCandidate === null && (referenceQuery.data?.reference_images.length ?? 0) === 0 ? (
-          <Notice
-            message={t(language, "generated.screens.CharactersScreen.imported.generated.and.confirmed.referen.b5e84403")}
-            tone="info"
-          />
-        ) : (
+        {activeReferenceCandidate === null && (referenceQuery.data?.reference_images.length ?? 0) === 0 ? null : (
           <>
             <Text style={styles.groupTitle}>{t(language, "generated.screens.CharactersScreen.preview.and.confirmed.images.78120ddc")}</Text>
             <ScrollView
@@ -2995,6 +2730,7 @@ export function CharactersScreen(): React.JSX.Element {
                     revision: referenceQuery.data?.updated_at ?? reference.created_at,
                     sessionKey
                   });
+            if (!canDisplayMobileImage(reference)) return <Notice key={reference.ref_id} message={imageAccessNotice(language)} tone="warning" />;
             return (
             <View key={reference.ref_id} style={styles.referenceCard}>
               <ConfirmedReferencePreview
@@ -3016,6 +2752,7 @@ export function CharactersScreen(): React.JSX.Element {
             </ScrollView>
           </>
         )}
+        {blockedPreviewCandidates ? <Notice message={imageAccessNotice(language)} tone="warning" /> : null}
         <EntityGenerationBlockers
           blockers={generationBlockers}
           language={language}
@@ -3023,12 +2760,14 @@ export function CharactersScreen(): React.JSX.Element {
           onAction={handleGenerationBlockerAction}
         />
         <PrimaryButton
-          disabled={entityStale || generationBlockers.length > 0}
+          disabled={entityStale || generationBlockers.length > 0 || previewBusy}
           disabledReason={entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : generationBlockers.length === 0 ? undefined : generationBlockerMessage(generationBlockers[0].code, language)}
-          label={t(language, 'generateReference')}
-          loading={generateReferenceMutation.isPending}
+          label={quoteCopy.reviewPreview}
+          loading={previewBusy}
           onPress={confirmGenerateReference}
+          variant={secondaryActions || entityEditorMode === 'create' ? 'secondary' : 'primary'}
         />
+        {assetQuote.state.phase === 'unknown' ? <Notice message={quoteCopy.unknown} actionLabel={quoteCopy.title} onAction={() => { if (assetQuote.state.target !== null) void assetQuote.controller.open(assetQuote.state.target); }} tone="warning" /> : null}
         <JobStatusCard
           api={api}
           jobId={displayedJobId}
@@ -3046,14 +2785,6 @@ export function CharactersScreen(): React.JSX.Element {
           />
         ) : null}
         <PrimaryButton
-          disabled={!canExport || selectedEntity === null || !candidateTokenUsable}
-          disabledReason={!canExport ? t(language, "generated.screens.CharactersScreen.export.permission.is.required.8c8fb948") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : !candidateTokenUsable ? t(language, "generated.screens.CharactersScreen.select.a.candidate.valid.for.this.charac.049d04a0") : undefined}
-          label={t(language, "generated.screens.CharactersScreen.save.candidate.image.9e676bff")}
-          loading={downloadCandidateMutation.isPending}
-          onPress={() => downloadCandidateMutation.mutate()}
-          variant="ghost"
-        />
-        <PrimaryButton
           disabled={!canEdit || selectedEntity === null || !candidateTokenUsable}
           disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : !candidateTokenUsable ? t(language, "generated.screens.CharactersScreen.review.a.candidate.image.for.the.current.efd0db5c") : undefined}
           label={t(language, 'confirmReference')}
@@ -3062,6 +2793,17 @@ export function CharactersScreen(): React.JSX.Element {
           variant="secondary"
         />
       </Section>
+      {selectedEntity === null ? null : (
+        <EntityStateEditor
+          key={`${sessionKey}:${organizationId ?? 'personal'}:${selectedEntity.id}:${JSON.stringify(initialStateCandidate ?? null)}:${stateEditorResetVersion}`}
+          entity={selectedEntity}
+          parentDirty={entityDirty}
+          parentBusy={previewBusy || importBusy || confirmReferenceMutation.isPending || hasActivePreviewJob}
+          availableCredits={availableCredits}
+          initialCandidate={initialStateCandidate === discardedStateCandidate ? undefined : initialStateCandidate}
+          onReturnToPages={onReturnToPages}
+        />
+      )}
       {characterContinuityStateUiEnabled ? (
         <Section
           collapsible
@@ -3164,6 +2906,10 @@ export function CharactersScreen(): React.JSX.Element {
         )}
         </Section>
       ) : null}
+      <AssetGenerationQuoteDialog state={assetQuote.state} language={language} canAccept={assetQuote.controller.canAccept()}
+        onAccept={() => { void assetQuote.controller.accept(); }} onClose={() => assetQuote.controller.close()}
+        onReconcile={() => { void assetQuote.controller.reconcile(); }}
+        onRequote={confirmGenerateReference} />
       <ImagePreviewModal contentId={selectedEntity?.id} headers={previewImageHeaders} language={language} onClose={closeImagePreview} uri={previewImageUri} />
     </Screen>
   );
@@ -3177,123 +2923,6 @@ const styles = StyleSheet.create({
   },
   caption: {
     ...textStyles.caption
-  },
-  choiceField: {
-    gap: spacing.xs
-  },
-  choiceChevron: {
-    color: colors.primary,
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 20
-  },
-  choiceModalBackdrop: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.62)',
-    flex: 1,
-    justifyContent: 'center',
-    padding: spacing.md
-  },
-  choiceModalClose: {
-    alignItems: 'center',
-    backgroundColor: colors.field,
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    height: 44,
-    justifyContent: 'center',
-    width: 44
-  },
-  choiceModalCloseText: {
-    color: colors.ink,
-    fontSize: 16,
-    fontWeight: '800',
-    lineHeight: 20
-  },
-  choiceModalHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-    justifyContent: 'space-between'
-  },
-  choiceModalScroll: {
-    width: '100%'
-  },
-  choiceModalSheet: {
-    backgroundColor: colors.surface,
-    borderColor: colors.controlBorder,
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: spacing.md,
-    maxHeight: '76%',
-    maxWidth: 520,
-    padding: spacing.md,
-    width: '100%'
-  },
-  choiceMenu: {
-    gap: spacing.xs
-  },
-  choiceOption: {
-    alignItems: 'center',
-    backgroundColor: colors.controlSurface,
-    borderColor: colors.controlBorder,
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    minHeight: 46,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm
-  },
-  choiceOptionSelected: {
-    backgroundColor: 'rgba(229, 199, 107, 0.12)',
-    borderColor: 'rgba(229, 199, 107, 0.44)'
-  },
-  choiceOptionText: {
-    ...textStyles.body,
-    color: colors.ink,
-    flex: 1,
-    fontWeight: '600',
-    minWidth: 0
-  },
-  choiceOptionTextSelected: {
-    color: colors.primary,
-    fontWeight: '700'
-  },
-  choiceRadioInner: {
-    backgroundColor: colors.primary,
-    borderRadius: 999,
-    height: 10,
-    width: 10
-  },
-  choiceRadioOuter: {
-    alignItems: 'center',
-    borderColor: colors.mutedSoft,
-    borderRadius: 999,
-    borderWidth: 2,
-    height: 22,
-    justifyContent: 'center',
-    width: 22
-  },
-  choiceRadioOuterSelected: {
-    borderColor: colors.primary
-  },
-  choiceTrigger: {
-    alignItems: 'center',
-    backgroundColor: colors.controlSurface,
-    borderColor: colors.controlBorder,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    minHeight: 44,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm
-  },
-  choiceValue: {
-    ...textStyles.body,
-    flex: 1,
-    minWidth: 0
   },
   candidateCard: {
     backgroundColor: colors.surfaceAlt,

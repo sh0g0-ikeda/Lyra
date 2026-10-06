@@ -1,3 +1,4 @@
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { QueryResultRow } from 'pg';
 import type {
   ConsumerPaidPlanCode,
@@ -25,6 +26,9 @@ export interface StorePurchaseRecord {
   transactionKey: string | null;
   expiresAt: Date | null;
   autoRenewEnabled: boolean | null;
+  scheduledProductId?: string | null;
+  scheduledPlanCode?: ConsumerPaidPlanCode | null;
+  scheduledEffectiveAt?: Date | null;
   grantedCredits: number;
   reversedCredits: number;
   lastObservedAt: Date;
@@ -37,10 +41,14 @@ export interface StorePurchaseUserRecord {
 }
 
 export interface StoreSubscriptionSummaryRecord {
+  store?: StorePurchaseStore;
   planCode: ConsumerPaidPlanCode;
   state: 'active' | 'cancelled';
   expiresAt: Date | null;
   autoRenewEnabled: boolean | null;
+  scheduledProductId?: string | null;
+  scheduledPlanCode?: ConsumerPaidPlanCode | null;
+  scheduledEffectiveAt?: Date | null;
 }
 
 export interface CreateStorePurchaseInput {
@@ -56,14 +64,23 @@ export interface CreateStorePurchaseInput {
   transactionKey: string | null;
   expiresAt: Date | null;
   autoRenewEnabled: boolean | null;
+  scheduledProductId?: string | null;
+  scheduledPlanCode?: ConsumerPaidPlanCode | null;
+  scheduledEffectiveAt?: Date | null;
   lastObservedAt: Date;
 }
 
 export interface UpdateStorePurchaseInput {
+  productId?: string;
+  planCode?: ConsumerPaidPlanCode | null;
+  creditPackageCode?: CreditPackageCode | null;
   state: StorePurchaseState;
   transactionKey: string | null;
   expiresAt: Date | null;
   autoRenewEnabled: boolean | null;
+  scheduledProductId?: string | null;
+  scheduledPlanCode?: ConsumerPaidPlanCode | null;
+  scheduledEffectiveAt?: Date | null;
   lastObservedAt: Date;
 }
 
@@ -150,22 +167,30 @@ interface StorePurchaseRow extends QueryResultRow {
   transaction_key: string | null;
   expires_at: Date | null;
   auto_renew_enabled: boolean | null;
+  scheduled_product_id: string | null;
+  scheduled_plan_code: ConsumerPaidPlanCode | null;
+  scheduled_effective_at: Date | null;
   granted_credits: number;
   reversed_credits: number;
   last_observed_at: Date;
 }
 
 interface StoreSubscriptionSummaryRow extends QueryResultRow {
+  store: StorePurchaseStore;
   plan_code: ConsumerPaidPlanCode;
   state: 'active' | 'cancelled';
   expires_at: Date | null;
   auto_renew_enabled: boolean | null;
+  scheduled_product_id: string | null;
+  scheduled_plan_code: ConsumerPaidPlanCode | null;
+  scheduled_effective_at: Date | null;
 }
 
 export class PostgresStorePurchaseRepository implements StorePurchaseRepository {
   public constructor(
     private readonly transactionRunner: TransactionRunner,
     private readonly readClient?: DatabaseClient,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   ) {}
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
@@ -189,15 +214,15 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
     const result = await client.query<{
       id: string;
       plan_code: string;
-      account_deletion_started_at: Date | null;
-      account_deleted_at: Date | null;
+      account_deletion_started_at?: Date | null;
+      account_deleted_at?: Date | null;
+      legacy_account_deleted?: boolean;
     }>(
       `
       SELECT
         id,
         plan_code,
-        account_deletion_started_at,
-        account_deleted_at
+        ${storeUserDeletionProjectionSql(this.schemaProfile)}
       FROM users
       WHERE id = $1
       FOR UPDATE
@@ -211,8 +236,9 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
           id: row.id,
           planCode: row.plan_code,
           accountDeleted:
-            row.account_deletion_started_at !== null
-            || row.account_deleted_at !== null,
+            this.schemaProfile === 'legacy_2debe_v1'
+              ? row.legacy_account_deleted === true
+              : row.account_deletion_started_at !== null || row.account_deleted_at !== null,
         };
   }
 
@@ -251,9 +277,10 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
         transaction_key,
         expires_at,
         auto_renew_enabled,
+        scheduled_product_id, scheduled_plan_code, scheduled_effective_at,
         last_observed_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING ${STORE_PURCHASE_FIELDS}
       `,
       [
@@ -269,6 +296,7 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
         input.transactionKey,
         input.expiresAt,
         input.autoRenewEnabled,
+        input.scheduledProductId ?? null, input.scheduledPlanCode ?? null, input.scheduledEffectiveAt ?? null,
         input.lastObservedAt,
       ],
     );
@@ -289,6 +317,12 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
           expires_at = $4,
           auto_renew_enabled = $5,
           last_observed_at = $6,
+          product_id = COALESCE($7, product_id),
+          plan_code = CASE WHEN $7::text IS NULL THEN plan_code ELSE $8 END,
+          credit_package_code = CASE WHEN $7::text IS NULL THEN credit_package_code ELSE $9 END,
+          scheduled_product_id = CASE WHEN $13::boolean THEN $10 ELSE scheduled_product_id END,
+          scheduled_plan_code = CASE WHEN $13::boolean THEN $11 ELSE scheduled_plan_code END,
+          scheduled_effective_at = CASE WHEN $13::boolean THEN $12 ELSE scheduled_effective_at END,
           updated_at = NOW()
       WHERE id = $1
       RETURNING ${STORE_PURCHASE_FIELDS}
@@ -300,6 +334,9 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
         input.expiresAt,
         input.autoRenewEnabled,
         input.lastObservedAt,
+        input.productId ?? null, input.planCode ?? null, input.creditPackageCode ?? null,
+        input.scheduledProductId ?? null, input.scheduledPlanCode ?? null, input.scheduledEffectiveAt ?? null,
+        input.scheduledProductId !== undefined,
       ],
     );
 
@@ -463,7 +500,7 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
     }
     const result = await queryClient.query<StoreSubscriptionSummaryRow>(
       `
-      SELECT plan_code, state, expires_at, auto_renew_enabled
+      SELECT store, plan_code, state, expires_at, auto_renew_enabled, scheduled_product_id, scheduled_plan_code, scheduled_effective_at
       FROM mobile_store_purchases
       WHERE user_id = $1
         AND kind = 'subscription'
@@ -485,10 +522,12 @@ export class PostgresStorePurchaseRepository implements StorePurchaseRepository 
       return null;
     }
     return {
+      store: row.store,
       planCode: row.plan_code,
       state: row.state,
       expiresAt: row.expires_at,
       autoRenewEnabled: row.auto_renew_enabled,
+      scheduledProductId: row.scheduled_product_id ?? null, scheduledPlanCode: row.scheduled_plan_code ?? null, scheduledEffectiveAt: row.scheduled_effective_at ?? null,
     };
   }
 }
@@ -507,6 +546,7 @@ const STORE_PURCHASE_FIELDS = `
   transaction_key,
   expires_at,
   auto_renew_enabled,
+  scheduled_product_id, scheduled_plan_code, scheduled_effective_at,
   granted_credits,
   reversed_credits,
   last_observed_at
@@ -539,8 +579,16 @@ function mapStorePurchaseRow(row: StorePurchaseRow): StorePurchaseRecord {
     transactionKey: row.transaction_key,
     expiresAt: row.expires_at,
     autoRenewEnabled: row.auto_renew_enabled,
+    scheduledProductId: row.scheduled_product_id ?? null, scheduledPlanCode: row.scheduled_plan_code ?? null, scheduledEffectiveAt: row.scheduled_effective_at ?? null,
     grantedCredits: row.granted_credits,
     reversedCredits: row.reversed_credits,
     lastObservedAt: row.last_observed_at,
   };
+}
+
+function storeUserDeletionProjectionSql(profile: RepositorySchemaProfile): string {
+  if (profile === 'legacy_2debe_v1') {
+    return "EXISTS (SELECT 1 FROM account_deletion_requests requests WHERE requests.user_id = users.id AND requests.status IN ('processing', 'pending_external_action', 'completed')) AS legacy_account_deleted";
+  }
+  return 'account_deletion_started_at,\n        account_deleted_at';
 }

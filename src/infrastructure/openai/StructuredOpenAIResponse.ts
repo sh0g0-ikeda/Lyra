@@ -33,6 +33,8 @@ export type OpenAIInputContent =
   | { type: 'input_text'; text: string }
   | { type: 'input_image'; image_url: string };
 
+export type OpenAIReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface StructuredOpenAIRequest<T> {
   client: OpenAIClient;
   model: string;
@@ -45,6 +47,7 @@ export interface StructuredOpenAIRequest<T> {
     role: 'system' | 'user' | 'assistant';
     content: OpenAIInputContent[];
   }>;
+  reasoningEffort?: OpenAIReasoningEffort;
   sanitize?: (value: unknown) => unknown;
 }
 
@@ -63,6 +66,7 @@ export async function requestStructuredOpenAIResponse<T>(
       },
     },
     input: options.input,
+    ...(options.reasoningEffort === undefined ? {} : { reasoning: { effort: options.reasoningEffort } }),
   });
 
   const responseStateFailure = inspectStructuredResponseState(

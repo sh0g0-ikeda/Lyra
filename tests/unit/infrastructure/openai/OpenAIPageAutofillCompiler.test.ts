@@ -1,4 +1,5 @@
-﻿import { describe, expect, it } from 'vitest';
+﻿import { STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY, STORY_SOURCE_POLICY, STORY_TEXT_POLICY, STORY_PANEL_POLICY } from '../../../../src/infrastructure/openai/StoryEditorialPrompts.js';
+import { describe, expect, it } from 'vitest';
 import { OpenAIPageAutofillCompiler } from '../../../../src/infrastructure/openai/OpenAIPageAutofillCompiler.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 
@@ -8,6 +9,8 @@ describe('OpenAIPageAutofillCompiler', () => {
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
         requests.push(payload);
+        expect(JSON.stringify(payload.input)).toContain(STORY_SPEAKER_POLICY);
+        expect(JSON.stringify(payload.input)).toContain(STORY_DIALOGUE_FLOW_POLICY);
 
         return {
           body: {
@@ -83,7 +86,7 @@ describe('OpenAIPageAutofillCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-4o-2024-08-06',
-      compilerPromptVersion: 'page_autofill_v2',
+      compilerPromptVersion: 'page_autofill_v7',
     });
 
     const request = requests[0];
@@ -100,7 +103,7 @@ describe('OpenAIPageAutofillCompiler', () => {
                 properties: {
                   dialogue: {
                     anyOf: [
-                      expect.objectContaining({ maxItems: 20 }),
+                      expect.objectContaining({ maxItems: 4 }),
                       expect.any(Object),
                     ],
                   },
@@ -120,19 +123,10 @@ describe('OpenAIPageAutofillCompiler', () => {
     const input = request.input as Array<{ content: Array<{ text: string }> }>;
     const systemPrompt = input[0].content[0].text;
     const userPrompt = input[1].content[0].text;
+    for (const policy of [STORY_SOURCE_POLICY,STORY_TEXT_POLICY,STORY_SPEAKER_POLICY,STORY_DIALOGUE_FLOW_POLICY,STORY_PANEL_POLICY]) expect(systemPrompt).toContain(policy);
+    expect(systemPrompt).not.toContain('provide at least one short speech or thought line');
 
-    expect(systemPrompt).toContain('Return JSON only');
-    expect(systemPrompt).toContain('Use only the provided entity IDs');
-    expect(systemPrompt).toContain('Narration may be used more freely');
-    expect(systemPrompt).toContain('prefer a short narration line rather than forcing extra dialogue');
-    expect(systemPrompt).toContain('provide at least one short speech or thought line');
-    expect(systemPrompt).toContain('assume some dialogue is usually natural');
-    expect(systemPrompt).toContain('infer what information the full page still needs');
-    expect(systemPrompt).toContain('natural Japanese a character would actually say or think');
-    expect(systemPrompt).toContain('reads like an actual conversation');
-    expect(systemPrompt).toContain('composition.custom_note');
-    expect(systemPrompt).toContain('do not require scenes to produce a useful page draft');
-    expect(systemPrompt).toContain('Treat chapter information only as a consistency guard');
+
     expect(userPrompt).toContain('[TASK]');
     expect(userPrompt).toContain('Return the final JSON now.');
   });

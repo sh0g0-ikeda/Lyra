@@ -141,6 +141,8 @@ export interface PageSkeletonPageDraft {
 }
 
 export interface EpisodePageSkeletonContext {
+  /** Opaque digest of legacy persisted graph; concurrency control, not prompt data. */
+  graphFingerprint?: string;
   episodeId: string;
   chapterId: string;
   workId: string;

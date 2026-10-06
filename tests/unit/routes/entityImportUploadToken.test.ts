@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
 import { describe, expect, it } from 'vitest';
+import type { Entity } from '../../../src/domain/types/entity.js';
 import type { AuthenticatedUser } from '../../../src/domain/types/user.js';
 import { errorHandler } from '../../../src/middleware/errorHandler.js';
 import { createEntityRoutes } from '../../../src/routes/entities.js';
@@ -24,6 +25,20 @@ const user: AuthenticatedUser = {
 };
 const entityId = '22222222-2222-4222-8222-222222222222';
 const pngDataUrl = 'data:image/png;base64,iVBORw0KGgo=';
+
+class FakeEntityService implements Pick<EntityServicePort, 'getEntity'> {
+  public calls: Array<{userId: string; entityId: string; organizationId: string | null}> = [];
+
+  public async getEntity(userId: string, requestedEntityId: string, organizationId: string | null = null): Promise<Entity> {
+    this.calls.push({userId, entityId: requestedEntityId, organizationId});
+    return {
+      id: requestedEntityId, workId: '33333333-3333-4333-8333-333333333333', userId,
+      entityType: 'character', name: 'Lyra', freeDescription: null, structuredFields: {},
+      promptSupplement: null, speechProfile: {}, status: 'draft',
+      createdAt: new Date('2026-10-05T00:00:00Z'), updatedAt: new Date('2026-10-05T00:00:00Z'),
+    };
+  }
+}
 
 class FakeUploadService implements Pick<EntityReferenceUploadServicePort, 'importUploadedImage'> {
   public input: {
@@ -78,7 +93,8 @@ describe('entity import upload token route', () => {
   it('upload_token formをraw S3 keyなしで既存responseへ変換する', async () => {
     const uploads = new FakeUploadService();
     const references = new FakeReferenceService();
-    const app = createTestApp(uploads, references);
+    const entities = new FakeEntityService();
+    const app = createTestApp(uploads, references, entities);
 
     const response = await app.request('/entities/import-image', {
       method: 'POST',
@@ -106,6 +122,7 @@ describe('entity import upload token route', () => {
       organizationId: null,
     });
     expect(references.base64Calls).toBe(0);
+    expect(entities.calls).toEqual([{userId: user.id, entityId, organizationId: null}]);
   });
 
   it('entity_id省略時はtoken側bindingを利用できるようundefinedで渡す', async () => {
@@ -174,11 +191,12 @@ describe('entity import upload token route', () => {
 function createTestApp(
   uploads: FakeUploadService,
   references: FakeReferenceService,
+  entities: FakeEntityService = new FakeEntityService(),
 ) {
   const app = createEntityRoutes({
     authMiddleware: authenticatedAs(user),
     rateLimitMiddleware: passThrough(),
-    entityService: {} as EntityServicePort,
+    entityService: entities as unknown as EntityServicePort,
     entityReferenceService: references as unknown as EntityReferenceServicePort,
     entityReferenceImageExportService: {} as EntityReferenceImageExportServicePort,
     entityReferenceUploadService: uploads as unknown as EntityReferenceUploadServicePort,

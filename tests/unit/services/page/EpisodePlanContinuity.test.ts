@@ -5,9 +5,14 @@ import type {
 } from '../../../../src/domain/types/page.js';
 import {
   buildEpisodeBeatPlanCompilerBrief,
+  buildEpisodeBeatPlanSegmentCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
+  buildEpisodePlanAuditArtifacts,
   buildEpisodePlanAuditBrief,
+  buildEpisodePlanAuditCoverageCatalog,
+  buildEpisodePlanSourceReviewForContext,
   detectDeterministicContinuityIssues,
+  hasCompletePageSourceMapping,
   validateEpisodeBeatPlanCoverage,
 } from '../../../../src/services/page/EpisodePlanContinuity.js';
 import type { EpisodeBeatPlan } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
@@ -18,6 +23,253 @@ const DIALOGUE_LINES_PER_PANEL = 20;
 const MAX_CONTINUITY_BRIEF_CHARS = 150_000;
 
 describe('EpisodePlanContinuity', () => {
+  it('audits true dialogue counts, complete voice IDs and frame area before shortened visuals',()=>{
+    const context=buildContext();const plan=buildBeatPlan();const suggestion=buildVerboseSuggestion();
+    suggestion.pages=suggestion.pages.slice(0,1);suggestion.pages[0]!.panels=suggestion.pages[0]!.panels.slice(0,1);
+    suggestion.pages[0]!.panels[0]!.dialogue=Array.from({length:5},(_,i)=>({entityId:'voice-id',text:`exact-${i}`,type:'thought',position:'right'}));
+    expect(detectDeterministicContinuityIssues(suggestion)).toContainEqual(expect.objectContaining({code:'dialogue_density',severity:'error'}));
+    const brief=buildEpisodePlanAuditBrief({context,plan,suggestion,language:'ja'});
+    expect(brief).toContain('[TEXT DISTRIBUTION]');expect(brief).toContain('lines=5');
+    expect(brief).toContain('p1.d5="exact-4"|thought:voice-id@right');
+  });
+
+  it('coverage catalogは原作sourceと実panel出力だけを短いrefで列挙する', () => {
+    const context = buildContext();
+    const plan = buildBeatPlan();
+    const suggestion = buildVerboseSuggestion();
+    context.pages = context.pages.slice(0, 1);
+    plan.pages = plan.pages.slice(0, 1);
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = suggestion.pages[0]!.panels.slice(0, 1);
+    suggestion.pages[0]!.panels[0]!.dialogue = suggestion.pages[0]!.panels[0]!.dialogue?.slice(0, 1);
+    const catalog = buildEpisodePlanAuditCoverageCatalog({ context, plan, suggestion });
+
+    expect(catalog.pages).toHaveLength(1);
+    expect(catalog.pages[0]?.sources.map((source) => source.ref)).toEqual(['source', 'ledger']);
+    expect(catalog.pages[0]?.outputs.length).toBeGreaterThan(0);
+    expect(catalog.pages[0]?.outputs.every((output) => output.panelOrder !== null)).toBe(true);
+    expect(catalog.pages[0]?.outputs.some((output) => output.ref.startsWith('page.'))).toBe(false);
+    expect(buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' })).toContain(
+      'dN=the Nth COMPLETE DIALOGUE line',
+    );
+  });
+
+  it('監査表示の空白正規化をvisual・dialogueとcoverage catalogで共有する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    context.episode.storyFullDraft = '原作の改行は\n  そのまま保持する。';
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    plan.pages[0]!.storyBeats = ['再び\n   押す'];
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = [{
+      order: 1,
+      situationText: '再び\n   押す',
+      backgroundNote: '雨\t\tの   港',
+      composition: {
+        source: 'custom',
+        compositionPrompt: '扉を\r\n  中央へ置く',
+        customNote: '暗部を   保つ',
+      },
+      panelNotes: '動作を\n 継続',
+      dialogue: [{
+        entityId: null,
+        text: 'もう一度\n   押す',
+        type: 'narration',
+        position: 'top',
+      }],
+      entities: [],
+    }];
+
+    const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
+    const page = artifacts.coverageCatalog.pages[0];
+
+    expect(artifacts.compilerBrief).toContain('p1.s="再び 押す"');
+    expect(artifacts.compilerBrief).toContain('p1.b="雨 の 港"');
+    expect(artifacts.compilerBrief).toContain('p1.c="扉を 中央へ置く"');
+    expect(artifacts.compilerBrief).toContain('p1.x="暗部を 保つ"');
+    expect(artifacts.compilerBrief).toContain('p1.n="動作を 継続"');
+    expect(artifacts.compilerBrief).toContain('p1.d1="もう一度 押す"');
+    expect(artifacts.compilerBrief).toContain('narrator label below is the display alias for entity_id=null');
+    expect(artifacts.compilerBrief).toContain('Copy each source_quote and output quote');
+    expect(page?.outputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: 'p1.s', text: '再び 押す' }),
+      expect.objectContaining({ ref: 'p1.b', text: '雨 の 港' }),
+      expect.objectContaining({ ref: 'p1.c', text: '扉を 中央へ置く' }),
+      expect.objectContaining({ ref: 'p1.x', text: '暗部を 保つ' }),
+      expect.objectContaining({ ref: 'p1.n', text: '動作を 継続' }),
+      expect.objectContaining({ ref: 'p1.d1', text: 'もう一度 押す' }),
+    ]));
+    expect(artifacts.compilerBrief).toContain(context.episode.storyFullDraft);
+    expect(page?.sources.find((source) => source.ref === 'source')?.text)
+      .toContain(context.episode.storyFullDraft);
+    const ledger = page?.sources.find((source) => source.ref === 'ledger')?.text;
+    expect(ledger).toContain('beats=再び 押す');
+    expect(artifacts.compilerBrief).toContain(ledger);
+    expect(suggestion.pages[0]?.panels[0]?.dialogue?.[0]?.text).toBe('もう一度\n   押す');
+    expect(context.episode.storyFullDraft).toBe('原作の改行は\n  そのまま保持する。');
+  });
+
+  it('動的budgetで切り詰めたvisualはsynthetic ellipsisをcatalogへ入れない', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = suggestion.pages[0]!.panels.slice(0, 1);
+    suggestion.pages[0]!.panels[0]!.dialogue = [];
+
+    const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
+    const situation = artifacts.coverageCatalog.pages[0]?.outputs.find(
+      (output) => output.ref === 'p1.s',
+    );
+
+    expect(situation?.text.endsWith('...')).toBe(false);
+    expect(artifacts.compilerBrief).toContain(`p1.s="${situation?.text}"…`);
+    expect(situation?.text).not.toContain('固有の状況'.repeat(300));
+  });
+
+  it('切り詰めていない実fieldのliteral ellipsisはcatalogに保持する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = [{
+      order: 1,
+      situationText: '扉を閉じる...',
+      dialogue: [],
+      entities: [],
+    }];
+
+    const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
+    const situation = artifacts.coverageCatalog.pages[0]?.outputs.find(
+      (output) => output.ref === 'p1.s',
+    );
+
+    expect(situation?.text).toBe('扉を閉じる...');
+    expect(artifacts.compilerBrief).toContain('p1.s="扉を閉じる..."|');
+  });
+
+  it('直接ref・短い台詞の非引用注記・literal ellipsisを同じartifactで示す', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = [{
+      order: 3,
+      situationText: '扉を閉じる...',
+      dialogue: [{ entityId: null, type: 'narration', position: 'right', text: '届いた' }],
+      entities: [],
+    }];
+
+    const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
+    const outputs = artifacts.coverageCatalog.pages[0]?.outputs ?? [];
+    const panelLine = artifacts.compilerBrief.split('\n').find((line) => line.includes('Panel 3'));
+
+    expect(panelLine).toContain('p3.s="扉を閉じる..."');
+    expect(panelLine?.length).toBeLessThanOrEqual(702);
+    expect(artifacts.compilerBrief).toContain('p3.d1="届いた" (not citable: fewer than 4 characters)');
+    expect(artifacts.compilerBrief).toContain('source_ref=source ranges only over SOURCE DATA');
+    expect(artifacts.compilerBrief).toContain('source_ref=ledger ranges only over that page');
+    expect(outputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: 'p3.s', text: '扉を閉じる...' }),
+      expect.objectContaining({ ref: 'p3.d1', text: '届いた' }),
+    ]));
+    expect(suggestion.pages[0]?.panels[0]?.dialogue?.[0]?.text).toBe('届いた');
+  });
+
+  it('JSON escape後の直接ref表示も各panel 700文字と全体150k以内へ切り詰める', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 6);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 6);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 6).map((page) => ({
+      ...page,
+      panels: page.panels.slice(0, 20).map((panel) => ({
+        ...panel,
+        situationText: `状況${'"\\'.repeat(500)}`,
+        backgroundNote: `背景${'"\\'.repeat(500)}`,
+        composition: {
+          source: 'custom' as const,
+          compositionPrompt: `構図${'"\\'.repeat(500)}`,
+          customNote: `演出${'"\\'.repeat(500)}`,
+        },
+        panelNotes: `注記${'"\\'.repeat(500)}`,
+        dialogue: [],
+        entities: [],
+      })),
+    }));
+
+    const artifacts = buildEpisodePlanAuditArtifacts({ context, plan, suggestion, language: 'ja' });
+    const panelLines = artifacts.compilerBrief.split('\n').filter((line) => /^  Panel \d+\|/u.test(line));
+
+    expect(artifacts.compilerBrief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+    expect(panelLines).toHaveLength(120);
+    expect(panelLines.every((line) => line.length <= 702)).toBe(true);
+    expect(artifacts.coverageCatalog.pages.flatMap((page) => page.outputs)
+      .every((output) => !output.text.endsWith('…'))).toBe(true);
+    expect(suggestion.pages[0]?.panels[0]?.situationText).toBe(`状況${'"\\'.repeat(500)}`);
+  });
+
+  it('監査 brief は全15ページで所有台帳と実パネルを同じページ entry に並べる', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 15);
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 15);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 15).map((page) => ({
+      ...page,
+      panels: [{
+        order: 1,
+        situationText: `実パネル-${page.pageNumber}`,
+        dialogue: [],
+        entities: [],
+      }],
+    }));
+
+    for (const page of plan.pages) {
+      page.storyBeats = [`所有出来事-${page.pageNumber}`];
+      page.newInformation = [`新情報-${page.pageNumber}`];
+      page.textPlan = {
+        requiredTextBeats: [`必須テキスト-${page.pageNumber}`],
+        visualOnlyBeats: [`必須映像-${page.pageNumber}`],
+        densityReason: `密度理由-${page.pageNumber}`,
+      };
+    }
+
+    const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+    const compiledDraft = brief.slice(
+      brief.indexOf('[COMPILED EPISODE DRAFT]'),
+      brief.indexOf('[TEXT DISTRIBUTION]'),
+    );
+
+    for (const page of plan.pages) {
+      const header = `Page ${page.pageNumber} (${page.pageId})`;
+      const nextPage = plan.pages.find((candidate) => candidate.pageNumber === page.pageNumber + 1);
+      const start = compiledDraft.indexOf(header);
+      const end = nextPage === undefined
+        ? compiledDraft.length
+        : compiledDraft.indexOf(`Page ${nextPage.pageNumber} (${nextPage.pageId})`, start + header.length);
+      const pageEntry = compiledDraft.slice(start, end);
+
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(pageEntry).toContain(`owner_page_id=${page.pageId}`);
+      expect(pageEntry).toContain(`story_beats=所有出来事-${page.pageNumber}`);
+      expect(pageEntry).toContain(`new_information=新情報-${page.pageNumber}`);
+      expect(pageEntry).toContain(`required_text=必須テキスト-${page.pageNumber}`);
+      expect(pageEntry).toContain(`visual_only=必須映像-${page.pageNumber}`);
+      expect(pageEntry).toContain(`Panel 1`);
+    }
+    expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+  });
+
   it('全話台帳 brief にページ容量とシーン内のキャラ状態を含める', () => {
     const context = buildContext();
     context.entities = [
@@ -79,6 +331,474 @@ describe('EpisodePlanContinuity', () => {
     expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
   });
 
+  it('明示page見出しの原文をbeat・detail・auditの同一pageへexactに補足する', () => {
+    const context = buildContext();
+    context.pages = [context.pages[8]!, context.pages[14]!];
+    context.episode.storyFullDraft = [
+      'タイトル：灯台への道',
+      '9ページ目：扉を最初に押すが動かない。小石を取り除き、再び扉を押して暗い内部を見てから灯台へ入る。',
+      '15ページ目：装置を十分に充電し、手を離しても点灯が続く。',
+      '「一歩ずつでも、光にたどり着ける」。絵本を閉じて座る。',
+      '本文中の「2ページ目：という本の見出し」はpage delimiterではない。',
+    ].join('\n');
+    const plan = buildBeatPlan();
+    plan.pages = [plan.pages[8]!, plan.pages[14]!];
+    plan.pages[0]!.storyBeats = ['小石を除けば入場可能になる。'];
+    plan.pages[1]!.storyBeats = ['光を確認して座る。'];
+    const outline = {
+      pages: plan.pages.map((page) => ({
+        pageId: page.pageId,
+        pageNumber: page.pageNumber,
+        storyAnchor: `page-${page.pageNumber}`,
+        reservedTransition: `transition-${page.pageNumber}`,
+      })),
+    };
+    const exactPage9 = '9ページ目：扉を最初に押すが動かない。小石を取り除き、再び扉を押して暗い内部を見てから灯台へ入る。';
+    const exactPage15 = [
+      '15ページ目：装置を十分に充電し、手を離しても点灯が続く。',
+      '「一歩ずつでも、光にたどり着ける」。絵本を閉じて座る。',
+      '本文中の「2ページ目：という本の見出し」はpage delimiterではない。',
+    ].join('\n');
+
+    const segment = buildEpisodeBeatPlanSegmentCompilerBrief({
+      context,
+      language: 'ja',
+      outline,
+      targetPages: [context.pages[0]!],
+      completedPages: [],
+    });
+    const segmentLocal = section(segment, '[TARGET PAGE ORIGINAL SOURCE]', '[FUTURE RESERVED PAGES]');
+    expect(segmentLocal).toContain(exactPage9);
+    expect(segmentLocal).not.toContain(exactPage15);
+
+    const detail = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds: new Set([pageId(9)]),
+      completedPages: [],
+    });
+    const detailLocal = section(detail, '[CURRENT CHUNK ORIGINAL SOURCE]', '[CURRENT CHUNK OWNERSHIP]');
+    expect(detailLocal).toContain(exactPage9);
+    expect(detailLocal).not.toContain(exactPage15);
+    expect(detail).toContain('the exact original source excerpt is the source of truth');
+
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = [suggestion.pages[8]!, suggestion.pages[14]!].map((page) => ({
+      ...page,
+      panels: page.panels.slice(0, 1),
+    }));
+    const audit = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+    const page9Local = section(
+      audit,
+      `[PAGE-LOCAL ORIGINAL SOURCE] Page 9 (${pageId(9)})`,
+      `Page 9 (${pageId(9)}) |`,
+    );
+    const page15Local = section(
+      audit,
+      `[PAGE-LOCAL ORIGINAL SOURCE] Page 15 (${pageId(15)})`,
+      `Page 15 (${pageId(15)}) |`,
+    );
+    expect(page9Local).toContain(exactPage9);
+    expect(page9Local).not.toContain(exactPage15);
+    expect(page15Local).toContain(exactPage15);
+    expect(page15Local).not.toContain(exactPage9);
+    expect(audit.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+  });
+
+  it('完全なpage原文ではgenerated beat台帳だけをdetail・repair・audit判断から除外する', () => {
+    const context = buildContext();
+    context.pages = [context.pages[0]!, context.pages[8]!, context.pages[14]!];
+    context.entities = [{
+      id: '10000000-0000-4000-8000-000000000001',
+      name: 'ココ',
+      entityType: 'character',
+      freeDescription: '生成された人物要約',
+      promptSupplement: null,
+      structuredFields: {},
+    }];
+    context.scenes = [{
+      id: '20000000-0000-4000-8000-000000000001',
+      order: 1,
+      location: '灯台',
+      time: '夜',
+      atmosphere: '静か',
+      involvedEntityIds: ['10000000-0000-4000-8000-000000000001'],
+      entityStates: [{
+        entityId: '10000000-0000-4000-8000-000000000001',
+        stateId: '30000000-0000-4000-8000-000000000001',
+        costumeNote: '赤いスカーフ',
+        costumeRefId: null,
+        conditionNote: '首から外さない',
+        hairNote: null,
+        expressionDefault: null,
+        extraNote: null,
+      }],
+    }];
+    context.episode.storyFullDraft = [
+      '1ページ目：帰港する船が灯台の光を航路の目印にして進む。',
+      '9ページ目：扉を押すが動かず、小石を取り除き、もう一度押してから中へ入る。',
+      '15ページ目：装置を十分に充電し、手を離しても灯りが続く。絵本を閉じて座る。',
+    ].join('\n');
+    const plan = buildBeatPlan();
+    plan.pages = [plan.pages[0]!, plan.pages[8]!, plan.pages[14]!];
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = [suggestion.pages[0]!, suggestion.pages[8]!, suggestion.pages[14]!]
+      .map((page) => ({ ...page, panels: page.panels.slice(0, 1) }));
+    const currentPageIds = new Set(context.pages.map((page) => page.pageId));
+
+    expect(hasCompletePageSourceMapping(context)).toBe(true);
+    const detailBefore = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds,
+      completedPages: [],
+      sourceOwnedPageContext: true,
+    });
+    const repairBefore = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds,
+      completedPages: [],
+      currentDraftPages: suggestion.pages,
+      repairIssues: [{
+        code: 'source_omission',
+        severity: 'error',
+        pageIds: [pageId(9)],
+        message: '再度押して入る動作がない。',
+        repairInstruction: '原文順に戻す。',
+      }],
+      sourceOwnedPageContext: true,
+    });
+    const auditBefore = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    });
+
+    for (const page of plan.pages) {
+      page.storyBeats = [`改変された生成beat-${page.pageNumber}`];
+      page.entryState = `改変entry-${page.pageNumber}`;
+      page.exitState = `改変exit-${page.pageNumber}`;
+      page.newInformation = [`改変情報-${page.pageNumber}`];
+      page.dialogueIntent = `改変会話-${page.pageNumber}`;
+      page.handoff = `改変handoff-${page.pageNumber}`;
+      page.textPlan = {
+        requiredTextBeats: [`改変text-${page.pageNumber}`],
+        visualOnlyBeats: [`改変visual-${page.pageNumber}`],
+        densityReason: `改変density-${page.pageNumber}`,
+      };
+    }
+
+    const detailAfter = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds,
+      completedPages: [],
+      sourceOwnedPageContext: true,
+    });
+    const auditAfter = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    });
+
+    expect(detailAfter).toBe(detailBefore);
+    expect(auditAfter).toEqual(auditBefore);
+    for (const value of [detailBefore, repairBefore, auditBefore.compilerBrief]) {
+      expect(value).toContain('帰港する船が灯台の光を航路の目印にして進む');
+      expect(value).toContain('小石を取り除き、もう一度押してから中へ入る');
+      expect(value).toContain('十分に充電し、手を離しても灯りが続く。絵本を閉じて座る');
+      expect(value).not.toContain('[GLOBAL EPISODE LEDGER]');
+      expect(value).not.toContain('[CURRENT CHUNK OWNERSHIP]');
+      expect(value).not.toContain('[FUTURE RESERVED BEATS]');
+    }
+    expect(repairBefore).toContain('[CURRENT CHUNK DRAFT TO REPAIR]');
+    expect(auditBefore.coverageCatalog.pages.every(
+      (page) => page.sources.map((source) => source.ref).join(',') === 'source',
+    )).toBe(true);
+    const grounding = auditBefore.coverageCatalog.grounding;
+    expect(grounding?.pages).toHaveLength(3);
+    const pageNineAuthorities = grounding?.pages.find((page) => page.pageId === pageId(9))?.authorities;
+    expect(pageNineAuthorities)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          ref: 'page_source',
+          kind: 'original_page',
+          text: expect.stringContaining('小石を取り除き、もう一度押してから中へ入る'),
+        }),
+        expect.objectContaining({ ref: 'source_context', kind: 'source_context' }),
+      ]));
+    expect(pageNineAuthorities)
+      .not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ text: expect.stringContaining('改変された生成beat') }),
+      ]));
+    const sourceContext = pageNineAuthorities?.find((authority) => authority.ref === 'source_context')?.text;
+    expect(sourceContext).toContain('[SCENES]');
+    expect(sourceContext).toContain('condition=首から外さない');
+    expect(sourceContext).not.toContain('[AVAILABLE ENTITIES]');
+    expect(sourceContext).not.toContain('生成された人物要約');
+    expect(sourceContext).not.toContain('[CHAPTER]');
+    expect(sourceContext).not.toContain('[EPISODE STORY]');
+    expect(sourceContext).not.toContain('旅の変化を描く');
+    expect(auditBefore.compilerBrief).toContain('[SOURCE UNIT REVIEW - COMPLETE ORIGINAL SOURCE]');
+    expect(auditBefore.coverageCatalog.sourceReview?.units).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        scope: 'page',
+        pageId: pageId(9),
+        sourceRef: 'page_source',
+        text: expect.stringContaining('小石を取り除き、もう一度押してから中へ入る'),
+      }),
+    ]));
+  });
+
+  it('source-owned監査でも内部planが監査対象全ページを所有しない場合は拒否する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 2);
+    context.episode.storyFullDraft = '1ページ目：開始する。\n2ページ目：完了する。';
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 2).map((page) => ({
+      ...page,
+      panels: page.panels.slice(0, 1),
+    }));
+
+    expect(() => buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    })).toThrow('Episode audit is missing page ownership');
+  });
+
+  it('page原文対応が曖昧な場合はtrusted modeをOFFにしてlegacy台帳を維持する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 2);
+    context.episode.storyFullDraft = '1ページ目：一部だけ。';
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 2);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 2).map((page) => ({
+      ...page,
+      panels: page.panels.slice(0, 1),
+    }));
+
+    expect(hasCompletePageSourceMapping(context)).toBe(false);
+    const detail = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds: new Set([pageId(1)]),
+      completedPages: [],
+      sourceOwnedPageContext: false,
+    });
+    const audit = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: false,
+    });
+
+    expect(detail).toContain('[GLOBAL EPISODE LEDGER]');
+    expect(detail).toContain('[CURRENT CHUNK OWNERSHIP]');
+    expect(audit.compilerBrief).toContain('[GLOBAL EPISODE LEDGER]');
+    expect(audit.coverageCatalog.pages[0]?.sources.map((source) => source.ref))
+      .toEqual(['source', 'ledger']);
+    expect(audit.coverageCatalog.sourceReview).toBeUndefined();
+  });
+
+  it('110page原文でreview表示予算を超える場合は部分unitを返さず全体fallbackする', () => {
+    const context = buildContext();
+    const pageTemplate = context.pages[0]!;
+    context.pages = Array.from({ length: 110 }, (_, index) => ({
+      ...pageTemplate,
+      pageId: pageId(index + 1),
+      pageNumber: index + 1,
+    }));
+    context.episode.storyFullDraft = context.pages.map((page) =>
+      `${page.pageNumber}ページ目：原文の全節を確認する。`,
+    ).join('\r\n');
+
+    expect(hasCompletePageSourceMapping(context)).toBe(true);
+    expect(buildEpisodePlanSourceReviewForContext(context)).toBeNull();
+  });
+
+  it('unit review追加が予算に入らない境界でも既存page-local原文を先に保持する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    context.episode.storyFullDraft = `1ページ目：${'短い事実。'.repeat(20)}`;
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1).map((page) => ({
+      ...page,
+      panels: [{
+        ...page.panels[0]!,
+        dialogue: [{ entityId: null, text: '短い台詞', type: 'narration', position: 'top' }],
+      }],
+    }));
+    const baseline = buildEpisodePlanAuditArtifacts({
+      context, plan, suggestion, language: 'ja', sourceOwnedPageContext: true,
+    });
+    const reviewStart = baseline.compilerBrief.indexOf('[SOURCE UNIT REVIEW - COMPLETE ORIGINAL SOURCE]');
+    const reviewEnd = baseline.compilerBrief.indexOf('[END SOURCE UNIT REVIEW]')
+      + '[END SOURCE UNIT REVIEW]'.length;
+    expect(reviewStart).toBeGreaterThanOrEqual(0);
+    const reviewLength = reviewEnd - reviewStart;
+    const growth = MAX_CONTINUITY_BRIEF_CHARS - baseline.compilerBrief.length
+      + reviewLength - 50;
+    suggestion.pages[0]!.panels[0]!.dialogue![0]!.text += '長'.repeat(growth);
+
+    const constrained = buildEpisodePlanAuditArtifacts({
+      context, plan, suggestion, language: 'ja', sourceOwnedPageContext: true,
+    });
+    expect(constrained.coverageCatalog.sourceReview).toBeUndefined();
+    expect(constrained.compilerBrief).toContain('[PAGE-LOCAL ORIGINAL SOURCE] Page 1');
+    expect(constrained.compilerBrief).toContain(context.episode.storyFullDraft);
+  });
+
+  it('page見出し前の原文をtrimせずoriginal_global unitとauthorityへ保持する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    context.episode.storyFullDraft = '  序文。\r\n1ページ目：扉を開ける。  ';
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1).map((page) => ({
+      ...page, panels: page.panels.slice(0, 1),
+    }));
+
+    const artifacts = buildEpisodePlanAuditArtifacts({
+      context, plan, suggestion, language: 'ja', sourceOwnedPageContext: true,
+    });
+    expect(artifacts.coverageCatalog.sourceReview?.units[0]).toMatchObject({
+      scope: 'global', pageId: null, sourceRef: 'global_source', start: 0, text: '  序文。\r\n',
+    });
+    expect(artifacts.coverageCatalog.sourceReview?.units[1]).toMatchObject({
+      scope: 'page', pageId: pageId(1), sourceRef: 'page_source', start: 0,
+    });
+    expect(artifacts.coverageCatalog.grounding?.pages[0]?.authorities).toContainEqual({
+      ref: 'global_source', text: '  序文。\r\n', kind: 'original_global',
+    });
+  });
+
+  it('曖昧なpage見出しでは局所補足を全体OFFにして旧FULL STORY全文を保持する', () => {
+    const variants = [
+      '見出しのない原文。',
+      '1ページ目：開始。\n1ページ目：重複。',
+      '1ページ目：開始。\n3ページ目：未知。',
+      '2ページ目：後半。\n1ページ目：前半。',
+      '1ページ目：一部だけ。',
+    ];
+    for (const storyFullDraft of variants) {
+      const context = buildContext();
+      context.pages = context.pages.slice(0, 2);
+      context.episode.storyFullDraft = storyFullDraft;
+      const plan = buildBeatPlan();
+      plan.pages = plan.pages.slice(0, 2);
+      const sourceBrief = buildEpisodeBeatPlanCompilerBrief(context, 'ja');
+      const detail = buildEpisodeDetailContinuitySupplement({
+        context,
+        plan,
+        currentPageIds: new Set([pageId(1)]),
+        completedPages: [],
+      });
+
+      expect(sourceBrief).toContain(storyFullDraft);
+      expect(detail).not.toContain('[CURRENT CHUNK ORIGINAL SOURCE]');
+    }
+
+    const duplicateContext = buildContext();
+    duplicateContext.pages = duplicateContext.pages.slice(0, 2);
+    duplicateContext.pages[1] = { ...duplicateContext.pages[1]!, pageNumber: 1 };
+    duplicateContext.episode.storyFullDraft = '1ページ目：最初。\n1ページ目：重複。';
+    const duplicatePlan = buildBeatPlan();
+    duplicatePlan.pages = duplicatePlan.pages.slice(0, 2);
+    const duplicateDetail = buildEpisodeDetailContinuitySupplement({
+      context: duplicateContext,
+      plan: duplicatePlan,
+      currentPageIds: new Set([pageId(1)]),
+      completedPages: [],
+    });
+    expect(duplicateDetail).not.toContain('[CURRENT CHUNK ORIGINAL SOURCE]');
+  });
+
+  it('page-local原文はraw CRLFと末尾空白を保持し先頭indent見出しを適格化しない', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 2);
+    const exactPage1 = '1ページ目：開始する。  \r\n次の動作へ進む。\t\r\n';
+    context.episode.storyFullDraft = `前書き\r\n${exactPage1}2ページ目：完了する。 \t`;
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 2);
+    const detail = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds: new Set([pageId(1)]),
+      completedPages: [],
+    });
+    const local = section(detail, '[CURRENT CHUNK ORIGINAL SOURCE]', '[CURRENT CHUNK OWNERSHIP]');
+    expect(local).toContain(exactPage1);
+
+    context.episode.storyFullDraft = '  1ページ目：indentされた開始。\r\n2ページ目：完了。';
+    const indented = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds: new Set([pageId(1)]),
+      completedPages: [],
+    });
+    expect(indented).not.toContain('[CURRENT CHUNK ORIGINAL SOURCE]');
+  });
+
+  it('repairでもpage-local原文を保持しaudit最大budgetでは局所補足をall-or-noneにする', () => {
+    const context = buildContext();
+    context.episode.storyFullDraft = context.pages
+      .map((page) => `${page.pageNumber}ページ目：${`原文-${page.pageNumber}-`.repeat(24)}`)
+      .join('\n');
+    const plan = buildBeatPlan();
+    const suggestion = buildVerboseSuggestion();
+    const currentDraftPages = suggestion.pages.slice(-3);
+    const currentPageIds = new Set(currentDraftPages.map((page) => page.pageId));
+    const repair = buildEpisodeDetailContinuitySupplement({
+      context,
+      plan,
+      currentPageIds,
+      completedPages: suggestion.pages.filter((page) => !currentPageIds.has(page.pageId)),
+      currentDraftPages,
+      repairIssues: [{
+        code: 'source_omission',
+        severity: 'error',
+        pageIds: [pageId(PAGE_COUNT)],
+        message: '原文の完了動作がない。',
+        repairInstruction: '原文どおり最後まで描く。',
+      }],
+    });
+    const repairLocal = section(repair, '[CURRENT CHUNK ORIGINAL SOURCE]', '[CURRENT CHUNK OWNERSHIP]');
+    expect(repairLocal).toContain(`${PAGE_COUNT}ページ目：原文-${PAGE_COUNT}-`);
+    expect(repairLocal).not.toContain('1ページ目：原文-1-');
+
+    for (const page of suggestion.pages) {
+      page.panels = page.panels.slice(0, 8);
+      for (const panel of page.panels) {
+        panel.dialogue = [{
+          entityId: null,
+          type: 'narration',
+          position: 'right',
+          text: `完全台詞-${page.pageNumber}-${panel.order}`,
+        }];
+      }
+    }
+    const audit = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+    const localSourceCount = audit.match(/\[PAGE-LOCAL ORIGINAL SOURCE\]/gu)?.length ?? 0;
+    expect([0, PAGE_COUNT]).toContain(localSourceCount);
+    expect(audit).toContain(`p8.d1="完全台詞-${PAGE_COUNT}-8"`);
+    expect(audit.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+  }, 20_000);
+
   it('同じページ内でも重複した story beat を台帳として採用しない', () => {
     const context = buildContext();
     context.pages = context.pages.slice(0, 1);
@@ -99,6 +819,8 @@ describe('EpisodePlanContinuity', () => {
     const plan = buildBeatPlan();
     const suggestion = buildVerboseSuggestion();
 
+    expect(()=>buildEpisodePlanAuditBrief({context,plan,suggestion,language:'ja'})).toThrow('complete dialogue');
+    for(const page of suggestion.pages) { page.panels=page.panels.slice(0,8); for(const panel of page.panels) panel.dialogue=[{entityId:null,type:'narration',position:'right',text:`page-${page.pageNumber}-panel-${panel.order}`}]; }
     const brief = buildEpisodePlanAuditBrief({
       context,
       plan,
@@ -109,7 +831,96 @@ describe('EpisodePlanContinuity', () => {
     expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
     expect(briefContainsPage(brief, 1)).toBe(true);
     expect(briefContainsPage(brief, PAGE_COUNT)).toBe(true);
-    expect(brief).toContain(`Panel ${PANELS_PER_PAGE}`);
+    expect(brief).toContain(`Panel 8`);
+  }, 20_000);
+
+  it('局所台帳の追加分だけが上限を超える場合は旧必須情報を保って補足だけを省く', () => {
+    const context = buildContext();
+    const sourceEndMarker = 'FULL-SOURCE-END-MARKER';
+    context.episode.storyFullDraft = `FULL-SOURCE-BEGIN-${'原文'.repeat(3_970)}-${sourceEndMarker}`;
+    const plan = buildBeatPlan();
+    const suggestion = buildVerboseSuggestion();
+    const finalDialogueMarker = 'FINAL-COMPLETE-DIALOGUE-MARKER';
+    for (const page of suggestion.pages) {
+      page.panels = page.panels.slice(0, 8);
+      for (const panel of page.panels) {
+        const isFinal = page.pageNumber === PAGE_COUNT && panel.order === 8;
+        panel.dialogue = [{
+          entityId: null,
+          type: 'narration',
+          position: 'right',
+          text: `${isFinal ? finalDialogueMarker : 'BOUNDARY-DIALOGUE'}-${page.pageNumber}-${panel.order}-${'情報'.repeat(30)}`,
+        }];
+      }
+    }
+
+    const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+    const compiledDraft = brief.slice(
+      brief.indexOf('[COMPILED EPISODE DRAFT]'),
+      brief.indexOf('[TEXT DISTRIBUTION]'),
+    );
+
+    expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+    expect(brief).toContain(sourceEndMarker);
+    expect(brief).toContain('[GLOBAL EPISODE LEDGER]');
+    expect(brief).toContain(finalDialogueMarker);
+    expect(brief).toContain('[TEXT DISTRIBUTION]');
+    expect(briefContainsPage(compiledDraft, 1)).toBe(true);
+    expect(briefContainsPage(compiledDraft, PAGE_COUNT)).toBe(true);
+    expect(compiledDraft).not.toContain('owner_page_id=');
+  }, 20_000);
+
+  it('上限付近で主体属性と構図・演出メモの最小予約が入らない場合は監査を失敗させる', () => {
+    const entityId = '10000000-0000-4000-8000-000000000001';
+    const context = buildContext();
+    context.entities = [
+      {
+        id: entityId,
+        name: '春香',
+        entityType: 'character',
+        freeDescription: null,
+        promptSupplement: null,
+        structuredFields: {},
+      },
+    ];
+    const plan = buildBeatPlan();
+    const suggestion = buildVerboseSuggestion();
+    for (const page of suggestion.pages) {
+      page.panels = page.panels.slice(0, 8);
+      for (const panel of page.panels) {
+        const marker = `${page.pageNumber}-${panel.order}`;
+        panel.dialogue = [{
+          entityId: null,
+          type: 'narration',
+          position: 'right',
+          text: `台詞${marker}:${'固有の説明'.repeat(8)}`,
+        }];
+        panel.composition = {
+          source: 'custom',
+          galleryItemId: null,
+          shotType: 'wide',
+          angle: 'front',
+          compositionPrompt: `外景${marker}:建物全体と港を遠景で見せる。`,
+          customNote: `演出${marker}:人物を画面に出さない。`,
+        };
+        panel.panelNotes = `継続${marker}:作業は室内で続いている。`;
+        panel.entities = [{
+          entityId,
+          role: 'primary',
+          expression: 'determined',
+          customExpression: null,
+          action: 'custom',
+          customAction: 'ハンドルを一定速度で回し続ける',
+          position: 'center',
+          facingDirection: 'front',
+          effectNote: null,
+          stateId: null,
+        }];
+      }
+    }
+
+    expect(() => buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' }))
+      .toThrow('Episode audit cannot fit complete dialogue within its safe input limit');
   }, 20_000);
 
   it('監査 brief は UUID ではなくキャラ名で登場人物と話者を識別できる', () => {
@@ -161,8 +972,87 @@ describe('EpisodePlanContinuity', () => {
 
     const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
 
-    expect(brief).toContain('entities=司カサネ');
-    expect(brief).toContain('speech:司カサネ:これは私に届いた手紙だ。');
+    expect(brief).toContain('p1.e="司カサネ');
+    expect(brief).toContain('p1.d1="これは私に届いた手紙だ。"');
+  });
+
+  it('監査 brief は構図と演出メモ、可視主体の役割・動作・位置、off-panel 話者を保持する', () => {
+    const entityId = '10000000-0000-4000-8000-000000000001';
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    context.entities = [
+      {
+        id: entityId,
+        name: '春香',
+        entityType: 'character',
+        freeDescription: null,
+        promptSupplement: null,
+        structuredFields: {},
+      },
+    ];
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = [
+      {
+        order: 1,
+        panelRole: 'establish',
+        situationText: '建物の外観と港を遠景で見せる。',
+        composition: {
+          source: 'custom',
+          galleryItemId: null,
+          shotType: 'wide',
+          angle: 'bird_eye',
+          compositionPrompt: '建物の外から港までを広く見渡す。',
+          customNote: '人物ではなく建物と光を主役にする。',
+        },
+        panelNotes: '直前の人物は建物内で作業を続けている。',
+        backgroundNote: '夕暮れの港。',
+        entities: [
+          {
+            entityId,
+            role: 'primary',
+            expression: 'calm',
+            customExpression: null,
+            action: 'standing_firm',
+            customAction: null,
+            position: 'center',
+            facingDirection: 'front',
+            effectNote: null,
+            stateId: null,
+          },
+        ],
+      },
+      {
+        order: 2,
+        panelRole: 'transition',
+        situationText: '港だけを映す。',
+        dialogue: [
+          {
+            entityId,
+            type: 'thought',
+            position: 'right',
+            text: '届いた。',
+          },
+        ],
+        entities: [],
+      },
+    ];
+
+    const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+
+    expect(brief).toContain('p1.c="建物の外から港までを広く見渡す。"');
+    expect(brief).toContain('p1.x="人物ではなく建物と光を主役にする。"');
+    expect(brief).toContain('p1.n="直前の人物は建物内で作業を続けている。"');
+    expect(brief).toContain('春香{role=primary,action=standing_firm,position=center}');
+    expect(brief).toContain('p2.e=none');
+    expect(brief).toContain('p2.d1="届いた。"');
+    // v19 design: the bounded two-fact sidecar samples actual omissions or
+    // contradictions before easy present dialogue, while the body still audits all facts.
+    expect(brief).toContain(
+      'reserve a check for it before sampling dialogue or an already-obvious present fact',
+    );
   });
 
   it('決定論的に検出した重複を同じ監査で必ず修復する対象として渡す', () => {
@@ -452,4 +1342,12 @@ function pageId(pageNumber: number): string {
 
 function briefContainsPage(brief: string, pageNumber: number): boolean {
   return brief.includes(`Page ${pageNumber} (${pageId(pageNumber)})`);
+}
+
+function section(value: string, startMarker: string, endMarker: string): string {
+  const start = value.indexOf(startMarker);
+  const end = value.indexOf(endMarker, start + startMarker.length);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return value.slice(start, end);
 }

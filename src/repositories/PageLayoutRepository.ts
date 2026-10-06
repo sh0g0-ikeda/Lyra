@@ -10,6 +10,11 @@ import type {
 import type { PageStatus } from '../domain/types/page.js';
 import { ConflictError, NotFoundError, ValidationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 export interface ApplyPageLayoutTemplateInput {
   templateId: PanelFrameTemplateId;
@@ -63,7 +68,10 @@ const defaultPanelComposition = {
  * the generation invariant intact: each saved frame always has one panel.
  */
 export class PostgresPageLayoutRepository implements PageLayoutRepository {
-  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
+  public constructor(
+    private readonly client: DatabaseClient & TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async applyTemplateAndSyncPanels(
     userId: string,
@@ -72,6 +80,9 @@ export class PostgresPageLayoutRepository implements PageLayoutRepository {
     organizationId: string | null = null,
   ): Promise<PageLayoutTemplateApplication> {
     return this.client.transaction(async (transactionClient) => {
+      if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      }
       await ensureEditableOwnedPage(transactionClient, userId, pageId, organizationId);
 
       const currentPanels = await listPanelsForUpdate(transactionClient, pageId);

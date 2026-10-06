@@ -73,6 +73,11 @@ export class InMemoryRateLimitStore implements RateLimitStore {
 
 export function createRateLimitMiddleware(store: RateLimitStore): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
+    if (c.get('authenticatedRateLimitApplied') === true) {
+      await next();
+      return;
+    }
+
     const user = c.get('user');
     const bucket = classifyRateLimitBucket(c.req.path, c.req.method);
     const rule = RATE_LIMIT_RULES[bucket];
@@ -91,6 +96,7 @@ export function createRateLimitMiddleware(store: RateLimitStore): MiddlewareHand
       throw new RateLimitError(bucket, result.retryAfterSeconds);
     }
 
+    c.set('authenticatedRateLimitApplied', true);
     await next();
     c.res.headers.set('x-ratelimit-limit', String(rule.maxRequests));
     c.res.headers.set('x-ratelimit-remaining', String(result.remaining));

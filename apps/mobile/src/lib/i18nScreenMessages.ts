@@ -118,10 +118,12 @@ export const screenTranslations = {
     'screen.pages.blocker.panelOrderInvalid': 'コマ順を1からの連番に直してください。',
     'screen.pages.blocker.dialogueSpeakerRequired': '話者が必要なセリフにキャラクターを設定してください。',
     'screen.pages.blocker.dialogueSpeakerNotInPanel': 'セリフの話者を同じコマの登場キャラクターに追加してください。',
+    'screen.pages.blocker.dialogueSpeakerInvalid': 'セリフの話者をこの作品のキャラクターから選び直してください。',
     'screen.pages.blocker.assignedEntityInvalid': 'コマに設定されたキャラクターを確認してください。',
     'screen.pages.blocker.pageGenerating': 'このページは現在生成中です。完了までお待ちください。',
     'screen.pages.blocker.pageReopenRequired': '確定済みページを生成するには、先に再編集してください。',
     'screen.pages.blocker.characterReferenceRequired': '使用するキャラクターの参照画像を確定してください。',
+    'screen.pages.blocker.characterReferenceModelIncompatible': '自由生成で確定したキャラは通常のページ生成には使用できません。通常生成したプレビューを確定し直すと、通常のページ生成に戻れます。',
     'screen.pages.blocker.referenceImageLimitExceeded': '参照画像数が上限を超えています。ページに出すキャラクターを減らしてください。',
     'screen.pages.blocker.activeGenerationJob': 'このページの生成処理が進行中です。完了を待つか、ジョブ画面で中止してください。',
     'screen.pages.blocker.insufficientCredits': 'クレジットが不足しています。現在の残高を確認してください。',
@@ -143,7 +145,10 @@ export const screenTranslations = {
     'screen.story.deleteScene': '「{sceneName}」を削除します。紐づく継続状態やページ材料からも外れる場合があります。この操作は元に戻せません。',
     'screen.story.replacePagePlan': '現在の{pageCount}ページ・{panelCount}コマの編集内容を上書きします。現在の話を保存後、新しい骨格を生成します。この操作は元に戻せません。',
     'screen.story.editingEpisode': '編集中: {episodeTitle}',
-    'screen.story.untitledEpisode': '第{episodeOrder}話'
+    'screen.story.untitledEpisode': '第{episodeOrder}話',
+    'screen.story.retryCurrentDraft': '現在の入力で再試行',
+    'screen.story.savePending': '保存処理が進行中です。完了後にもう一度お試しください。',
+    'screen.story.latestEpisodeMissing': 'この話を確認できませんでした。入力は保持されています。作品と話の選択を確認してください。'
   },
   en: {
     'screen.account.plan.free': 'Free',
@@ -264,10 +269,12 @@ export const screenTranslations = {
     'screen.pages.blocker.panelOrderInvalid': 'Make panel order contiguous from 1.',
     'screen.pages.blocker.dialogueSpeakerRequired': 'Assign a character to each dialogue line that requires a speaker.',
     'screen.pages.blocker.dialogueSpeakerNotInPanel': 'Add each dialogue speaker to the same panel.',
+    'screen.pages.blocker.dialogueSpeakerInvalid': 'Choose the dialogue speaker from this work’s characters.',
     'screen.pages.blocker.assignedEntityInvalid': 'Review the characters assigned to the panel.',
     'screen.pages.blocker.pageGenerating': 'This page is currently generating. Wait for it to finish.',
     'screen.pages.blocker.pageReopenRequired': 'Reopen the confirmed page before generating it.',
     'screen.pages.blocker.characterReferenceRequired': 'Confirm a reference image for each assigned character.',
+    'screen.pages.blocker.characterReferenceModelIncompatible': 'Characters confirmed with flexible generation cannot be used for standard page generation. Generate and confirm a standard preview to use standard page generation again.',
     'screen.pages.blocker.referenceImageLimitExceeded': 'Too many reference images are assigned. Reduce the characters on this page.',
     'screen.pages.blocker.activeGenerationJob': 'A generation job for this page is active. Wait for it or cancel it from Jobs.',
     'screen.pages.blocker.insufficientCredits': 'There are not enough credits. Check the current balance.',
@@ -289,7 +296,10 @@ export const screenTranslations = {
     'screen.story.deleteScene': 'Delete "{sceneName}". Linked continuity states and page sources may also be detached. This cannot be undone.',
     'screen.story.replacePagePlan': 'This replaces edits in {pageCount} pages and {panelCount} panels. The current episode is saved before a new plan is generated. This cannot be undone.',
     'screen.story.editingEpisode': 'Editing: {episodeTitle}',
-    'screen.story.untitledEpisode': 'Episode {episodeOrder}'
+    'screen.story.untitledEpisode': 'Episode {episodeOrder}',
+    'screen.story.retryCurrentDraft': 'Retry with current draft',
+    'screen.story.savePending': 'A save is in progress. Try again after it finishes.',
+    'screen.story.latestEpisodeMissing': 'This episode could not be found. Your input is retained. Check the selected work and episode.'
   }
 } as const;
 

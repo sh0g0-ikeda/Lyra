@@ -1,18 +1,30 @@
 import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityReference.js';
+import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import {
+  requireOpenAIEntityInputCompatible,
+  requireOpenAIEntityJobCompatible,
+} from '../../domain/generation/ImageInputProviderPolicy.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type {
   EntityReferenceContext,
   PersistedEntityGenerationJobParams,
 } from '../../domain/types/entityReference.js';
 import type { GenerationJob } from '../../domain/types/job.js';
+import { computeStateReferenceFingerprint } from '../../domain/state/StateReferenceFingerprint.js';
+import {
+  isReadyEntityStateReferenceContext,
+  type EntityStateReferenceContext,
+} from '../../domain/types/entityStateReference.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import type { EntityReferenceRepository } from '../../repositories/EntityRepository.js';
 import type { EntityGenerationExecutionRepository } from '../../repositories/EntityGenerationExecutionRepository.js';
+import type { EntityStateReferenceRepository } from '../../repositories/EntityStateReferenceRepository.js';
 import type {
   GenerationJobCancellationControlRepository,
+  GenerationJobRepository,
 } from '../../repositories/GenerationJobRepository.js';
 import type {
   EntityReferenceGeneratorPort,
@@ -27,6 +39,8 @@ import type {
   EntityReferencePromptCompilerPort,
 } from './EntityReferencePromptCompiler.js';
 import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolicy.js';
+import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
+import { resolveEntityImageProvenance } from './EntityImageProvenance.js';
 
 export interface ProcessEntityGenerationJobResult {
   status: 'processed' | 'skipped';
@@ -49,6 +63,9 @@ export class EntityGenerationWorkerService {
     private readonly generationEnabled = true,
     private readonly organizationService?: OrganizationServicePort,
     private readonly cancellationControl?: GenerationJobCancellationControlRepository,
+    private readonly stateRepository?: EntityStateReferenceRepository,
+    private readonly quotedInputs?: QuotedGenerationInputsPort,
+    private readonly sourceProvenanceJobs?: Pick<GenerationJobRepository, 'findByIdAndUserId'>,
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessEntityGenerationJobResult> {
@@ -74,25 +91,67 @@ export class EntityGenerationWorkerService {
 
       let workIdForAudit: string | null = null;
       try {
-        const entity = await this.entityRepository.findReferenceContextByIdAndUserId(
-        params.entity_id,
-        job.userId,
-        job.organizationId ?? null,
-      );
-      if (entity === null) {
-        throw new ConfigurationError('Entity not found for generation job');
-      }
-      workIdForAudit = entity.workId;
+        requireOpenAIEntityJobCompatible(job.params, this.imageModel);
+        if (hasGenerationQuote(job) && this.quotedInputs === undefined) {
+          throw new ConfigurationError('Quoted entity execution is not configured');
+        }
+        const quoted = hasGenerationQuote(job) ? await this.quotedInputs!.entity(job) : null;
+        let entity: EntityReferenceContext;
+        let compilerBrief: string;
+        let compiled: CompiledEntityReferencePrompt;
+        let inputImages: Array<{ dataUrl: string }>;
+        let generationPrompt: string;
 
-      const draftPrompt = this.promptBuilder.buildGenerationPrompt(entity);
-      const compilerBrief = this.promptBuilder.buildCompilerBrief(entity);
-      const compiled = await compilePromptSafely(this.promptCompiler, entity, draftPrompt, compilerBrief);
-      const inputImages = await buildGeneratorInputImages(params, job.userId, this.storedImageLoader);
-      const generationPrompt = buildPreviewVariationPrompt(
-        compiled.prompt,
-        job.id,
-        params.source_s3_key !== undefined,
-      );
+        if (params.target === 'entity_state') {
+          if (!isPersistedEntityStateGenerationParams(params)) {
+            throw new ConfigurationError('Entity state generation job params are invalid');
+          }
+          const state = quoted?.snapshot.state ?? await this.loadCurrentStateContext(job, params);
+          requireOpenAIEntityInputCompatible(state.baseReference);
+          entity = toEntityReferenceContext(state);
+          workIdForAudit = state.workId;
+          const draftPrompt = this.promptBuilder.buildStateGenerationPrompt(state);
+          compilerBrief = this.promptBuilder.buildStateCompilerBrief(state);
+          compiled = await compilePromptSafely(this.promptCompiler, entity, draftPrompt, compilerBrief);
+          inputImages = quoted?.inputImages ?? await buildStateGeneratorInputImages(state, this.storedImageLoader);
+          generationPrompt = buildStatePreviewPrompt(compiled.prompt);
+        } else {
+          const baseEntity = quoted?.snapshot.entity ?? await this.entityRepository.findReferenceContextByIdAndUserId(
+            params.entity_id,
+            job.userId,
+            job.organizationId ?? null,
+          );
+          if (baseEntity === null) {
+            throw new ConfigurationError('Entity not found for generation job');
+          }
+          if (quoted === null && params.source_s3_key !== undefined) {
+            ensureAllowedReferenceSourceKey(
+              params.source_s3_key,
+              job.userId,
+              params.entity_id,
+              'source_s3_key',
+            );
+            requireOpenAIEntityInputCompatible(await resolveEntityImageProvenance({
+              userId: job.userId,
+              entityId: params.entity_id,
+              organizationId: job.organizationId ?? null,
+              s3Key: params.source_s3_key,
+              references: baseEntity.referenceSet.images,
+              jobs: this.sourceProvenanceJobs,
+            }));
+          }
+          entity = baseEntity;
+          workIdForAudit = entity.workId;
+          const draftPrompt = this.promptBuilder.buildGenerationPrompt(entity);
+          compilerBrief = this.promptBuilder.buildCompilerBrief(entity);
+          compiled = await compilePromptSafely(this.promptCompiler, entity, draftPrompt, compilerBrief);
+          inputImages = quoted?.inputImages ?? await buildGeneratorInputImages(params, job.userId, this.storedImageLoader);
+          generationPrompt = buildPreviewVariationPrompt(
+            compiled.prompt,
+            job.id,
+            params.source_s3_key !== undefined,
+          );
+        }
       const generated = await this.generator.generateCandidates({ prompt: generationPrompt, inputImages });
       assertGeneratedCandidates(generated.candidates);
 
@@ -137,7 +196,9 @@ export class EntityGenerationWorkerService {
         compilerModel: compiled.compilerModel,
         compilerPromptVersion: compiled.compilerPromptVersion,
         compilerError: compiled.compilerProvider === 'none' ? 'Entity prompt compiler fallback used' : null,
-        imageModel: this.imageModel,
+        imageModel: generated.imageModel ?? this.imageModel,
+        ...(generated.providerModelId === undefined ? {} : { providerModelId: generated.providerModelId }),
+        ...(generated.provider === undefined ? {} : { provider: generated.provider }),
         imageParams: {
           quality: ENTITY_REFERENCE_GENERATION.QUALITY,
           size: ENTITY_REFERENCE_GENERATION.SIZE,
@@ -161,6 +222,42 @@ export class EntityGenerationWorkerService {
     } finally {
       clearInterval(heartbeatTimer);
     }
+  }
+
+  private async loadCurrentStateContext(
+    job: GenerationJob,
+    params: PersistedEntityStateGenerationJobParams,
+  ): Promise<EntityStateReferenceContext> {
+    if (this.stateRepository === undefined) {
+      throw new ConfigurationError('Entity state reference repository is not configured');
+    }
+    const state = await this.stateRepository.findContextByIdAndUserId(
+      params.entity_id,
+      params.entity_state_id,
+      job.userId,
+      job.organizationId ?? null,
+    );
+    if (state === null || !isReadyEntityStateReferenceContext(state)) {
+      throw new ConfigurationError('Entity state reference inputs are no longer available');
+    }
+    const currentFingerprint = computeStateReferenceFingerprint({
+      entityId: state.entityId,
+      stateId: state.stateId,
+      name: state.stateName,
+      description: state.stateDescription,
+      baseRefId: state.baseReference.refId,
+    });
+    if (
+      state.stateRevision !== params.state_revision
+      || state.stateName !== params.state_name
+      || state.stateDescription !== params.state_description
+      || state.baseReference.refId !== params.base_primary_ref_id
+      || currentFingerprint !== params.state_input_fingerprint
+      || params.image_model !== this.imageModel
+    ) {
+      throw new ConfigurationError('Entity state or base reference changed after the preview was queued');
+    }
+    return state;
   }
 
   private async finalizeCancellationIfRequested(jobId: string): Promise<boolean> {
@@ -332,22 +429,89 @@ function parsePersistedParams(value: Record<string, unknown>): PersistedEntityGe
   const entityType = value.entity_type;
   const previousEntityStatus = value.previous_entity_status;
   const sourceS3Key = value.source_s3_key;
+  const target = value.target;
 
   if (
     typeof entityId !== 'string' ||
     (entityType !== 'character' && entityType !== 'nonhuman' && entityType !== 'object') ||
     (previousEntityStatus !== 'draft' && previousEntityStatus !== 'ready') ||
-    (sourceS3Key !== undefined && typeof sourceS3Key !== 'string')
+    (sourceS3Key !== undefined && typeof sourceS3Key !== 'string') ||
+    (target !== undefined && target !== 'entity' && target !== 'entity_state')
   ) {
     return null;
+  }
+
+  if (target === 'entity_state') {
+    const entityStateId = value.entity_state_id;
+    const basePrimaryRefId = value.base_primary_ref_id;
+    const stateInputFingerprint = value.state_input_fingerprint;
+    const stateRevision = value.state_revision;
+    const stateName = value.state_name;
+    const stateDescription = value.state_description;
+    const imageModel = value.image_model;
+    const pricingVersion = value.pricing_version;
+    if (
+      sourceS3Key !== undefined
+      || typeof entityStateId !== 'string'
+      || typeof basePrimaryRefId !== 'string'
+      || typeof stateInputFingerprint !== 'string'
+      || typeof stateRevision !== 'string'
+      || typeof stateName !== 'string'
+      || typeof stateDescription !== 'string'
+      || typeof imageModel !== 'string'
+      || typeof pricingVersion !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      entity_id: entityId,
+      entity_type: entityType,
+      previous_entity_status: previousEntityStatus,
+      target,
+      entity_state_id: entityStateId,
+      base_primary_ref_id: basePrimaryRefId,
+      state_input_fingerprint: stateInputFingerprint,
+      state_revision: stateRevision,
+      state_name: stateName,
+      state_description: stateDescription,
+      image_model: imageModel,
+      pricing_version: pricingVersion,
+    };
   }
 
   return {
     entity_id: entityId,
     entity_type: entityType,
     previous_entity_status: previousEntityStatus,
+    ...(target === undefined ? {} : { target }),
     ...(sourceS3Key === undefined ? {} : { source_s3_key: sourceS3Key }),
   };
+}
+
+type PersistedEntityStateGenerationJobParams = PersistedEntityGenerationJobParams & {
+  target: 'entity_state';
+  entity_state_id: string;
+  base_primary_ref_id: string;
+  state_input_fingerprint: string;
+  state_revision: string;
+  state_name: string;
+  state_description: string;
+  image_model: string;
+  pricing_version: string;
+};
+
+function isPersistedEntityStateGenerationParams(
+  params: PersistedEntityGenerationJobParams,
+): params is PersistedEntityStateGenerationJobParams {
+  return params.target === 'entity_state'
+    && params.entity_state_id !== undefined
+    && params.base_primary_ref_id !== undefined
+    && params.state_input_fingerprint !== undefined
+    && params.state_revision !== undefined
+    && params.state_name !== undefined
+    && params.state_description !== undefined
+    && params.image_model !== undefined
+    && params.pricing_version !== undefined;
 }
 
 function buildPreviewVariationPrompt(
@@ -369,6 +533,16 @@ function buildPreviewVariationPrompt(
     sourceImageInstruction,
     'Use a clearly new neutral presentation while keeping the authored subject readable.',
     `Variation profile ${profile.code}: ${profile.instruction}`,
+  ].join(' ');
+}
+
+function buildStatePreviewPrompt(prompt: string): string {
+  return [
+    prompt.trim(),
+    '',
+    'Create one new state reference preview from the attached confirmed base reference and the frozen state description.',
+    'Keep every identity feature and every undescribed visual detail consistent with the attached base reference.',
+    'Do not use any previous state preview or previously confirmed state image as an input.',
   ].join(' ');
 }
 
@@ -444,6 +618,42 @@ async function buildGeneratorInputImages(
       dataUrl: `data:${loadedImage.mimeType};base64,${loadedImage.imageData.toString('base64')}`,
     },
   ];
+}
+
+async function buildStateGeneratorInputImages(
+  context: EntityStateReferenceContext,
+  storedImageLoader: StoredImageLoaderPort,
+): Promise<Array<{ dataUrl: string }>> {
+  ensureOwnedEntityReferenceImageKey(
+    context.baseReference.s3Key,
+    context.baseReference.storageOwnerUserId,
+    context.entityId,
+    'base primary reference image key',
+  );
+  const loadedImage = await storedImageLoader.loadByS3Key(context.baseReference.s3Key);
+  ensureInputImageWithinLimit(loadedImage.imageData);
+  return [{ dataUrl: `data:${loadedImage.mimeType};base64,${loadedImage.imageData.toString('base64')}` }];
+}
+
+function toEntityReferenceContext(context: EntityStateReferenceContext): EntityReferenceContext {
+  return {
+    entityId: context.entityId,
+    workId: context.workId,
+    userId: context.entityOwnerUserId,
+    entityType: context.entityType,
+    name: context.entityName,
+    freeDescription: context.entityFreeDescription,
+    structuredFields: context.entityStructuredFields,
+    promptSupplement: context.entityPromptSupplement,
+    status: context.entityStatus,
+    referenceSet: {
+      entityId: context.entityId,
+      images: [],
+      primaryRefId: context.baseReference.refId,
+      status: 'ready',
+      updatedAt: new Date(context.stateRevision),
+    },
+  };
 }
 
 function ensureInputImageWithinLimit(imageData: Buffer): void {

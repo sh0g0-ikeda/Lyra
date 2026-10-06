@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, ConfigurationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { PageGenerationContext } from '../../domain/types/page.js';
-import type { PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
+import type { PageGenerationRequestKind, PageRenderStyle } from '../../domain/types/pageGeneration.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import {
@@ -22,6 +22,10 @@ import {
   type PageGenerationRecoveryServicePort,
 } from './PageGenerationRecoveryService.js';
 import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
+import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
+import { pageReferenceImageKey } from './PageReferenceIdentity.js';
+import { requireOpenAIImageInputCompatible } from '../../domain/generation/ImageInputProviderPolicy.js';
+import { requireAssignedCharacterPrimariesCompatible } from './PageCharacterPrimaryReferencePolicy.js';
 
 export interface EnqueuePageGenerationResult {
   jobId: string;
@@ -32,6 +36,7 @@ export interface PageGenerationServicePort {
     userId: string,
     pageId: string,
     organizationId?: string | null,
+    renderStyle?: PageRenderStyle,
   ): Promise<EnqueuePageGenerationResult>;
 }
 
@@ -57,6 +62,7 @@ export class PageGenerationService implements PageGenerationServicePort {
     userId: string,
     pageId: string,
     organizationId: string | null = null,
+    renderStyle: PageRenderStyle = 'color',
   ): Promise<EnqueuePageGenerationResult> {
     await this.recoveryService.recoverStaleJobsForPage(userId, pageId, organizationId);
     if (!this.generationEnabled) {
@@ -109,6 +115,7 @@ export class PageGenerationService implements PageGenerationServicePort {
           requires_planner: selection.requiresPlanner,
           previous_page_status: page.status,
           previous_generation_mode: page.generationMode,
+          render_style: renderStyle,
         },
       });
       createdJobId = job.id;
@@ -269,6 +276,9 @@ export class PageGenerationService implements PageGenerationServicePort {
     userId: string,
     page: PageGenerationContext,
   ): Promise<number> {
+    if (page.hasVariantState === true) {
+      return this.ensureVariantReferencesAndCount(userId, page);
+    }
     const assignedEntityIds = Array.from(
       new Set(page.panels.flatMap((panel) => panel.entities.map((assignment) => assignment.entityId))),
     );
@@ -288,6 +298,8 @@ export class PageGenerationService implements PageGenerationServicePort {
       userId,
       organizationId,
     );
+    requireAssignedCharacterPrimariesCompatible(new Set(assignedEntityIds), entities, references);
+    for (const reference of references) requireOpenAIImageInputCompatible(reference);
 
     const referenceImageCount = new Set(references.map((reference) => reference.entityId)).size;
     if (referenceImageCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
@@ -310,6 +322,59 @@ export class PageGenerationService implements PageGenerationServicePort {
     throw new ValidationError(
       `Generate requires confirmed character references for: ${missingNames}`,
     );
+  }
+
+  private async ensureVariantReferencesAndCount(userId: string, page: PageGenerationContext): Promise<number> {
+    const resolve = this.entityRepository.findResolvedReferenceImagesByAssignmentsAndUserId;
+    if (resolve === undefined) {
+      throw new ValidationError('Assigned character state requires a confirmed reference image before page generation');
+    }
+    const assignments = Array.from(new Map(
+      page.panels.flatMap((panel) => panel.entities.map((assignment) => [
+        `${assignment.entityId}:${assignment.stateId ?? 'default'}`,
+        { entityId: assignment.entityId, stateId: assignment.stateId },
+      ] as const)),
+    ).values());
+    const references = await resolve.call(
+      this.entityRepository, assignments, page.workId, userId, page.organizationId ?? null,
+    );
+    const entities = await this.entityRepository.findByWorkIdAndUserId(
+      page.workId, userId, page.organizationId ?? null,
+    );
+    const entityTypes = new Map(entities.map((entity) => [entity.id, entity.entityType]));
+    const assignedEntityIds = new Set(assignments.map((assignment) => assignment.entityId));
+    const primaryReferences = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+      Array.from(assignedEntityIds), page.workId, userId, page.organizationId ?? null,
+    );
+    requireAssignedCharacterPrimariesCompatible(assignedEntityIds, entities, primaryReferences);
+    const available = new Set<string>();
+    for (const assignment of assignments) {
+      const reference = references.find((candidate) =>
+        candidate.entityId === assignment.entityId && candidate.stateId === assignment.stateId);
+      const required = entityTypes.get(assignment.entityId) === 'character'
+        || (reference !== undefined && reference.stateDescription !== null);
+      if (assignment.stateId !== null && (reference === undefined || !reference.stateExists)) {
+        throw new ValidationError('Assigned character state requires a confirmed reference image before page generation');
+      }
+      if (reference?.refId === null || reference?.s3Key === null || reference === undefined) {
+        if (required) {
+          throw new ValidationError('Assigned character state requires a confirmed reference image before page generation');
+        }
+        continue;
+      }
+      if (reference.ownerUserId === null) {
+        throw new ValidationError('Assigned character state reference has no storage owner');
+      }
+      ensureOwnedEntityReferenceImageKey(reference.s3Key, reference.ownerUserId, assignment.entityId);
+      requireOpenAIImageInputCompatible(reference);
+      available.add(pageReferenceImageKey(reference));
+    }
+    if (available.size > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
+      throw new ValidationError(
+        `Page generation supports up to ${PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES} reference images per page. Reduce assigned characters or split the scene.`,
+      );
+    }
+    return available.size;
   }
 
   private async consumeCredits(input: {

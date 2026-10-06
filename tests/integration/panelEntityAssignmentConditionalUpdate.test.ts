@@ -2,15 +2,32 @@ import { randomUUID } from 'node:crypto';
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PanelEntityAssignment } from '../../src/domain/types/panelEntityAssignment.js';
+import type { EpisodePagePlanApplyResult } from '../../src/domain/types/page.js';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresPanelEntityAssignmentRepository } from '../../src/repositories/PanelEntityAssignmentRepository.js';
+import { PostgresEpisodePlanPersistenceRepository } from '../../src/repositories/EpisodePlanPersistenceRepository.js';
 import { PanelEntityAssignmentService } from '../../src/services/page/PanelEntityAssignmentService.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const shouldRunPostgresTest = process.env.APP_ENV === 'test' && databaseUrl !== undefined;
 const describePostgres = shouldRunPostgresTest ? describe : describe.skip;
+const storyAutofillSettlementVariants: Array<[
+  string,
+  Partial<EpisodePagePlanApplyResult>,
+]> = [
+  ['通常の話全体反映', {}],
+  [
+    '状態反映v1',
+    {
+      stateTransitions: [],
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'preserve_existing',
+    },
+  ],
+];
 
 describePostgres('panel entity assignment conditional update', () => {
   let adminPool: Pool;
@@ -27,7 +44,8 @@ describePostgres('panel entity assignment conditional update', () => {
       new PoolTransactionDatabase(pool),
       { migrationLockPollMs: 1, migrationLockMaxAttempts: 10 },
     ));
-    expect(applied.at(-1)).toBe('039_connect_generation_terminal_push_outbox.sql');
+    expect(applied).toContain('046_bridge_production_schema_lineage.sql');
+    expect(applied.at(-1)).toBe('047_add_state_reference_copy_attempts.sql');
   }, 120_000);
 
   afterAll(async () => {
@@ -54,15 +72,154 @@ describePostgres('panel entity assignment conditional update', () => {
         effectNote: 'after',
       })];
 
-      await expect(service.replacePanelEntityAssignments(
+      expect(await (service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         replacement,
         null,
         expected,
-      )).resolves.toEqual(replacement);
-      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(replacement);
+      ))).toEqual(replacement);
+      expect(await (readAssignments(pool, ids.panelId))).toEqual(replacement);
     } finally {
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it.each(storyAutofillSettlementVariants)(
+    '%sはjob完了後に例外が起きた場合にpageとjobを一括で戻す',
+    async (_label, stateResult) => {
+      const ids = createFixtureIds();
+      const jobId = randomUUID();
+      let inserted = false;
+      try {
+        await insertFixture(pool, ids);
+        await pool.query(
+          `INSERT INTO generation_jobs (
+             id, user_id, job_type, status, credit_cost, params, started_at, commit_started_at
+           ) VALUES (
+             $1::uuid, $2::uuid, 'episode_story_autofill', 'processing', 0,
+             jsonb_build_object('episode_id', $3::text), NOW(), NOW()
+           )`,
+          [jobId, ids.userId, ids.episodeId],
+        );
+        inserted = true;
+        const database = new PoolTransactionDatabase(pool);
+        let activeTransactionClient: DatabaseClient | null = null;
+        const scopedDatabase: DatabaseClient & TransactionRunner = {
+          query: database.query.bind(database),
+          transaction: async <T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> =>
+            database.transaction(async (client) => {
+              activeTransactionClient = client;
+              try {
+                return await work(client);
+              } finally {
+                activeTransactionClient = null;
+              }
+            }),
+        };
+        const repository = new PostgresEpisodePlanPersistenceRepository(scopedDatabase);
+        expect(await throwingRejectionOf(repository.withLockedEpisodePlan(
+          { episodeId: ids.episodeId, userId: ids.userId, organizationId: null },
+          async (_context, resources) => {
+            if (activeTransactionClient === null || resources.completeStoryAutofillJob === undefined) {
+              throw new Error('transaction resources missing');
+            }
+            await activeTransactionClient.query(
+              `UPDATE pages SET status = 'generated' WHERE id = $1::uuid`,
+              [ids.pageId],
+            );
+            const completed = await resources.completeStoryAutofillJob(jobId, ids.userId, {
+              updatedPageCount: 1, updatedPanelCount: 0, updatedAssignmentCount: 0,
+              filledFieldCount: 0, compilerUsed: true, compilerProvider: 'openai',
+              compilerModel: 'test', compilerPromptVersion: 'test', compilerError: null,
+              ...stateResult,
+            });
+            expect(completed).toBe(true);
+            throw new Error('injected failure after job completion');
+          },
+        ))).toThrow('injected failure after job completion');
+        const page = await pool.query<{ status: string }>(
+          'SELECT status FROM pages WHERE id = $1::uuid', [ids.pageId],
+        );
+        const job = await pool.query<{ status: string; result: unknown }>(
+          'SELECT status, result FROM generation_jobs WHERE id = $1::uuid', [jobId],
+        );
+        expect(page.rows[0]?.status).toBe('designing');
+        expect(job.rows[0]).toMatchObject({ status: 'processing', result: null });
+      } finally {
+        if (inserted) {
+          await pool.query('DELETE FROM generation_jobs WHERE id = $1::uuid', [jobId]);
+        }
+        await removeFixture(pool, ids);
+      }
+    },
+  );
+
+  it('stale recoveryが先にjobをfailedへ確定した場合は通常話全体反映を全て戻す', async () => {
+    const ids = createFixtureIds();
+    const jobId = randomUUID();
+    let inserted = false;
+    try {
+      await insertFixture(pool, ids);
+      await pool.query(
+        `INSERT INTO generation_jobs (
+           id, user_id, job_type, status, credit_cost, params, started_at, commit_started_at,
+           completed_at, error_message
+         ) VALUES (
+           $1::uuid, $2::uuid, 'episode_story_autofill', 'failed', 0,
+           jsonb_build_object('episode_id', $3::text), NOW(), NOW(), NOW(), 'stale recovery won'
+         )`,
+        [jobId, ids.userId, ids.episodeId],
+      );
+      inserted = true;
+      const database = new PoolTransactionDatabase(pool);
+      let activeTransactionClient: DatabaseClient | null = null;
+      const scopedDatabase: DatabaseClient & TransactionRunner = {
+        query: database.query.bind(database),
+        transaction: async <T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> =>
+          database.transaction(async (client) => {
+            activeTransactionClient = client;
+            try {
+              return await work(client);
+            } finally {
+              activeTransactionClient = null;
+            }
+          }),
+      };
+      const repository = new PostgresEpisodePlanPersistenceRepository(scopedDatabase);
+
+      expect(await throwingRejectionOf(repository.withLockedEpisodePlan(
+        { episodeId: ids.episodeId, userId: ids.userId, organizationId: null },
+        async (_context, resources) => {
+          if (activeTransactionClient === null || resources.completeStoryAutofillJob === undefined) {
+            throw new Error('transaction resources missing');
+          }
+          await activeTransactionClient.query(
+            `UPDATE pages SET status = 'generated' WHERE id = $1::uuid`,
+            [ids.pageId],
+          );
+          const completed = await resources.completeStoryAutofillJob(jobId, ids.userId, {
+            updatedPageCount: 1, updatedPanelCount: 0, updatedAssignmentCount: 0,
+            filledFieldCount: 0, compilerUsed: true, compilerProvider: 'openai',
+            compilerModel: 'test', compilerPromptVersion: 'test', compilerError: null,
+          });
+          if (!completed) {
+            throw new Error('atomic job completion lost its status race');
+          }
+        },
+      ))).toThrow('atomic job completion lost its status race');
+      const page = await pool.query<{ status: string }>(
+        'SELECT status FROM pages WHERE id = $1::uuid', [ids.pageId],
+      );
+      const job = await pool.query<{ status: string; error_message: string }>(
+        'SELECT status, error_message FROM generation_jobs WHERE id = $1::uuid', [jobId],
+      );
+      expect(page.rows[0]?.status).toBe('designing');
+      expect(job.rows[0]).toMatchObject({ status: 'failed', error_message: 'stale recovery won' });
+    } finally {
+      if (inserted) {
+        await pool.query('DELETE FROM generation_jobs WHERE id = $1::uuid', [jobId]);
+      }
       await removeFixture(pool, ids);
     }
   });
@@ -77,14 +234,14 @@ describePostgres('panel entity assignment conditional update', () => {
       const expected = [assignment(ids.entityId, ids.stateId)];
       const replacement = [assignment(ids.entityId, ids.stateId, { role: 'secondary' })];
 
-      await expect(service.replacePanelEntityAssignments(
+      expect(await (service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         replacement,
         ids.organizationId,
         expected,
-      )).resolves.toEqual(replacement);
-      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(replacement);
+      ))).toEqual(replacement);
+      expect(await (readAssignments(pool, ids.panelId))).toEqual(replacement);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -106,34 +263,34 @@ describePostgres('panel entity assignment conditional update', () => {
         [ids.organizationId, ids.userId],
       );
 
-      await expect(service.replacePanelEntityAssignments(
+      expect(await rejectionOf(service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         replacement,
         ids.organizationId,
         expected,
-      )).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      ))).toMatchObject({ code: 'NOT_FOUND' });
       await pool.query(
         `UPDATE organization_members
          SET status = 'active'
          WHERE organization_id = $1::uuid AND user_id = $2::uuid`,
         [ids.organizationId, ids.userId],
       );
-      await expect(service.replacePanelEntityAssignments(
+      expect(await rejectionOf(service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         replacement,
         randomUUID(),
         expected,
-      )).rejects.toMatchObject({ code: 'NOT_FOUND' });
-      await expect(service.replacePanelEntityAssignments(
+      ))).toMatchObject({ code: 'NOT_FOUND' });
+      expect(await rejectionOf(service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         replacement,
         null,
         expected,
-      )).rejects.toMatchObject({ code: 'NOT_FOUND' });
-      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(expected);
+      ))).toMatchObject({ code: 'NOT_FOUND' });
+      expect(await (readAssignments(pool, ids.panelId))).toEqual(expected);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -163,14 +320,14 @@ describePostgres('panel entity assignment conditional update', () => {
       const expected = [assignment(ids.entityId, null, { facingDirection: null })];
       const replacement = [assignment(ids.entityId, ids.stateId, { role: 'secondary' })];
 
-      await expect(service.replacePanelEntityAssignments(
+      expect(await (service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         replacement,
         null,
         expected,
-      )).resolves.toEqual(replacement);
-      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(replacement);
+      ))).toEqual(replacement);
+      expect(await (readAssignments(pool, ids.panelId))).toEqual(replacement);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -210,14 +367,14 @@ describePostgres('panel entity assignment conditional update', () => {
       })];
       const replacement = [assignment(ids.entityId, ids.stateId, { role: 'secondary' })];
 
-      await expect(service.replacePanelEntityAssignments(
+      expect(await (service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         replacement,
         null,
         expected,
-      )).resolves.toEqual(replacement);
-      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(replacement);
+      ))).toEqual(replacement);
+      expect(await (readAssignments(pool, ids.panelId))).toEqual(replacement);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -235,14 +392,14 @@ describePostgres('panel entity assignment conditional update', () => {
         [ids.panelId, JSON.stringify(brokenEntities)],
       );
 
-      await expect(service.replacePanelEntityAssignments(
+      expect(await rejectionOf(service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         [assignment(ids.entityId, ids.stateId, { role: 'secondary' })],
         null,
         [],
-      )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-      await expect(readRawPanelJson(pool, ids.panelId, 'entities')).resolves.toEqual(brokenEntities);
+      ))).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(await (readRawPanelJson(pool, ids.panelId, 'entities'))).toEqual(brokenEntities);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -261,15 +418,15 @@ describePostgres('panel entity assignment conditional update', () => {
         [ids.panelId, JSON.stringify(brokenDialogue)],
       );
 
-      await expect(service.replacePanelEntityAssignments(
+      expect(await rejectionOf(service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         [assignment(ids.entityId, ids.stateId, { role: 'secondary' })],
         null,
         expected,
-      )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(expected);
-      await expect(readRawPanelJson(pool, ids.panelId, 'dialogue')).resolves.toEqual(brokenDialogue);
+      ))).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(await (readAssignments(pool, ids.panelId))).toEqual(expected);
+      expect(await (readRawPanelJson(pool, ids.panelId, 'dialogue'))).toEqual(brokenDialogue);
     } finally {
       await removeFixture(pool, ids);
     }
@@ -303,8 +460,8 @@ describePostgres('panel entity assignment conditional update', () => {
       await expectPromiseToRemainPending(savePromise);
       await plannerClient.query('COMMIT');
 
-      await expect(savePromise).rejects.toMatchObject({ code: 'CONFLICT' });
-      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(plannerAssignments);
+      expect(await rejectionOf(savePromise)).toMatchObject({ code: 'CONFLICT' });
+      expect(await (readAssignments(pool, ids.panelId))).toEqual(plannerAssignments);
     } finally {
       if (plannerClient !== undefined) {
         try {
@@ -329,21 +486,21 @@ describePostgres('panel entity assignment conditional update', () => {
         await pool.query('UPDATE pages SET status = $2 WHERE id = $1::uuid', [ids.pageId, status]);
         const expected = [assignment(ids.entityId, ids.stateId)];
 
-        await expect(service.replacePanelEntityAssignments(
+        expect(await rejectionOf(service.replacePanelEntityAssignments(
           ids.userId,
           ids.panelId,
           [assignment(ids.entityId, ids.stateId, { role: 'secondary' })],
           null,
           expected,
-        )).rejects.toMatchObject({ code: 'CONFLICT' });
-        await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(expected);
+        ))).toMatchObject({ code: 'CONFLICT' });
+        expect(await (readAssignments(pool, ids.panelId))).toEqual(expected);
       } finally {
         await removeFixture(pool, ids);
       }
     },
   );
 
-  it('保存済み会話speakerをassignmentから外す場合は変更しない', async () => {
+  it('同じworkの保存済み話者を画面外にしても会話IDは保持する', async () => {
     const ids = createFixtureIds();
     const service = createService(pool);
 
@@ -351,17 +508,30 @@ describePostgres('panel entity assignment conditional update', () => {
       await insertFixture(pool, ids);
       const expected = [assignment(ids.entityId, ids.stateId)];
 
-      await expect(service.replacePanelEntityAssignments(
+      expect(await (service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         [],
         null,
         expected,
-      )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(expected);
+      ))).toEqual([]);
+      expect(await (readAssignments(pool, ids.panelId))).toEqual([]);
+      const dialogue = await pool.query<{dialogue: Array<{entity_id:string}>}>('SELECT dialogue FROM panels WHERE id=$1',[ids.panelId]);
+      expect(dialogue.rows[0]?.dialogue[0]?.entity_id).toBe(ids.entityId);
     } finally {
       await removeFixture(pool, ids);
     }
+  });
+
+  it('a stored off-panel speaker from a different work remains rejected', async () => {
+    const ids=createFixtureIds();const service=createService(pool);
+    try {
+      await insertFixture(pool,ids);
+      await pool.query('UPDATE panels SET dialogue=$2::jsonb WHERE id=$1',[ids.panelId,JSON.stringify([{entity_id:ids.otherEntityId,text:'foreign',type:'speech',position:'right'}])]);
+      const expected=[assignment(ids.entityId,ids.stateId)];
+      expect(await rejectionOf(service.replacePanelEntityAssignments(ids.userId,ids.panelId,[],null,expected))).toMatchObject({code:'VALIDATION_ERROR'});
+      expect(await (readAssignments(pool,ids.panelId))).toEqual(expected);
+    } finally { await removeFixture(pool,ids); }
   });
 
   it('別workのEntityと別Entityのstateをtransaction内で拒否する', async () => {
@@ -372,21 +542,21 @@ describePostgres('panel entity assignment conditional update', () => {
       await insertFixture(pool, ids);
       const expected = [assignment(ids.entityId, ids.stateId)];
 
-      await expect(service.replacePanelEntityAssignments(
+      expect(await rejectionOf(service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         [assignment(ids.otherEntityId, ids.otherStateId)],
         null,
         expected,
-      )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-      await expect(service.replacePanelEntityAssignments(
+      ))).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(await rejectionOf(service.replacePanelEntityAssignments(
         ids.userId,
         ids.panelId,
         [assignment(ids.entityId, ids.otherStateId)],
         null,
         expected,
-      )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-      await expect(readAssignments(pool, ids.panelId)).resolves.toEqual(expected);
+      ))).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(await (readAssignments(pool, ids.panelId))).toEqual(expected);
     } finally {
       await removeFixture(pool, ids);
     }

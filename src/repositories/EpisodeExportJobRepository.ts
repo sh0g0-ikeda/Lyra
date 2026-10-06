@@ -1,3 +1,5 @@
+import { assertImageDeliveryAllowed, imageMobileAccess, readImageProvenance, type ImageDeliveryAudience } from '../domain/generation/ImageAccessPolicy.js';
+import { AppError } from '../domain/errors/index.js';
 import type { QueryResultRow } from 'pg';
 import {
   EPISODE_EXPORT_FORMATS,
@@ -31,6 +33,7 @@ const MAX_MINIMUM_REMAINING_SECONDS = 24 * 60 * 60;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
 
 export interface CreateEpisodeExportJobInput {
+  audience?: ImageDeliveryAudience;
   userId: string;
   organizationId: string | null;
   episodeId: string;
@@ -108,6 +111,7 @@ export interface ExpiredEpisodeExportArtifact {
 }
 
 export interface EpisodeExportJobRepository {
+  isSourceSnapshotCurrent(job: EpisodeExportJob): Promise<boolean>;
   createOrGet(input: CreateEpisodeExportJobInput): Promise<CreateEpisodeExportJobResult>;
   findForScope(input: EpisodeExportJobScope): Promise<EpisodeExportJob | null>;
   findForWorker(jobId: string): Promise<EpisodeExportJob | null>;
@@ -127,6 +131,7 @@ export interface EpisodeExportJobRepository {
 }
 
 interface EpisodeExportPageSnapshotRow extends QueryResultRow {
+  generated_image?: unknown;
   page_id: string;
   page_number: number;
   s3_key: string;
@@ -794,6 +799,23 @@ export class PostgresEpisodeExportJobRepository implements EpisodeExportJobRepos
     return result.rows[0]?.authorized_episode_id === input.episodeId;
   }
 
+  public async isSourceSnapshotCurrent(job: EpisodeExportJob): Promise<boolean> {
+    try {
+      const current = await this.lockPageSnapshot(this.client, { userId: job.userId,
+        organizationId: job.organizationId, episodeId: job.episodeId, pageIds: job.pageIds,
+        format: job.format, filename: job.filename, requestFingerprint: job.requestFingerprint,
+        idempotencyKey: job.idempotencyKey, expiresAt: job.expiresAt, audience: 'authorized_web' });
+      return current.length === job.pageSnapshot.length && current.every((page, index) => {
+        const saved = job.pageSnapshot[index];
+        return saved !== undefined && saved.pageId === page.pageId && saved.s3Key === page.s3Key
+          && imageMobileAccess(saved) === imageMobileAccess(page);
+      });
+    } catch (error) {
+      if (error instanceof AppError) return false;
+      throw error;
+    }
+  }
+
   private async lockPageSnapshot(
     client: DatabaseClient,
     input: CreateEpisodeExportJobInput,
@@ -802,7 +824,8 @@ export class PostgresEpisodeExportJobRepository implements EpisodeExportJobRepos
       `
       SELECT pages.id AS page_id,
              pages.page_number,
-             pages.generated_image ->> 's3_key' AS s3_key
+             pages.generated_image ->> 's3_key' AS s3_key,
+             pages.generated_image
       FROM pages
       INNER JOIN unnest($1::uuid[]) WITH ORDINALITY
         AS requested(page_id, requested_order)
@@ -843,12 +866,12 @@ export class PostgresEpisodeExportJobRepository implements EpisodeExportJobRepos
       );
     }
 
-    return result.rows.map((row) => ({
-      pageId: row.page_id,
-      pageNumber: row.page_number,
-      s3Key: row.s3_key,
-      mimeType: inferEpisodeExportImageMimeType(row.s3_key),
-    }));
+    return result.rows.map((row) => {
+      const provenance = readImageProvenance(row.generated_image);
+      assertImageDeliveryAllowed(provenance, input.audience);
+      return { pageId: row.page_id, pageNumber: row.page_number, s3Key: row.s3_key,
+        mimeType: inferEpisodeExportImageMimeType(row.s3_key), ...provenance };
+    });
   }
 }
 

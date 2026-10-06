@@ -23,6 +23,8 @@ tags: [staging, personal, creation]
 - assertVisible: ${E2E_NEW_EPISODE_TITLE}
 - runFlow:
     file: ../helpers/open-pages.yaml
+- tapOn:
+    id: page-step-design
 - tapOn: ${E2E_CREATE_PAGE_LABEL}
 - assertVisible: ${E2E_NEW_PAGE_LABEL}
 - takeScreenshot: E2E-03-personal-creation

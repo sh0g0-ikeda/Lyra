@@ -1,4 +1,6 @@
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { QueryResultRow } from 'pg';
+import { toImageProvenanceRecord, type ImageProvenance } from '../domain/generation/ImageAccessPolicy.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { sanitizePersistedErrorMessage } from '../lib/errorSanitizer.js';
@@ -8,7 +10,7 @@ import {
   lockMobilePushTokenRegistryForTerminalSettlement,
 } from './PushNotificationOutboxRepository.js';
 
-export interface CompleteEntityGenerationInput {
+export interface CompleteEntityGenerationInput extends ImageProvenance {
   jobId: string;
   userId: string;
   structuredFields: Record<string, unknown>;
@@ -80,7 +82,10 @@ interface GenerationJobRow extends QueryResultRow {
 }
 
 export class PostgresEntityGenerationExecutionRepository implements EntityGenerationExecutionRepository {
-  public constructor(private readonly client: DatabaseClient & TransactionRunner) {}
+  public constructor(
+    private readonly client: DatabaseClient & TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async claimQueuedEntityGenerationJob(jobId: string): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
@@ -158,6 +163,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
             compiler_prompt_version: input.compilerPromptVersion,
             compiler_error: input.compilerError,
             image_model: input.imageModel,
+            ...toImageProvenanceRecord(input),
             image_params: input.imageParams,
             created_at: input.createdAt,
           }),
@@ -173,6 +179,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
         transactionClient,
         completedJob,
         'completed',
+        this.schemaProfile,
       );
       return true;
     });
@@ -225,6 +232,7 @@ export class PostgresEntityGenerationExecutionRepository implements EntityGenera
         transactionClient,
         failedJob,
         'failed',
+        this.schemaProfile,
       );
       return true;
     });

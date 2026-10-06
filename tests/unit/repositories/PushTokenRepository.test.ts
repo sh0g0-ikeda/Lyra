@@ -16,23 +16,25 @@ const input = {
 describe('PostgresPushTokenRepository', () => {
   it('registryをlockして旧登録削除とupsertを同一transactionで行う', async () => {
     const database = new RecordingTransactionDatabase();
-    database.responses.push([], [], [registrationRow()]);
+    database.responses.push([{ id: input.userId }], [], [], [registrationRow()]);
     const repository = new PostgresPushTokenRepository(database);
 
     const result = await repository.upsertForUser(input);
 
     expect(database.transactionCount).toBe(1);
-    expect(database.queries).toHaveLength(3);
-    expect(database.queries[0]?.text).toContain('pg_advisory_xact_lock');
-    expect(database.queries[0]?.values).toEqual(['mobile-push-token-registry:v1']);
-    expect(database.queries[1]?.text).toContain('DELETE FROM mobile_push_tokens');
-    expect(database.queries[1]?.text).toContain('installation_id = $1::uuid');
-    expect(database.queries[1]?.text).toContain('OR token_hash = $3');
-    expect(database.queries[1]?.text).toContain('user_id IS DISTINCT FROM $2::uuid');
-    expect(database.queries[2]?.text).toContain('ON CONFLICT (token_hash)');
-    expect(database.queries[2]?.text).not.toContain('user_id = EXCLUDED.user_id');
-    expect(database.queries[2]?.text).not.toContain('installation_id = EXCLUDED.installation_id');
-    expect(database.queries[2]?.values).toEqual([
+    expect(database.queries[0]?.text).toContain('FOR UPDATE');
+    expect(database.queries[0]?.text).toContain('account_deletion_started_at IS NULL');
+    expect(database.queries).toHaveLength(4);
+    expect(database.queries[1]?.text).toContain('pg_advisory_xact_lock');
+    expect(database.queries[1]?.values).toEqual(['mobile-push-token-registry:v1']);
+    expect(database.queries[2]?.text).toContain('DELETE FROM mobile_push_tokens');
+    expect(database.queries[2]?.text).toContain('installation_id = $1::uuid');
+    expect(database.queries[2]?.text).toContain('OR token_hash = $3');
+    expect(database.queries[2]?.text).toContain('user_id IS DISTINCT FROM $2::uuid');
+    expect(database.queries[3]?.text).toContain('ON CONFLICT (token_hash)');
+    expect(database.queries[3]?.text).not.toContain('user_id = EXCLUDED.user_id');
+    expect(database.queries[3]?.text).not.toContain('installation_id = EXCLUDED.installation_id');
+    expect(database.queries[3]?.values).toEqual([
       input.userId,
       input.installationId,
       input.platform,
@@ -73,9 +75,15 @@ describe('PostgresPushTokenRepository', () => {
     await expect(repository.deleteForUser(input.userId, input.installationId)).resolves.toBe(false);
   });
 
+  it('deletion admission blocks registration before replacing any token', async () => {
+    const database = new RecordingTransactionDatabase(); const repository = new PostgresPushTokenRepository(database);
+    await expect(repository.upsertForUser(input)).rejects.toThrow('Account is unavailable for push registration');
+    expect(database.queries).toHaveLength(1);expect(database.queries[0]?.text).toContain('FOR UPDATE');
+  });
+
   it('upsertがrowを返さない場合は未保存登録を公開しない', async () => {
     const database = new RecordingTransactionDatabase();
-    database.responses.push([], [], []);
+    database.responses.push([{ id: input.userId }], [], [], []);
     const repository = new PostgresPushTokenRepository(database);
 
     await expect(repository.upsertForUser(input)).rejects.toThrow(

@@ -1,3 +1,4 @@
+import { navigationTranslations, type NavigationTranslationKey } from '@/lib/i18nNavigationMessages';
 import type { UiLanguage } from '@/domain/types';
 import {
   componentTranslations,
@@ -18,6 +19,7 @@ import {
 
 type BaseTranslationKey =
   | 'account'
+  | 'accountLinkRequired'
   | 'apiSetupRequired'
   | 'applyDraft'
   | 'applyStoryPlan'
@@ -54,6 +56,7 @@ type BaseTranslationKey =
   | 'frames'
   | 'fullDraft'
   | 'generate'
+  | 'generateMonochrome'
   | 'generateReference'
   | 'guide'
   | 'imageImport'
@@ -107,6 +110,7 @@ type BaseTranslationKey =
 const baseTranslations: Record<UiLanguage, Record<BaseTranslationKey, string>> = {
   ja: {
     account: 'アカウント',
+    accountLinkRequired: 'このメールアドレスは登録済みです。これまでの方法でログインしてください。Googleログインを使うには、アカウント画面から連携する必要があります。',
     apiSetupRequired: 'API URL と Cognito 設定を .env に入れてください。',
     applyDraft: '改善案を反映',
     applyStoryPlan: '話全体を反映',
@@ -142,7 +146,8 @@ const baseTranslations: Record<UiLanguage, Record<BaseTranslationKey, string>> =
     estimatedPages: '想定ページ数',
     frames: '枠',
     fullDraft: '話の本文',
-    generate: 'ページ生成',
+    generate: 'カラー生成',
+    generateMonochrome: '白黒で生成',
     generateReference: '全身プレビュー生成',
     guide: 'ガイド',
     imageImport: '画像取り込み',
@@ -195,6 +200,7 @@ const baseTranslations: Record<UiLanguage, Record<BaseTranslationKey, string>> =
   },
   en: {
     account: 'Account',
+    accountLinkRequired: 'This email address is already registered. Sign in with your existing method. To use Google sign-in, link Google from your account.',
     apiSetupRequired: 'Set the API URL and Cognito values in .env.',
     applyDraft: 'Apply draft',
     applyStoryPlan: 'Apply story plan',
@@ -230,7 +236,8 @@ const baseTranslations: Record<UiLanguage, Record<BaseTranslationKey, string>> =
     estimatedPages: 'Estimated pages',
     frames: 'Frames',
     fullDraft: 'Full draft',
-    generate: 'Generate page',
+    generate: 'Generate in color',
+    generateMonochrome: 'Generate in black and white',
     generateReference: 'Generate reference',
     guide: 'Guide',
     imageImport: 'Import image',
@@ -288,7 +295,8 @@ export type TranslationKey =
   | GeneratedTranslationKey
   | ComponentTranslationKey
   | ScreenTranslationKey
-  | SharedTranslationKey;
+  | SharedTranslationKey
+  | NavigationTranslationKey;
 
 const translations: Record<UiLanguage, Record<TranslationKey, string>> = {
   ja: {
@@ -296,6 +304,7 @@ const translations: Record<UiLanguage, Record<TranslationKey, string>> = {
     ...generatedTranslations.ja,
     ...componentTranslations.ja,
     ...screenTranslations.ja,
+    ...navigationTranslations.ja,
     ...sharedTranslations.ja
   },
   en: {
@@ -303,6 +312,7 @@ const translations: Record<UiLanguage, Record<TranslationKey, string>> = {
     ...generatedTranslations.en,
     ...componentTranslations.en,
     ...screenTranslations.en,
+    ...navigationTranslations.en,
     ...sharedTranslations.en
   }
 };

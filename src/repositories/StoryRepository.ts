@@ -1,4 +1,5 @@
 ﻿import type { QueryResultRow } from 'pg';
+import { readableStateReferencePredicateSql, readableStateReferenceSql } from './FencedStateReferenceReadGuard.js';
 import { buildPanelFrameTemplateInputs } from '../domain/constants/panelFrameTemplates.js';
 import type {
   Chapter,
@@ -6,6 +7,7 @@ import type {
   CreateEpisodeInput,
   CreateWorkInput,
   Episode,
+  EpisodeStartingEntityState,
   StoryItemMoveDirection,
   StoryStatus,
   UpdateChapterInput,
@@ -25,10 +27,12 @@ import type {
 import {
   ConfigurationError,
   ConflictError,
+  NotFoundError,
   ValidationError,
 } from '../domain/errors/index.js';
 import type { WorkListCursor } from '../domain/pagination.js';
 import { normalizeEpisodeStoryInput } from '../domain/episodeStoryInput.js';
+import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { isUniqueViolation } from '../lib/dbErrors.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
@@ -37,6 +41,17 @@ import {
   lockStoryEpisodeAdmission,
   lockStoryEpisodeAdmissions,
 } from './StoryEpisodeAdmissionLock.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
+
+// CAS revisions must advance even inside one transaction or when clocks move backwards.
+type StoryRevisionTable = 'works' | 'chapters' | 'episodes';
+const nextStoryRevisionSql = (table: StoryRevisionTable): string =>
+  `GREATEST(date_trunc('milliseconds', clock_timestamp()),
+    date_trunc('milliseconds', ${table}.updated_at) + INTERVAL '1 millisecond')`;
 
 export type {
   Chapter,
@@ -56,15 +71,21 @@ export interface StoryRepository {
   createWork(userId: string, input: CreateWorkInput): Promise<Work>;
   findWorkByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Work | null>;
   updateWork(id: string, userId: string, input: UpdateWorkInput, organizationId?: string | null): Promise<Work | null>;
-  createChapter(workId: string, input: CreateChapterInput): Promise<Chapter>;
+  createChapter(workId: string, input: CreateChapterInput, userId?: string, organizationId?: string | null): Promise<Chapter>;
   findChaptersByWorkIdAndUserId(workId: string, userId: string, organizationId?: string | null): Promise<Chapter[]>;
   findChapterByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Chapter | null>;
   updateChapter(id: string, userId: string, input: UpdateChapterInput, organizationId?: string | null): Promise<Chapter | null>;
   deleteChapter(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
   moveChapter(id: string, userId: string, direction: StoryItemMoveDirection, organizationId?: string | null): Promise<Chapter | null>;
-  createEpisode(chapterId: string, input: CreateEpisodeInput): Promise<Episode>;
+  createEpisode(chapterId: string, input: CreateEpisodeInput, userId?: string, organizationId?: string | null): Promise<Episode>;
   findEpisodesByChapterIdAndUserId(chapterId: string, userId: string, organizationId?: string | null): Promise<Episode[]>;
   findEpisodeByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Episode | null>;
+  validateEpisodeStartingEntityStates?(
+    episodeId: string,
+    userId: string,
+    startingEntityStates: EpisodeStartingEntityState[],
+    organizationId?: string | null,
+  ): Promise<boolean>;
   updateEpisode(id: string, userId: string, input: UpdateEpisodeInput, organizationId?: string | null): Promise<Episode | null>;
   deleteEpisode(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
   moveEpisode(
@@ -174,6 +195,7 @@ interface EpisodeRow extends QueryResultRow {
   ending_hook: string | null;
   estimated_pages: number;
   entities_involved: string[];
+  starting_entity_states: unknown;
   page_skeleton_generated: boolean;
   version: number;
   edit_history: unknown;
@@ -185,6 +207,24 @@ interface EpisodeRow extends QueryResultRow {
 interface EpisodeMoveRow extends EpisodeRow {
   work_id: string;
   chapter_order: number;
+}
+
+interface LockedEpisodeStartingStateRow extends EpisodeRow {
+  work_id: string;
+}
+
+interface LockedStartingStateReferenceSetRow extends QueryResultRow {
+  entity_id: string;
+  primary_ref_id: string | null;
+  reference_images: unknown;
+}
+
+interface LockedStartingEntityStateRow extends QueryResultRow {
+  id: string;
+  entity_id: string;
+  name: string | null;
+  description: string | null;
+  reference_image: unknown;
 }
 
 interface EpisodeOrderRow extends QueryResultRow {
@@ -204,6 +244,7 @@ interface CollaborationRow extends QueryResultRow {
 }
 
 interface EpisodeSkeletonContextRow extends QueryResultRow {
+  graph_fingerprint?: string;
   episode_id: string;
   chapter_id: string;
   work_id: string;
@@ -292,7 +333,37 @@ export class PostgresStoryRepository
   public constructor(
     private readonly client: DatabaseClient,
     private readonly transactionRunner?: TransactionRunner,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   ) {}
+
+  private async runLegacyPersonalGraphWrite<T>(
+    userId: string,
+    organizationId: string | null,
+    work: (client: DatabaseClient) => Promise<T>,
+  ): Promise<T> {
+    if (this.schemaProfile !== 'legacy_2debe_v1' || organizationId !== null) {
+      return work(this.client);
+    }
+    if (this.transactionRunner === undefined) {
+      throw new ConfigurationError('Legacy personal story writes require transaction support');
+    }
+    return this.transactionRunner.transaction(async (client) => {
+      await assertLegacyPersonalWriteAllowed(client, { userId, organizationId });
+      return work(client);
+    });
+  }
+
+  private async runLegacyGraphTransaction<T>(
+    userId: string,
+    organizationId: string | null,
+    work: (client: DatabaseClient) => Promise<T>,
+    transactionRunner: TransactionRunner | undefined = this.transactionRunner,
+  ): Promise<T> {
+    if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
+      return this.runLegacyPersonalGraphWrite(userId, organizationId, work);
+    }
+    return runInTransaction(this.client, transactionRunner, work);
+  }
 
   public async findWorksByUserId(userId: string, organizationId: string | null = null): Promise<Work[]> {
     const result = await this.client.query<WorkRow>(
@@ -334,6 +405,7 @@ export class PostgresStoryRepository
       throw new ConfigurationError('Work list page limit is invalid');
     }
 
+    const productionCursor = request.cursor?.format === 'production-v1';
     const result = await this.client.query<WorkRow>(
       `
       SELECT works.*
@@ -360,7 +432,8 @@ export class PostgresStoryRepository
         OR (
           works.updated_at = $3::timestamptz
           AND (
-            works.created_at < $4::timestamptz
+            ($4::timestamptz IS NULL AND works.id < $5::uuid)
+            OR works.created_at < $4::timestamptz
             OR (
               works.created_at = $4::timestamptz
               AND works.id < $5::uuid
@@ -368,14 +441,16 @@ export class PostgresStoryRepository
           )
         )
       )
-      ORDER BY works.updated_at DESC, works.created_at DESC, works.id DESC
+      ORDER BY ${productionCursor
+        ? 'works.updated_at DESC, works.id DESC'
+        : 'works.updated_at DESC, works.created_at DESC, works.id DESC'}
       LIMIT $6
       `,
       [
         userId,
         organizationId,
         request.cursor?.updatedAt ?? null,
-        request.cursor?.createdAt ?? null,
+        request.cursor?.format === 'production-v1' ? null : request.cursor?.createdAt ?? null,
         request.cursor?.id ?? null,
         request.limit + 1,
       ],
@@ -387,7 +462,9 @@ export class PostgresStoryRepository
       works: rows.map(mapWorkRow),
       nextCursor:
         result.rows.length > request.limit && lastRow !== undefined
-          ? {
+          ? productionCursor
+            ? {format: 'production-v1', updatedAt: lastRow.updated_at, id: lastRow.id}
+            : {
               updatedAt: lastRow.updated_at,
               createdAt: lastRow.created_at,
               id: lastRow.id,
@@ -397,7 +474,17 @@ export class PostgresStoryRepository
   }
 
   public async createWork(userId: string, input: CreateWorkInput): Promise<Work> {
-    const result = await this.client.query<WorkRow>(
+    return this.runLegacyPersonalGraphWrite(userId, input.organizationId ?? null, async (client) => {
+      const valueSql = this.schemaProfile === 'legacy_2debe_v1'
+        ? `SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+           WHERE $2::uuid IS NULL OR EXISTS (
+             SELECT 1 FROM organization_members
+             WHERE organization_members.organization_id = $2::uuid
+               AND organization_members.user_id = $1::uuid
+               AND organization_members.status = 'active'
+           )`
+        : 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)';
+      const result = await client.query<WorkRow>(
       `
       INSERT INTO works (
         user_id,
@@ -411,7 +498,7 @@ export class PostgresStoryRepository
         ending_point,
         overall_flow
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ${valueSql}
       RETURNING *
       `,
       [
@@ -428,7 +515,11 @@ export class PostgresStoryRepository
       ],
     );
 
-    return mapWorkRow(result.rows[0]);
+      if (this.schemaProfile === 'legacy_2debe_v1' && result.rows[0] === undefined) {
+        throw new NotFoundError('Organization membership not found');
+      }
+      return mapWorkRow(result.rows[0]);
+    });
   }
 
   public async findWorkByIdAndUserId(
@@ -468,7 +559,8 @@ export class PostgresStoryRepository
     input: UpdateWorkInput,
     organizationId: string | null = null,
   ): Promise<Work | null> {
-    const result = await this.client.query<WorkRow>(
+    return this.runLegacyPersonalGraphWrite(userId, organizationId, async (client) => {
+      const result = await client.query<WorkRow>(
       `
       UPDATE works
       SET title = COALESCE($3, title),
@@ -506,8 +598,9 @@ export class PostgresStoryRepository
             ) history_entry
           ),
           version = version + 1,
-          updated_at = NOW()
+          updated_at = ${nextStoryRevisionSql('works')}
       WHERE id = $1
+          AND ($20::timestamptz IS NULL OR date_trunc('milliseconds', works.updated_at) = $20::timestamptz)
         AND (
           ($19::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
           OR (
@@ -544,15 +637,54 @@ export class PostgresStoryRepository
         normalizeNullableText(input.overallFlow ?? null),
         input.status ?? null,
         organizationId,
+        input.expectedUpdatedAt ?? null,
       ],
     );
 
-    return result.rows[0] === undefined ? null : mapWorkRow(result.rows[0]);
+      return result.rows[0] === undefined ? null : mapWorkRow(result.rows[0]);
+    });
   }
 
-  public async createChapter(workId: string, input: CreateChapterInput): Promise<Chapter> {
-    try {
-      const result = await this.client.query<ChapterRow>(
+  public async createChapter(
+    workId: string,
+    input: CreateChapterInput,
+    userId?: string,
+    organizationId: string | null = null,
+  ): Promise<Chapter> {
+    if (this.schemaProfile === 'legacy_2debe_v1' && userId === undefined) {
+      throw new ConfigurationError('Legacy chapter creation requires an authenticated actor');
+    }
+    const actorUserId = userId ?? '';
+    return this.runLegacyPersonalGraphWrite(actorUserId, organizationId, async (client) => {
+      try {
+        const legacyScope = this.schemaProfile === 'legacy_2debe_v1'
+          ? `WHERE EXISTS (
+              SELECT 1 FROM works
+              WHERE works.id = $1
+                AND (($11::uuid IS NULL AND works.user_id = $10 AND works.organization_id IS NULL)
+                  OR ($11::uuid IS NOT NULL AND works.organization_id = $11::uuid
+                    AND EXISTS (SELECT 1 FROM organization_members
+                      WHERE organization_members.organization_id = works.organization_id
+                        AND organization_members.user_id = $10
+                        AND organization_members.status = 'active')))
+            )`
+          : '';
+        const valueSql = this.schemaProfile === 'legacy_2debe_v1'
+          ? 'SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9'
+          : 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)';
+        const values: readonly unknown[] = [
+          workId,
+          input.order,
+          normalizeNullableText(input.title),
+          normalizeNullableText(input.purpose),
+          normalizeNullableText(input.startingState),
+          normalizeNullableText(input.endingState),
+          normalizeNullableText(input.emotionCurve),
+          input.entitiesInvolved,
+          input.keyBeats,
+          ...(this.schemaProfile === 'legacy_2debe_v1' ? [actorUserId, organizationId] : []),
+        ];
+        const result = await client.query<ChapterRow>(
         `
         INSERT INTO chapters (
           work_id,
@@ -565,26 +697,19 @@ export class PostgresStoryRepository
           entities_involved,
           key_beats
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ${valueSql}
+        ${legacyScope}
         RETURNING *
         `,
-        [
-          workId,
-          input.order,
-          normalizeNullableText(input.title),
-          normalizeNullableText(input.purpose),
-          normalizeNullableText(input.startingState),
-          normalizeNullableText(input.endingState),
-          normalizeNullableText(input.emotionCurve),
-          input.entitiesInvolved,
-          input.keyBeats,
-        ],
+        values,
       );
 
+      if (result.rows[0] === undefined) throw new NotFoundError('Work not found');
       return mapChapterRow(result.rows[0]);
     } catch (error) {
       throw mapOrderConflict(error, 'Chapter order must be unique within the work');
     }
+    });
   }
 
   public async findChaptersByWorkIdAndUserId(
@@ -658,8 +783,9 @@ export class PostgresStoryRepository
     input: UpdateChapterInput,
     organizationId: string | null = null,
   ): Promise<Chapter | null> {
-    try {
-      const result = await this.client.query<ChapterRow>(
+    return this.runLegacyPersonalGraphWrite(userId, organizationId, async (client) => {
+      try {
+        const result = await client.query<ChapterRow>(
         `
         UPDATE chapters
         SET "order" = COALESCE($3, chapters."order"),
@@ -697,9 +823,10 @@ export class PostgresStoryRepository
               ) history_entry
             ),
             version = chapters.version + 1,
-            updated_at = NOW()
+            updated_at = ${nextStoryRevisionSql('chapters')}
         FROM works
         WHERE chapters.id = $1
+          AND ($20::timestamptz IS NULL OR date_trunc('milliseconds', chapters.updated_at) = $20::timestamptz)
           AND chapters.work_id = works.id
           AND (
             ($19::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
@@ -737,6 +864,7 @@ export class PostgresStoryRepository
           input.keyBeats ?? [],
           input.status ?? null,
           organizationId,
+          input.expectedUpdatedAt ?? null,
         ],
       );
 
@@ -744,11 +872,12 @@ export class PostgresStoryRepository
     } catch (error) {
       throw mapOrderConflict(error, 'Chapter order must be unique within the work');
     }
+    });
   }
 
   public async deleteChapter(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
     const transactionRunner = this.requireTransactionRunnerForStoryDeletion();
-    return transactionRunner.transaction(async (transactionClient) => {
+    return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const authorized = await transactionClient.query<AuthorizedChapterIdRow>(
         `
         SELECT chapters.id AS authorized_chapter_id
@@ -818,7 +947,7 @@ export class PostgresStoryRepository
         [id, userId, organizationId],
       );
       return (deleted.rowCount ?? 0) > 0;
-    });
+    }, transactionRunner);
   }
 
   public async moveChapter(
@@ -827,7 +956,7 @@ export class PostgresStoryRepository
     direction: StoryItemMoveDirection,
     organizationId: string | null = null,
   ): Promise<Chapter | null> {
-    return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
+    return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const currentResult = await transactionClient.query<ChapterRow>(
         `
         SELECT chapters.*
@@ -889,8 +1018,18 @@ export class PostgresStoryRepository
     });
   }
 
-  public async createEpisode(chapterId: string, input: CreateEpisodeInput): Promise<Episode> {
-    const normalizedStoryInput = normalizeEpisodeStoryInput({
+  public async createEpisode(
+    chapterId: string,
+    input: CreateEpisodeInput,
+    userId?: string,
+    organizationId: string | null = null,
+  ): Promise<Episode> {
+    if (this.schemaProfile === 'legacy_2debe_v1' && userId === undefined) {
+      throw new ConfigurationError('Legacy episode creation requires an authenticated actor');
+    }
+    const actorUserId = userId ?? '';
+    return this.runLegacyPersonalGraphWrite(actorUserId, organizationId, async (client) => {
+      const normalizedStoryInput = normalizeEpisodeStoryInput({
       storyInputMode: input.storyInputMode,
       purpose: input.purpose,
       introduction: input.introduction,
@@ -900,8 +1039,39 @@ export class PostgresStoryRepository
       storyFullDraft: input.storyFullDraft,
     });
 
-    try {
-      const result = await this.client.query<EpisodeRow>(
+      try {
+        const legacyScope = this.schemaProfile === 'legacy_2debe_v1'
+          ? `WHERE EXISTS (
+              SELECT 1 FROM chapters
+              INNER JOIN works ON works.id = chapters.work_id
+              WHERE chapters.id = $1
+                AND (($14::uuid IS NULL AND works.user_id = $13 AND works.organization_id IS NULL)
+                  OR ($14::uuid IS NOT NULL AND works.organization_id = $14::uuid
+                    AND EXISTS (SELECT 1 FROM organization_members
+                      WHERE organization_members.organization_id = works.organization_id
+                        AND organization_members.user_id = $13
+                        AND organization_members.status = 'active')))
+            )`
+          : '';
+        const valueSql = this.schemaProfile === 'legacy_2debe_v1'
+          ? 'SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12'
+          : 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)';
+        const values: readonly unknown[] = [
+          chapterId,
+          input.order,
+          normalizeNullableText(input.title),
+          normalizedStoryInput.purpose,
+          normalizedStoryInput.storyInputMode,
+          normalizedStoryInput.storyFullDraft,
+          normalizedStoryInput.normalizedIntroduction,
+          normalizedStoryInput.normalizedMiddle,
+          normalizedStoryInput.normalizedClimax,
+          normalizedStoryInput.normalizedEndingHook,
+          input.estimatedPages,
+          input.entitiesInvolved,
+          ...(this.schemaProfile === 'legacy_2debe_v1' ? [actorUserId, organizationId] : []),
+        ];
+        const result = await client.query<EpisodeRow>(
         `
         INSERT INTO episodes (
           chapter_id,
@@ -917,29 +1087,19 @@ export class PostgresStoryRepository
           estimated_pages,
           entities_involved
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ${valueSql}
+        ${legacyScope}
         RETURNING *
         `,
-        [
-          chapterId,
-          input.order,
-          normalizeNullableText(input.title),
-          normalizedStoryInput.purpose,
-          normalizedStoryInput.storyInputMode,
-          normalizedStoryInput.storyFullDraft,
-          normalizedStoryInput.normalizedIntroduction,
-          normalizedStoryInput.normalizedMiddle,
-          normalizedStoryInput.normalizedClimax,
-          normalizedStoryInput.normalizedEndingHook,
-          input.estimatedPages,
-          input.entitiesInvolved,
-        ],
+        values,
       );
 
+      if (result.rows[0] === undefined) throw new NotFoundError('Chapter not found');
       return mapEpisodeRow(result.rows[0]);
     } catch (error) {
       throw mapOrderConflict(error, 'Episode order must be unique within the chapter');
     }
+    });
   }
 
   public async findEpisodesByChapterIdAndUserId(
@@ -981,7 +1141,16 @@ export class PostgresStoryRepository
     userId: string,
     organizationId: string | null = null,
   ): Promise<Episode | null> {
-    const result = await this.client.query<EpisodeRow>(
+    return this.findEpisodeByIdAndUserIdWithClient(this.client, id, userId, organizationId);
+  }
+
+  private async findEpisodeByIdAndUserIdWithClient(
+    client: DatabaseClient,
+    id: string,
+    userId: string,
+    organizationId: string | null,
+  ): Promise<Episode | null> {
+    const result = await client.query<EpisodeRow>(
       `
       SELECT episodes.*
       FROM episodes
@@ -1009,17 +1178,132 @@ export class PostgresStoryRepository
     return result.rows[0] === undefined ? null : mapEpisodeRow(result.rows[0]);
   }
 
+  public async validateEpisodeStartingEntityStates(
+    episodeId: string,
+    userId: string,
+    startingEntityStates: EpisodeStartingEntityState[],
+    organizationId: string | null = null,
+  ): Promise<boolean> {
+    const result = await this.client.query<{ valid: boolean }>(
+      `
+      WITH authorized_episode AS (
+        SELECT chapters.work_id, works.organization_id
+        FROM episodes
+        INNER JOIN chapters ON chapters.id = episodes.chapter_id
+        INNER JOIN works ON works.id = chapters.work_id
+        WHERE episodes.id = $1::uuid
+          AND (
+            ($3::uuid IS NULL AND works.user_id = $2::uuid AND works.organization_id IS NULL)
+            OR (
+              $3::uuid IS NOT NULL
+              AND works.organization_id = $3::uuid
+              AND EXISTS (
+                SELECT 1
+                FROM organization_members
+                WHERE organization_members.organization_id = works.organization_id
+                  AND organization_members.user_id = $2::uuid
+                  AND organization_members.status = 'active'
+              )
+            )
+          )
+      )
+      SELECT EXISTS (SELECT 1 FROM authorized_episode)
+        AND NOT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements($4::jsonb) AS requested(value)
+        LEFT JOIN entities
+          ON entities.id::text = requested.value->>'entity_id'
+        LEFT JOIN entity_states
+          ON entity_states.id::text = requested.value->>'state_id'
+          AND entity_states.entity_id = entities.id
+        LEFT JOIN reference_sets ON reference_sets.entity_id = entities.id
+        WHERE entities.id IS NULL
+          OR entities.work_id <> (SELECT work_id FROM authorized_episode)
+          OR NOT (${currentPrimaryReferencePredicate})
+        OR (
+          (requested.value->>'state_id') IS NOT NULL
+          AND NOT (${confirmedStateReferencePredicate})
+        )
+      ) AS valid
+      `,
+      [episodeId, userId, organizationId, serializeEpisodeStartingEntityStates(startingEntityStates)],
+    );
+    return result.rows[0]?.valid === true;
+  }
+
   public async updateEpisode(
     id: string,
     userId: string,
     input: UpdateEpisodeInput,
     organizationId: string | null = null,
   ): Promise<Episode | null> {
+    const startingEntityStates = input.startingEntityStates;
+    if (this.schemaProfile === 'legacy_2debe_v1' && startingEntityStates !== undefined) {
+      throw new ConfigurationError('startingEntityStates is not supported by legacy_2debe_v1 persistence');
+    }
+    if (this.schemaProfile === 'legacy_2debe_v1') {
+      return this.runLegacyPersonalGraphWrite(userId, organizationId, async (client) => {
+        const currentEpisode = await this.findEpisodeByIdAndUserIdWithClient(
+          client,
+          id,
+          userId,
+          organizationId,
+        );
+        if (currentEpisode === null) return null;
+        return this.updateEpisodeWithClient(client, currentEpisode, id, userId, input, organizationId);
+      });
+    }
+    if (startingEntityStates !== undefined) {
+      const transactionRunner = this.requireTransactionRunnerForEpisodeStartingStates();
+      return transactionRunner.transaction(async (transactionClient) => {
+        const currentEpisode = await this.lockEpisodeForStartingStateUpdate(
+          transactionClient,
+          id,
+          userId,
+          organizationId,
+        );
+        if (currentEpisode === null) {
+          return null;
+        }
+        await this.lockAndValidateEpisodeStartingStates(
+          transactionClient,
+          currentEpisode.workId,
+          startingEntityStates,
+        );
+        return this.updateEpisodeWithClient(
+          transactionClient,
+          currentEpisode.episode,
+          id,
+          userId,
+          input,
+          organizationId,
+        );
+      });
+    }
+
     const currentEpisode = await this.findEpisodeByIdAndUserId(id, userId, organizationId);
     if (currentEpisode === null) {
       return null;
     }
 
+    return this.updateEpisodeWithClient(
+      this.client,
+      currentEpisode,
+      id,
+      userId,
+      input,
+      organizationId,
+    );
+  }
+
+  private async updateEpisodeWithClient(
+    client: DatabaseClient,
+    currentEpisode: Episode,
+    id: string,
+    userId: string,
+    input: UpdateEpisodeInput,
+    organizationId: string | null,
+  ): Promise<Episode | null> {
     // Partial updates use undefined as "leave unchanged"; null is an explicit editor clear.
     const normalizedStoryInput = normalizeEpisodeStoryInput({
       storyInputMode: input.storyInputMode ?? currentEpisode.storyInputMode,
@@ -1032,7 +1316,7 @@ export class PostgresStoryRepository
     });
 
     try {
-      const result = await this.client.query<EpisodeRow>(
+      const result = await client.query<EpisodeRow>(
         `
         UPDATE episodes
         SET "order" = COALESCE($3, episodes."order"),
@@ -1047,6 +1331,10 @@ export class PostgresStoryRepository
             estimated_pages = COALESCE($20, episodes.estimated_pages),
             entities_involved = CASE WHEN $21::boolean THEN $22 ELSE episodes.entities_involved END,
             status = COALESCE($23, episodes.status),
+             ${this.schemaProfile === 'legacy_2debe_v1' ? '' : `starting_entity_states = CASE
+              WHEN $24::boolean THEN $25::jsonb
+              ELSE episodes.starting_entity_states
+             END,`}
             edit_history = (
               SELECT COALESCE(jsonb_agg(history_entry.value ORDER BY history_entry.ordinality), '[]'::jsonb)
               FROM (
@@ -1065,7 +1353,7 @@ export class PostgresStoryRepository
                       'climax', episodes.climax,
                       'ending_hook', episodes.ending_hook,
                       'estimated_pages', episodes.estimated_pages,
-                      'entities_involved', episodes.entities_involved,
+                       'entities_involved', episodes.entities_involved${this.schemaProfile === 'legacy_2debe_v1' ? '' : ",\n                       'starting_entity_states', episodes.starting_entity_states"},
                       'status', episodes.status,
                       'updated_at', episodes.updated_at
                     )
@@ -1076,16 +1364,17 @@ export class PostgresStoryRepository
               ) history_entry
             ),
             version = episodes.version + 1,
-            updated_at = NOW()
+            updated_at = ${nextStoryRevisionSql('episodes')}
         FROM chapters
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
+          AND ($27::timestamptz IS NULL OR date_trunc('milliseconds', episodes.updated_at) = $27::timestamptz)
           AND episodes.chapter_id = chapters.id
           AND (
-            ($24::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+            ($26::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
             OR (
-            $24::uuid IS NOT NULL
-            AND works.organization_id = $24::uuid
+            $26::uuid IS NOT NULL
+            AND works.organization_id = $26::uuid
             AND EXISTS (
               SELECT 1
               FROM organization_members
@@ -1095,6 +1384,9 @@ export class PostgresStoryRepository
             )
           )
           )
+          -- Freshness is checked under row locks before this UPDATE. Keep the
+          -- parameters typed here without duplicating the JS fingerprint in SQL.
+          AND (NOT $24::boolean OR $25::jsonb IS NOT NULL)
         RETURNING episodes.*
         `,
         [
@@ -1121,11 +1413,20 @@ export class PostgresStoryRepository
           input.entitiesInvolved !== undefined,
           input.entitiesInvolved ?? [],
           input.status ?? null,
+          input.startingEntityStates !== undefined,
+          serializeEpisodeStartingEntityStates(input.startingEntityStates ?? []),
           organizationId,
+          input.expectedUpdatedAt ?? null,
         ],
       );
 
-      return result.rows[0] === undefined ? null : mapEpisodeRow(result.rows[0]);
+      if (result.rows[0] === undefined) {
+        if (input.startingEntityStates !== undefined && input.expectedUpdatedAt === undefined) {
+          throw new ConflictError('Episode starting state references changed while the episode was being updated');
+        }
+        return null;
+      }
+      return mapEpisodeRow(result.rows[0]);
     } catch (error) {
       throw mapOrderConflict(error, 'Episode order must be unique within the chapter');
     }
@@ -1133,7 +1434,7 @@ export class PostgresStoryRepository
 
   public async deleteEpisode(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
     const transactionRunner = this.requireTransactionRunnerForStoryDeletion();
-    return transactionRunner.transaction(async (transactionClient) => {
+    return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const initialTarget = await this.findAuthorizedEpisodeForDeletion(
         transactionClient,
         id,
@@ -1194,7 +1495,7 @@ export class PostgresStoryRepository
         [id, userId, organizationId],
       );
       return (deleted.rowCount ?? 0) > 0;
-    });
+    }, transactionRunner);
   }
 
   private requireTransactionRunnerForStoryDeletion(): TransactionRunner {
@@ -1202,6 +1503,124 @@ export class PostgresStoryRepository
       throw new ConfigurationError('Story deletion requires transaction support');
     }
     return this.transactionRunner;
+  }
+
+  private requireTransactionRunnerForEpisodeStartingStates(): TransactionRunner {
+    if (this.transactionRunner === undefined) {
+      throw new ConfigurationError('Episode starting state updates require transaction support');
+    }
+    return this.transactionRunner;
+  }
+
+  private async lockEpisodeForStartingStateUpdate(
+    client: DatabaseClient,
+    episodeId: string,
+    userId: string,
+    organizationId: string | null,
+  ): Promise<{ episode: Episode; workId: string } | null> {
+    const result = await client.query<LockedEpisodeStartingStateRow>(
+      `
+      SELECT episodes.*, chapters.work_id
+      FROM episodes
+      INNER JOIN chapters ON chapters.id = episodes.chapter_id
+      INNER JOIN works ON works.id = chapters.work_id
+      WHERE episodes.id = $1::uuid
+        AND (
+          ($3::uuid IS NULL AND works.user_id = $2::uuid AND works.organization_id IS NULL)
+          OR (
+            $3::uuid IS NOT NULL
+            AND works.organization_id = $3::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $2::uuid
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      FOR UPDATE OF episodes
+      `,
+      [episodeId, userId, organizationId],
+    );
+    const row = result.rows[0];
+    return row === undefined ? null : { episode: mapEpisodeRow(row), workId: row.work_id };
+  }
+
+  private async lockAndValidateEpisodeStartingStates(
+    client: DatabaseClient,
+    workId: string,
+    states: EpisodeStartingEntityState[],
+  ): Promise<void> {
+    const entityIds = states.map((state) => state.entityId);
+    const stateIds = states.flatMap((state) => state.stateId === null ? [] : [state.stateId]);
+    // Lock order is intentional: reference_sets before entity_states, matching state confirmation.
+    const referenceSets = await client.query<LockedStartingStateReferenceSetRow>(
+      `
+      SELECT reference_sets.entity_id, reference_sets.primary_ref_id, reference_sets.reference_images
+      FROM reference_sets
+      INNER JOIN entities ON entities.id = reference_sets.entity_id
+      WHERE entities.work_id = $1::uuid
+        AND entities.id::text = ANY($2::text[])
+      ORDER BY reference_sets.entity_id ASC
+      FOR UPDATE OF reference_sets
+      `,
+      [workId, entityIds],
+    );
+    const entityStates = await client.query<LockedStartingEntityStateRow>(
+      `
+      SELECT entity_states.id, entity_states.entity_id, entity_states.name,
+             entity_states.description,
+             ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })} AS reference_image
+      FROM entity_states
+      INNER JOIN entities ON entities.id = entity_states.entity_id
+      INNER JOIN works ON works.id = entities.work_id
+      WHERE entities.work_id = $1::uuid
+        AND entity_states.id::text = ANY($2::text[])
+      ORDER BY entity_states.id ASC
+      FOR UPDATE OF entity_states
+      `,
+      [workId, stateIds],
+    );
+
+    const referenceSetsByEntityId = new Map(
+      referenceSets.rows.map((row) => [row.entity_id, row] as const),
+    );
+    const statesById = new Map(entityStates.rows.map((row) => [row.id, row] as const));
+    for (const state of states) {
+      const referenceSet = referenceSetsByEntityId.get(state.entityId);
+      const primaryReference = referenceSet === undefined
+        ? null
+        : findCurrentPrimaryReference(referenceSet.reference_images, referenceSet.primary_ref_id);
+      if (primaryReference === null) {
+        throw new ConflictError('Episode starting state references changed while the episode was being updated');
+      }
+      if (state.stateId === null) {
+        continue;
+      }
+      const entityState = statesById.get(state.stateId);
+      if (entityState === undefined || entityState.entity_id !== state.entityId) {
+        throw new ConflictError('Episode starting state references changed while the episode was being updated');
+      }
+      const descriptor = parseConfirmedStateReferenceDescriptor(entityState.reference_image);
+      if (
+        descriptor === null
+        || entityState.name === null
+        || entityState.name.trim().length === 0
+        || entityState.description === null
+        || entityState.description.trim().length === 0
+        || descriptor.baseRefId !== referenceSet?.primary_ref_id
+        || descriptor.inputFingerprint !== computeStateReferenceFingerprint({
+          entityId: state.entityId,
+          stateId: state.stateId,
+          name: entityState.name,
+          description: entityState.description,
+          baseRefId: primaryReference.refId,
+        })
+      ) {
+        throw new ConflictError('Episode starting state references changed while the episode was being updated');
+      }
+    }
   }
 
   private async findAuthorizedEpisodeForDeletion(
@@ -1369,7 +1788,7 @@ export class PostgresStoryRepository
     organizationId: string | null = null,
     crossChapter = false,
   ): Promise<Episode | null> {
-    return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
+    return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const currentResult = await transactionClient.query<EpisodeMoveRow>(
         `
         SELECT episodes.*,
@@ -1685,6 +2104,46 @@ export class PostgresStoryRepository
     userId: string,
     organizationId: string | null = null,
   ): Promise<EpisodePageSkeletonContext | null> {
+    // One statement snapshots both prompt context and everything an overwrite
+    // would replace. Hash inside Postgres; raw saved graph never leaves the DB.
+    const graphFingerprintProjection = this.schemaProfile === 'legacy_2debe_v1' ? `,
+             encode(sha256(convert_to(jsonb_build_object(
+               'work', to_jsonb(works),
+               'chapter', to_jsonb(chapters),
+               'episode', to_jsonb(episodes),
+               'scenes', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(s) ORDER BY s.id), '[]'::jsonb)
+                 FROM scenes s WHERE s.episode_id = episodes.id
+               ),
+               'pages', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY p.id), '[]'::jsonb)
+                 FROM pages p WHERE p.episode_id = episodes.id
+               ),
+               'panels', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY p.id), '[]'::jsonb)
+                 FROM panels p INNER JOIN pages g ON g.id = p.page_id WHERE g.episode_id = episodes.id
+               ),
+               'frames', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(f) ORDER BY f.id), '[]'::jsonb)
+                 FROM panel_frames f INNER JOIN pages g ON g.id = f.page_id WHERE g.episode_id = episodes.id
+               ),
+               'balloons', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(b) ORDER BY b.id), '[]'::jsonb)
+                 FROM balloons b INNER JOIN pages g ON g.id = b.page_id WHERE g.episode_id = episodes.id
+               ),
+               'entities', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]'::jsonb)
+                 FROM entities e WHERE e.work_id = works.id
+               ),
+               'references', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY r.id), '[]'::jsonb)
+                 FROM reference_sets r INNER JOIN entities e ON e.id = r.entity_id WHERE e.work_id = works.id
+               ),
+               'states', (
+                 SELECT COALESCE(jsonb_agg(to_jsonb(s) ORDER BY s.id), '[]'::jsonb)
+                 FROM entity_states s INNER JOIN entities e ON e.id = s.entity_id WHERE e.work_id = works.id
+               )
+             )::text, 'UTF8')), 'hex') AS graph_fingerprint` : '';
     const result = await this.client.query<EpisodeSkeletonContextRow>(
       `
       SELECT episodes.id AS episode_id,
@@ -1764,7 +2223,7 @@ export class PostgresStoryRepository
                )
                FROM scenes
                WHERE scenes.episode_id = episodes.id
-             ) AS scene_summaries
+             ) AS scene_summaries${graphFingerprintProjection}
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id
@@ -1800,6 +2259,7 @@ export class PostgresStoryRepository
     );
 
     return {
+      ...(this.schemaProfile === 'legacy_2debe_v1' ? { graphFingerprint: row.graph_fingerprint } : {}),
       episodeId: row.episode_id,
       chapterId: row.chapter_id,
       workId: row.work_id,
@@ -2013,7 +2473,7 @@ export class PostgresStoryRepository
     organizationId: string | null = null,
   ): Promise<PageSkeletonPersistResult | null> {
     const overwriteExisting = options?.overwriteExisting === true;
-    return runInTransaction(this.client, this.transactionRunner, async (transactionClient) => {
+    return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const ownershipResult = await transactionClient.query<SkeletonLockRow>(
         `
         SELECT episodes.id,
@@ -2227,7 +2687,7 @@ export class PostgresStoryRepository
               ) history_entry
             ),
             version = episodes.version + 1,
-            updated_at = NOW()
+            updated_at = ${nextStoryRevisionSql('episodes')}
         FROM chapters
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
@@ -2355,7 +2815,7 @@ export class PostgresStoryRepository
               ) history_entry
             ),
             version = episodes.version + 1,
-            updated_at = NOW()
+            updated_at = ${nextStoryRevisionSql('episodes')}
         FROM chapters
         INNER JOIN works ON works.id = chapters.work_id
         WHERE episodes.id = $1
@@ -2429,7 +2889,7 @@ async function swapChapterOrders(
     UPDATE chapters
     SET "order" = $2,
         version = version + 1,
-        updated_at = NOW()
+        updated_at = ${nextStoryRevisionSql('chapters')}
     WHERE id = $1
     `,
     [neighborChapterId, currentOrder],
@@ -2440,7 +2900,7 @@ async function swapChapterOrders(
     UPDATE chapters
     SET "order" = $2,
         version = version + 1,
-        updated_at = NOW()
+        updated_at = ${nextStoryRevisionSql('chapters')}
     WHERE id = $1
     RETURNING *
     `,
@@ -2478,7 +2938,7 @@ async function swapEpisodeOrders(
     UPDATE episodes
     SET "order" = $2,
         version = version + 1,
-        updated_at = NOW()
+        updated_at = ${nextStoryRevisionSql('episodes')}
     WHERE id = $1
     `,
     [neighborEpisodeId, currentOrder],
@@ -2489,7 +2949,7 @@ async function swapEpisodeOrders(
     UPDATE episodes
     SET "order" = $2,
         version = version + 1,
-        updated_at = NOW()
+        updated_at = ${nextStoryRevisionSql('episodes')}
     WHERE id = $1
     RETURNING *
     `,
@@ -2543,7 +3003,7 @@ async function moveEpisodeAcrossChapters(
       UPDATE episodes
       SET "order" = $2,
           version = version + 1,
-          updated_at = NOW()
+          updated_at = ${nextStoryRevisionSql('episodes')}
       WHERE id = $1
       `,
       [sourceEpisode.id, sourceEpisode.order - 1],
@@ -2557,7 +3017,7 @@ async function moveEpisodeAcrossChapters(
         UPDATE episodes
         SET "order" = $2,
             version = version + 1,
-            updated_at = NOW()
+            updated_at = ${nextStoryRevisionSql('episodes')}
         WHERE id = $1
         `,
         [destinationEpisode.id, destinationEpisode.order + 1],
@@ -2575,7 +3035,7 @@ async function moveEpisodeAcrossChapters(
     SET chapter_id = $2,
         "order" = $3,
         version = version + 1,
-        updated_at = NOW()
+        updated_at = ${nextStoryRevisionSql('episodes')}
     WHERE id = $1
     RETURNING *
     `,
@@ -2650,6 +3110,7 @@ function mapEpisodeRow(row: EpisodeRow): Episode {
     endingHook: normalizeNullableText(row.ending_hook),
     estimatedPages: row.estimated_pages,
     entitiesInvolved: row.entities_involved,
+    startingEntityStates: parseEpisodeStartingEntityStates(row.starting_entity_states),
     pageSkeletonGenerated: row.page_skeleton_generated,
     version: row.version,
     editHistory: toObjectArray(row.edit_history),
@@ -2657,6 +3118,143 @@ function mapEpisodeRow(row: EpisodeRow): Episode {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function serializeEpisodeStartingEntityStates(
+  states: EpisodeStartingEntityState[],
+): string {
+  return JSON.stringify(states.map((state) => ({
+    entity_id: state.entityId,
+    state_id: state.stateId,
+  })));
+}
+
+function findCurrentPrimaryReference(
+  value: unknown,
+  primaryRefId: string | null,
+): { refId: string; s3Key: string; cdnUrl: string } | null {
+  if (primaryRefId === null || !Array.isArray(value)) {
+    return null;
+  }
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      continue;
+    }
+    const reference = entry as Record<string, unknown>;
+    if (
+      reference.ref_id === primaryRefId
+      && typeof reference.ref_id === 'string' && reference.ref_id.trim().length > 0
+      && typeof reference.s3_key === 'string' && reference.s3_key.trim().length > 0
+      && typeof reference.cdn_url === 'string' && reference.cdn_url.trim().length > 0
+    ) {
+      return { refId: reference.ref_id, s3Key: reference.s3_key, cdnUrl: reference.cdn_url };
+    }
+  }
+  return null;
+}
+
+function parseConfirmedStateReferenceDescriptor(value: unknown): {
+  refId: string;
+  s3Key: string;
+  storageOwnerUserId: string;
+  imageModel: string;
+  baseRefId: string;
+  createdAt: string;
+  inputFingerprint: string;
+} | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const descriptor = value as Record<string, unknown>;
+  const required = [
+    descriptor.ref_id,
+    descriptor.s3_key,
+    descriptor.storage_owner_user_id,
+    descriptor.image_model,
+    descriptor.base_ref_id,
+    descriptor.created_at,
+    descriptor.input_fingerprint,
+  ];
+  if (!required.every((entry) => typeof entry === 'string' && entry.trim().length > 0)) {
+    return null;
+  }
+  return {
+    refId: descriptor.ref_id as string,
+    s3Key: descriptor.s3_key as string,
+    storageOwnerUserId: descriptor.storage_owner_user_id as string,
+    imageModel: descriptor.image_model as string,
+    baseRefId: descriptor.base_ref_id as string,
+    createdAt: descriptor.created_at as string,
+    inputFingerprint: descriptor.input_fingerprint as string,
+  };
+}
+
+const currentPrimaryReferencePredicate = `
+  reference_sets.primary_ref_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(reference_sets.reference_images) = 'array'
+          THEN reference_sets.reference_images
+        ELSE '[]'::jsonb
+      END
+    ) AS primary_image(value)
+    WHERE primary_image.value->>'ref_id' = reference_sets.primary_ref_id
+      AND jsonb_typeof(primary_image.value->'ref_id') = 'string'
+      AND NULLIF(BTRIM(primary_image.value->>'ref_id'), '') IS NOT NULL
+      AND jsonb_typeof(primary_image.value->'s3_key') = 'string'
+      AND NULLIF(BTRIM(primary_image.value->>'s3_key'), '') IS NOT NULL
+      AND jsonb_typeof(primary_image.value->'cdn_url') = 'string'
+      AND NULLIF(BTRIM(primary_image.value->>'cdn_url'), '') IS NOT NULL
+  )
+`;
+
+const confirmedStateReferencePredicate = `
+  ${readableStateReferencePredicateSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: '(SELECT organization_id FROM authorized_episode)' })}
+  AND entity_states.id IS NOT NULL
+  AND NULLIF(BTRIM(entity_states.name), '') IS NOT NULL
+  AND NULLIF(BTRIM(entity_states.description), '') IS NOT NULL
+  AND jsonb_typeof(entity_states.reference_image) = 'object'
+  AND (
+    SELECT bool_and(
+      jsonb_typeof(entity_states.reference_image -> required_key) = 'string'
+      AND NULLIF(BTRIM(entity_states.reference_image ->> required_key), '') IS NOT NULL
+    )
+    FROM unnest(ARRAY[
+      'ref_id',
+      's3_key',
+      'storage_owner_user_id',
+      'image_model',
+      'base_ref_id',
+      'created_at',
+      'input_fingerprint'
+    ]) AS required_key
+  )
+  AND entity_states.reference_image->>'base_ref_id' = reference_sets.primary_ref_id
+`;
+
+function parseEpisodeStartingEntityStates(value: unknown): EpisodeStartingEntityState[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry) => {
+    if (
+      typeof entry !== 'object'
+      || entry === null
+      || Array.isArray(entry)
+    ) {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    if (
+      typeof record.entity_id !== 'string'
+      || !(typeof record.state_id === 'string' || record.state_id === null)
+    ) {
+      return [];
+    }
+    return [{ entityId: record.entity_id, stateId: record.state_id }];
+  });
 }
 
 function pickEpisodeUpdateValue<T>(nextValue: T | undefined, currentValue: T): T {

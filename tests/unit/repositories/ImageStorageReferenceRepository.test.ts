@@ -5,13 +5,15 @@ import type { QueryResult, QueryResultRow } from 'pg';
 
 class FakeDb implements DatabaseClient {
   public values: readonly unknown[] | undefined;
+  public sql: string | undefined;
 
   public constructor(private readonly rows: Array<{ s3_key: string | null }>) {}
 
   public async query<T extends QueryResultRow = QueryResultRow>(
-    _: string,
+    text: string,
     values?: readonly unknown[],
   ): Promise<QueryResult<T>> {
+    this.sql = text;
     this.values = values;
     return {
       command: 'SELECT',
@@ -24,10 +26,12 @@ class FakeDb implements DatabaseClient {
 }
 
 describe('PostgresImageStorageReferenceRepository', () => {
-  it('live page/reference/recent candidate の s3_key を重複なしで返す', async () => {
+  it('live page/reference/state と保存中snapshotの s3_key を重複なしで返す', async () => {
     const db = new FakeDb([
       { s3_key: 'session/user/pages/page/current.png' },
       { s3_key: 'saved/user/entities/entity/ref.png' },
+      { s3_key: 'saved/user/entities/entity/state-ref.png' },
+      { s3_key: 'saved/user/entities/entity/state-ref.png' },
       { s3_key: 'session/user/pages/page/current.png' },
       { s3_key: null },
     ]);
@@ -39,6 +43,14 @@ describe('PostgresImageStorageReferenceRepository', () => {
     expect(result).toEqual(new Set([
       'session/user/pages/page/current.png',
       'saved/user/entities/entity/ref.png',
+      'saved/user/entities/entity/state-ref.png',
     ]));
+    expect(db.sql).toContain('live_entity_state_reference_images');
+    expect(db.sql).toContain('jsonb_typeof(entity_states.reference_image) = \'object\'');
+    expect(db.sql).toContain('retained_input_snapshot_reference_images');
+    expect(db.sql).toContain('retained_state_reference_copies');
+    expect(db.sql).toContain("jsonb_typeof(result->'state_reference_copies') = 'array'");
+    expect(db.sql).toContain("jsonb_typeof(generation_jobs.result->'input_snapshot'->'references') = 'array'");
+    expect(db.sql).toContain("reference_image->>'s3Key'");
   });
 });

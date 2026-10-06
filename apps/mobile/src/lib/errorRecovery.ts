@@ -37,6 +37,8 @@ const frameMismatchCodes = new Set([
 
 const missingReferenceCodes = new Set([
   'CONFIRMED_REFERENCE_REQUIRED',
+  'PAGE_REFERENCE_MODEL_INCOMPATIBLE',
+  'ENTITY_REFERENCE_MODEL_INCOMPATIBLE',
   'MISSING_CHARACTER_REFERENCE',
   'REFERENCE_NOT_FOUND'
 ]);
@@ -118,6 +120,7 @@ export const pageGenerationBlockerRecoveryTarget = (
     case 'FRAME_PANEL_MISMATCH':
       return 'layout';
     case 'CHARACTER_REFERENCE_REQUIRED':
+    case 'CHARACTER_REFERENCE_MODEL_INCOMPATIBLE':
       return 'characters';
     case 'PAGE_GENERATING':
     case 'ACTIVE_GENERATION_JOB':
@@ -129,6 +132,7 @@ export const pageGenerationBlockerRecoveryTarget = (
     case 'PANEL_ORDER_INVALID':
     case 'DIALOGUE_SPEAKER_REQUIRED':
     case 'DIALOGUE_SPEAKER_NOT_IN_PANEL':
+    case 'DIALOGUE_SPEAKER_INVALID':
     case 'ASSIGNED_ENTITY_INVALID':
     case 'PAGE_REOPEN_REQUIRED':
     case 'REFERENCE_IMAGE_LIMIT_EXCEEDED':

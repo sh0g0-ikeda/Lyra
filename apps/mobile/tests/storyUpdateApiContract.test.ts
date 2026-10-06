@@ -62,7 +62,7 @@ describe('story update API contract', () => {
     vi.unstubAllGlobals();
   });
 
-  it('episode保存ではclient内部の更新時刻を現行backendへ送らない', async () => {
+  it('episode保存では更新時刻をCAS条件としてbackendへ送る', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(updatedEpisode), {
         headers: { 'Content-Type': 'application/json' },
@@ -82,6 +82,7 @@ describe('story update API contract', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      expected_updated_at: '2026-08-01T12:00:00.000Z',
       estimated_pages: 8,
       story_full_draft: '保存後の本文',
       story_input_mode: 'full',
@@ -106,7 +107,7 @@ describe('story update API contract', () => {
         title: updatedChapter.title
       })
     }
-  ])('$label保存でもclient内部の更新時刻を現行backendへ送らない', async ({ response, run }) => {
+  ])('$label保存でも更新時刻をCAS条件としてbackendへ送る', async ({ response, run }) => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(response), {
         headers: { 'Content-Type': 'application/json' },
@@ -120,6 +121,7 @@ describe('story update API contract', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      expected_updated_at: '2026-08-01T12:00:00.000Z',
       title: response.title
     });
   });

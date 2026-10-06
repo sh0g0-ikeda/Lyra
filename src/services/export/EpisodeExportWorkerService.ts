@@ -1,3 +1,4 @@
+import { assertImageDeliveryAllowed } from '../../domain/generation/ImageAccessPolicy.js';
 import { randomUUID } from 'node:crypto';
 import {
   EPISODE_EXPORT_MAX_ARTIFACT_BYTES,
@@ -146,6 +147,7 @@ export class EpisodeExportWorkerService {
     job: EpisodeExportJob,
     leaseToken: string,
   ): Promise<EpisodeExportArtifactPage[]> {
+    if (!(await this.repository.isSourceSnapshotCurrent(job))) throw permanentSourceFailure();
     const pages: EpisodeExportArtifactPage[] = [];
     let totalSourceBytes = 0;
     for (let index = 0; index < job.pageSnapshot.length; index += 1) {
@@ -155,6 +157,7 @@ export class EpisodeExportWorkerService {
       }
       await this.heartbeat(job.id, leaseToken);
       try {
+        assertImageDeliveryAllowed(snapshot, 'authorized_web');
         ensurePageImageKeyForPage(
           snapshot.s3Key,
           snapshot.pageId,
@@ -195,6 +198,7 @@ export class EpisodeExportWorkerService {
         progressPercent(5, 55, index + 1, job.pageSnapshot.length),
       );
     }
+    if (!(await this.repository.isSourceSnapshotCurrent(job))) throw permanentSourceFailure();
     return pages;
   }
 

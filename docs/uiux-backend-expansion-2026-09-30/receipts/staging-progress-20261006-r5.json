@@ -1,0 +1,102 @@
+{
+  "schema": "lyra.staging-progress-20261006-r5",
+  "recordedAt": "2026-10-06T07:35:53.762Z",
+  "sourceFixCommit": "ebb5fcfa7f1f3fd728217a14b6a36ccebc70cee7",
+  "ciFixCommit": "1db1dcfb2b9dd31526d009e04c63ceed9a77df23",
+  "finalLocal": {
+    "postgres18": {
+      "vitestFullPassed": 3583,
+      "subsequentGuardRegressionsPassed": 50,
+      "bunFullPassed": 3588,
+      "failures": 0
+    },
+    "postgres16": {
+      "vitestFullPassed": 3588,
+      "bunFullPassed": 3588,
+      "failures": 0
+    },
+    "backendBuild": "PASSED",
+    "backendBuildLogSha256": "f876ec7553e281fa587d8701697920d525b114d9d39b68dbbc592bcfec6b09ce",
+    "migration": "PASSED",
+    "invariants": {
+      "status": "PASSED",
+      "checkedCount": 71,
+      "violations": 0
+    },
+    "lineage": "PASSED",
+    "apiInventory": {
+      "status": "PASSED",
+      "endpoints": 151
+    },
+    "mobileGeneratedContract": "PASSED",
+    "rawRunReceipts": [
+      {
+        "mode": "pg18-bun",
+        "finishedAt": "2026-10-06T07:17:30.987Z",
+        "unchangedSource": true,
+        "rawLogSha256": "1ca7a32a6b60db36b3513a50b895267001216f2e66283251d6e34a86b8b6038e"
+      },
+      {
+        "mode": "pg16-vitest",
+        "finishedAt": "2026-10-06T07:21:41.757Z",
+        "unchangedSource": true,
+        "rawLogSha256": "f2372af789cdb743c1479680ee6421182f04ea312598fa52204f7f0ad9684a13"
+      },
+      {
+        "mode": "pg16-bun",
+        "finishedAt": "2026-10-06T07:25:54.249Z",
+        "unchangedSource": true,
+        "rawLogSha256": "9f1380b0a4380f0777dd1d360a61334cbfb59a8a7f287befd912280315986578"
+      }
+    ],
+    "finalGateReceiptSha256": "d2595e5d59c4cff58d74cabbd6c840d2093a019fc1f6e785d2f692fd1be16ece",
+    "scope": "synthetic owned loopback databases only; representative production-copy acceptance is not inferred"
+  },
+  "frontend": {
+    "mobileWebAndApiContractUnchangedFrom": "3b328df2e9e173daa7442c7342ff983d5ad311b9",
+    "newFrontendTestExecution": false,
+    "physicalAndroid": "NOT_RUN",
+    "physicalIos": "NOT_RUN"
+  },
+  "publicCi": {
+    "lastPublishedCommit": "9e3b4a5afbfaa368a506c8a0f97c3a1833fc128c",
+    "backend": "FAILED",
+    "mobile": "PASSED",
+    "newFixCi": "NOT_RUN"
+  },
+  "iamRequest15": {
+    "status": "CREATED_AND_READBACK_VERIFIED",
+    "receiptSha256": "eec8b04742a85fad974755756c89f6f7459233d68ae9a62eb8eb5063311bd1c9",
+    "newManagedPolicies": 2,
+    "newRoles": 1,
+    "existingResourceMutations": 0,
+    "dbConnections": 0,
+    "secretValueReads": 0,
+    "executionLogPositive": "FAILED_UNRESOLVED",
+    "drainDeployment": "BLOCKED"
+  },
+  "m2": {
+    "restoreAndManagedSecretMetadata": "PASSED",
+    "representativeBaseline": "NOT_RUN",
+    "migration": "NOT_RUN",
+    "oldWriterAcceptance": "NOT_RUN",
+    "rollback": "NOT_RUN"
+  },
+  "sourceRequirements": {
+    "existingV3Gate": "DEFAULT_OFF",
+    "literalGlobalTransport": "LOCAL_PASSED",
+    "real15PageSemanticAcceptance": "NOT_PASSED",
+    "approvedProviderHttpBudgetConsumed": 3,
+    "furtherHttpCalls": 0
+  },
+  "preservedWork": {
+    "checkedAt": "2026-10-06T07:33:35.245Z",
+    "originalHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "baselineDirtyPaths": 28,
+    "changedBaselinePaths": 0
+  },
+  "productionReady": false,
+  "productionChanges": 0,
+  "mainMerges": 0,
+  "storeSubmissions": 0
+}

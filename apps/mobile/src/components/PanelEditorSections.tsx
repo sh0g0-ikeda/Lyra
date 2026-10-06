@@ -1,11 +1,25 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { ChevronDown, ChevronUp } from 'lucide-react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  AccessibilityInfo,
+  findNodeHandle,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View
+} from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, spacing, textStyles } from '@/constants/theme';
+import { ChevronRight } from 'lucide-react-native';
+
+import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import type { UiLanguage } from '@/domain/types';
 import type { ComponentTranslationKey } from '@/lib/i18nComponentMessages';
 import { t } from '@/lib/i18n';
+import { beginConfirmationPresentation } from '@/lib/confirmationPresentation';
 
 interface PanelEditorSectionContent {
   characters: React.ReactNode;
@@ -16,7 +30,9 @@ interface PanelEditorSectionContent {
 }
 
 interface PanelEditorSectionsProps {
+  disabled?: boolean;
   language: UiLanguage;
+  panelId: string | null;
   sections: PanelEditorSectionContent;
 }
 
@@ -28,110 +44,216 @@ interface SectionDefinition {
 }
 
 const definitions: readonly SectionDefinition[] = [
-  {
-    key: 'situationAndBackground',
-    labelKey: 'component.panelEditorSections.situationAndBackground'
-  },
-  {
-    key: 'compositionAndCamera',
-    labelKey: 'component.panelEditorSections.compositionAndCamera'
-  },
-  {
-    key: 'characters',
-    labelKey: 'component.panelEditorSections.characters'
-  },
-  {
-    key: 'dialogue',
-    labelKey: 'component.panelEditorSections.dialogue'
-  },
-  {
-    key: 'effectsAndNotes',
-    labelKey: 'component.panelEditorSections.effectsAndNotes'
-  }
+  { key: 'situationAndBackground', labelKey: 'component.panelEditorSections.situationAndBackground' },
+  { key: 'compositionAndCamera', labelKey: 'component.panelEditorSections.compositionAndCamera' },
+  { key: 'characters', labelKey: 'component.panelEditorSections.characters' },
+  { key: 'dialogue', labelKey: 'component.panelEditorSections.dialogue' },
+  { key: 'effectsAndNotes', labelKey: 'component.panelEditorSections.effectsAndNotes' }
 ];
 
+// Keep drafts owned by PagesScreen; closing a scoped dialog never saves or discards them.
+// A panel/context change or an operation lock closes the editor before another target renders.
 export function PanelEditorSections({
+  disabled = false,
   language,
+  panelId,
   sections
 }: PanelEditorSectionsProps): React.JSX.Element {
-  const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<PanelEditorSectionKey>>(
-    () => new Set<PanelEditorSectionKey>(['situationAndBackground'])
-  );
+  const [activeDialog, setActiveDialog] = useState<{
+    key: PanelEditorSectionKey;
+    panelId: string | null;
+  } | null>(null);
+  const triggerRefs = useRef(new Map<PanelEditorSectionKey, View | null>());
+  const restoreFocusRef = useRef<PanelEditorSectionKey | null>(null);
+  const headerRef = useRef<View | null>(null);
+  const previouslyVisibleRef = useRef(false);
 
-  const toggle = (key: PanelEditorSectionKey): void => {
-    setExpandedKeys((current) => {
-      const next = new Set(current);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
+  const visible = activeDialog !== null && activeDialog.panelId === panelId && !disabled;
+
+  useEffect(() => visible ? beginConfirmationPresentation() : undefined, [visible]);
+
+  if (activeDialog !== null && (disabled || activeDialog.panelId !== panelId)) {
+    setActiveDialog(null);
+  }
+
+  const restoreTriggerFocus = useCallback((): void => {
+    if (restoreFocusRef.current === null) {
+      return;
+    }
+    const triggerNode = findNodeHandle(triggerRefs.current.get(restoreFocusRef.current) ?? null);
+    if (triggerNode !== null) {
+      AccessibilityInfo.setAccessibilityFocus(triggerNode);
+    }
+    restoreFocusRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!visible && previouslyVisibleRef.current && Platform.OS === 'android') {
+      restoreTriggerFocus();
+    }
+    previouslyVisibleRef.current = visible;
+  }, [restoreTriggerFocus, visible]);
+
+  const close = (): void => {
+    if (activeDialog !== null) {
+      restoreFocusRef.current = activeDialog.key;
+    }
+    setActiveDialog(null);
   };
+
+  const open = (key: PanelEditorSectionKey): void => {
+    if (disabled) {
+      return;
+    }
+    restoreFocusRef.current = null;
+    setActiveDialog({ key, panelId });
+  };
+
+  const focusHeader = (): void => {
+    const headerNode = findNodeHandle(headerRef.current);
+    if (headerNode !== null) {
+      AccessibilityInfo.setAccessibilityFocus(headerNode);
+    }
+  };
+
+  const activeDefinition = activeDialog === null
+    ? null
+    : definitions.find((definition) => definition.key === activeDialog.key) ?? null;
+  const activeLabel = activeDefinition === null ? '' : t(language, activeDefinition.labelKey);
 
   return (
     <View style={styles.root}>
-      <Text style={styles.guidance}>
-        {t(language, "generated.components.PanelEditorSections.you.do.not.need.to.fill.every.blank.fiel.b83d95c2")}
-      </Text>
       {definitions.map((definition) => {
-        const expanded = expandedKeys.has(definition.key);
         const label = t(language, definition.labelKey);
         return (
-          <View key={definition.key} style={styles.section}>
-            <Pressable
-              accessibilityLabel={t(
-                language,
-                expanded ? 'component.panelEditorSections.collapse' : 'component.panelEditorSections.expand',
-                { label }
-              )}
-              accessibilityRole="button"
-              accessibilityState={{ expanded }}
-              onPress={() => toggle(definition.key)}
-              style={styles.header}
-            >
-              <Text style={styles.title}>{label}</Text>
-              {expanded ? (
-                <ChevronUp color={colors.primary} size={20} strokeWidth={2} />
-              ) : (
-                <ChevronDown color={colors.primary} size={20} strokeWidth={2} />
-              )}
-            </Pressable>
-            {expanded ? <View style={styles.body}>{sections[definition.key]}</View> : null}
-          </View>
+          <Pressable
+            accessibilityLabel={t(language, 'component.panelEditorSections.open', { label })}
+            accessibilityRole="button"
+            accessibilityState={{ disabled }}
+            disabled={disabled}
+            key={definition.key}
+            onPress={() => open(definition.key)}
+            ref={(node: View | null): void => { triggerRefs.current.set(definition.key, node); }}
+            style={styles.trigger}
+          >
+            <Text style={styles.triggerText}>{label}</Text>
+            <ChevronRight color={colors.primary} size={20} strokeWidth={2} />
+          </Pressable>
         );
       })}
+
+      <Modal
+        animationType="slide"
+        backdropColor={colors.canvas}
+        onDismiss={restoreTriggerFocus}
+        onRequestClose={() => close()}
+        onShow={focusHeader}
+        presentationStyle="fullScreen"
+        visible={visible}
+      >
+        {visible && activeDefinition !== null ? (
+          <SafeAreaProvider>
+            <SafeAreaView
+              accessibilityViewIsModal
+              edges={['top', 'right', 'bottom', 'left']}
+              onAccessibilityEscape={() => close()}
+              style={styles.safeArea}
+            >
+              <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardAvoiding}>
+                <View style={styles.header}>
+                  <Text accessibilityRole="header" ref={headerRef} style={styles.headerTitle}>
+                    {activeLabel}
+                  </Text>
+                  <Pressable
+                    accessibilityLabel={t(language, 'component.panelEditorSections.close')}
+                    accessibilityRole="button"
+                    onPress={() => close()}
+                    style={styles.closeButton}
+                  >
+                    <Text style={styles.closeText}>{t(language, 'component.panelEditorSections.close')}</Text>
+                  </Pressable>
+                </View>
+                <ScrollView
+                  contentContainerStyle={styles.content}
+                  indicatorStyle="white"
+                  keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                  style={styles.scroll}
+                >
+                  {sections[activeDefinition.key]}
+                </ScrollView>
+              </KeyboardAvoidingView>
+            </SafeAreaView>
+          </SafeAreaProvider>
+        ) : null}
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  body: {
-    gap: spacing.md,
-    paddingBottom: spacing.md
+  closeButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 44,
+    paddingHorizontal: spacing.sm
   },
-  guidance: {
-    ...textStyles.caption,
-    color: colors.ink
+  closeText: {
+    ...textStyles.body,
+    color: colors.primary,
+    fontWeight: '700'
+  },
+  content: {
+    gap: spacing.md,
+    padding: spacing.md,
+    paddingBottom: spacing.lg
   },
   header: {
     alignItems: 'center',
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    gap: spacing.sm,
-    justifyContent: 'space-between',
-    minHeight: 48,
-    paddingVertical: spacing.sm
+    minHeight: 56,
+    paddingHorizontal: spacing.md
+  },
+  headerTitle: {
+    ...textStyles.sectionTitle,
+    color: colors.inkStrong,
+    flex: 1
+  },
+  keyboardAvoiding: {
+    flex: 1,
+    minHeight: 0
   },
   root: {
-    gap: spacing.xs
+    gap: spacing.sm
   },
-  section: {
-    borderTopColor: colors.border,
-    borderTopWidth: StyleSheet.hairlineWidth
+  safeArea: {
+    backgroundColor: colors.canvas,
+    flex: 1
   },
-  title: {
-    ...textStyles.sectionTitle,
+  scroll: {
+    flex: 1,
+    minHeight: 0
+  },
+  trigger: {
+    alignItems: 'center',
+    backgroundColor: colors.controlSurface,
+    borderColor: colors.controlBorder,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    flexDirection: 'row',
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  triggerText: {
+    ...textStyles.body,
+    color: colors.inkStrong,
+    fontWeight: '700',
     flex: 1
   }
 });

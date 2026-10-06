@@ -18,13 +18,31 @@ interface CognitoTokenResponse {
 
 export class AuthError extends Error {
   public readonly fatal: boolean;
+  public readonly code: 'ACCOUNT_LINK_REQUIRED' | null;
 
-  public constructor(message: string, fatal = false) {
+  public constructor(message: string, fatal = false, code: 'ACCOUNT_LINK_REQUIRED' | null = null) {
     super(message);
     this.name = 'AuthError';
     this.fatal = fatal;
+    this.code = code;
   }
 }
+
+const ACCOUNT_LINK_REQUIRED_PROVIDER_MESSAGE =
+  'Use the existing sign-in method and link this provider from your account.';
+
+const isAccountLinkRequiredResult = (result: AuthSession.AuthSessionResult): boolean => {
+  if (result.type !== 'error') {
+    return false;
+  }
+  if (result.error?.code === 'state_mismatch') {
+    return false;
+  }
+  return (
+    result.params.error?.trim().toUpperCase() === 'ACCOUNT_LINK_REQUIRED' ||
+    result.params.error_description?.includes(ACCOUNT_LINK_REQUIRED_PROVIDER_MESSAGE) === true
+  );
+};
 
 const normalizeDomain = (domain: string): string => domain.replace(/\/+$/, '');
 
@@ -102,13 +120,17 @@ const refreshAuthTokensOnce = async (tokens: AuthTokens): Promise<AuthTokens> =>
 
 export const refreshAuthTokens = createSingleFlight(refreshAuthTokensOnce);
 
-export const signInWithCognito = async (): Promise<AuthTokens> => {
+interface CognitoSignInOptions { identityProvider?: 'Google'; }
+
+const authorizeWithCognito = async (options: CognitoSignInOptions & { reauthenticate?: boolean } = {}): Promise<AuthTokens> => {
   const request = new AuthSession.AuthRequest({
     clientId: config.cognitoClientId,
     redirectUri: config.cognitoRedirectUri,
     responseType: AuthSession.ResponseType.Code,
     scopes: config.cognitoScopes,
-    usePKCE: true
+    usePKCE: true,
+    ...(options.reauthenticate ? { prompt: AuthSession.Prompt.Login, extraParams: { max_age: '0' } }
+      : options.identityProvider === 'Google' ? { extraParams: { identity_provider: 'Google' } } : {})
   });
 
   const discovery: AuthSession.DiscoveryDocument = {
@@ -118,6 +140,9 @@ export const signInWithCognito = async (): Promise<AuthTokens> => {
 
   const result = await request.promptAsync(discovery);
   if (result.type !== 'success') {
+    if (isAccountLinkRequiredResult(result)) {
+      throw new AuthError('ACCOUNT_LINK_REQUIRED', false, 'ACCOUNT_LINK_REQUIRED');
+    }
     throw new AuthError('Cognito sign-in was cancelled or failed.');
   }
 
@@ -126,10 +151,17 @@ export const signInWithCognito = async (): Promise<AuthTokens> => {
     throw new AuthError('Cognito authorization code is missing.');
   }
 
-  const tokens = await exchangeCodeForTokens(code, request.codeVerifier);
+  return exchangeCodeForTokens(code, request.codeVerifier);
+};
+
+export const signInWithCognito = async (options: CognitoSignInOptions = {}): Promise<AuthTokens> => {
+  const tokens = await authorizeWithCognito(options);
   await saveAuthTokens(tokens);
   return tokens;
 };
+
+// Linking proves recent native ownership without replacing the active session.
+export const reauthenticateWithCognito = (): Promise<AuthTokens> => authorizeWithCognito({ reauthenticate: true });
 
 export const signOutFromCognito = async (): Promise<void> => {
   await clearAuthTokens();

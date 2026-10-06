@@ -1,20 +1,21 @@
+import { useRef } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { BookOpenText, CircleHelp, Images, Settings, UsersRound, type LucideIcon } from 'lucide-react-native';
+import { BookOpenText, CircleHelp, Settings, UsersRound, type LucideIcon } from 'lucide-react-native';
 
 import { colors } from '@/constants/theme';
 import { t } from '@/lib/i18n';
 import { AccountScreen } from '@/screens/AccountScreen';
-import { CharactersScreen } from '@/screens/CharactersScreen';
+import { AssetsScreen } from '@/screens/AssetsScreen';
+import type { MangaCreationStep } from '@/domain/mangaWorkflow';
 import { GuideScreen } from '@/screens/GuideScreen';
-import { PagesScreen } from '@/screens/PagesScreen';
-import { StoryScreen } from '@/screens/StoryScreen';
+import { MangaScreen } from '@/screens/MangaScreen';
 import { useAppState } from '@/state/appState';
 import { useDirtyState } from '@/state/dirtyState';
 
 export type MobileTabParamList = {
-  Story: undefined;
+  Story: { step: MangaCreationStep; requestId: number } | undefined;
   Characters: undefined;
-  Pages: undefined;
   Account: undefined;
   Guide: undefined;
 };
@@ -29,11 +30,14 @@ export function MainTabs(): React.JSX.Element {
   const { hasCapability, language } = useAppState();
   const { hasNavigationBlockingEditors, resolveDirtyEditors } = useDirtyState();
   const canViewWork = hasCapability('view_work');
+  const { bottom } = useSafeAreaInsets();
+  const navigationRequest = useRef(0);
 
   return (
     <Tab.Navigator
       screenListeners={({ navigation, route }) => ({
         tabPress: (event) => {
+          const request = ++navigationRequest.current;
           const navigationState = navigation.getState();
           const activeRoute = navigationState.routes[navigationState.index];
           if (!hasNavigationBlockingEditors || activeRoute?.key === route.key) {
@@ -41,7 +45,8 @@ export function MainTabs(): React.JSX.Element {
           }
           event.preventDefault();
           void resolveDirtyEditors(language).then((canLeave) => {
-            if (canLeave) {
+            if (canLeave && request === navigationRequest.current &&
+                navigation.getState().routes[navigation.getState().index]?.key === activeRoute?.key) {
               navigation.navigate(route.name);
             }
           });
@@ -60,8 +65,8 @@ export function MainTabs(): React.JSX.Element {
         tabBarStyle: {
           backgroundColor: 'rgba(8, 8, 8, 0.96)',
           borderTopColor: 'rgba(229, 199, 107, 0.18)',
-          minHeight: 72,
-          paddingBottom: 9,
+          height: 72 + bottom,
+          paddingBottom: 9 + bottom,
           paddingTop: 7
         },
         tabBarItemStyle: {
@@ -72,12 +77,11 @@ export function MainTabs(): React.JSX.Element {
     >
       {canViewWork ? (
         <>
-          <Tab.Screen component={StoryScreen} name="Story" options={{ title: t(language, 'shared.navigation.story'), tabBarButtonTestID: 'tab-story', tabBarIcon: ({ color }) => tabIcon(BookOpenText, color) }} />
-          <Tab.Screen component={CharactersScreen} name="Characters" options={{ title: t(language, 'shared.navigation.characters'), tabBarButtonTestID: 'tab-characters', tabBarIcon: ({ color }) => tabIcon(UsersRound, color) }} />
-          <Tab.Screen component={PagesScreen} name="Pages" options={{ title: t(language, 'pages'), tabBarButtonTestID: 'tab-pages', tabBarIcon: ({ color }) => tabIcon(Images, color) }} />
+          <Tab.Screen component={MangaScreen} name="Story" options={{ title: t(language, 'navigation.manga'), tabBarButtonTestID: 'tab-manga', tabBarIcon: ({ color }) => tabIcon(BookOpenText, color) }} />
+          <Tab.Screen component={AssetsScreen} name="Characters" options={{ title: t(language, 'navigation.assets'), tabBarButtonTestID: 'tab-assets', tabBarIcon: ({ color }) => tabIcon(UsersRound, color) }} />
         </>
       ) : null}
-      <Tab.Screen component={AccountScreen} name="Account" options={{ title: t(language, 'shared.navigation.account'), tabBarButtonTestID: 'tab-account', tabBarIcon: ({ color }) => tabIcon(Settings, color) }} />
+      <Tab.Screen component={AccountScreen} name="Account" options={{ title: t(language, 'navigation.myPage'), tabBarButtonTestID: 'tab-account', tabBarIcon: ({ color }) => tabIcon(Settings, color) }} />
       <Tab.Screen component={GuideScreen} name="Guide" options={{ title: t(language, 'shared.navigation.guide'), tabBarButtonTestID: 'tab-guide', tabBarIcon: ({ color }) => tabIcon(CircleHelp, color) }} />
     </Tab.Navigator>
   );

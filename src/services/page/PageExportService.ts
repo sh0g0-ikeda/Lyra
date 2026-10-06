@@ -1,3 +1,4 @@
+import { assertImageDeliveryAllowed, type ImageDeliveryAudience } from '../../domain/generation/ImageAccessPolicy.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
@@ -10,7 +11,7 @@ export interface ExportedPageImage {
 }
 
 export interface PageExportServicePort {
-  exportGeneratedImage(userId: string, pageId: string, organizationId?: string | null): Promise<ExportedPageImage>;
+  exportGeneratedImage(userId: string, pageId: string, organizationId?: string | null, audience?: ImageDeliveryAudience): Promise<ExportedPageImage>;
 }
 
 export class PageExportService implements PageExportServicePort {
@@ -24,6 +25,7 @@ export class PageExportService implements PageExportServicePort {
     userId: string,
     pageId: string,
     organizationId: string | null = null,
+    audience: ImageDeliveryAudience = 'mobile',
   ): Promise<ExportedPageImage> {
     const page = await this.pageRepository.findPageByIdAndUserId(pageId, userId, organizationId);
     if (page === null) {
@@ -34,6 +36,7 @@ export class PageExportService implements PageExportServicePort {
       throw new ValidationError('Page does not have an exportable generated image');
     }
 
+    assertImageDeliveryAllowed(page.generatedImage, audience);
     if (organizationId === null) {
       ensureOwnedPageImageKey(page.generatedImage.s3Key, userId, pageId, 'generated page image key');
     } else {

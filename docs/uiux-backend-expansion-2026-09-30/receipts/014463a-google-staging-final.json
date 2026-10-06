@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-05T17:24:02.026Z",
+  "sourceCommit": "014463a1becc38b0d910f494c53c06bfdfdd2dfa",
+  "mobileSourceCommit": "6daa8bafd7b530bd89adc2625417422530028df0",
+  "runtime": {
+    "phase": "runtime-verified",
+    "onlyStaging": true,
+    "sourceCommit": "014463a1becc38b0d910f494c53c06bfdfdd2dfa",
+    "baseDigest": "sha256:adcf8b9b5c5ed1a29541b5de82511806cc6ddab344968fc65e379f96f8ccc8a8",
+    "previousRuntimeDigest": "sha256:30570be3c364fc74d31c5f8d11033c0563c4b4c349ca229b1e4badf07efd5244",
+    "image": "452284481392.dkr.ecr.ap-northeast-1.amazonaws.com/lyra-staging-20261003-api@sha256:115221bde22f9ce2ec2da06852dbf6caf4e3058cee61f7ce42aded163d43eec9",
+    "publishReceiptSha256": "23ee836fa2baf3f4aaa8e5b7759a59981077afe363c678003fa9a65df2b26da9",
+    "createFile": "oci-runtime-image-google-r1-create-2026-10-05T17-00-35-432Z.json",
+    "createReceiptSha256": "c9dbb0b05763fc27f771f2dba91859681e0f339854781ec01a417ebb5f3a1593",
+    "operationFile": "oci-runtime-image-google-r1-execute-intent.json",
+    "operationReceiptSha256": "6bb8633ed02dc163abf5af9a3fe1cb0a3eda707c261f8331f51de67f3d35727d",
+    "stackStatus": "UPDATE_COMPLETE",
+    "taskDefinitionFingerprints": {
+      "ApiTaskDefinition": "6067418c2605325c16b3995790a70ea8a675efe4c3e09f55a3a659eb07d11c12",
+      "DeletionTaskDefinition": "d32c475e982f01138d1fd44b9bb06f12f79ebec555334d136141304021786bb3",
+      "ExportTaskDefinition": "6834de5f175309369fcfe564cf0c6709e5138c5b0f1bec9cd172de4f3b4d7cad",
+      "GenerationTaskDefinition": "eec1394f2d1b978ffad4de64c516026d39c2257cb47189c63bf104c018680eb9",
+      "MigrationTaskDefinition": "e391b5a98bbe44c44ea60cc27edada6ea46bb34ae29187eb4c23b0527a3998f3"
+    },
+    "api": {
+      "desired": 1,
+      "running": 1,
+      "pending": 0,
+      "imageDigest": "sha256:115221bde22f9ce2ec2da06852dbf6caf4e3058cee61f7ce42aded163d43eec9"
+    },
+    "workersIdle": true,
+    "health": {
+      "healthz": 200,
+      "readyz": 200
+    },
+    "iamChanges": 0,
+    "lambdaChanges": 0,
+    "apiUrl": "https://d2dw83tkmziksr.cloudfront.net/",
+    "migrationTaskExecuted": false,
+    "nonImageParameterChanges": 0,
+    "databaseChanges": 0
+  },
+  "localGates": {
+    "backendVitest": 3568,
+    "backendBun": 3568,
+    "mobile": 1053,
+    "webSmoke": 83,
+    "mockedGoogleChrome": 3,
+    "pg16InvariantViolations": 0,
+    "pg18InvariantViolations": 0,
+    "representativeProductionDatabase": false,
+    "fullPhysicalDependencyIntegrityRevalidated": false
+  },
+  "liveWeb": {
+    "emailLoginLogoutCallbackPassed": true,
+    "personalWorks": 4,
+    "personalCreditsBeforeAfter": [
+      9,
+      9
+    ],
+    "organizationWorks": 0,
+    "organizationCredits": 0,
+    "confirmedCharacterReferenceRendered": true,
+    "savedMonochromePageRendered": true,
+    "colorAndMonochromeControlsEnabled": true,
+    "freeGenerationControlsDisabled": true,
+    "responsiveWebNavigation": [
+      "story",
+      "entities",
+      "pages",
+      "account",
+      "guide"
+    ],
+    "smallWebViewport": 390,
+    "smallWebDocumentWidth": 375,
+    "temporaryViewportReset": true,
+    "saveGeneratePurchaseDeleteOperations": 0,
+    "realGoogleAccepted": false,
+    "nativeDeviceAccepted": false,
+    "notes": [
+      "Initial DOM proof used a whitespace-sensitive credit substring; normalized DOM proof and screenshot confirm 9.",
+      "Cognito AX batch encountered a detached input; semantic locators completed login. These automation errors are retained and are not product acceptance failures."
+    ]
+  },
+  "apk": {
+    "buildId": "6424d29c-8fd9-48d4-b4ae-398e4c521702",
+    "buildUrl": "https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/6424d29c-8fd9-48d4-b4ae-398e4c521702",
+    "sourceCommit": "6daa8bafd7b530bd89adc2625417422530028df0",
+    "sha256": "0cb2deec7bf6f603f41819769863045b56444424c4ae3b9e4762f25da601398e",
+    "bytes": 107225940,
+    "cryptographicSignatureVerified": true,
+    "verifiedUsingV2": true,
+    "signerCertificateSha256": "001efdc75467ab92e5372080e647d0aec61996a4fb0ecfa50b89e35095105c5f",
+    "installationPerformed": false
+  },
+  "productionReady": false,
+  "productionChanged": false,
+  "mainMerged": false,
+  "storeSubmitted": false,
+  "publicGitHubUpdated": false,
+  "blockers": [
+    "Google branding final creation previously refused; 2 OAuth clients/secrets, IdP/trigger wiring and real acceptance remain incomplete.",
+    "Legacy runtime admission remains refused. Old deletion HTTP must bypass candidate provisioning through a separately retained old owner; actual owner/deployment and mixed-writer rollback on representative data remain unproven.",
+    "15-page semantic quality FAIL and its previously refused real-provider retry remain unresolved.",
+    "Real billing/refund/S3 acceptance, physical old/new APK and iOS acceptance, expiry/shutdown fixed costs remain unverified."
+  ],
+  "evidence": [
+    {
+      "file": "staging-live/oci-runtime-image-google-r1-status-2026-10-05T17-10-53-708Z.json",
+      "sha256": "29e40fef84a3069c59367d9d4e66853b9aab9b7af99b5d8bbc5afb930b0c25c7"
+    },
+    {
+      "file": "google-activation-r1/final-local-evidence.json",
+      "sha256": "efc455fecdf1ffdf3a0a42a67afee50e511bd48cca5adebaad81562ca9189837"
+    },
+    {
+      "file": "google-activation-r1/stage-api-readonly-receipt.json",
+      "sha256": "cb42af4df72c0c67cafa9039fb7d021f3e096eb6ef8fab4f7c6f51ccf5845c62"
+    },
+    {
+      "file": "google-activation-r1/stage-web-dom-proof.json",
+      "sha256": "bc5a0573d9f13f14e6295a4924fd65fd959b0e490e34235ef62e5269f0984d35"
+    },
+    {
+      "file": "google-activation-r1/stage-web-credit-proof.json",
+      "sha256": "418356b429c78ad6f3ed3366ac3ece7a109fe521489f48d5aebb8a57d5529979"
+    },
+    {
+      "file": "google-activation-r1/stage-latest-email-login.png",
+      "sha256": "277a68c3e65d8ea1eaea203866620f30c7fa06ed5493123ab07ff93d7a8ad242"
+    },
+    {
+      "file": "google-activation-r1/stage-latest-generation-controls.png",
+      "sha256": "8d62130e6be7d89d89dbd618ebb0f0aaf9064298223c1f3b590c821059708a14"
+    },
+    {
+      "file": "google-activation-r1/apk-cryptographic-verification/receipt.txt",
+      "sha256": "38145de243889485d4d459b2981e2461956567c6dc20157dc5f9334f28e24eb2"
+    },
+    {
+      "file": "google-activation-r1/apk-cryptographic-verification/VerifyApk.java",
+      "sha256": "c10fa2c8c6fef04a430dec6902e1a7082f21f6153d33b28d11592baaeefb6c62"
+    }
+  ]
+}

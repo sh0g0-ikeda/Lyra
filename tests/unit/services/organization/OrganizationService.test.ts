@@ -663,6 +663,30 @@ describe('OrganizationService', () => {
     expect(repository.creditLedger.filter((entry) => entry.type === 'refund')).toHaveLength(1);
   });
 
+  it('旧triggerが月次分を購入枠へ全額返した法人jobを再返還しても台帳を増やさない', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.balance = buildBalance({monthlyCredits:0,purchasedCredits:8});
+    repository.creditLedger.push(buildCreditLedgerEntry({type:'consume',amount:-5,monthlyDelta:-3,purchasedDelta:-2,monthlyAfter:0,purchasedAfter:3,jobId:'job-expired'}),buildCreditLedgerEntry({type:'refund',amount:5,monthlyDelta:0,purchasedDelta:5,monthlyAfter:0,purchasedAfter:8,jobId:'job-expired'}));
+    const before=repository.creditLedger.length;
+    const balance=await buildService(repository).refundCredits({organizationId:'org-1',actorUserId:'editor-user',amount:5,description:'retry after old trigger',jobId:'job-expired'});
+    expect(balance).toMatchObject({monthlyCredits:0,purchasedCredits:8});
+    expect(repository.creditLedger).toHaveLength(before);
+    expect(repository.insertedUsageEvents).toEqual([]);
+  });
+
+  it('法人の期限切れ月次の部分返還を再開しても購入枠へ合計消費額だけ戻る', async () => {
+    const repository=new InMemoryOrganizationRepository();
+    repository.balance=buildBalance({monthlyCredits:7,purchasedCredits:3,monthlyExpiresAt:new Date(0)});
+    repository.creditLedger.push(buildCreditLedgerEntry({type:'consume',amount:-5,monthlyDelta:-3,purchasedDelta:-2,monthlyAfter:7,purchasedAfter:3,jobId:'partial-expired'}));
+    const service=buildService(repository);
+    await service.refundCredits({organizationId:'org-1',actorUserId:'editor-user',amount:1,description:'partial',jobId:'partial-expired'});
+    const input={organizationId:'org-1',actorUserId:'editor-user',amount:5,description:'remaining retry',jobId:'partial-expired'};
+    expect(await service.refundCredits(input)).toMatchObject({monthlyCredits:0,purchasedCredits:8});
+    expect(await service.refundCredits(input)).toMatchObject({monthlyCredits:0,purchasedCredits:8});
+    expect(repository.creditLedger.filter(entry=>entry.type==='refund').map(entry=>[entry.amount,entry.monthlyDelta,entry.purchasedDelta])).toEqual([[1,0,1],[4,0,4]]);
+    expect(repository.insertedAuditLogs.filter(log=>log.action==='credit.refunded').map(log=>[log.metadata?.amount,log.metadata?.monthly_delta,log.metadata?.purchased_delta])).toEqual([[1,0,1],[4,0,4]]);
+  });
+
   it('法人月額クレジットは更新時に蓄積せず規定値へリセットする', async () => {
     const repository = new InMemoryOrganizationRepository();
     repository.balance = buildBalance({ monthlyCredits: 240, purchasedCredits: 12 });

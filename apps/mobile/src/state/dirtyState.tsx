@@ -23,7 +23,7 @@ interface DirtyStateContextValue {
   hasDirtyEditors: boolean;
   hasNavigationBlockingEditors: boolean;
   register: (registration: DirtyEditorRegistration) => () => void;
-  resolveDirtyEditors: (language: UiLanguage) => Promise<boolean>;
+  resolveDirtyEditors: (language: UiLanguage, options?: { includeNonBlocking?: boolean }) => Promise<boolean>;
   saveDirtyEditors: () => Promise<boolean>;
 }
 
@@ -120,16 +120,16 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     });
   }, [removeResolvedRegistrations]);
 
-  const resolveDirtyEditors = useCallback((language: UiLanguage): Promise<boolean> => {
+  const resolveDirtyEditors = useCallback(function resolve(language: UiLanguage, options?: { includeNonBlocking?: boolean }): Promise<boolean> {
     if (registrationsRef.current.size === 0) {
       return Promise.resolve(true);
     }
     if (resolutionRef.current !== null) {
+      if (options?.includeNonBlocking) return resolutionRef.current.then((allowed) => allowed ? resolve(language, options) : false);
       return resolutionRef.current;
     }
-    const registrations = navigationBlockingRegistrations([
-      ...registrationsRef.current.values()
-    ]);
+    const allRegistrations = [...registrationsRef.current.values()];
+    const registrations = options?.includeNonBlocking ? allRegistrations : navigationBlockingRegistrations(allRegistrations);
     if (registrations.length === 0) {
       return Promise.resolve(true);
     }

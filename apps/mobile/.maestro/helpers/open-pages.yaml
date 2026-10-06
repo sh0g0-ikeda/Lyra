@@ -1,4 +1,21 @@
+# A fixture episode must already be selected, or created by the current flow.
+- runFlow:
+    file: open-manga.yaml
+- runFlow:
+    when:
+      visible:
+        id: manga-resume
+    commands:
+      - tapOn:
+          id: manga-resume
+- runFlow:
+    when:
+      visible:
+        id: manga-start-story
+    commands:
+      - tapOn:
+          id: manga-start-story
 - tapOn:
-    id: tab-pages
+    id: manga-step-pages
 - assertVisible:
-    id: tab-pages
+    id: page-step-design

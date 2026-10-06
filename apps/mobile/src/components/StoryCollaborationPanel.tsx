@@ -70,6 +70,7 @@ export function StoryCollaborationPanel({
           label={t(language, 'component.storyCollaboration.request')}
           loading={loading}
           onPress={onRequest}
+        variant="secondary"
         />
         {loading ? (
           <PrimaryButton
@@ -122,7 +123,7 @@ const styles = StyleSheet.create({
   },
   description: {
     ...textStyles.caption,
-    color: colors.mutedSoft
+    color: colors.muted
   },
   proposal: {
     borderTopColor: colors.border,

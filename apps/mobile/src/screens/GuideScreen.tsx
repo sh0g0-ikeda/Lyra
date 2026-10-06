@@ -2,19 +2,23 @@ import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { MangaTutorial } from '@/components/MangaTutorial';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import { t } from '@/lib/i18n';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
+import { creationRouteParams } from '@/navigation/creationRoute';
 import type { MobileTabParamList } from '@/navigation/tabs';
 import { useAppState } from '@/state/appState';
+import { useDirtyState } from '@/state/dirtyState';
+import type { MangaCreationStep } from '@/domain/mangaWorkflow';
 
 type TutorialGroup = {
   id: string;
   titleKey: ScreenTranslationKey;
-  target: keyof MobileTabParamList;
+  target: MangaCreationStep;
   ctaKey: ScreenTranslationKey;
   stepKeys: ScreenTranslationKey[];
 };
@@ -23,7 +27,7 @@ const tutorialGroups: TutorialGroup[] = [
   {
     id: 'story',
     titleKey: 'screen.guide.story.title',
-    target: 'Story',
+    target: 'story',
     ctaKey: 'screen.guide.story.cta',
     stepKeys: [
       'screen.guide.story.step1',
@@ -37,7 +41,7 @@ const tutorialGroups: TutorialGroup[] = [
   {
     id: 'characters',
     titleKey: 'screen.guide.characters.title',
-    target: 'Characters',
+    target: 'characters',
     ctaKey: 'screen.guide.characters.cta',
     stepKeys: [
       'screen.guide.characters.step1',
@@ -50,7 +54,7 @@ const tutorialGroups: TutorialGroup[] = [
   {
     id: 'pages',
     titleKey: 'screen.guide.pages.title',
-    target: 'Pages',
+    target: 'pages',
     ctaKey: 'screen.guide.pages.cta',
     stepKeys: [
       'screen.guide.pages.step1',
@@ -66,7 +70,9 @@ const tutorialGroups: TutorialGroup[] = [
 ];
 
 export function GuideScreen(): React.JSX.Element {
-  const { language } = useAppState();
+  const { hasCapability, language } = useAppState();
+  const canViewWork = hasCapability('view_work');
+  const { resolveDirtyEditors } = useDirtyState();
   const navigation = useNavigation<BottomTabNavigationProp<MobileTabParamList>>();
 
   return (
@@ -74,6 +80,7 @@ export function GuideScreen(): React.JSX.Element {
       subtitle={t(language, "generated.screens.GuideScreen.a.focused.first.run.guide.for.the.main.w.3d898886")}
       title={t(language, 'tutorial')}
     >
+      <MangaTutorial />
       {tutorialGroups.map((group) => (
         <Section key={group.id} title={t(language, group.titleKey)} tone="highlight">
           {group.stepKeys.map((stepKey, index) => (
@@ -82,7 +89,12 @@ export function GuideScreen(): React.JSX.Element {
               <Text style={styles.text}>{t(language, stepKey)}</Text>
             </View>
           ))}
-          <PrimaryButton label={t(language, group.ctaKey)} onPress={() => navigation.navigate(group.target)} variant="secondary" />
+          <PrimaryButton disabled={!canViewWork} disabledReason={!canViewWork ? t(language, 'shared.error.workspacePermission') : undefined} label={t(language, group.ctaKey)} onPress={() => {
+            if (!canViewWork) return;
+            void resolveDirtyEditors(language).then((allowed) => {
+              if (allowed) navigation.navigate('Story', creationRouteParams(group.target));
+            });
+          }} variant="secondary" />
         </Section>
       ))}
     </Screen>

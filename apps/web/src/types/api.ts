@@ -56,6 +56,10 @@ export interface EpisodeRecord {
   ending_hook: string | null;
   estimated_pages: number;
   entities_involved: string[];
+  readonly starting_entity_states?: ReadonlyArray<{
+    readonly entity_id: string;
+    readonly state_id: string | null;
+  }>;
   page_skeleton_generated: boolean;
   version: number;
   status: StoryStatus;
@@ -78,6 +82,10 @@ export interface EntityRecord {
 }
 
 export interface EntityReferenceImageRecord {
+  image_model?: string | null;
+  provider_model_id?: string | null;
+  provider?: string | null;
+  mobile_access?: 'available' | 'web_only' | 'unavailable';
   ref_id: string;
   cdn_url?: string | null;
   source: 'upload' | 'generated';
@@ -110,9 +118,21 @@ export interface SceneRecord {
 }
 
 export interface GeneratedImageRecord {
+  image_model?: string | null;
+  provider_model_id?: string | null;
+  provider?: string | null;
+  mobile_access?: 'available' | 'web_only' | 'unavailable';
   cdn_url?: string | null;
   generation_mode: 'standard' | 'thinking' | null;
   generated_at: string | null;
+}
+
+export interface PageGenerationReadinessRecord {
+  ready: boolean;
+  blockers: Array<{ code: string; entity_id: string | null; field: string; action: string; message_key: string }>;
+  warnings: string[];
+  estimated_credit_cost: number;
+  page_revision: string;
 }
 
 export interface PageRecord {
@@ -447,6 +467,7 @@ export interface CurrentUserCreditRecord {
 }
 
 export interface CurrentSessionRecord {
+  capabilities?: { web_image_delivery?: boolean };
   user: CurrentUserRecord;
   personal_credits: CurrentUserCreditRecord | null;
   organizations: CurrentUserOrganizationRecord[];

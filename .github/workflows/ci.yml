@@ -14,6 +14,7 @@ jobs:
       NODE_ENV: test
       DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/lyra_test
       DATABASE_SSL_MODE: disable
+      LYRA_CI_TEST_DATABASE_ADMIN_ALLOWED: 'true'
     services:
       postgres:
         image: postgres:16-alpine
@@ -23,6 +24,19 @@ jobs:
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lyra_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      postgres-production-version:
+        image: postgres:18.3-alpine
+        env:
+          POSTGRES_DB: lyra_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5433:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d lyra_test"
           --health-interval 5s
@@ -51,6 +65,11 @@ jobs:
 
       - name: Run Vitest suite
         run: bun run test
+
+      - name: Run release DB regressions on production PostgreSQL version
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5433/lyra_test
+        run: bun run test tests/integration
 
       - name: Run Bun test entrypoint
         run: bun test
@@ -82,6 +101,9 @@ jobs:
 
   mobile-verify:
     runs-on: ubuntu-latest
+    env:
+      EXPO_NO_TELEMETRY: '1'
+      SENTRY_DISABLE_AUTO_UPLOAD: 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v5

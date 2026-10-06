@@ -98,6 +98,42 @@ function createBackend(): Parameters<typeof createNativeStoreBillingAdapter>[0][
 }
 
 describe('native store billing adapter', () => {
+  it('blocks a subscription already active or scheduled using fresh server entitlement', async () => {
+    for (const entitlement of [{ currentPlan: 'standard' }, { currentPlan: 'premium', scheduledPlan: 'standard' }] as const) {
+      const harness = createSdkHarness(); const backend = createBackend();
+      vi.mocked(backend.getAccountBinding).mockResolvedValue({ appleAppAccountToken: 'apple-account-token', googleObfuscatedAccountId: 'google-account-token', subscriptionPurchaseAllowed: true, ...entitlement });
+      const adapter = createNativeStoreBillingAdapter({ backend, sdk: harness.sdk, products: products.map((product) => product.kind === 'subscription' ? { ...product, planCode: 'standard' as const } : product) });
+      await adapter.connect(); await expect(adapter.purchase('lyra.standard.monthly')).rejects.toMatchObject({ code: 'ALREADY_OWNED' });
+      expect(harness.requestPurchase).not.toHaveBeenCalled();
+    }
+  });
+  it('uses the existing Android subscription token for plan replacement and keeps downgrades deferred', async () => {
+    const harness = createSdkHarness(); const backend = createBackend();
+    harness.sdk.store = 'google';
+    harness.sdk.getActiveSubscriptions = vi.fn().mockResolvedValue([{ productId: 'premium', isActive: true, purchaseTokenAndroid: 'existing-owned-token', transactionDate: 100 }]);
+    vi.mocked(harness.sdk.fetchProducts).mockResolvedValue([{ id: 'standard', title: 'Standard', displayPrice: '$5', type: 'subs' }, { id: 'premium', title: 'Premium', displayPrice: '$10', type: 'subs' }]);
+    vi.mocked(backend.getAccountBinding).mockResolvedValue({ appleAppAccountToken: 'account', googleObfuscatedAccountId: 'account', subscriptionPurchaseAllowed: true, currentPlan: 'premium', scheduledPlan: null });
+    const adapter = createNativeStoreBillingAdapter({ backend, sdk: harness.sdk, products: [{ id: 'standard', kind: 'subscription', planCode: 'standard', title: 'Standard' }, { id: 'premium', kind: 'subscription', planCode: 'premium', title: 'Premium' }] });
+    await adapter.connect(); await adapter.purchase('standard');
+    expect(harness.requestPurchase).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ google: expect.objectContaining({ purchaseToken: 'existing-owned-token', subscriptionProductReplacementParams: { oldProductId: 'premium', replacementMode: 'deferred' } }) }) }));
+    expect(adapter.getState().lastVerified).toBeNull();
+  });
+  it('does not start a fresh Android subscription when the existing replacement token is missing', async () => {
+    const harness = createSdkHarness(); const backend = createBackend(); harness.sdk.store = 'google'; harness.sdk.getActiveSubscriptions = vi.fn().mockResolvedValue([]);
+    vi.mocked(backend.getAccountBinding).mockResolvedValue({ appleAppAccountToken: 'account', googleObfuscatedAccountId: 'account', subscriptionPurchaseAllowed: true, currentPlan: 'premium' });
+    const adapter = createNativeStoreBillingAdapter({ backend, sdk: harness.sdk, products: products.map((product) => product.kind === 'subscription' ? { ...product, planCode: 'standard' as const } : product) });
+    await adapter.connect(); await expect(adapter.purchase('lyra.standard.monthly')).rejects.toMatchObject({ code: 'PRODUCT_UNAVAILABLE' });
+    expect(harness.requestPurchase).not.toHaveBeenCalled();
+  });
+  it('refreshes an empty native catalog without duplicating purchase listeners', async () => {
+    const harness = createSdkHarness(); vi.mocked(harness.sdk.fetchProducts).mockResolvedValue([]);
+    const adapter = createNativeStoreBillingAdapter({ backend: createBackend(), sdk: harness.sdk, products }); await adapter.connect();
+    expect(adapter.getState().products.every((product) => !product.available)).toBe(true);
+    vi.mocked(harness.sdk.fetchProducts).mockResolvedValue([{ id: 'lyra.credits.200', title: '200 credits', displayPrice: '$2.99', type: 'in-app' }]);
+    await adapter.refreshProducts?.(); expect(adapter.getState().products[0].available).toBe(true); expect(harness.sdk.purchaseUpdatedListener).toHaveBeenCalledOnce();
+    vi.mocked(harness.sdk.fetchProducts).mockRejectedValue(new Error('offline')); await adapter.refreshProducts?.();
+    expect(adapter.getState().products.every((product) => !product.available)).toBe(true);
+  });
   it('Android subscriptionのnative offer tokenをpurchase request用に保持する', async () => {
     vi.mocked(ExpoIap.fetchProducts).mockResolvedValueOnce([
       {

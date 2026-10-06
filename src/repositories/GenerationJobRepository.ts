@@ -1,5 +1,6 @@
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { QueryResultRow } from 'pg';
-import type { GenerationJob, GenerationJobType } from '../domain/types/job.js';
+import type { GenerationJob, GenerationJobType, GenerationJobStatus, GenerationJobCreditSettlement } from '../domain/types/job.js';
 import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
 import { ConfigurationError, ConflictError } from '../domain/errors/index.js';
 import type { GenerationJobHistoryCursor } from '../domain/pagination.js';
@@ -10,6 +11,7 @@ import {
   lockMobilePushTokenRegistryForTerminalSettlement,
 } from './PushNotificationOutboxRepository.js';
 import { lockStoryEpisodeAdmission } from './StoryEpisodeAdmissionLock.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 export type { GenerationJob };
 export type { GenerationJobHistoryCursor };
@@ -105,6 +107,8 @@ export interface ListGenerationJobHistoryInput {
   organizationId?: string | null;
   limit: number;
   cursor: GenerationJobHistoryCursor | null;
+  statuses?: readonly GenerationJobStatus[];
+  jobTypes?: readonly GenerationJobType[];
 }
 
 export interface GenerationJobHistoryPage {
@@ -127,6 +131,9 @@ export interface GenerationJobHistoryRepository {
 }
 
 interface GenerationJobRow extends QueryResultRow {
+  charged_credits?: string;
+  refunded_credits?: string;
+  settlement_entries?: string;
   id: string;
   user_id: string;
   organization_id: string | null;
@@ -168,6 +175,13 @@ interface RetryStoryTargetRow extends QueryResultRow {
   params: unknown;
 }
 
+interface RetryAdmissionScopeRow extends QueryResultRow {
+  id: string;
+  user_id: string;
+  organization_id: string | null;
+  status: GenerationJobStatus;
+}
+
 interface GenerationJobHistoryRow extends GenerationJobRow {
   active_rank: number;
 }
@@ -199,7 +213,21 @@ interface CancellationLedgerSummaryRow extends QueryResultRow {
 const DEFAULT_CAPACITY_JOB_TYPES: readonly GenerationJobType[] = [
   'page_generate',
   'entity_generate',
+  'entity_import_analysis',
 ];
+
+// These payloads may be the only durable inventory of saved images. Until a
+// dedicated asset-cleanup workflow releases them, keep the complete job beyond
+// its seven-day expiry. Only missing/null/empty arrays are safe to prune; retain
+// malformed non-null values too, rather than losing a possible checkpoint.
+const NO_RETAINED_IMAGE_CHECKPOINTS_SQL = `
+  COALESCE(result->'input_snapshot'->'references', 'null'::jsonb) IN ('null'::jsonb, '[]'::jsonb)
+  AND COALESCE(result->'retained_input_references', 'null'::jsonb) IN ('null'::jsonb, '[]'::jsonb)
+  AND COALESCE(result->'state_reference_copies', 'null'::jsonb) IN ('null'::jsonb, '[]'::jsonb)
+  AND COALESCE(result->'import_copy_intent', 'null'::jsonb) = 'null'::jsonb
+  AND NOT EXISTS (SELECT 1 FROM state_reference_copy_attempts retained_attempt
+    WHERE retained_attempt.job_id = generation_jobs.id)
+`;
 
 export class PostgresGenerationJobRepository
   implements
@@ -209,22 +237,44 @@ export class PostgresGenerationJobRepository
 {
   private static readonly advisoryLockNamespace = 81_527;
 
-  public constructor(private readonly client: DatabaseClient & Partial<TransactionRunner>) {}
+  public constructor(
+    private readonly client: DatabaseClient & Partial<TransactionRunner>,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  ) {}
 
   public async create(input: CreateGenerationJobInput): Promise<GenerationJob> {
+    return this.createWithAdmission(input);
+  }
+
+  /** Run quoted resource validation inside the existing capacity/target locks. */
+  public async createWithAdmission(
+    input: CreateGenerationJobInput,
+    beforeInsert?: (client: DatabaseClient) => Promise<void>,
+  ): Promise<GenerationJob> {
     const capacityLimits = input.capacityLimits;
     const storyTargetRequired = isStoryEpisodeGenerationJobType(input.jobType);
-    if (capacityLimits !== undefined || storyTargetRequired) {
-      const transactionRunner = capacityLimits === undefined
-        ? this.requireTransactionRunnerForStoryAdmission()
-        : this.requireTransactionRunnerForCapacity();
+    const legacyPersonalFenceRequired =
+      this.schemaProfile === 'legacy_2debe_v1' && (input.organizationId ?? null) === null;
+    if (capacityLimits !== undefined || storyTargetRequired || beforeInsert !== undefined || legacyPersonalFenceRequired) {
+      const transactionRunner = capacityLimits !== undefined
+        ? this.requireTransactionRunnerForCapacity()
+        : storyTargetRequired || beforeInsert !== undefined
+          ? this.requireTransactionRunnerForStoryAdmission()
+          : this.requireTransactionRunnerForLegacyAdmission();
       return transactionRunner.transaction(async (transactionClient) => {
+        if (this.schemaProfile === 'legacy_2debe_v1') {
+          await assertLegacyPersonalWriteAllowed(transactionClient, {
+            userId: input.userId,
+            organizationId: input.organizationId ?? null,
+          });
+        }
         if (capacityLimits !== undefined) {
           const scope = getGenerationCapacityScope(input.userId, input.organizationId ?? null);
           await this.lockGenerationCapacity(transactionClient, scope);
           await this.assertCapacityWithinTransaction(transactionClient, scope, capacityLimits);
         }
         await this.lockStoryTargetForGenerationCreate(transactionClient, input);
+        await beforeInsert?.(transactionClient);
         return this.insertJob(transactionClient, input);
       });
     }
@@ -263,6 +313,11 @@ export class PostgresGenerationJobRepository
     );
 
     return mapGenerationJobRow(result.rows[0]);
+  }
+
+  /** Acquire the existing admission locks before an outer atomic draft write locks its page. */
+  public async lockCapacityForAtomicAdmission(client: DatabaseClient, userId: string, organizationId: string | null): Promise<void> {
+    await this.lockGenerationCapacity(client, getGenerationCapacityScope(userId, organizationId));
   }
 
   private async lockGenerationCapacity(client: DatabaseClient, scope: GenerationCapacityScope): Promise<void> {
@@ -304,9 +359,10 @@ export class PostgresGenerationJobRepository
   ): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
       `
-      SELECT generation_jobs.*
+      SELECT generation_jobs.*, credit_settlement.charged_credits, credit_settlement.refunded_credits, credit_settlement.settlement_entries
       FROM generation_jobs
-      WHERE id = $1
+      ${creditSettlementJoin('generation_jobs')}
+      WHERE generation_jobs.id = $1
         AND (
           ($3::uuid IS NULL
             AND generation_jobs.user_id = $2
@@ -368,6 +424,8 @@ export class PostgresGenerationJobRepository
             )
           )
         )
+        AND (cardinality($7::text[]) = 0 OR generation_jobs.status = ANY($7::text[]))
+        AND (cardinality($8::text[]) = 0 OR generation_jobs.job_type = ANY($8::text[]))
         AND (
           generation_jobs.status IN ('queued', 'processing')
           OR NOT EXISTS (
@@ -378,8 +436,9 @@ export class PostgresGenerationJobRepository
           )
         )
       )
-      SELECT *
+      SELECT visible_jobs.*, credit_settlement.charged_credits, credit_settlement.refunded_credits, credit_settlement.settlement_entries
       FROM visible_jobs
+      ${creditSettlementJoin('visible_jobs')}
       WHERE (
         $3::int IS NULL
         OR active_rank > $3::int
@@ -401,6 +460,8 @@ export class PostgresGenerationJobRepository
         input.cursor?.createdAt ?? null,
         input.cursor?.id ?? null,
         input.limit + 1,
+        [...(input.statuses ?? [])],
+        [...(input.jobTypes ?? [])],
       ],
     );
 
@@ -411,6 +472,7 @@ export class PostgresGenerationJobRepository
       nextCursor:
         result.rows.length > input.limit && lastRow !== undefined
           ? {
+              ...(input.cursor?.format === undefined ? {} : { format: input.cursor.format }),
               activeRank: toGenerationJobHistoryActiveRank(lastRow.active_rank),
               createdAt: lastRow.created_at,
               id: lastRow.id,
@@ -887,7 +949,7 @@ export class PostgresGenerationJobRepository
       SELECT monthly_credits,
              purchased_credits,
              monthly_expires_at,
-             false AS monthly_expired
+             monthly_expires_at IS NOT NULL AND monthly_expires_at <= NOW() AS monthly_expired
       FROM organization_credit_balances
       WHERE organization_id = $1::uuid
       FOR UPDATE
@@ -1008,7 +1070,7 @@ export class PostgresGenerationJobRepository
 
     let monthlyDelta = refund.monthlyDelta;
     let purchasedDelta = refund.purchasedDelta;
-    const monthlyExpired = organizationId === null && lockedBalance.monthly_expired === true;
+    const monthlyExpired = lockedBalance.monthly_expired === true;
     const currentMonthlyCredits = monthlyExpired ? 0 : lockedBalance.monthly_credits;
     if (monthlyExpired && monthlyDelta > 0) {
       purchasedDelta += monthlyDelta;
@@ -1144,6 +1206,7 @@ export class PostgresGenerationJobRepository
         transactionClient,
         failedJob,
         'failed',
+        this.schemaProfile,
       );
       return true;
     });
@@ -1154,10 +1217,23 @@ export class PostgresGenerationJobRepository
     maxRetryCount: number,
     options?: PrepareGenerationJobRetryOptions,
   ): Promise<boolean> {
+    const legacyCandidate = this.schemaProfile === 'legacy_2debe_v1'
+      ? await this.findRetryAdmissionScope(this.client, jobId, false)
+      : null;
+    if (this.schemaProfile === 'legacy_2debe_v1') {
+      if (legacyCandidate === null) return false;
+      if (options !== undefined && !retryScopeMatchesOptions(legacyCandidate, options)) return false;
+    }
     const transactionRunner = options === undefined
       ? this.requireTransactionRunnerForRetry()
       : this.requireTransactionRunnerForCapacity();
     return transactionRunner.transaction(async (transactionClient) => {
+      if (legacyCandidate !== null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, {
+          userId: legacyCandidate.user_id,
+          organizationId: legacyCandidate.organization_id,
+        });
+      }
       if (options !== undefined) {
         const scope = getGenerationCapacityScope(options.userId, options.organizationId ?? null);
         await this.lockGenerationCapacity(transactionClient, scope);
@@ -1174,6 +1250,15 @@ export class PostgresGenerationJobRepository
       );
       if (!retryTargetAvailable) {
         return false;
+      }
+      if (legacyCandidate !== null) {
+        const lockedCandidate = await this.findRetryAdmissionScope(transactionClient, jobId, true);
+        if (lockedCandidate === null || !sameRetryAdmissionScope(legacyCandidate, lockedCandidate)) {
+          return false;
+        }
+        if (options !== undefined && !retryScopeMatchesOptions(lockedCandidate, options)) {
+          return false;
+        }
       }
       return this.prepareRetryWithClient(transactionClient, jobId, maxRetryCount);
     });
@@ -1205,6 +1290,32 @@ export class PostgresGenerationJobRepository
       );
     }
     return this.client;
+  }
+
+  private requireTransactionRunnerForLegacyAdmission(): DatabaseClient & TransactionRunner {
+    if (!isTransactionRunner(this.client)) {
+      throw new ConfigurationError(
+        'Legacy generation admission requires a transaction-capable database client',
+      );
+    }
+    return this.client;
+  }
+
+  private async findRetryAdmissionScope(
+    client: DatabaseClient,
+    jobId: string,
+    lock: boolean,
+  ): Promise<RetryAdmissionScopeRow | null> {
+    const result = await client.query<RetryAdmissionScopeRow>(
+      `
+      SELECT id, user_id, organization_id, status
+      FROM generation_jobs
+      WHERE id = $1::uuid AND status = 'failed'
+      ${lock ? 'FOR UPDATE' : ''}
+      `,
+      [jobId],
+    );
+    return result.rows[0] ?? null;
   }
 
   private async lockStoryTargetForGenerationCreate(
@@ -1435,6 +1546,34 @@ export class PostgresGenerationJobRepository
     jobId: string,
     maxRetryCount: number,
   ): Promise<boolean> {
+    if (this.schemaProfile === 'legacy_2debe_v1') {
+      // Old outboxes are unique per job, not per retry generation. Preserve the
+      // existing notification and its lease instead of applying canonical
+      // delivery invalidation to absent columns or unsupported statuses.
+      const result = await client.query<PreparedRetryRow>(
+        `
+        UPDATE generation_jobs
+        SET status = 'queued',
+            retry_count = retry_count + 1,
+            started_at = NULL,
+            completed_at = NULL,
+            error_message = NULL,
+            openai_request_id = NULL,
+            sqs_message_id = NULL,
+            cancel_requested_at = NULL,
+            cancel_requested_by = NULL,
+            cancelled_at = NULL,
+            commit_started_at = NULL
+        WHERE id = $1
+          AND status = 'failed'
+          AND NOT (params ? 'quote_id')
+          AND retry_count < $2
+        RETURNING id, retry_count
+        `,
+        [jobId, maxRetryCount],
+      );
+      return (result.rowCount ?? 0) > 0;
+    }
     const result = await client.query<PreparedRetryRow>(
       `
       WITH retried_job AS (
@@ -1452,6 +1591,7 @@ export class PostgresGenerationJobRepository
             commit_started_at = NULL
         WHERE id = $1
           AND status = 'failed'
+          AND NOT (params ? 'quote_id')
           AND retry_count < $2
         RETURNING id, retry_count
       ),
@@ -1511,6 +1651,7 @@ export class PostgresGenerationJobRepository
         AND expires_at IS NOT NULL
         AND expires_at < NOW()
         AND status IN ('completed', 'failed', 'cancelled')
+        AND (${NO_RETAINED_IMAGE_CHECKPOINTS_SQL})
       RETURNING id
       `,
       [idsToDelete],
@@ -1533,6 +1674,7 @@ export class PostgresGenerationJobRepository
       WHERE expires_at IS NOT NULL
         AND expires_at < NOW()
         AND status IN ('completed', 'failed', 'cancelled')
+        AND (${NO_RETAINED_IMAGE_CHECKPOINTS_SQL})
       ORDER BY expires_at ASC, created_at ASC
       LIMIT $1
       `,
@@ -1593,6 +1735,24 @@ function getGenerationCapacityScope(userId: string, organizationId: string | nul
   return { userId, organizationId };
 }
 
+function retryScopeMatchesOptions(
+  scope: RetryAdmissionScopeRow,
+  options: PrepareGenerationJobRetryOptions,
+): boolean {
+  return scope.user_id === options.userId
+    && scope.organization_id === (options.organizationId ?? null);
+}
+
+function sameRetryAdmissionScope(
+  initial: RetryAdmissionScopeRow,
+  locked: RetryAdmissionScopeRow,
+): boolean {
+  return initial.id === locked.id
+    && initial.user_id === locked.user_id
+    && initial.organization_id === locked.organization_id
+    && locked.status === 'failed';
+}
+
 function formatGenerationCapacityScopeKey(scope: GenerationCapacityScope): string {
   return scope.organizationId === null
     ? `generation_jobs:user:${scope.userId}`
@@ -1623,6 +1783,7 @@ export function isUniqueViolation(error: unknown): boolean {
 }
 
 function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
+  const creditSettlement = readCreditSettlement(row);
   return {
     id: row.id,
     userId: row.user_id,
@@ -1631,6 +1792,7 @@ function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
     status: row.status,
     generationMode: toPageGenerationMode(row.generation_mode),
     creditCost: row.credit_cost,
+    ...(creditSettlement === undefined ? {} : { creditSettlement }),
     params: toJsonObject(row.params),
     result: row.result === null ? null : toJsonObject(row.result),
     sqsMessageId: row.sqs_message_id,
@@ -1703,11 +1865,16 @@ function calculateCancellationRefund(
     0,
     -Number(row.consumed_purchased_delta ?? '0') - Number(row.refunded_purchased_delta ?? '0'),
   );
-  const amount = Math.min(requestedAmount, remainingMonthly + remainingPurchased);
+  // The old cancellation trigger may refund monthly usage into purchased
+  // credits after expiry. Preserve its settlement before a retry is charged.
+  const unsettledAmount = Math.max(0,
+    Math.abs(Number(row.consumed_amount ?? '0')) - Number(row.refunded_amount ?? '0'));
+  const amount = Math.min(requestedAmount, remainingMonthly + remainingPurchased, unsettledAmount);
   if (amount <= 0) {
     return null;
   }
-  const monthlyDelta = Math.min(remainingMonthly, amount);
+  const monthlyDelta = Number(row.refunded_purchased_delta ?? '0') > 0 && remainingMonthly > 0
+    ? 0 : Math.min(remainingMonthly, amount);
   return {
     amount,
     monthlyDelta,
@@ -1721,4 +1888,28 @@ function toGenerationJobHistoryActiveRank(value: number): 0 | 1 {
   }
 
   throw new ConfigurationError('Generation job history active rank is invalid');
+}
+
+// Reporting only: aggregate ledger evidence within the job's billing scope.
+// This does not settle, refund, or change the cancellation transaction.
+function creditSettlementJoin(table: 'generation_jobs' | 'visible_jobs'): string {
+  return `LEFT JOIN LATERAL (
+    SELECT (-COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'consume'), 0))::text AS charged_credits,
+      COALESCE(SUM(credit_ledger.amount) FILTER (WHERE credit_ledger.type = 'refund'), 0)::text AS refunded_credits,
+      COUNT(*) FILTER (WHERE credit_ledger.type IN ('consume', 'refund'))::text AS settlement_entries
+    FROM credit_ledger WHERE credit_ledger.job_id = ${table}.id AND (
+      (${table}.organization_id IS NULL AND credit_ledger.organization_id IS NULL AND credit_ledger.user_id = ${table}.user_id)
+      OR (${table}.organization_id IS NOT NULL AND credit_ledger.organization_id = ${table}.organization_id)
+    )
+  ) AS credit_settlement ON TRUE`;
+}
+function readCreditSettlement(row: GenerationJobRow): GenerationJobCreditSettlement | undefined {
+  if (row.charged_credits === undefined || row.refunded_credits === undefined) return undefined;
+  const charged = Number(row.charged_credits); const refunded = Number(row.refunded_credits);
+  if (![charged, refunded].every((value) => Number.isSafeInteger(value) && value >= 0) || refunded > charged) return undefined;
+  // A historical paid job without linked ledger evidence remains unknown.
+  if (charged === 0 && row.credit_cost > 0 && Number(row.settlement_entries ?? 0) === 0) return undefined;
+  const netCredits = charged - refunded;
+  const status = charged === 0 ? 'not_charged' : netCredits === 0 ? 'refunded' : refunded > 0 ? 'partially_refunded' : row.status === 'failed' || row.status === 'cancelled' ? 'refund_pending' : 'charged';
+  return { chargedCredits: charged, refundedCredits: refunded, netCredits, status };
 }

@@ -7,6 +7,7 @@ import type { PageGenerationContext, PagePromptContext, PageSummary } from '../.
 import type { CompositionGalleryRepository } from '../../../../src/repositories/CompositionGalleryRepository.js';
 import type {
   EntityPrimaryReferenceImage,
+  EntityResolvedReferenceImage,
   EntityRepository,
 } from '../../../../src/repositories/EntityRepository.js';
 import type { PageRepository } from '../../../../src/repositories/PageRepository.js';
@@ -110,6 +111,7 @@ class FakeEntityRepository implements EntityRepository {
   public lastReferenceArgs:
     | { entityIds: string[]; workId: string; userId: string; organizationId: string | null }
     | null = null;
+  public resolvedReferences: EntityResolvedReferenceImage[] | null = null;
 
   public async create(_input: CreateEntityInput): Promise<Entity> {
     throw new Error('not used');
@@ -149,6 +151,32 @@ class FakeEntityRepository implements EntityRepository {
       }));
   }
 
+  public async findResolvedReferenceImagesByAssignmentsAndUserId(
+    assignments: Array<{ entityId: string; stateId: string | null }>,
+    workId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityResolvedReferenceImage[]> {
+    this.lastReferenceArgs = {
+      entityIds: Array.from(new Set(assignments.map((assignment) => assignment.entityId))),
+      workId,
+      userId,
+      organizationId,
+    };
+    return this.resolvedReferences ?? assignments.map((assignment, index) => ({
+      entityId: assignment.entityId,
+      stateId: assignment.stateId,
+      stateName: null,
+      stateDescription: null,
+      stateExists: assignment.stateId === null,
+      ownerUserId: 'user-1',
+      refId: `ref-${index + 1}`,
+      s3Key: `saved/user-1/entities/${assignment.entityId}/ref-${index + 1}.png`,
+      cdnUrl: null,
+      imageModel: null,
+    }));
+  }
+
   public async update(_id: string, _userId: string, _input: UpdateEntityInput): Promise<Entity | null> {
     throw new Error('not used');
   }
@@ -171,6 +199,200 @@ class FakeCompositionGalleryRepository implements CompositionGalleryRepository {
 }
 
 describe('PromptBuilder', () => {
+  it('keeps off-panel thought identity without adding a visible subject or image reference', async () => {
+    const panels=new FakePanelRepository();const entities=new FakeEntityRepository();
+    entities.entities.push({...entities.entities[0]!,id:'off-panel',name:'Mio'});
+    panels.panels[0]!.dialogue=[{entityId:'off-panel',text:'I remember.',type:'thought',position:'right'},{entityId:null,text:'Later.',type:'narration',position:'left'}];
+    const result=await new PromptBuilder(new FakePageRepository(),panels,entities,new FakeCompositionGalleryRepository()).buildPagePrompt({userId:'user-1',pageId:'page-1',requestKind:'initial',generationMode:'standard'});
+    expect(result.draftPrompt).toContain('off-panel');
+    expect(result.draftPrompt).toContain('thought has no speech tail');
+    expect(result.draftPrompt).toContain('Mio');
+    expect(result.inputSnapshot.panels[0]?.entityIds).toEqual(['entity-1']);
+    expect(result.inputSnapshot.references).toHaveLength(1);
+    expect(result.inputSnapshot.panels[0]?.dialogue[0]?.entityId).toBe('off-panel');
+  });
+
+  it('freezes a complete numbered frame map with the prompt and marks the last image as layout', async () => {
+    const page=new FakePageRepository();page.promptContext=buildPagePromptContext({layoutConfig:{type:'template',template_id:'splash_1'}});
+    const result=await new PromptBuilder(page,new FakePanelRepository(),new FakeEntityRepository(),new FakeCompositionGalleryRepository()).buildPagePrompt({userId:'user-1',pageId:'page-1',requestKind:'initial',generationMode:'standard'});
+    expect(result.layoutControl?.frames[0]?.physicalPlacement).toContain('full page');
+    expect(result.compilerBrief).toContain('P1: full page');
+    expect(result.compilerBrief).toContain('Image 2 (layout)');
+    expect(result.inputSnapshot.references).toHaveLength(1);
+  });
+
+  it.each([false, true])('旧状態の別名を同一Imageに割当て全panelを許可しvariant=%sを保持する', async (includeVariant) => {
+    const states = ['legacy-first', null, 'legacy-second', ...(includeVariant ? ['state-injured'] : [])];
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = states.map((stateId, index) => ({
+      ...buildPanel(), id: `panel-${index + 1}`, order: index + 1,
+      entities: [{ ...buildPanel().entities[0]!, stateId }],
+    }));
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = states.map((stateId) => ({
+      entityId: 'entity-1', stateId, stateName: stateId === 'state-injured' ? 'injured' : stateId,
+      stateDescription: stateId === 'state-injured' ? 'cheek scar' : null,
+      stateExists: true, ownerUserId: 'user-1',
+      refId: stateId === 'state-injured' ? 'injured-ref' : 'base-ref',
+      s3Key: `saved/user-1/entities/entity-1/${stateId === 'state-injured' ? 'injured-ref' : 'base-ref'}.png`,
+      cdnUrl: null, imageModel: null,
+    }));
+    const pageRepository = new FakePageRepository();
+    pageRepository.promptContext = buildPagePromptContext({ layoutConfig: { type: 'custom' } });
+    const result = await new PromptBuilder(
+      pageRepository, panelRepository, entityRepository, new FakeCompositionGalleryRepository(),
+    ).buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+
+    const baseLabel = includeVariant ? 'Aki / default' : 'Aki';
+    for (const order of [1, 2, 3]) {
+      expect(result.draftPrompt).toContain(`Panel ${order} subject lock: required visible subjects are Aki, reference Image 1 (${baseLabel})`);
+      expect(result.draftPrompt).toContain(`Panel ${order} dialogue by Aki, reference Image 1 (${baseLabel})`);
+    }
+    expect(result.draftPrompt).toContain(`${baseLabel} is allowed only in panels 1, 2, 3`);
+    expect(result.draftPrompt).not.toContain(`Image ${includeVariant ? 3 : 2} (layout)`);
+    expect(result.inputSnapshot.references?.map((reference) => [reference.stateId, reference.refId, reference.modelInputOrder, reference.subjectLabel]))
+      .toEqual([
+        [null, 'base-ref', 1, baseLabel],
+        ...(includeVariant ? [['state-injured', 'injured-ref', 2, 'Aki / injured']] : []),
+      ]);
+  });
+
+  it('同一人物の既定と状態を別Imageに割当て、subject lockとsnapshotへ固定する', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [
+      buildPanel(),
+      {
+        ...buildPanel(),
+        id: 'panel-2',
+        order: 2,
+        entities: [{ ...buildPanel().entities[0]!, stateId: 'state-injured' }],
+      },
+    ];
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = [
+      {
+        entityId: 'entity-1', stateId: null, stateName: null, stateDescription: null,
+        stateExists: true, ownerUserId: 'user-1', refId: 'base-ref',
+        s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: null, imageModel: null,
+      },
+      {
+        entityId: 'entity-1', stateId: 'state-injured', stateName: 'injured', stateDescription: 'cheek scar',
+        stateExists: true, ownerUserId: 'user-1', refId: 'injured-ref',
+        s3Key: 'saved/user-1/entities/entity-1/injured-ref.png', cdnUrl: null, imageModel: 'gpt-image-2',
+      },
+    ];
+    const builder = new PromptBuilder(
+      new FakePageRepository(),
+      panelRepository,
+      entityRepository,
+      new FakeCompositionGalleryRepository(),
+    );
+
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'thinking',
+    });
+
+    expect(result.draftPrompt).toContain('Image 1 (Aki / default)');
+    expect(result.draftPrompt).toContain('Image 2 (Aki / injured)');
+    expect(result.draftPrompt).toContain('Panel 1 subject lock: required visible subjects are Aki, reference Image 1 (Aki / default)');
+    expect(result.draftPrompt).toContain('Panel 2 subject lock: required visible subjects are Aki, reference Image 2 (Aki / injured)');
+    expect(result.draftPrompt).toContain('Panel 2 dialogue by Aki, reference Image 2 (Aki / injured)');
+    expect(result.draftPrompt).toContain('Visual lock for panel 2: subjects=Aki [Image 2 (Aki / injured)]');
+    expect(result.inputSnapshot.references).toEqual([
+      {
+        entityId: 'entity-1', stateId: null, refId: 'base-ref',
+        s3Key: 'saved/user-1/entities/entity-1/base-ref.png', imageModel: null,
+        subjectLabel: 'Aki / default', modelInputOrder: 1,
+      },
+      {
+        entityId: 'entity-1', stateId: 'state-injured', refId: 'injured-ref',
+        s3Key: 'saved/user-1/entities/entity-1/injured-ref.png', imageModel: 'gpt-image-2',
+        subjectLabel: 'Aki / injured', modelInputOrder: 2,
+      },
+    ]);
+    const monochrome = await builder.buildPagePrompt({
+      userId: 'user-1', pageId: 'page-1', requestKind: 'initial',
+      generationMode: 'thinking', renderStyle: 'monochrome',
+    });
+    expect(monochrome.draftPrompt).toContain('black-and-white manga');
+    expect(monochrome.draftPrompt).toContain('Image 2 (Aki / injured)');
+    expect(monochrome.inputSnapshot.references).toEqual(result.inputSnapshot.references);
+    expect(monochrome.inputSnapshot.renderStyle).toBe('monochrome');
+  });
+
+  it('未確定variantを旧base画像へ戻さず明示的に止める', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [{
+      ...buildPanel(),
+      entities: [{ ...buildPanel().entities[0]!, stateId: 'state-injured' }],
+    }];
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = [{
+      entityId: 'entity-1', stateId: 'state-injured', stateName: 'injured', stateDescription: 'cheek scar',
+      stateExists: true, ownerUserId: null, refId: null, s3Key: null, cdnUrl: null, imageModel: null,
+    }];
+    const builder = new PromptBuilder(
+      new FakePageRepository(), panelRepository, entityRepository, new FakeCompositionGalleryRepository(),
+    );
+
+    await expect(builder.buildPagePrompt({
+      userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'thinking',
+    })).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('複数stateをpanel順に別々のreferenceとsnapshotへ固定する', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [
+      { ...buildPanel(), entities: [{ ...buildPanel().entities[0]!, stateId: 'state-injured' }] },
+      {
+        ...buildPanel(), id: 'panel-2', order: 2,
+        entities: [{ ...buildPanel().entities[0]!, stateId: 'state-rain' }],
+      },
+    ];
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = [
+      {
+        entityId: 'entity-1', stateId: 'state-injured', stateName: 'injured', stateDescription: 'cheek scar',
+        stateExists: true, ownerUserId: 'user-1', refId: 'injured-ref',
+        s3Key: 'saved/user-1/entities/entity-1/injured-ref.png', cdnUrl: null, imageModel: 'gpt-image-2',
+      },
+      {
+        entityId: 'entity-1', stateId: 'state-rain', stateName: 'rain', stateDescription: 'wet hair',
+        stateExists: true, ownerUserId: 'user-1', refId: 'rain-ref',
+        s3Key: 'saved/user-1/entities/entity-1/rain-ref.png', cdnUrl: null, imageModel: 'gpt-image-2',
+      },
+    ];
+
+    const result = await new PromptBuilder(
+      new FakePageRepository(), panelRepository, entityRepository, new FakeCompositionGalleryRepository(),
+    ).buildPagePrompt({
+      userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'thinking',
+    });
+
+    expect(result.draftPrompt).toContain('Image 1 (Aki / injured)');
+    expect(result.draftPrompt).toContain('Image 2 (Aki / rain)');
+    expect(result.inputSnapshot.references?.map((reference) => [reference.stateId, reference.refId, reference.modelInputOrder]))
+      .toEqual([
+        ['state-injured', 'injured-ref', 1],
+        ['state-rain', 'rain-ref', 2],
+      ]);
+  });
+
+  it('白黒生成の場合に白黒styleを固定しカラー指示を出さない', async () => {
+    const builder = new PromptBuilder(
+      new FakePageRepository(), new FakePanelRepository(),
+      new FakeEntityRepository(), new FakeCompositionGalleryRepository(),
+    );
+    const result = await builder.buildPagePrompt({
+      userId: 'user-1', pageId: 'page-1', requestKind: 'initial',
+      generationMode: 'standard', renderStyle: 'monochrome',
+    });
+
+    expect(result.draftPrompt).toContain('black-and-white manga');
+    expect(result.compilerBrief).toContain('black-and-white manga');
+    expect(result.draftPrompt).not.toContain('flat colors with manga-style shading');
+    expect(result.inputSnapshot).toMatchObject({ renderStyle: 'monochrome' });
+  });
   it('includes layout, references, setting, and dialogue without redundant sections', async () => {
     const builder = new PromptBuilder(
       new FakePageRepository(),
@@ -187,7 +409,7 @@ describe('PromptBuilder', () => {
     });
 
     expect(result.draftPrompt).toContain('Create page 3 of the episode, covering The hero confronts the rival.');
-    expect(result.draftPrompt).toContain('Use the standard_4 template with 4 panels.');
+    expect(result.draftPrompt).toContain('No complete saved frame map is available. Keep exactly 1 panels');
     expect(result.draftPrompt).toContain('Image 1 (Aki): Aki character reference.');
     expect(result.draftPrompt).toContain('Use this image only for Aki; never use it as another character.');
     expect(result.draftPrompt).toContain('Aki is allowed only in panel 1 where listed in the subject lock.');
@@ -374,7 +596,7 @@ describe('PromptBuilder', () => {
     });
 
     expect(result.draftPrompt).toContain('Follow the uploaded layout reference image exactly for panel borders, gutter spacing, and reading order.');
-    expect(result.draftPrompt).toContain('panel 1 uses vertices (0.00, 0.00) -> (1.00, 0.00) -> (1.00, 0.50) -> (0.00, 0.50)');
+    expect(result.draftPrompt).toContain('P1=[(0.00,0.00),(1.00,0.00),(1.00,0.50),(0.00,0.50)]');
     expect(result.compilerBrief).toContain('Image 2 (layout): Layout reference.');
   });
 

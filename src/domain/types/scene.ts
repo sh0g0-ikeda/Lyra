@@ -23,6 +23,10 @@ export interface EntityState {
   id: string;
   entityId: string;
   sceneId: string | null;
+  name: string | null;
+  description: string | null;
+  referenceImage: Record<string, unknown> | null;
+  baseReferenceId?: string | null;
   costumeNote: string | null;
   costumeRefId: string | null;
   conditionNote: string | null;
@@ -30,6 +34,7 @@ export interface EntityState {
   expressionDefault: string;
   extraNote: string | null;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface CreateSceneInput {
@@ -50,6 +55,8 @@ export interface UpdateSceneInput {
 }
 
 export interface CreateEntityStateInput {
+  name?: string;
+  description?: string;
   sceneId: string | null;
   costumeNote: string | null;
   costumeRefId: string | null;
@@ -60,6 +67,8 @@ export interface CreateEntityStateInput {
 }
 
 export interface UpdateEntityStateInput {
+  name?: string;
+  description?: string;
   sceneId?: string | null;
   costumeNote?: string | null;
   costumeRefId?: string | null;

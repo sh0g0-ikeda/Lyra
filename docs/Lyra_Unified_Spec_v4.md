@@ -61,8 +61,24 @@ durable deletion workflow finishes.
 
 Organization roles are `owner`, `admin`, `billing`, `editor`, and `viewer`.
 Billing authority is separate from editing authority. Public routes are explicitly
-limited to health/readiness, verified Stripe webhooks, static web assets, and the
-organization-invitation acceptance flow where applicable.
+limited to health/readiness, verified provider webhooks, static web assets, the
+capability-only authentication endpoint, the fixed single-use Google linking
+callback, and the organization-invitation acceptance flow where applicable.
+Ordinary login identifies the existing user by the verified stable subject. It
+never changes that subject solely because an email matches. New user and signup
+credit grant share one transaction. Google linking has a separate, recent native
+authentication proof and dedicated Google OAuth challenge; ambiguous provider
+results are reconciled by reads, never by blindly repeating the link mutation.
+The unversioned authentication capability response retains the older clients'
+literal `google_ios:false` contract. An explicit `?version=2` response adds
+`version:2` and a boolean iOS capability; unknown or duplicate versions are
+rejected. New clients accept only the validated v2 response and hide Google on
+unconfirmed configuration. iOS activation requires a reviewed login policy and
+a dedicated allowed Cognito app client/provider policy. It defaults to OFF.
+Mobile identity-link returns use a fixed environment-specific scheme:
+`lyra-mobile://auth/identity-link` for production and
+`lyra-mobile-staging://auth/identity-link` for isolated staging. A client
+cannot choose the return URL, and a browser return never proves linking success.
 
 ## 5. Persistence and tenancy
 
@@ -108,9 +124,12 @@ Episode export runtime wiring is independently gated by
 `EPISODE_EXPORT_ENABLED`, which defaults to false. When enabled, authenticated
 create/status/download routes require personal ownership or active organization
 membership with export capability. Creation commits the job and outbox before a
-best-effort dispatch to `SQS_QUEUE_URL_EXPORT`; status reads and a bounded periodic
-runner recover undispatched rows. Export messages carry only a version and export
-job ID, and a dedicated poller never shares the generation queue or credit path.
+best-effort dispatch to `SQS_QUEUE_URL_EXPORT`, or the existing generation queue
+when no dedicated export queue is configured; status reads and a bounded periodic
+runner recover undispatched rows. The shared queue uses the deployed
+`{job_id, job_type: episode_export}` envelope, and consumers also accept the
+strict versioned export-job envelope. A dedicated poller refuses a shared queue
+so it cannot acknowledge generation messages. Export never consumes credits.
 Completed, unexpired artifacts are delivered only through an HTTPS URL lasting no
 longer than five minutes or the remaining artifact lifetime. Expiry cleanup deletes
 the exact server-derived key before marking it deleted and is safe to retry.
@@ -142,7 +161,10 @@ terminal settlement takes the token-registry lock before the job-row lock, then
 commits the terminal state, retry-count event snapshot, outbox, and deliveries in
 one transaction. Retrying a failed job invalidates its unsent failed deliveries
 in the same statement. Lease-based delivery and provider dispatch must still be
-wired and verified before push delivery is enabled.
+verified before push delivery is enabled. The release candidate includes the
+authenticated registration routes, leased delivery repository, injected APNs/FCM
+providers and a bounded non-overlapping runtime maintenance loop, all gated OFF
+by default. It rechecks recipient, token, deletion and job status before sending.
 
 Account deletion is independently gated by `ACCOUNT_DELETION_ENABLED`, which
 defaults to false. The authenticated API accepts no user, identity, subscription,
@@ -189,6 +211,191 @@ packs sized by estimated structured-output cost; it must not use a fixed three-p
 split. A page is never split between packs, and a pack may contain the full episode
 when it fits the safe output budget.
 
+For a complete original-page mapping without character-state opt-in, bounded
+original-source requirement extraction replaces the existing beat-plan pack calls.
+It preserves source-unit locators, authored quotes, ordered prerequisite/result
+obligations and page completion boundaries. Global meaning ownership remains
+global; extraction pack assignment does not make it a page-visible event. Every
+global requirement carries its complete trimmed original unit in context. Empty
+or partial context is rejected before detail or saving. This checks literal
+transport only, not semantic fidelity, and remains inside the existing continuity
+V3 gate with its default OFF. Detail
+output allocates page-owned requirements to panels before writing panel fields.
+Placement validation checks structural coverage and prerequisite order, not semantic
+fidelity. Normal and repair detail calls retain the same complete requirements.
+Unsupported mappings or capacity take the complete legacy path before any paid
+call; a paid extraction failure does not start an additional legacy compiler call.
+Requirements and placements are internal and are stripped before public saving.
+Existing opt-in character-state compilation, cancellation, atomic save, prices,
+HTTP contracts and the semantic soft-save policy remain unchanged.
+
+Episode detail provider output declares a non-null entity assignment array for
+every panel. An explicit empty array means no character is visible in that panel;
+fallback must not repopulate it. Omitted assignments in legacy/internal suggestions
+retain the existing character list. Applying an explicit empty list clears existing
+assignments atomically, subject to the existing manual-state preservation/conflict
+policy. Close-ups, off-panel viewpoints, and exterior cutaways may legitimately have
+no visible entity.
+
+Source omissions, dropped ongoing actions, and visible-entity contradictions are
+repairable semantic findings when a safe field patch restores the input story. They
+use the bounded repair passes below; they do not add a new persistence-blocking gate.
+
+Explicitly authored dialogue, narration, and caption text are copied without
+shortening or paraphrasing, with the source's unambiguous speaker and dialogue type.
+Narration retains no speaker. Quoted names, titles, or labels
+are not automatically dialogue. A bounded beat ledger keeps an exact line when it
+fits, otherwise a source locator; it must not supply a shortened replacement quote.
+The source takes precedence over a conflicting outline or ledger. Detail and audit
+compare each action's prerequisite, execution, immediate result, and stated order
+against actual panel fields. Missing or altered authored dialogue and action steps
+use the existing field-level repair contract and semantic soft-save policy.
+Compression preserves explicit decision bases, prerequisite or transition actions,
+completion boundaries, negative or continuing constraints, and final viewpoint.
+An authored completed action must not become stopping immediately before it.
+Visible situation and composition agree with entity action metadata; poses outside
+the fixed enums use the existing custom action. The auditor repairs contradictions
+through the existing fields without adding a new save-blocking condition.
+Chapter/episode arc summaries, page purpose, continuity, and generated ledgers are
+planning context, not authored display text. A successful episode detail compiler's
+omitted dialogue receives no generated fallback; existing manual-field preservation
+still applies. Server fallback must not turn this context into speech, thought, or
+narration. Explicitly authored display text in the full source
+and provider-supplied dialogue remain subject to the existing source-fidelity audit.
+The bounded coverage sidecar samples high-risk facts; it does not limit the full
+episode audit to those sampled facts. Legacy single-page fallback is unchanged.
+
+When line-start page headings in the original full story map completely,
+uniquely and in increasing order to existing page numbers, segmented beat,
+detail and audit inputs may also include the matching untouched contiguous
+original page excerpts. Generated ledgers allocate pages; they must not restrict
+the original facts to a compressed summary or reverse an explicit completion
+boundary. Ambiguous or incomplete headings omit this optional local supplement
+and retain the full-source input. Audit supplements must fit the existing input
+budget after full source, complete dialogue and minimum panel evidence have been
+reserved; otherwise the supplement is omitted. This changes provider context,
+not persisted story fields, API contracts or the semantic soft-save policy.
+
+For that complete original-page mapping, detail and audit judgments omit the
+generated beat ledger, its text plan and entry/exit/handoff constraints. The
+original source, page identity and frame capacity, allowed scenes/entities,
+and actual compiled or repair-draft panels with their purpose/continuity remain.
+Service-derived internal ownership selects this mode; user text markers do not.
+The audit citation catalog contains only visible source references in this mode,
+never a hidden generated beat ledger. Omitting optional local excerpts for budget
+does not restore the generated beat ledger. Ambiguous mappings retain the legacy
+ledger path. Opt-in validated character-state transition ledgers and their saving
+workflow remain unchanged; this omission applies to generated story-beat context.
+
+In this source-owned mode only, every provider error issue also supplies bounded
+internal grounding metadata. Original-page quotes and actual draft-field quotes
+are distinct. Generated page purpose, continuity, panel notes, chapter/episode
+summaries and entity summaries cannot become original-source authority. Visible,
+typed scene continuity and its entity-state notes, plus validated character-state transitions,
+may ground their applicable continuity issues. Deterministic exceptions must match
+an actual service finding's code and page scope. Optional excerpt omission does
+not authorize quoting hidden source: authority quotes must remain in the displayed
+full source or other typed visible authority. This metadata is discarded before
+the public audit result or persistence; omitted/false source ownership retains the
+legacy response schema and retry behavior.
+
+For complete source ownership, an optional provider-only source-unit review
+contract enumerates lossless spans of typed original global preface and page
+source. Generated plans, purposes, notes, summaries and scene/state context never
+produce these units. Offsets bind each span to its exact visible source string;
+sentence boundaries organize review and do not claim to isolate every fact. All
+units and their displayed catalog are produced together. Enable the entire list
+only when it has at most 256 units, its additional display fits 8,000 characters,
+and full source, complete dialogue and minimum panel evidence remain reserved.
+Empty, ambiguous or oversized input retains the existing contract as a whole;
+partial unit review is never advertised as complete and does not reject long
+episodes.
+
+Native source-unit review additionally binds integer evidence IDs to actual
+same-page displayed panel fields, including short fields that cannot supply a
+four-character quote. Generated purpose and continuity never supply evidence.
+Reserve the complete field-ID display before optional visual excerpts, then bind
+IDs to the final displayed text. At most 1,024 fields, 40,000 field-display
+characters and a 16,000-character worst-case comparison response are permitted.
+Exceeding any bound falls back as a whole; no partial list is advertised.
+
+With this native catalog, source_unit_review has one comparison per unit:
+verdict (supported, constraint, context, missing or conflict), up to four positive
+field IDs, up to two counter-evidence IDs, and an existing grounded error index or
+null. Supported requires actual positive panel evidence; conflict requires
+counter-evidence; missing/conflict link a source-grounded error scoped to that
+unit. Context/constraint classify headings, directions or restrictions rather
+than requiring every unit to depict an action. These classifications are model
+judgments and can still be wrong; they are never accepted as semantic proof.
+Internally supplied legacy catalogs without a field catalog retain their existing
+integer/null vector. This neither requires all issues to be linked nor makes a
+repair mandatory. Patchless findings, validated-state ambiguity and second-audit
+semantic soft-save retain their existing handling. Comparison results stay frozen
+during quote-only correction and are discarded before public output/persistence.
+Every authored clause must be compared for functional meaning, same-page
+completion, explicit conditions, specified emotion and viewpoint, including
+conflicts with negative draft notes. Actual semantic review remains a separate
+acceptance gate. No additional call, model, token budget or save gate is added.
+
+An invalidly grounded body uses the existing remaining structured-response retry
+for a full audit. Only a valid grounded body and repair scope with an invalid
+coverage sidecar may freeze that body and request a strict coverage-only retry.
+Recombination revalidates grounding, scope and coverage, including missing-fact
+issue/repair links. The coverage-only response cannot change acceptance, issues,
+repairs or grounding. Cancellation checkpoints precede either retry.
+Coverage-only retries use a dedicated system instruction and at most 12,000
+characters of frozen issue-code/page/panel/visible-field linkage metadata, without
+echoing the prior audit's prose, evidence quotes or patch values. If this bounded
+metadata cannot fit, the existing remaining attempt is a full audit retry.
+When the complete coverage structure, page/ref scope, status and repair links
+are valid and every retained citation error is a known-reference exact-quote
+mismatch, the same remaining request may correct only those quote slots. This
+requires no omitted diagnostics and at most the existing eight diagnostics. A
+strict fixed-key object returns only the corresponding 4-40 character quotes;
+page/ref/status/check counts, links and the frozen audit body stay server-owned.
+Source-quote slots remain bound to the same visible, typed source authority. The
+joined result revalidates every grounding and coverage check against the same
+displayed catalog. Missing/extra slots, nonexact or hidden-tail quotes fail;
+unknown refs, structural/link errors and omitted diagnostics retain the existing
+retry branch. This does not add a request or relax model, token, cancellation,
+transport, semantic-review or persistence contracts. A finite content schema does
+not itself prove provider completion within the token budget.
+Before freezing, repairs must cover their error pages and have valid, unique field
+targets under the existing repair contract. Each audit
+pass still has at most two logical structured requests, the existing 20k output
+limit and unchanged transport retries; this is not a two-HTTP-attempt guarantee.
+The source-owned provider acceptance condition is stronger, while semantic
+soft-save, the second audit pass and atomic persistence remain unchanged. Exact
+quotation establishes existence, not whether a proposed repair follows from the
+source, so actual saved-output acceptance remains a separate verification gate.
+Repair completeness is a freeze-eligibility condition only. A valid grounded
+audit may contain patchless semantic issues; validated-state ambiguity and the
+second audit's mixed patchable/residual findings retain their existing Service
+handling. When coverage needs retry but repair completeness is insufficient for
+freezing, the remaining request is a full audit.
+
+The OpenAI episode auditor returns a bounded source-coverage sidecar in the same
+structured response: one entry per page, at most two high-risk facts per entry,
+at most two actual panel-field citations per fact, and exact quotes of 4–40
+characters. Source and output references are checked against the current planning
+snapshot. Output citations use the whitespace-normalized actual field prefixes
+shown in the audit prompt; synthetic truncation markers are not citable evidence.
+The prompt and citation catalog are built together, while original story text and
+persisted dialogue remain unchanged. Literal ellipses in untruncated data remain
+part of that data.
+Each displayed visual field and complete dialogue line is labeled with its direct
+panel-field reference. Quoted visual literals exclude synthetic display markers;
+fields shorter than four characters remain actual content but are not citable.
+Citation retry feedback contains bounded positions and known references only
+(at most eight diagnostics and 4,000 characters), with omitted counts. It does not
+echo quotation text, unknown reference values, or the previous coverage response.
+Page purpose, continuity, and ledger metadata are not visual evidence.
+A reported missing fact must link to an error and an actual panel-field repair on
+the same page. Citation validity proves that quoted text exists, not semantic
+equivalence or exhaustive source coverage. Legacy/internal compiler ports may omit
+the sidecar. Provider retries, output-token limits, atomic saving, and the semantic
+soft-save policy remain unchanged; this does not add another provider call.
+
 The combined draft is reviewed for cross-page repetition, dialogue placement,
 chronology, page handoffs, entity assignment, and editable visual fields before any
 page or panel content is persisted. Review repairs are field-level patches: page and
@@ -221,6 +428,26 @@ Generation-job history hiding is a per-user display preference. It never deletes
 job, changes its status, cancels work, or mutates credits. Any future history write
 must first authorize the job through personal ownership or active organization
 membership.
+
+Confirmed state-reference copies use a durable exact-key intent before storage
+mutation and serialize confirmation with the user's account-deletion row gate.
+Every new copy intent includes a unique attempt ID and an explicit unresolved,
+succeeded, or not-dispatched state. An unresolved, legacy, malformed, or duplicate
+attempt history blocks further copy admission for that job and personal deletion finalization,
+even after database connection loss. Only a complete successful single-attempt
+storage response or proof that this invocation never dispatched its own attempt
+can settle that attempt; abort, elapsed time, object existence and another retry
+are not settlement evidence. Failure to persist settlement remains fail-closed.
+The intent and historical page-input references remain protected from image/job
+pruning until an explicit cleanup or personal account-deletion workflow handles
+them. Personal cleanup verifies storage-owner and entity scope and excludes
+organization assets. Retaining these job records increases retention; expiry alone
+must not erase the only deletion checkpoint.
+
+Legacy note-only state assignments resolving to the same base reference image
+share one billable image, prompt label, snapshot reference, and attachment.
+Distinct confirmed variant images remain separate. Authorization and freshness
+checks apply to every original assignment before this canonicalization.
 
 ## 7. Credits and billing
 
@@ -271,9 +498,10 @@ failure returns a generic HTTP 503 response without infrastructure details.
 The API must remain responsive while generation work is queued. Workers can scale
 independently of the API. Queue depth, oldest message age, job duration, failure
 rate, credit refunds, database capacity, and provider errors are operational signals.
-Episode export has a separate queue, worker process, visibility timeout, outbox
-recovery, and artifact-cleanup loop so document assembly cannot consume image
-generation capacity.
+Episode export supports a separate queue and worker process with its own
+visibility timeout, outbox recovery and artifact cleanup. The current production
+shared generation queue is also supported for compatibility; shared polling uses
+the generation visibility policy and dispatches by the verified job type.
 
 ## 10. Verification gate
 
@@ -281,6 +509,7 @@ Every release must pass:
 
 - Vitest and Bun test entrypoints
 - PostgreSQL migration and deployment-invariant checks
+- read-only release compatibility check for the intended backend-only or new-mobile profile
 - backend TypeScript build
 - frontend lint and production build
 - Playwright auth and authenticated-console smoke tests
@@ -289,9 +518,211 @@ Production deployment additionally requires runtime configuration validation,
 migrations as a one-off task, healthy API readiness, worker rollout health, queue
 inspection, and post-deploy log review.
 
-## 11. Related documents
+## 11. Release compatibility additions (2026-10-01)
+
+Server generation quotes pin actor/workspace, operation, current resource revision,
+references, render style, model, quality, tariff and price. Acceptance atomically
+creates the job, debit/ledger, target transition and dispatch intent. Receipts
+reconcile uncertain responses without a new charge. Existing unquoted clients and
+jobs keep their supported contracts; new Mobile paid flows require quotes.
+GENERATION_QUOTES_ENABLED defaults to false until runtime acceptance is complete.
+
+Unversioned generation-job history and detail preserve the four production Mobile
+job types. Clients request `job_contract=v2` to receive `entity_import_analysis`;
+history applies that type selection before pagination, and an unversioned import
+detail/cancel request is not found before mutation. Active-resource and native push
+eligibility remain limited to their existing job types. Safe nested page-image job
+metadata accepts the bounded public provenance fields while omitting image locations.
+
+Unversioned export status preserves the production Mobile flat DTO, including
+episode, format, filename, progress and cancellation metadata. A completed artifact's
+optional `download_url` is obtained through the existing scoped, audience-checked,
+expiry-bounded download service. `export_contract=v2` selects nested progress/error
+and `download_ready`; new Mobile clients explicitly request it. Blank filenames use
+the existing safe default. Contract negotiation never changes ownership or image
+delivery authorization.
+
+Organization member, invitation, usage and audit-log lists preserve production
+`limit`/`cursor` pagination with strict cursor validation and authorization on every
+page. Usage totals cover the complete month independently of page size; legacy
+unpaged response bounds do not truncate those totals. See
+`docs/organization-pagination-compatibility-design-2026-10-02.md`.
+
+Output provenance is adapter-sourced. Missing historical metadata has a separate
+legacy policy from an unknown model value. Known Web-only output is blocked from
+all common/Mobile display, saved-image and export paths. Dedicated Web delivery
+requires a verified Cognito app-client allowlist, never a platform header. A
+client ID shared with Mobile must never be allowlisted: enablement requires a
+dedicated Web client and rejection tests with both old and new Mobile tokens. Hy4
+image generation remains unavailable until its actual provider contract is known;
+there is no substitution with an unrelated image model.
+
+Standard OpenAI image generation must reject an assigned confirmed primary/state
+reference with Web-only, unknown or conflicting provider provenance before job
+admission or debit, and recheck before an image provider call. Flexible-generation
+requests and references must never fall back to an OpenAI image model. An assigned character's
+active primary remains subject to this check even when a named state provides
+the rendered reference; a compatible state cannot bypass a Web-only primary. A new
+preview does not replace the confirmed reference until confirmation; confirming a
+standard compatible reference restores standard page eligibility without deleting
+historical images. Unassigned characters and inactive historical references do not
+block unrelated pages. The same input boundary applies to explicit entity-preview
+sources and state-preview bases. Web identifies both providers and Web-only output;
+Mobile retains standard generation and displays the Web-only notice.
+
+The production source lineage differs from main. The release preserves its legacy
+HTTP contracts and scheduled-billing, push, export, page planning and editorial
+behavior while retaining candidate deletion/refund/ownership protections. Applied
+001–041 migrations are immutable. The existing 046 bridge requires a full
+write freeze, so it is not an eligible first rollout under the uninterrupted
+operation requirement. The first legacy compatibility phase must retain the
+physical schema, old settlement and terminal-push ownership, existing billing
+and deletion workflows, old export relation and old-worker job contracts.
+An explicit, read-only validated persistence profile must be injected before
+HTTP admission, queue consumption or recovery. Candidate startup attests the
+required canonical migration, relation, column and definition signatures in a
+bounded read-only transaction before starting writers. Automatic migration is
+limited to a verified empty schema or known canonical lineage; namespace sequence,
+enum, domain or application-function leftovers are not an empty schema. These
+required signatures do not attest every possible hybrid schema or trigger-function
+body and do not establish legacy production readiness. Unknown or hybrid schemas refuse
+candidate startup while the old runtime remains available. Feature flags alone
+are not proof that existing queries avoid absent columns. New capabilities may
+remain gated; existing published capabilities must continue. Mixed old/new
+writers and rollback with candidate-created records must pass on a representative
+copy before production readiness. The 046 rename is a separate later proposal;
+its old-image rollback restriction must not be applied to this first phase.
+
+The release Mobile navigation has four primary tabs and nested creation steps.
+All editing capabilities and stored values remain available; simple display
+changes must not erase aliases, scene entities or unsaved fields. New state UI,
+Google, quote and Web-only-delivery capabilities remain gated until their own
+external and device checks pass. Detailed requirements, compatibility evidence and
+remaining gates are recorded in the documents below, not inferred from test totals.
+
+The optional state-copy v2 protocol uses a durable non-cascading journal,
+conditional image writes, retained ordinary markers and exact-version erasure.
+Admission defaults OFF; recovery, read authorization and retention remain active
+for existing v2 attempts when configured. Legacy unknown outcomes are never
+converted to completed evidence. Personal finalization requires verified fencing
+and original source cleanup before journal scrubbing; organization assets remain
+under organization authorization. Actual storage policy/retention acceptance is
+required before enablement. See the local design and audit follow-up below.
+
+New unsaved person forms show the six editable basic defaults selected by the
+frontend design; existing blanks, imported suggestions, aliases and hidden fields
+are not backfilled. Unresolved existing selections remain read-only until their
+snapshot loads. Editor errors retain operation and local draft context. Successful
+mutation receipts survive failed refreshes, while ambiguous state confirmations
+retain an explicit unknown outcome through state navigation and reconciliation.
+Read recovery never silently repeats a paid mutation. Targeted rendered-style
+contrast is tested locally; native layout and accessibility acceptance remain open.
+
+### Draft reference image binding (2026-10-05)
+
+An entity image import without an existing entity returns an opaque, signed
+entity-draft candidate token (v3). It binds user, organization (including personal
+null scope), requested entity type, temporary image key and expiry. Existing
+entity imports retain the entity-bound v1 token and continue accepting a locally
+edited entity type before that entity is saved. Ownership and organization scope
+are verified before paid import analysis; type editing grants no extra permission.
+
+POST /api/entities/:id/reference-candidate/bind accepts only candidate_token and
+returns only a bound candidate_token. It requires edit_work permission and target
+ownership, and checks the draft token's user, organization, entity type, source-key
+policy and expiry. Binding issues a v1 token for that target with the original
+expiry; it neither renews the temporary image nor invokes provider, credits,
+storage writes or DB mutation. Rebinding within the same scope and expiry is
+idempotent and is not a single-use claim. Existing v1/base and v2/state validation
+remain unchanged. Quoted import results retain the same opaque response fields.
+No persistence schema changes or migration are required for this token addition.
+
+Browser draft imports are kept in their original workspace/work/type until the
+created entity is bound. Binding failure keeps the successful entity creation and
+the candidate for retry; recovery does not analyze or charge for the image again.
+The installed Mobile path does not adopt an unbound draft candidate after creating
+an entity, so its prior restriction remains; existing entity imports remain v1.
+
+Browser navigation and same-resource refresh preserve unsaved chapter, episode,
+entity, scene, page-settings, panel and frame input. Cancellation never saves or
+changes selection. Background loading and errors are not authoritative empty
+lists. Remote removal retains local edits and requires an explicit selection;
+revoked workspace access exposes local recovery for copying without restoring
+server permissions. Save responses preserve later typing and omitted dirty fields,
+and reject older known revisions. Panel assignment failure after metadata success
+rebases only the successful data and prevents generation. Frame edits must be
+saved before page generation; layout replacement and deletion preserve drafts
+until a successful, explicitly requested operation.
+Frame records have no server revision field in the current API. The browser
+checks the observed baseline at submission and refetches without adopting a late
+response if that baseline changes. This client check does not add server-side
+optimistic locking. An empty initial selection is not a disappeared record and
+never replaces the current action's success or error notice. Initial scene or panel selection waits while a new local draft or operation is pending; unbound new input is also protected by navigation and beforeunload. A draft candidate
+is retained with its original type when that type changes during import; changing
+back reuses the candidate without another analysis.
+
+## 12. Related documents
 
 - `docs/Lyra_StoryAI_SubSpec.md`
 - `docs/runtime-contract-readiness-design.md`
 - `README.md`
 - `migrations/`
+
+- `docs/release-readiness-2026-10-01.md`
+- `docs/release-feature-traceability-2026-10-01.md`
+- `docs/release-ui-traceability-2026-10-01.md`
+- `docs/generation-quotes-atomic-admission-design-2026-10-01.md`
+- `docs/google-identity-link-readiness-2026-10-01.md`
+- `docs/production-lineage-bridge-design-2026-10-01.md`
+- `docs/production-billing-compatibility-2026-10-01.md`
+- `docs/image-provenance-delivery-design-2026-10-01.md`
+- `docs/editorial-layout-compatibility-2026-10-01.md`
+
+- `docs/state-copy-fenced-recovery-local-design-2026-10-02.md`
+- `docs/account-deletion-fenced-references-local-design-2026-10-02.md`
+- `docs/release-readiness-audit-2026-10-02.md`
+
+- `docs/mobile-new-character-defaults-design-2026-10-01.md`
+- `docs/mobile-operation-error-context-design-2026-10-01.md`
+- `docs/mobile-state-operation-outcomes-design-2026-10-01.md`
+
+### Local release compatibility preflight (2026-10-02)
+
+Run `bun run release:check --profile backend-only` for staged backend work,
+or `bun run release:check --profile new-mobile` before distributing the new
+Mobile client. The compiled artifact uses `release:check:prod`. The checker
+requires exact migration 001–047 history and evaluates existing data invariants
+and v2 journal presence in one bounded repeatable-read, read-only transaction.
+Malformed or missing database results fail closed. It never applies a migration
+or changes feature flags. Historical 026 and 039/041 preflights remain specific
+to their older schema boundaries and must not be run against schema 047.
+
+Backend-only permits quotes OFF; new-mobile requires quotes and the existing
+paid page/entity/import operations, direct uploads, durable queue, GPT Image 2
+and image storage, with local image fallback disabled. Optional state preview
+may remain OFF. Any v2 journal requires complete recovery configuration even
+with copy admission OFF. Enabling Web image delivery requires an explicit
+inventory of every old/new Mobile Cognito client via repeated
+`--mobile-client-id` arguments and rejects overlap with the Web allowlist.
+Old/new Mobile may intentionally share one client; an empty Web allowlist needs
+no Mobile inventory because dedicated Web image delivery remains disabled.
+
+A passing check proves local declared compatibility only. Storage attestation,
+client inventory and runtime configuration are not proof of actual remote
+IAM/S3/Cognito/provider behavior, queue drain, migration lock duration, old
+installed-client behavior or signed-device acceptance. Those remain separate
+release gates.
+
+
+### Isolated staging runtime
+
+An explicit APP_ENV=staging uses NODE_ENV=production and the same database SSL,
+authentication, CORS, storage, origin, timeout and generation infrastructure guards.
+Staging must declare isolation, the actual runtime secret source and a current
+production resource deny inventory; deployment binds LYRA_APP_SECRET_ID and
+STAGING_SECRET_SOURCE_ID to the same dedicated secret and IAM denies production
+resources. This metadata is not a replacement for IAM isolation. Stripe configuration
+is either wholly absent (existing fail-closed adapter) or complete test mode only.
+Only staging may omit the OpenAI key when all five generation gates are explicitly
+false in the input environment and generation quotes remain disabled. Provider
+operations then fail closed; production still requires a real provider key.

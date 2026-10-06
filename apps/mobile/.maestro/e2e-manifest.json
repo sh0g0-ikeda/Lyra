@@ -128,7 +128,7 @@
     },
     {
       "id": "E2E-16",
-      "title": "save-and-generate atomicity/409 conflict",
+      "title": "quoted generation/409 conflict",
       "platforms": { "ios": "required", "android": "required" },
       "flow": "flows/e2e-16-save-and-generate-atomicity-409-conflict.yaml",
       "fixtures": ["fixture-page-conflict"],

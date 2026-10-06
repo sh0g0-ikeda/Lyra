@@ -1,0 +1,2302 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Parameters": {
+    "ResourcePrefix": {
+      "Type": "String",
+      "AllowedPattern": "^lyra-staging-[a-z0-9-]+$"
+    },
+    "ExpiresAt": {
+      "Type": "String"
+    },
+    "AssetsBucketName": {
+      "Type": "String"
+    },
+    "KmsKeyArn": {
+      "Type": "String"
+    },
+    "GenerationQueueArn": {
+      "Type": "String"
+    },
+    "ExportQueueArn": {
+      "Type": "String"
+    },
+    "RuntimeSecretArn": {
+      "Type": "String"
+    },
+    "ApiLogGroupName": {
+      "Type": "String"
+    },
+    "WorkerLogGroupName": {
+      "Type": "String"
+    },
+    "ClusterArn": {
+      "Type": "String"
+    },
+    "ApiTargetGroupArn": {
+      "Type": "String"
+    },
+    "PublicSubnetAId": {
+      "Type": "AWS::EC2::Subnet::Id"
+    },
+    "PublicSubnetCId": {
+      "Type": "AWS::EC2::Subnet::Id"
+    },
+    "ApiSG": {
+      "Type": "AWS::EC2::SecurityGroup::Id"
+    },
+    "WorkerSG": {
+      "Type": "AWS::EC2::SecurityGroup::Id"
+    },
+    "ContainerImage": {
+      "Type": "String"
+    },
+    "WorkloadBoundaryArn": {
+      "Type": "String"
+    },
+    "ProductionDeniedArns": {
+      "Type": "CommaDelimitedList"
+    },
+    "DesiredApiCount": {
+      "Type": "Number",
+      "Default": 0,
+      "AllowedValues": [
+        0,
+        1
+      ]
+    },
+    "DesiredGenerationCount": {
+      "Type": "Number",
+      "Default": 0,
+      "AllowedValues": [
+        0,
+        1
+      ]
+    },
+    "DesiredExportCount": {
+      "Type": "Number",
+      "Default": 0,
+      "AllowedValues": [
+        0,
+        1
+      ]
+    },
+    "DesiredDeletionCount": {
+      "Type": "Number",
+      "Default": 0,
+      "AllowedValues": [
+        0,
+        1
+      ]
+    },
+    "GoogleIdentityLinkGrantEnabled": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": [
+        "false",
+        "true"
+      ]
+    },
+    "GoogleUserPoolId": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^ap-northeast-1_[A-Za-z0-9]+$",
+      "AllowedValues": [
+        "",
+        "ap-northeast-1_qZM5rxoco"
+      ]
+    },
+    "GoogleIdentityExpiryEnabled": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": [
+        "false",
+        "true"
+      ]
+    },
+    "GoogleIdentityExpiryScheduleEnabled": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": [
+        "false",
+        "true"
+      ]
+    }
+  },
+  "Resources": {
+    "ExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${ResourcePrefix}-execution"
+        },
+        "PermissionsBoundary": {
+          "Ref": "WorkloadBoundaryArn"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "own-execution",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:GetAuthorizationToken"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchGetImage"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ResourcePrefix}-api"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ApiLogGroupName}:*"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${WorkerLogGroupName}:*"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Deny",
+                  "Action": "*",
+                  "Resource": {
+                    "Ref": "ProductionDeniedArns"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "ApiTaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${ResourcePrefix}-api-task"
+        },
+        "PermissionsBoundary": {
+          "Ref": "WorkloadBoundaryArn"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "api-scope",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": {
+                    "Ref": "RuntimeSecretArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:Decrypt",
+                    "kms:GenerateDataKey"
+                  ],
+                  "Resource": {
+                    "Ref": "KmsKeyArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject",
+                    "s3:GetObjectVersion"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::${AssetsBucketName}/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": [
+                    {
+                      "Ref": "GenerationQueueArn"
+                    },
+                    {
+                      "Ref": "ExportQueueArn"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Deny",
+                  "Action": "*",
+                  "Resource": {
+                    "Ref": "ProductionDeniedArns"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ListBucket"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::${AssetsBucketName}"
+                  }
+                },
+                {
+                  "Sid": "AssumeExactStageStateV2Roles",
+                  "Effect": "Allow",
+                  "Action": "sts:AssumeRole",
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-image-create"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-recovery"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "WorkerTaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${ResourcePrefix}-worker-task"
+        },
+        "PermissionsBoundary": {
+          "Ref": "WorkloadBoundaryArn"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "worker-scope",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": {
+                    "Ref": "RuntimeSecretArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:Decrypt",
+                    "kms:GenerateDataKey"
+                  ],
+                  "Resource": {
+                    "Ref": "KmsKeyArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject",
+                    "s3:GetObjectVersion"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::${AssetsBucketName}/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:ReceiveMessage",
+                    "sqs:DeleteMessage",
+                    "sqs:GetQueueAttributes",
+                    "sqs:SendMessage",
+                    "sqs:ChangeMessageVisibility"
+                  ],
+                  "Resource": [
+                    {
+                      "Ref": "GenerationQueueArn"
+                    },
+                    {
+                      "Ref": "ExportQueueArn"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Deny",
+                  "Action": "*",
+                  "Resource": {
+                    "Ref": "ProductionDeniedArns"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ListBucket"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::${AssetsBucketName}"
+                  }
+                },
+                {
+                  "Sid": "OwnTaskScaleInProtection",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecs:GetTaskProtection",
+                    "ecs:UpdateTaskProtection"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": [
+                      "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${StageClusterName}/*",
+                      {
+                        "StageClusterName": {
+                          "Fn::Select": [
+                            1,
+                            {
+                              "Fn::Split": [
+                                "/",
+                                {
+                                  "Ref": "ClusterArn"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "Condition": {
+                    "ArnEquals": {
+                      "ecs:cluster": {
+                        "Ref": "ClusterArn"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "AssumeExactStageStateV2RecoveryRole",
+                  "Effect": "Allow",
+                  "Action": "sts:AssumeRole",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-recovery"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "MigrationTaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${ResourcePrefix}-migration-task"
+        },
+        "PermissionsBoundary": {
+          "Ref": "WorkloadBoundaryArn"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "migration-minimal",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": {
+                    "Ref": "RuntimeSecretArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": {
+                    "Ref": "KmsKeyArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${WorkerLogGroupName}:*"
+                  }
+                },
+                {
+                  "Effect": "Deny",
+                  "Action": "*",
+                  "Resource": {
+                    "Ref": "ProductionDeniedArns"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "ApiTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "${ResourcePrefix}-api"
+        },
+        "Cpu": "512",
+        "Memory": "1024",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "RuntimePlatform": {
+          "CpuArchitecture": "ARM64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "ExecutionRole",
+            "Arn"
+          ]
+        },
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "ApiTaskRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "api",
+            "Image": {
+              "Ref": "ContainerImage"
+            },
+            "Command": [
+              "/usr/local/bin/bun",
+              "dist/scripts/startProductionApi.js"
+            ],
+            "PortMappings": [
+              {
+                "ContainerPort": 3000
+              }
+            ],
+            "Environment": [
+              {
+                "Name": "NODE_ENV",
+                "Value": "production"
+              },
+              {
+                "Name": "APP_ENV",
+                "Value": "staging"
+              },
+              {
+                "Name": "AWS_REGION",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              },
+              {
+                "Name": "LYRA_APP_SECRET_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              },
+              {
+                "Name": "STAGING_SECRET_SOURCE_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "ApiLogGroupName"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "api"
+              }
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain"
+    },
+    "GenerationTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "${ResourcePrefix}-generation"
+        },
+        "Cpu": "512",
+        "Memory": "1024",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "RuntimePlatform": {
+          "CpuArchitecture": "ARM64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "ExecutionRole",
+            "Arn"
+          ]
+        },
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "WorkerTaskRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "generation",
+            "Image": {
+              "Ref": "ContainerImage"
+            },
+            "Command": [
+              "/usr/local/bin/bun",
+              "dist/scripts/startProductionWorker.js"
+            ],
+            "Environment": [
+              {
+                "Name": "NODE_ENV",
+                "Value": "production"
+              },
+              {
+                "Name": "APP_ENV",
+                "Value": "staging"
+              },
+              {
+                "Name": "AWS_REGION",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              },
+              {
+                "Name": "LYRA_APP_SECRET_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              },
+              {
+                "Name": "STAGING_SECRET_SOURCE_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              },
+              {
+                "Name": "ECS_TASK_SCALE_IN_PROTECTION_ENABLED",
+                "Value": "true"
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "WorkerLogGroupName"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "generation"
+              }
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain"
+    },
+    "ExportTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "${ResourcePrefix}-export"
+        },
+        "Cpu": "512",
+        "Memory": "1024",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "RuntimePlatform": {
+          "CpuArchitecture": "ARM64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "ExecutionRole",
+            "Arn"
+          ]
+        },
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "WorkerTaskRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "export",
+            "Image": {
+              "Ref": "ContainerImage"
+            },
+            "Command": [
+              "/usr/local/bin/bun",
+              "dist/scripts/startProductionEpisodeExportWorker.js"
+            ],
+            "Environment": [
+              {
+                "Name": "NODE_ENV",
+                "Value": "production"
+              },
+              {
+                "Name": "APP_ENV",
+                "Value": "staging"
+              },
+              {
+                "Name": "AWS_REGION",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              },
+              {
+                "Name": "LYRA_APP_SECRET_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              },
+              {
+                "Name": "STAGING_SECRET_SOURCE_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "WorkerLogGroupName"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "export"
+              }
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain"
+    },
+    "DeletionTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "${ResourcePrefix}-deletion"
+        },
+        "Cpu": "512",
+        "Memory": "1024",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "RuntimePlatform": {
+          "CpuArchitecture": "ARM64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "ExecutionRole",
+            "Arn"
+          ]
+        },
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "WorkerTaskRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "deletion",
+            "Image": {
+              "Ref": "ContainerImage"
+            },
+            "Command": [
+              "/usr/local/bin/bun",
+              "dist/scripts/startProductionAccountDeletionWorker.js"
+            ],
+            "Environment": [
+              {
+                "Name": "NODE_ENV",
+                "Value": "production"
+              },
+              {
+                "Name": "APP_ENV",
+                "Value": "staging"
+              },
+              {
+                "Name": "AWS_REGION",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              },
+              {
+                "Name": "LYRA_APP_SECRET_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              },
+              {
+                "Name": "STAGING_SECRET_SOURCE_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "WorkerLogGroupName"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "deletion"
+              }
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain"
+    },
+    "MigrationTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "${ResourcePrefix}-migration"
+        },
+        "Cpu": "512",
+        "Memory": "1024",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "RuntimePlatform": {
+          "CpuArchitecture": "ARM64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "ExecutionRole",
+            "Arn"
+          ]
+        },
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "MigrationTaskRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "migration",
+            "Image": {
+              "Ref": "ContainerImage"
+            },
+            "Command": [
+              "/usr/local/bin/bun",
+              "dist/scripts/startProductionMigration.js"
+            ],
+            "Environment": [
+              {
+                "Name": "NODE_ENV",
+                "Value": "production"
+              },
+              {
+                "Name": "APP_ENV",
+                "Value": "staging"
+              },
+              {
+                "Name": "AWS_REGION",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              },
+              {
+                "Name": "LYRA_APP_SECRET_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              },
+              {
+                "Name": "STAGING_SECRET_SOURCE_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "WorkerLogGroupName"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "migration"
+              }
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain"
+    },
+    "ApiService": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "ServiceName": {
+          "Fn::Sub": "${ResourcePrefix}-api"
+        },
+        "Cluster": {
+          "Ref": "ClusterArn"
+        },
+        "TaskDefinition": {
+          "Ref": "ApiTaskDefinition"
+        },
+        "DesiredCount": {
+          "Ref": "DesiredApiCount"
+        },
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "Subnets": [
+              {
+                "Ref": "PublicSubnetAId"
+              },
+              {
+                "Ref": "PublicSubnetCId"
+              }
+            ],
+            "SecurityGroups": [
+              {
+                "Ref": "ApiSG"
+              }
+            ]
+          }
+        },
+        "LoadBalancers": [
+          {
+            "ContainerName": "api",
+            "ContainerPort": 3000,
+            "TargetGroupArn": {
+              "Ref": "ApiTargetGroupArn"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "GenerationService": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "ServiceName": {
+          "Fn::Sub": "${ResourcePrefix}-generation"
+        },
+        "Cluster": {
+          "Ref": "ClusterArn"
+        },
+        "TaskDefinition": {
+          "Ref": "GenerationTaskDefinition"
+        },
+        "DesiredCount": {
+          "Ref": "DesiredGenerationCount"
+        },
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "Subnets": [
+              {
+                "Ref": "PublicSubnetAId"
+              },
+              {
+                "Ref": "PublicSubnetCId"
+              }
+            ],
+            "SecurityGroups": [
+              {
+                "Ref": "WorkerSG"
+              }
+            ]
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "ExportService": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "ServiceName": {
+          "Fn::Sub": "${ResourcePrefix}-export"
+        },
+        "Cluster": {
+          "Ref": "ClusterArn"
+        },
+        "TaskDefinition": {
+          "Ref": "ExportTaskDefinition"
+        },
+        "DesiredCount": {
+          "Ref": "DesiredExportCount"
+        },
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "Subnets": [
+              {
+                "Ref": "PublicSubnetAId"
+              },
+              {
+                "Ref": "PublicSubnetCId"
+              }
+            ],
+            "SecurityGroups": [
+              {
+                "Ref": "WorkerSG"
+              }
+            ]
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "DeletionService": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "ServiceName": {
+          "Fn::Sub": "${ResourcePrefix}-deletion"
+        },
+        "Cluster": {
+          "Ref": "ClusterArn"
+        },
+        "TaskDefinition": {
+          "Ref": "DeletionTaskDefinition"
+        },
+        "DesiredCount": {
+          "Ref": "DesiredDeletionCount"
+        },
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "Subnets": [
+              {
+                "Ref": "PublicSubnetAId"
+              },
+              {
+                "Ref": "PublicSubnetCId"
+              }
+            ],
+            "SecurityGroups": [
+              {
+                "Ref": "WorkerSG"
+              }
+            ]
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "GoogleIdentityLinkGrant": {
+      "Type": "AWS::IAM::Policy",
+      "Condition": "GoogleLinkGrantConfigured",
+      "Properties": {
+        "PolicyName": {
+          "Fn::Sub": "${ResourcePrefix}-google-link"
+        },
+        "Roles": [
+          {
+            "Ref": "ApiTaskRole"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "ExplicitGoogleLinkInExactStagePool",
+              "Effect": "Allow",
+              "Action": [
+                "cognito-idp:AdminGetUser",
+                "cognito-idp:AdminLinkProviderForUser"
+              ],
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${GoogleUserPoolId}"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "GoogleLinkExpiryTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "${ResourcePrefix}-google-link-expiry"
+        },
+        "Cpu": "256",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "RuntimePlatform": {
+          "CpuArchitecture": "ARM64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "ExecutionRole",
+            "Arn"
+          ]
+        },
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "MigrationTaskRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "google-link-expiry",
+            "Image": {
+              "Ref": "ContainerImage"
+            },
+            "Command": [
+              "/usr/local/bin/bun",
+              "-e",
+              "const emit=(failure,atLimit)=>console.log(JSON.stringify({_aws:{Timestamp:Date.now(),CloudWatchMetrics:[{Namespace:'Lyra/StagingGoogleAuth',Dimensions:[['StageId']],Metrics:[{Name:'CleanupFailures',Unit:'Count'},{Name:'CleanupAtLimit',Unit:'Count'}]}]},StageId:process.env.LYRA_GOOGLE_EXPIRY_STAGE_PREFIX,CleanupFailures:failure,CleanupAtLimit:atLimit}));\nconst deadline=setTimeout(()=>{emit(1,0);console.error('Google challenge cleanup exceeded its deadline');process.exit(1);},120000);\ntry{const{loadRuntimeSecretEnv}=await import('./dist/src/lib/runtimeSecretEnv.js');await loadRuntimeSecretEnv();const stage=process.env.LYRA_GOOGLE_EXPIRY_STAGE_PREFIX;if(process.env.APP_ENV!=='staging'||stage!=='lyra-staging-20261003')throw new Error('Stage mismatch');const target=new URL(process.env.DATABASE_URL??'');if(!['postgres:','postgresql:'].includes(target.protocol)||!target.hostname.startsWith(stage+'-db.')||!target.hostname.endsWith('.ap-northeast-1.rds.amazonaws.com'))throw new Error('Stage database mismatch');const{expireGoogleIdentityLinkChallenges}=await import('./dist/scripts/expireGoogleIdentityLinkChallenges.js');const{db,closeDatabasePool}=await import('./dist/src/lib/db.js');try{let complete=false;for(let batch=0;batch<5;batch++){const result=await expireGoogleIdentityLinkChallenges(db,{apply:true,limit:100});console.log(JSON.stringify(result));emit(0,result.expired_exchange_material===100?1:0);if(result.expired_exchange_material<100){complete=true;break;}}if(!complete)throw new Error('Cleanup limit reached');}finally{await closeDatabasePool();}}catch{emit(1,0);console.error('Google challenge cleanup failed; no private details were printed');process.exitCode=1;}finally{clearTimeout(deadline);}"
+            ],
+            "Environment": [
+              {
+                "Name": "NODE_ENV",
+                "Value": "production"
+              },
+              {
+                "Name": "APP_ENV",
+                "Value": "staging"
+              },
+              {
+                "Name": "AWS_REGION",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              },
+              {
+                "Name": "LYRA_APP_SECRET_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              },
+              {
+                "Name": "STAGING_SECRET_SOURCE_ID",
+                "Value": {
+                  "Ref": "RuntimeSecretArn"
+                }
+              },
+              {
+                "Name": "LYRA_GOOGLE_EXPIRY_STAGE_PREFIX",
+                "Value": {
+                  "Ref": "ResourcePrefix"
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "WorkerLogGroupName"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "google-link-expiry"
+              }
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      },
+      "UpdateReplacePolicy": "Retain",
+      "DeletionPolicy": "Retain",
+      "Condition": "GoogleExpiryConfigured"
+    },
+    "GoogleLinkExpiryScheduleGroup": {
+      "Type": "AWS::Scheduler::ScheduleGroup",
+      "Condition": "GoogleExpiryConfigured",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${ResourcePrefix}-google-auth"
+        },
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "GoogleLinkExpiryDlq": {
+      "Type": "AWS::SQS::Queue",
+      "Condition": "GoogleExpiryConfigured",
+      "Properties": {
+        "QueueName": {
+          "Fn::Sub": "${ResourcePrefix}-google-link-expiry-dlq"
+        },
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 86400,
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "GoogleLinkExpirySchedulerRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "GoogleExpiryConfigured",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${ResourcePrefix}-google-link-expiry-scheduler"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "scheduler.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  },
+                  "aws:SourceArn": {
+                    "Fn::GetAtt": [
+                      "GoogleLinkExpiryScheduleGroup",
+                      "Arn"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "exact-google-link-expiry",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ecs:RunTask",
+                  "Resource": {
+                    "Ref": "GoogleLinkExpiryTaskDefinition"
+                  },
+                  "Condition": {
+                    "ArnEquals": {
+                      "ecs:cluster": {
+                        "Ref": "ClusterArn"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "iam:PassRole",
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "ExecutionRole",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "MigrationTaskRole",
+                        "Arn"
+                      ]
+                    }
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "ecs-tasks.amazonaws.com"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "GoogleLinkExpiryDlq",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Deny",
+                  "Action": "*",
+                  "Resource": {
+                    "Ref": "ProductionDeniedArns"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ],
+        "PermissionsBoundary": {
+          "Ref": "GoogleLinkExpirySchedulerBoundary"
+        }
+      }
+    },
+    "GoogleLinkExpirySchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "Condition": "GoogleExpiryConfigured",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${ResourcePrefix}-google-link-expiry"
+        },
+        "GroupName": {
+          "Fn::Sub": "${ResourcePrefix}-google-auth"
+        },
+        "State": {
+          "Fn::If": [
+            "GoogleExpiryScheduleConfigured",
+            "ENABLED",
+            "DISABLED"
+          ]
+        },
+        "ScheduleExpression": "rate(15 minutes)",
+        "FlexibleTimeWindow": {
+          "Mode": "OFF"
+        },
+        "EndDate": "2026-10-10T00:00:00.000Z",
+        "Target": {
+          "Arn": {
+            "Ref": "ClusterArn"
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "GoogleLinkExpirySchedulerRole",
+              "Arn"
+            ]
+          },
+          "RetryPolicy": {
+            "MaximumEventAgeInSeconds": 60,
+            "MaximumRetryAttempts": 0
+          },
+          "DeadLetterConfig": {
+            "Arn": {
+              "Fn::GetAtt": [
+                "GoogleLinkExpiryDlq",
+                "Arn"
+              ]
+            }
+          },
+          "EcsParameters": {
+            "TaskDefinitionArn": {
+              "Ref": "GoogleLinkExpiryTaskDefinition"
+            },
+            "TaskCount": 1,
+            "LaunchType": "FARGATE",
+            "EnableECSManagedTags": true,
+            "PropagateTags": "TASK_DEFINITION",
+            "NetworkConfiguration": {
+              "AwsvpcConfiguration": {
+                "AssignPublicIp": "ENABLED",
+                "Subnets": [
+                  {
+                    "Ref": "PublicSubnetAId"
+                  },
+                  {
+                    "Ref": "PublicSubnetCId"
+                  }
+                ],
+                "SecurityGroups": [
+                  {
+                    "Ref": "WorkerSG"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "DependsOn": "GoogleLinkExpiryScheduleGroup"
+    },
+    "GoogleLinkExpiryFailureAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "GoogleExpiryScheduleConfigured",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "${ResourcePrefix}-google-link-expiry-failure"
+        },
+        "Namespace": "Lyra/StagingGoogleAuth",
+        "MetricName": "CleanupFailures",
+        "Dimensions": [
+          {
+            "Name": "StageId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          }
+        ],
+        "Period": 900,
+        "EvaluationPeriods": 1,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "breaching",
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "GoogleLinkExpirySaturationAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "GoogleExpiryScheduleConfigured",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "${ResourcePrefix}-google-link-expiry-at-limit"
+        },
+        "Namespace": "Lyra/StagingGoogleAuth",
+        "MetricName": "CleanupAtLimit",
+        "Dimensions": [
+          {
+            "Name": "StageId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          }
+        ],
+        "Period": 900,
+        "EvaluationPeriods": 1,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "GoogleLinkExpiryDlqAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "GoogleExpiryScheduleConfigured",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "${ResourcePrefix}-google-link-expiry-dlq"
+        },
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "GoogleLinkExpiryDlq",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Period": 900,
+        "EvaluationPeriods": 1,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "Tags": [
+          {
+            "Key": "Owner",
+            "Value": "Lyra"
+          },
+          {
+            "Key": "Environment",
+            "Value": "staging"
+          },
+          {
+            "Key": "LyraStagingId",
+            "Value": {
+              "Ref": "ResourcePrefix"
+            }
+          },
+          {
+            "Key": "ExpiresAt",
+            "Value": {
+              "Ref": "ExpiresAt"
+            }
+          }
+        ]
+      }
+    },
+    "GoogleLinkExpirySchedulerBoundary": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Condition": "GoogleExpiryConfigured",
+      "Properties": {
+        "ManagedPolicyName": {
+          "Fn::Sub": "${ResourcePrefix}-google-link-expiry-boundary"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": "ecs:RunTask",
+              "Resource": {
+                "Ref": "GoogleLinkExpiryTaskDefinition"
+              },
+              "Condition": {
+                "ArnEquals": {
+                  "ecs:cluster": {
+                    "Ref": "ClusterArn"
+                  }
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": "iam:PassRole",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ExecutionRole",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::GetAtt": [
+                    "MigrationTaskRole",
+                    "Arn"
+                  ]
+                }
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "iam:PassedToService": "ecs-tasks.amazonaws.com"
+                }
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": "sqs:SendMessage",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "GoogleLinkExpiryDlq",
+                  "Arn"
+                ]
+              }
+            },
+            {
+              "Effect": "Deny",
+              "Action": "*",
+              "Resource": {
+                "Ref": "ProductionDeniedArns"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "ApiTaskDefinitionArn": {
+      "Value": {
+        "Ref": "ApiTaskDefinition"
+      }
+    },
+    "GenerationTaskDefinitionArn": {
+      "Value": {
+        "Ref": "GenerationTaskDefinition"
+      }
+    },
+    "ExportTaskDefinitionArn": {
+      "Value": {
+        "Ref": "ExportTaskDefinition"
+      }
+    },
+    "DeletionTaskDefinitionArn": {
+      "Value": {
+        "Ref": "DeletionTaskDefinition"
+      }
+    },
+    "MigrationTaskDefinitionArn": {
+      "Value": {
+        "Ref": "MigrationTaskDefinition"
+      }
+    },
+    "ApiTaskRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ApiTaskRole",
+          "Arn"
+        ]
+      }
+    },
+    "WorkerTaskRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "WorkerTaskRole",
+          "Arn"
+        ]
+      }
+    },
+    "MigrationTaskRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "MigrationTaskRole",
+          "Arn"
+        ]
+      }
+    },
+    "ExecutionRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ExecutionRole",
+          "Arn"
+        ]
+      }
+    },
+    "ApiServiceName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ApiService",
+          "Name"
+        ]
+      }
+    },
+    "GenerationServiceName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "GenerationService",
+          "Name"
+        ]
+      }
+    },
+    "ExportServiceName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ExportService",
+          "Name"
+        ]
+      }
+    },
+    "DeletionServiceName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "DeletionService",
+          "Name"
+        ]
+      }
+    },
+    "GoogleLinkExpiryScheduleGroupName": {
+      "Condition": "GoogleExpiryConfigured",
+      "Value": {
+        "Ref": "GoogleLinkExpiryScheduleGroup"
+      }
+    },
+    "GoogleLinkExpiryScheduleName": {
+      "Condition": "GoogleExpiryConfigured",
+      "Value": {
+        "Ref": "GoogleLinkExpirySchedule"
+      }
+    },
+    "GoogleLinkExpiryScheduleArn": {
+      "Condition": "GoogleExpiryConfigured",
+      "Value": {
+        "Fn::Sub": "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${ResourcePrefix}-google-auth/${ResourcePrefix}-google-link-expiry"
+      }
+    },
+    "GoogleLinkExpiryTaskDefinitionArn": {
+      "Condition": "GoogleExpiryConfigured",
+      "Value": {
+        "Ref": "GoogleLinkExpiryTaskDefinition"
+      }
+    },
+    "GoogleLinkExpirySchedulerRoleArn": {
+      "Condition": "GoogleExpiryConfigured",
+      "Value": {
+        "Fn::GetAtt": [
+          "GoogleLinkExpirySchedulerRole",
+          "Arn"
+        ]
+      }
+    },
+    "GoogleLinkExpiryDlqArn": {
+      "Condition": "GoogleExpiryConfigured",
+      "Value": {
+        "Fn::GetAtt": [
+          "GoogleLinkExpiryDlq",
+          "Arn"
+        ]
+      }
+    }
+  },
+  "Metadata": {
+    "LyraStagingRuntimeRetentionContract": {
+      "Version": "2026-10-03-retain-task-definitions-v1"
+    }
+  },
+  "Conditions": {
+    "GoogleLinkGrantConfigured": {
+      "Fn::Equals": [
+        {
+          "Ref": "GoogleIdentityLinkGrantEnabled"
+        },
+        "true"
+      ]
+    },
+    "GoogleExpiryConfigured": {
+      "Fn::Equals": [
+        {
+          "Ref": "GoogleIdentityExpiryEnabled"
+        },
+        "true"
+      ]
+    },
+    "GoogleExpiryScheduleConfigured": {
+      "Fn::Equals": [
+        {
+          "Ref": "GoogleIdentityExpiryScheduleEnabled"
+        },
+        "true"
+      ]
+    }
+  },
+  "Rules": {
+    "GoogleLinkGrantRequiresPool": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "GoogleIdentityLinkGrantEnabled"
+          },
+          "true"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Equals": [
+                  {
+                    "Ref": "GoogleUserPoolId"
+                  },
+                  ""
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "Resolve and verify the owned staging pool before granting explicit Google linking"
+        }
+      ]
+    },
+    "GoogleExpiryRequiresLinkGrant": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "GoogleIdentityExpiryEnabled"
+          },
+          "true"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "GoogleIdentityLinkGrantEnabled"
+              },
+              "true"
+            ]
+          },
+          "AssertDescription": "Verify stage Google settings and grant before creating cleanup resources"
+        }
+      ]
+    },
+    "GoogleExpiryScheduleRequiresTask": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "GoogleIdentityExpiryScheduleEnabled"
+          },
+          "true"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "GoogleIdentityExpiryEnabled"
+              },
+              "true"
+            ]
+          },
+          "AssertDescription": "Deploy and verify the cleanup task before enabling its schedule"
+        }
+      ]
+    },
+    "GoogleExpiryRequiresExactStage": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "GoogleIdentityExpiryEnabled"
+          },
+          "true"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "ResourcePrefix"
+              },
+              "lyra-staging-20261003"
+            ]
+          },
+          "AssertDescription": "Run the Google expiry task only in the reviewed staging environment"
+        }
+      ]
+    }
+  }
+}

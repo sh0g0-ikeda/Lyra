@@ -1,11 +1,12 @@
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import type { DirtyStateChoice } from '@/domain/dirtyStatePolicy';
 import type { UiLanguage } from '@/domain/types';
 import { t } from '@/lib/i18n';
+import { commonGuidanceMessages } from '@/lib/commonGuidanceMessages';
 
 interface UnsavedChangesResolutionDialogProps {
   language: UiLanguage;
@@ -18,6 +19,7 @@ export function UnsavedChangesResolutionDialog({
   onSelect,
   visible
 }: UnsavedChangesResolutionDialogProps): React.JSX.Element {
+  const copy = commonGuidanceMessages(language);
   const cancel = (): void => onSelect('cancel');
 
   return (
@@ -33,40 +35,44 @@ export function UnsavedChangesResolutionDialog({
         onPress={cancel}
         style={styles.backdrop}
       >
-        <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-          <View
-            accessibilityViewIsModal
-            onAccessibilityEscape={cancel}
-            onStartShouldSetResponder={() => true}
-            style={styles.dialog}
-          >
-            <Text accessibilityRole="header" style={styles.title}>
-              {t(language, "generated.lib.confirm.unsaved.changes.4947a834")}
-            </Text>
-            <Text style={styles.message}>
-              {t(language, "generated.lib.confirm.save.or.discard.your.edits.before.leavin.764f7978")}
-            </Text>
-            <View style={styles.actions}>
-              <PrimaryButton
-                label={t(language, "generated.lib.confirm.save.80b89d5e")}
-                onPress={() => onSelect('save')}
-                testID="dirty-resolution-save"
-              />
-              <PrimaryButton
-                label={t(language, "generated.lib.confirm.discard.bd94165e")}
-                onPress={() => onSelect('discard')}
-                testID="dirty-resolution-discard"
-                variant="danger"
-              />
-              <PrimaryButton
-                label={t(language, "generated.lib.confirm.cancel.3672b0b9")}
-                onPress={cancel}
-                testID="dirty-resolution-cancel"
-                variant="secondary"
-              />
-            </View>
-          </View>
-        </SafeAreaView>
+        <SafeAreaProvider>
+          <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+            <ScrollView contentContainerStyle={styles.scroll}>
+              <View
+                accessibilityViewIsModal
+                onAccessibilityEscape={cancel}
+                onStartShouldSetResponder={() => true}
+                style={styles.dialog}
+              >
+                <Text accessibilityRole="header" style={styles.title}>
+                  {t(language, "generated.lib.confirm.unsaved.changes.4947a834")}
+                </Text>
+                <Text style={styles.message}>
+                  {copy.dirtyMessage}
+                </Text>
+                <View style={styles.actions}>
+                  <PrimaryButton
+                    label={copy.saveContinue}
+                    onPress={() => onSelect('save')}
+                    testID="dirty-resolution-save"
+                  />
+                  <PrimaryButton
+                    label={copy.discardContinue}
+                    onPress={() => onSelect('discard')}
+                    testID="dirty-resolution-discard"
+                    variant="danger"
+                  />
+                  <PrimaryButton
+                    label={copy.goBack}
+                    onPress={cancel}
+                    testID="dirty-resolution-cancel"
+                    variant="secondary"
+                  />
+                </View>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </SafeAreaProvider>
       </Pressable>
     </Modal>
   );
@@ -98,6 +104,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.md
   },
+  scroll: { flexGrow: 1, justifyContent: 'center' },
   title: {
     ...textStyles.sectionTitle,
     color: colors.inkStrong

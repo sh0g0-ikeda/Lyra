@@ -5,7 +5,12 @@ import {
 } from '../domain/constants/generation.js';
 
 interface RuntimeGuardConfig {
-  APP_ENV?: 'development' | 'test' | 'production';
+  APP_ENV?: 'development' | 'test' | 'staging' | 'production';
+  LYRA_PERSISTENCE_PROFILE?: 'canonical' | 'legacy_2debe_v1';
+  STAGING_RESOURCE_ISOLATION_ATTESTED?: boolean;
+  STAGING_PRODUCTION_RESOURCE_DENYLIST?: string;
+  STAGING_SECRET_SOURCE_ID?: string;
+  STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED?: boolean;
   DEV_AUTH_BYPASS: boolean;
   DATABASE_URL?: string;
   DATABASE_POOL_MAX?: number;
@@ -21,16 +26,28 @@ interface RuntimeGuardConfig {
   COGNITO_USER_POOL_ID?: string;
   COGNITO_CLIENT_ID?: string;
   COGNITO_ALLOWED_CLIENT_IDS?: string;
+  WEB_IMAGE_DELIVERY_COGNITO_CLIENT_IDS?: string;
   COGNITO_ISSUER?: string;
   COGNITO_JWKS_URI?: string;
   COGNITO_TOKEN_USE?: 'access' | 'id';
   COGNITO_REQUIRED_SCOPES?: string;
+  GOOGLE_IOS_COGNITO_CLIENT_ID?: string;
+  GOOGLE_COGNITO_IDP_CLIENT_ID?: string;
+  GOOGLE_LINK_CLIENT_ID?: string;
+  GOOGLE_LINK_REDIRECT_URI?: string;
+  GOOGLE_LINK_WEB_RETURN_URI?: string;
+  GOOGLE_LINK_MOBILE_RETURN_URI?: string;
   LOCAL_FILE_STORAGE_DIR?: string;
   LOCAL_ASSET_BASE_URL?: string;
   LOCAL_IMAGE_FALLBACK_ENABLED?: boolean;
   LLM_PAGE_PROMPT_COMPILER_ENABLED?: boolean;
   LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED?: boolean;
   LLM_PAGE_GENERATION_PLANNER_ENABLED?: boolean;
+  GENERATION_ENABLED?: boolean;
+  PAGE_GENERATION_ENABLED?: boolean;
+  ENTITY_GENERATION_ENABLED?: boolean;
+  ENTITY_IMPORT_ANALYSIS_ENABLED?: boolean;
+  ENTITY_STATE_REFERENCE_GENERATION_ENABLED?: boolean;
   OPENAI_API_KEY?: string;
   OPENAI_IMAGE_MODEL?: string;
   OPENAI_BASE_URL?: string;
@@ -149,8 +166,13 @@ export function assertProductionRuntimeConfig(
   nodeEnv = process.env.NODE_ENV,
 ): void {
   const appEnv = config.APP_ENV;
-  const isProductionRuntime = nodeEnv === 'production' || appEnv === 'production';
+  const isStagingRuntime = appEnv === 'staging';
+  const isProductionRuntime = nodeEnv === 'production' || appEnv === 'production' || isStagingRuntime;
   const violations: string[] = [];
+
+  if (config.LYRA_PERSISTENCE_PROFILE === 'legacy_2debe_v1') {
+    throw new ConfigurationError('LYRA_PERSISTENCE_PROFILE legacy_2debe_v1 is not enabled');
+  }
 
   if (config.DEV_AUTH_BYPASS && !isDevAuthBypassRuntimeAllowed(appEnv, nodeEnv)) {
     violations.push('DEV_AUTH_BYPASS is only allowed in explicit development or test runtimes');
@@ -167,8 +189,16 @@ export function assertProductionRuntimeConfig(
     violations.push('NODE_ENV must be production when APP_ENV is production');
   }
 
-  if (nodeEnv === 'production' && appEnv !== undefined && appEnv !== 'production') {
+  if (isStagingRuntime && nodeEnv !== 'production') {
+    violations.push('NODE_ENV must be production when APP_ENV is staging');
+  }
+
+  if (nodeEnv === 'production' && appEnv !== undefined && appEnv !== 'production' && !isStagingRuntime) {
     violations.push('APP_ENV must be production when NODE_ENV is production');
+  }
+
+  if (isStagingRuntime) {
+    validateStagingResourceIsolation(config, violations);
   }
 
   if (config.DEV_AUTH_BYPASS) {
@@ -274,9 +304,26 @@ export function assertProductionRuntimeConfig(
     violations.push('ORIGIN_GUARD_HEADER_VALUE is required');
   }
 
+  const stagingAllowsMissingOpenAiKey =
+    isStagingRuntime &&
+    config.STAGING_GENERATION_FLAGS_EXPLICITLY_DISABLED === true &&
+    config.GENERATION_ENABLED === false &&
+    config.PAGE_GENERATION_ENABLED === false &&
+    config.ENTITY_GENERATION_ENABLED === false &&
+    config.ENTITY_IMPORT_ANALYSIS_ENABLED === false &&
+    config.ENTITY_STATE_REFERENCE_GENERATION_ENABLED === false;
+
   for (const key of REQUIRED_PRODUCTION_GENERATION_KEYS) {
     if (isMissingConfigValue(config[key])) {
-      violations.push(`${key} is required`);
+      if (key === 'OPENAI_API_KEY' && isStagingRuntime) {
+        if (!stagingAllowsMissingOpenAiKey) {
+          violations.push(
+            'OPENAI_API_KEY may be omitted in staging only when all generation feature flags are explicitly false',
+          );
+        }
+      } else {
+        violations.push(`${key} is required`);
+      }
     }
   }
 
@@ -297,27 +344,19 @@ export function assertProductionRuntimeConfig(
   }
 
   if (config.EPISODE_EXPORT_ENABLED === true) {
-    if (isMissingConfigValue(config.SQS_QUEUE_URL_EXPORT)) {
-      violations.push('SQS_QUEUE_URL_EXPORT is required when episode export is enabled');
+    const queueUrl = config.SQS_QUEUE_URL_EXPORT ?? config.SQS_QUEUE_URL_GENERATION;
+    const queueName = config.SQS_QUEUE_URL_EXPORT === undefined ? 'SQS_QUEUE_URL_GENERATION' : 'SQS_QUEUE_URL_EXPORT';
+    const sharedQueue = queueUrl === config.SQS_QUEUE_URL_GENERATION;
+    if (isMissingConfigValue(queueUrl)) {
+      violations.push('An export or generation SQS queue is required when episode export is enabled');
     } else {
-      const queueUrl = config.SQS_QUEUE_URL_EXPORT;
-      if (queueUrl !== undefined && !isSafeProductionHttpsUrl(queueUrl)) {
-        violations.push(
-          'SQS_QUEUE_URL_EXPORT must use https and a non-local host in production',
-        );
-      }
-      if (hasPlaceholderConfigValue(queueUrl)) {
-        violations.push('SQS_QUEUE_URL_EXPORT must not use a placeholder value');
-      }
+      if (queueUrl !== undefined && !isSafeProductionHttpsUrl(queueUrl)) violations.push(`${queueName} must use https and a non-local host in production`);
+      if (hasPlaceholderConfigValue(queueUrl)) violations.push(`${queueName} must not use a placeholder value`);
     }
-    if (
-      config.SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS === undefined
-      || config.SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS
-        < MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS
-    ) {
-      violations.push(
-        `SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS must be at least ${MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS}`,
-      );
+    const exportVisibility = sharedQueue ? config.SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS : config.SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS;
+    const visibilityName = sharedQueue ? 'SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS' : 'SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS';
+    if (exportVisibility === undefined || exportVisibility < MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS) {
+      violations.push(`${visibilityName} must be at least ${MIN_PRODUCTION_SQS_EXPORT_VISIBILITY_TIMEOUT_SECONDS}`);
     }
     if (isMissingConfigValue(config.AWS_REGION)) {
       violations.push('AWS_REGION is required when episode export is enabled');
@@ -428,36 +467,50 @@ export function assertProductionRuntimeConfig(
     );
   }
 
-  const missingStripeKeys = STRIPE_KEYS.filter((key) => isMissingConfigValue(config[key]));
-  if (missingStripeKeys.length > 0) {
-    violations.push(`Stripe config is incomplete: ${missingStripeKeys.join(', ')}`);
-  }
-  const placeholderStripeKeys: string[] = STRIPE_KEYS.filter((key) => hasPlaceholderConfigValue(config[key]));
-  const placeholderOptionalStripePriceKeys = OPTIONAL_STRIPE_PRICE_KEYS.filter((key) =>
-    hasPlaceholderConfigValue(config[key]),
+  const hasAnyStripeConfig = [...STRIPE_KEYS, ...OPTIONAL_STRIPE_PRICE_KEYS].some(
+    (key) => config[key] !== undefined,
   );
-  placeholderStripeKeys.push(...placeholderOptionalStripePriceKeys);
-  if (placeholderStripeKeys.length > 0) {
-    violations.push(`Stripe config contains placeholder values: ${placeholderStripeKeys.join(', ')}`);
-  }
-  const stripeSecretKey = config.STRIPE_SECRET_KEY;
-  if (stripeSecretKey !== undefined && hasConfigValue(stripeSecretKey) && !stripeSecretKey.trim().startsWith('sk_live_')) {
-    violations.push('STRIPE_SECRET_KEY must use a live secret key in production');
-  }
-  const stripeWebhookSecret = config.STRIPE_WEBHOOK_SECRET;
-  if (
-    stripeWebhookSecret !== undefined &&
-    hasConfigValue(stripeWebhookSecret) &&
-    !stripeWebhookSecret.trim().startsWith('whsec_')
-  ) {
-    violations.push('STRIPE_WEBHOOK_SECRET must start with whsec_');
-  }
-  const invalidStripePriceKeys = STRIPE_PRICE_KEYS.filter((key) => {
-    const value = config[key];
-    return value !== undefined && hasConfigValue(value) && !value.trim().startsWith('price_');
-  });
-  if (invalidStripePriceKeys.length > 0) {
-    violations.push(`Stripe price ids must start with price_: ${invalidStripePriceKeys.join(', ')}`);
+  if (!isStagingRuntime || hasAnyStripeConfig) {
+    const missingStripeKeys = STRIPE_KEYS.filter((key) => isMissingConfigValue(config[key]));
+    if (missingStripeKeys.length > 0) {
+      violations.push(`Stripe config is incomplete: ${missingStripeKeys.join(', ')}`);
+    }
+    const placeholderStripeKeys: string[] = STRIPE_KEYS.filter((key) => hasPlaceholderConfigValue(config[key]));
+    const placeholderOptionalStripePriceKeys = OPTIONAL_STRIPE_PRICE_KEYS.filter((key) =>
+      hasPlaceholderConfigValue(config[key]),
+    );
+    placeholderStripeKeys.push(...placeholderOptionalStripePriceKeys);
+    if (placeholderStripeKeys.length > 0) {
+      violations.push(`Stripe config contains placeholder values: ${placeholderStripeKeys.join(', ')}`);
+    }
+    const stripeSecretKey = config.STRIPE_SECRET_KEY;
+    const requiredStripeSecretPrefix = isStagingRuntime ? 'sk_test_' : 'sk_live_';
+    if (
+      stripeSecretKey !== undefined &&
+      hasConfigValue(stripeSecretKey) &&
+      !stripeSecretKey.trim().startsWith(requiredStripeSecretPrefix)
+    ) {
+      violations.push(
+        isStagingRuntime
+          ? 'STRIPE_SECRET_KEY must use a test secret key in staging'
+          : 'STRIPE_SECRET_KEY must use a live secret key in production',
+      );
+    }
+    const stripeWebhookSecret = config.STRIPE_WEBHOOK_SECRET;
+    if (
+      stripeWebhookSecret !== undefined &&
+      hasConfigValue(stripeWebhookSecret) &&
+      !stripeWebhookSecret.trim().startsWith('whsec_')
+    ) {
+      violations.push('STRIPE_WEBHOOK_SECRET must start with whsec_');
+    }
+    const invalidStripePriceKeys = STRIPE_PRICE_KEYS.filter((key) => {
+      const value = config[key];
+      return value !== undefined && hasConfigValue(value) && !value.trim().startsWith('price_');
+    });
+    if (invalidStripePriceKeys.length > 0) {
+      violations.push(`Stripe price ids must start with price_: ${invalidStripePriceKeys.join(', ')}`);
+    }
   }
 
   for (const key of PRODUCTION_PUBLIC_URL_KEYS) {
@@ -483,11 +536,101 @@ export function isDevAuthBypassRuntimeAllowed(
   appEnv: RuntimeGuardConfig['APP_ENV'],
   nodeEnv = process.env.NODE_ENV,
 ): boolean {
-  if (appEnv === 'production' || nodeEnv === 'production') {
+  if (appEnv === 'production' || appEnv === 'staging' || nodeEnv === 'production') {
     return false;
   }
 
   return appEnv === 'development' || appEnv === 'test' || nodeEnv === 'development' || nodeEnv === 'test';
+}
+
+function validateStagingResourceIsolation(config: RuntimeGuardConfig, violations: string[]): void {
+  if (config.STAGING_RESOURCE_ISOLATION_ATTESTED !== true) {
+    violations.push('STAGING_RESOURCE_ISOLATION_ATTESTED must be true in staging');
+  }
+
+  if (isMissingConfigValue(config.STAGING_PRODUCTION_RESOURCE_DENYLIST)) {
+    violations.push('STAGING_PRODUCTION_RESOURCE_DENYLIST is required in staging');
+    return;
+  }
+
+  if (isMissingConfigValue(config.STAGING_SECRET_SOURCE_ID)) {
+    violations.push('STAGING_SECRET_SOURCE_ID is required in staging');
+  }
+
+  const deniedIdentities = new Set(
+    splitConfigList(config.STAGING_PRODUCTION_RESOURCE_DENYLIST).flatMap((value) => resourceIdentities(value)),
+  );
+  const references: ReadonlyArray<readonly [string, string | undefined]> = [
+    ...PRODUCTION_PUBLIC_URL_KEYS.map((key) => [key, config[key]] as const),
+    ['DATABASE_URL', config.DATABASE_URL],
+    ['COGNITO_USER_POOL_ID', config.COGNITO_USER_POOL_ID],
+    ['COGNITO_CLIENT_ID', config.COGNITO_CLIENT_ID],
+    ['COGNITO_ISSUER', config.COGNITO_ISSUER],
+    ['COGNITO_JWKS_URI', config.COGNITO_JWKS_URI],
+    ['GOOGLE_IOS_COGNITO_CLIENT_ID', config.GOOGLE_IOS_COGNITO_CLIENT_ID],
+    ['GOOGLE_COGNITO_IDP_CLIENT_ID', config.GOOGLE_COGNITO_IDP_CLIENT_ID],
+    ['GOOGLE_LINK_CLIENT_ID', config.GOOGLE_LINK_CLIENT_ID],
+    ['GOOGLE_LINK_REDIRECT_URI', config.GOOGLE_LINK_REDIRECT_URI],
+    ['GOOGLE_LINK_WEB_RETURN_URI', config.GOOGLE_LINK_WEB_RETURN_URI],
+    ['GOOGLE_LINK_MOBILE_RETURN_URI', config.GOOGLE_LINK_MOBILE_RETURN_URI],
+    ['SQS_QUEUE_URL_GENERATION', config.SQS_QUEUE_URL_GENERATION],
+    ['SQS_QUEUE_URL_EXPORT', config.SQS_QUEUE_URL_EXPORT],
+    ['S3_BUCKET_IMAGES', config.S3_BUCKET_IMAGES],
+    ['IMAGES_CDN_BASE_URL', config.IMAGES_CDN_BASE_URL],
+    ['STAGING_SECRET_SOURCE_ID', config.STAGING_SECRET_SOURCE_ID],
+  ];
+  const matchingKeys = references
+    .filter(([key, value]) => value !== undefined && resourceReferenceMatchesDenied(key, value, deniedIdentities))
+    .map(([key]) => key);
+  const allowedClientIds = splitConfigList(config.COGNITO_ALLOWED_CLIENT_IDS);
+  if (allowedClientIds.some((value) => resourceIdentities(value).some((identity) => deniedIdentities.has(identity)))) {
+    matchingKeys.push('COGNITO_ALLOWED_CLIENT_IDS');
+  }
+  const webImageDeliveryClientIds = splitConfigList(config.WEB_IMAGE_DELIVERY_COGNITO_CLIENT_IDS);
+  if (webImageDeliveryClientIds.some((value) => resourceIdentities(value).some((identity) => deniedIdentities.has(identity)))) {
+    matchingKeys.push('WEB_IMAGE_DELIVERY_COGNITO_CLIENT_IDS');
+  }
+
+  if (matchingKeys.length > 0) {
+    violations.push(`Staging runtime references production resources: ${matchingKeys.join(', ')}`);
+  }
+}
+
+function splitConfigList(value: string | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  return value.split(',').map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+}
+
+function resourceIdentities(value: string): string[] {
+  const trimmedValue = value.trim();
+  const identities = new Set([trimmedValue, trimmedValue.toLowerCase()]);
+  try {
+    const parsed = new URL(trimmedValue);
+    identities.add(parsed.href);
+    identities.add(parsed.href.toLowerCase());
+  } catch {
+    // Opaque AWS resource IDs and secret source IDs are compared as exact values.
+  }
+  return [...identities];
+}
+
+function resourceReferenceMatchesDenied(key: string, value: string, deniedIdentities: ReadonlySet<string>): boolean {
+  if (resourceIdentities(value).some((identity) => deniedIdentities.has(identity))) {
+    return true;
+  }
+
+  if (key !== 'DATABASE_URL') {
+    return false;
+  }
+
+  try {
+    return deniedIdentities.has(new URL(value).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function isMissingConfigValue(value: string | undefined): boolean {

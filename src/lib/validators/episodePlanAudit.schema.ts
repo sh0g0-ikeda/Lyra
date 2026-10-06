@@ -1,3 +1,4 @@
+import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
 import { z } from 'zod';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import {
@@ -6,14 +7,23 @@ import {
   autofillPanelEntityAssignmentSchema,
 } from './pageAutofill.schema.js';
 
+export const EPISODE_PLAN_AUDIT_COVERAGE_MAX_CHECKS_PER_PAGE = 2;
+export const EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK = 2;
+export const EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS = 40;
+export const EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS = 24;
+
 export const episodePlanAuditIssueCodes = [
   'duplicate_dialogue',
+  'dialogue_density',
   'duplicate_visual_beat',
   'timeline_discontinuity',
   'dialogue_misplacement',
   'knowledge_violation',
   'page_handoff_break',
   'unsupported_story_fact',
+  'source_omission',
+  'ongoing_action_dropped',
+  'visible_entity_mismatch',
 ] as const;
 
 export const episodePlanAuditPageRepairFields = [
@@ -84,7 +94,7 @@ const panelRepairPatchSchema = z
     situation_text: z.string().trim().min(1).max(2_000).nullable(),
     composition: autofillCompositionSchema.nullable(),
     dialogue_in_panel: z.boolean().nullable(),
-    dialogue: z.array(autofillDialogueLineSchema).max(20).nullable(),
+    dialogue: z.array(autofillDialogueLineSchema).max(EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL).nullable(),
     sfx_text: z.string().trim().min(1).max(200).nullable(),
     background_note: z.string().trim().min(1).max(2_000).nullable(),
     panel_notes: z.string().trim().min(1).max(2_000).nullable(),
@@ -139,6 +149,60 @@ const episodePlanAuditPanelRepairSchema = z
     }
   });
 
+const episodePlanAuditCoverageEvidenceSchema = z
+  .object({
+    output_ref: z.string().trim().min(1).max(EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS),
+    quote: z.string().trim().min(4).max(EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS),
+  })
+  .strict();
+
+const episodePlanAuditCoverageRepairTargetSchema = z
+  .object({
+    scope: z.literal('panel'),
+    page_id: z.string().uuid(),
+    panel_order: z.number().int().min(1).max(1_000),
+  })
+  .strict();
+
+const episodePlanAuditCoverageCheckSchema = z
+  .object({
+    source_ref: z.string().trim().min(1).max(EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS),
+    source_quote: z.string().trim().min(4).max(EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS),
+    status: z.enum(['present', 'missing']),
+    output_evidence: z
+      .array(episodePlanAuditCoverageEvidenceSchema)
+      .max(EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK),
+    issue_code: z.enum(['source_omission', 'ongoing_action_dropped']).nullable(),
+    repair_target: episodePlanAuditCoverageRepairTargetSchema.nullable(),
+  })
+  .strict()
+  .superRefine((check, context) => {
+    const presentShapeIsValid = check.status === 'present'
+      && check.output_evidence.length > 0
+      && check.issue_code === null
+      && check.repair_target === null;
+    const missingShapeIsValid = check.status === 'missing'
+      && check.output_evidence.length === 0
+      && check.issue_code !== null
+      && check.repair_target !== null;
+    if (!presentShapeIsValid && !missingShapeIsValid) {
+      context.addIssue({
+        code: 'custom',
+        message: 'coverage status must match evidence, issue, and repair target',
+      });
+    }
+  });
+
+const episodePlanAuditSourceCoverageSchema = z
+  .object({
+    page_id: z.string().uuid(),
+    checks: z
+      .array(episodePlanAuditCoverageCheckSchema)
+      .min(1)
+      .max(EPISODE_PLAN_AUDIT_COVERAGE_MAX_CHECKS_PER_PAGE),
+  })
+  .strict();
+
 export const episodePlanAuditSchema = z
   .object({
     accepted: z.boolean(),
@@ -147,6 +211,10 @@ export const episodePlanAuditSchema = z
     panel_repairs: z
       .array(episodePlanAuditPanelRepairSchema)
       .max(STORY_AI_LIMITS.maxSkeletonPages * STORY_AI_LIMITS.maxPanelsPerPage),
+    source_coverage: z
+      .array(episodePlanAuditSourceCoverageSchema)
+      .min(1)
+      .max(STORY_AI_LIMITS.maxSkeletonPages),
   })
   .strict();
 

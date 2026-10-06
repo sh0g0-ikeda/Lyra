@@ -35,6 +35,18 @@ export class RateLimitError extends AppError {
   }
 }
 
+export class PageStaleError extends AppError {
+  public constructor() {
+    super('PAGE_STALE', 'The page was changed by another edit. Reload before generating.', 409);
+  }
+}
+
+export class ResourceStaleError extends AppError {
+  public constructor() {
+    super('RESOURCE_STALE', 'The resource was changed by another edit. Reload and review the latest state.', 409);
+  }
+}
+
 export class NotFoundError extends AppError {
   public constructor(message = 'Not found') {
     super('NOT_FOUND', message, 404);
@@ -50,6 +62,32 @@ export class ForbiddenError extends AppError {
 export class ConflictError extends AppError {
   public constructor(message = 'Conflict') {
     super('CONFLICT', message, 409);
+  }
+}
+
+export class PageReferenceModelIncompatibleError extends AppError {
+  public constructor() {
+    super(
+      'PAGE_REFERENCE_MODEL_INCOMPATIBLE',
+      'The confirmed character reference cannot be sent to the selected page image provider. Confirm a compatible character image first.',
+      409,
+    );
+  }
+}
+
+export class EntityReferenceModelIncompatibleError extends AppError {
+  public constructor() {
+    super(
+      'ENTITY_REFERENCE_MODEL_INCOMPATIBLE',
+      'The selected character reference cannot be sent to the selected image provider. Choose a compatible source image or generate without a source image.',
+      409,
+    );
+  }
+}
+
+export class AccountLinkRequiredError extends AppError {
+  public constructor() {
+    super('ACCOUNT_LINK_REQUIRED', 'Use the existing sign-in method and link this provider from your account.', 409);
   }
 }
 

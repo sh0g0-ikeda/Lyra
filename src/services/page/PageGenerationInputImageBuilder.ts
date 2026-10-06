@@ -1,20 +1,31 @@
-import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { resolvePageGenerationLayoutControl, type PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
+import { ConfigurationError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import { PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../../domain/constants/generation.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import type { PageGenerationInputImage } from '../../domain/types/pageGeneration.js';
-import type { EntityRepository } from '../../repositories/EntityRepository.js';
+import type {
+  EntityReferenceAssignment,
+  EntityRepository,
+  EntityResolvedReferenceImage,
+} from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { StoredImageLoaderPort } from '../../infrastructure/aws/S3StoredImageLoader.js';
 import type { LayoutGuideImageRendererPort } from './LayoutGuideImageRenderer.js';
 import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
+import { requireOpenAIImageInputCompatible } from '../../domain/generation/ImageInputProviderPolicy.js';
+import { buildPageReferenceSubjectLabel, collectPageReferenceImages } from './PageReferenceIdentity.js';
+import { requireAssignedCharacterPrimariesCompatible } from './PageCharacterPrimaryReferencePolicy.js';
+import type { Entity } from '../../domain/types/entity.js';
 
 export interface BuildPageGenerationInputImagesInput {
   userId: string;
   organizationId?: string | null;
   pageId: string;
+  layoutControl?: PageGenerationLayoutControl | null;
 }
 
 export interface PageGenerationInputImageBuilderPort {
+  assertRenderableState(input: BuildPageGenerationInputImagesInput): Promise<void>;
   buildInputImages(input: BuildPageGenerationInputImagesInput): Promise<PageGenerationInputImage[]>;
 }
 
@@ -25,6 +36,29 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     private readonly storedImageLoader: StoredImageLoaderPort,
     private readonly layoutGuideImageRenderer: LayoutGuideImageRendererPort,
   ) {}
+
+  public async assertRenderableState(input: BuildPageGenerationInputImagesInput): Promise<void> {
+    const page = await this.pageRepository.findGenerationContextByIdAndUserId(
+      input.pageId,
+      input.userId,
+      input.organizationId ?? null,
+    );
+    if (page === null) {
+      throw new NotFoundError('Page not found');
+    }
+    const assignments = collectAssignments(page.panels);
+    await assertAssignedCharacterPrimaries(
+      this.entityRepository,
+      assignments,
+      page.workId,
+      input.userId,
+      page.organizationId ?? input.organizationId ?? null,
+    );
+    const references = await resolveReferences(this.entityRepository, assignments, page.workId, input.userId, page.organizationId ?? input.organizationId ?? null);
+    for (const reference of references) {
+      if (hasResolvedImage(reference)) requireOpenAIImageInputCompatible(reference);
+    }
+  }
 
   public async buildInputImages(
     input: BuildPageGenerationInputImagesInput,
@@ -37,45 +71,77 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
     if (page === null) {
       throw new NotFoundError('Page not found');
     }
-
     const organizationId = page.organizationId ?? input.organizationId ?? null;
-    const entityIds = collectEntityIds(page.panels);
+    const assignments = collectAssignments(page.panels);
     const entities = await this.entityRepository.findByWorkIdAndUserId(page.workId, input.userId, organizationId);
+    await assertAssignedCharacterPrimaries(
+      this.entityRepository,
+      assignments,
+      page.workId,
+      input.userId,
+      organizationId,
+      entities,
+    );
     const entityNameById = new Map(entities.map((entity) => [entity.id, entity.name]));
-    const references = await this.entityRepository.findPrimaryReferenceImagesByEntityIdsAndUserId(
-      entityIds,
+    const references = await resolveReferences(
+      this.entityRepository,
+      assignments,
       page.workId,
       input.userId,
       organizationId,
     );
-    const referenceImageCount = new Set(references.map((reference) => reference.entityId)).size;
+    assertResolvedStates(assignments, references);
+    const referenceByAssignment = new Map(
+      references.map((reference) => [referenceAssignmentKey(reference), reference]),
+    );
+    // Validate each alias before deduplication so a shared image cannot hide an invalid owner.
+    for (const assignment of assignments) {
+      const reference = referenceByAssignment.get(referenceAssignmentKey(assignment));
+      if (reference !== undefined && hasResolvedImage(reference)) {
+        requireOpenAIImageInputCompatible(reference);
+        ensureOwnedEntityReferenceImageKey(reference.s3Key, reference.ownerUserId ?? input.userId, assignment.entityId);
+      }
+    }
+    const referenceImages = collectPageReferenceImages(assignments, references);
+    const referenceImageCount = referenceImages.length;
     if (referenceImageCount > PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES) {
       throw new ValidationError(
         `Page generation supports up to ${PAGE_GENERATION_INPUT_IMAGE_LIMITS.MAX_ENTITY_REFERENCE_IMAGES} reference images per page. Reduce assigned characters or split the scene.`,
       );
     }
 
-    const referenceByEntityId = new Map(references.map((reference) => [reference.entityId, reference]));
-
     const inputImages: PageGenerationInputImage[] = [];
-    for (const entityId of entityIds) {
-      const reference = referenceByEntityId.get(entityId);
-      if (reference === undefined) {
-        continue;
-      }
-
-      ensureOwnedEntityReferenceImageKey(reference.s3Key, reference.ownerUserId ?? input.userId, entityId);
+    for (const { reference } of referenceImages) {
       const loadedImage = await this.storedImageLoader.loadByS3Key(reference.s3Key);
       ensureInputImageWithinLimit(loadedImage.imageData);
+      const subjectLabel = buildPageReferenceSubjectLabel(
+        entityNameById.get(reference.entityId) ?? `entity-${reference.entityId}`,
+        reference,
+        referenceImages,
+      );
       inputImages.push({
         role: 'entity_reference',
-        label: entityNameById.get(entityId) ?? `entity-${entityId}`,
+        label: subjectLabel,
         dataUrl: toDataUrl(loadedImage.mimeType, loadedImage.imageData),
+        reference: {
+          entityId: reference.entityId,
+          stateId: reference.stateId,
+          refId: reference.refId,
+          s3Key: reference.s3Key,
+          imageModel: reference.imageModel ?? null,
+          providerModelId: reference.providerModelId,
+          provider: reference.provider,
+          subjectLabel,
+        },
       });
     }
 
-    const layoutGuideImage = buildLayoutGuideImage(page.layoutConfig, this.layoutGuideImageRenderer);
+    const control = input.layoutControl === undefined
+      ? resolvePageGenerationLayoutControl(page.layoutConfig, page.panels.length) : input.layoutControl;
+    const layoutGuideImage = control === null ? null : this.layoutGuideImageRenderer.render(control.frames, { numberFrames: true });
+    if (control !== null && layoutGuideImage === null) throw new ConfigurationError('Resolved layout guide could not be rendered');
     if (layoutGuideImage !== null) {
+      ensureInputImageWithinLimit(layoutGuideImage.imageData);
       inputImages.push({
         role: 'layout_reference',
         label: 'page-layout-reference',
@@ -87,28 +153,111 @@ export class PageGenerationInputImageBuilder implements PageGenerationInputImage
   }
 }
 
-function buildLayoutGuideImage(
-  layoutConfig: Record<string, unknown>,
-  layoutGuideImageRenderer: LayoutGuideImageRendererPort,
-): { imageData: Buffer; mimeType: 'image/png' } | null {
-  if (layoutConfig.type !== 'custom') {
-    return null;
-  }
-
-  return layoutGuideImageRenderer.render(layoutConfig.frame_definitions);
-}
-
-function collectEntityIds(
-  panels: Array<{ entities: Array<{ entityId: string }> }>,
-): string[] {
-  const orderedEntityIds = new Set<string>();
+function collectAssignments(
+  panels: Array<{ entities: Array<{ entityId: string; stateId: string | null }> }>,
+): EntityReferenceAssignment[] {
+  const orderedAssignments = new Map<string, EntityReferenceAssignment>();
   for (const panel of panels) {
     for (const assignment of panel.entities) {
-      orderedEntityIds.add(assignment.entityId);
+      orderedAssignments.set(referenceAssignmentKey(assignment), {
+        entityId: assignment.entityId,
+        stateId: assignment.stateId,
+      });
     }
   }
 
-  return Array.from(orderedEntityIds);
+  return Array.from(orderedAssignments.values());
+}
+
+async function assertAssignedCharacterPrimaries(
+  repository: EntityRepository,
+  assignments: EntityReferenceAssignment[],
+  workId: string,
+  userId: string,
+  organizationId: string | null,
+  loadedEntities?: Entity[],
+): Promise<void> {
+  const assignedEntityIds = new Set(assignments.map((assignment) => assignment.entityId));
+  if (assignedEntityIds.size === 0) return;
+  const entities = loadedEntities ?? await repository.findByWorkIdAndUserId(workId, userId, organizationId);
+  const primaryReferences = await repository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+    Array.from(assignedEntityIds), workId, userId, organizationId,
+  );
+  requireAssignedCharacterPrimariesCompatible(assignedEntityIds, entities, primaryReferences);
+}
+
+function assertResolvedStates(
+  assignments: EntityReferenceAssignment[],
+  references: EntityResolvedReferenceImage[],
+): void {
+  for (const assignment of assignments) {
+    if (assignment.stateId === null) {
+      continue;
+    }
+    const reference = references.find((candidate) => (
+      candidate.entityId === assignment.entityId && candidate.stateId === assignment.stateId
+    ));
+    if (
+      reference === undefined
+      || !reference.stateExists
+      || (reference.stateDescription !== null && !hasResolvedImage(reference))
+    ) {
+      throw new ValidationError('Assigned character state requires a confirmed reference image before page generation');
+    }
+  }
+}
+
+async function resolveReferences(
+  repository: EntityRepository,
+  assignments: EntityReferenceAssignment[],
+  workId: string,
+  userId: string,
+  organizationId: string | null,
+): Promise<EntityResolvedReferenceImage[]> {
+  if (repository.findResolvedReferenceImagesByAssignmentsAndUserId !== undefined) {
+    return repository.findResolvedReferenceImagesByAssignmentsAndUserId(
+      assignments,
+      workId,
+      userId,
+      organizationId,
+    );
+  }
+
+  const primaryReferences = await repository.findPrimaryReferenceImagesByEntityIdsAndUserId(
+    Array.from(new Set(assignments.map((assignment) => assignment.entityId))),
+    workId,
+    userId,
+    organizationId,
+  );
+  return assignments.map((assignment) => {
+    const primaryReference = primaryReferences.find(
+      (reference) => reference.entityId === assignment.entityId,
+    );
+    return {
+      entityId: assignment.entityId,
+      stateId: assignment.stateId,
+      stateName: null,
+      stateDescription: null,
+      stateExists: assignment.stateId === null,
+      ownerUserId: primaryReference?.ownerUserId ?? userId,
+      refId: primaryReference?.refId ?? null,
+      s3Key: primaryReference?.s3Key ?? null,
+      cdnUrl: primaryReference?.cdnUrl ?? null,
+      imageModel: primaryReference?.imageModel ?? null,
+      providerModelId: primaryReference?.providerModelId ?? null,
+      provider: primaryReference?.provider ?? null,
+    };
+  });
+}
+
+function hasResolvedImage(
+  reference: EntityResolvedReferenceImage,
+): reference is EntityResolvedReferenceImage & { refId: string; s3Key: string } {
+  return reference.refId !== null && reference.s3Key !== null;
+}
+
+function referenceAssignmentKey(assignment: EntityReferenceAssignment): string {
+  return `${assignment.entityId}:${assignment.stateId ?? 'default'}`;
 }
 
 function ensureInputImageWithinLimit(imageData: Buffer): void {

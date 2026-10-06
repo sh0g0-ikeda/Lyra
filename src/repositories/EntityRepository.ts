@@ -1,4 +1,6 @@
+import { readImageProvenance, toImageProvenanceRecord, type ImageProvenance } from '../domain/generation/ImageAccessPolicy.js';
 import type { QueryResultRow } from 'pg';
+import { readableStateReferenceSql } from './FencedStateReferenceReadGuard.js';
 import type {
   CreateEntityInput,
   Entity,
@@ -13,14 +15,25 @@ import type {
   EntityReferenceSet,
   EntityReferenceSetStatus,
 } from '../domain/types/entityReference.js';
-import { ConfigurationError } from '../domain/errors/index.js';
+import { ConfigurationError, NotFoundError } from '../domain/errors/index.js';
 import type { EntityListCursor } from '../domain/pagination.js';
+import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import {
+  CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  type RepositorySchemaProfile,
+} from './RepositorySchemaProfile.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
+
+// All entity/reference writes advance the revision used by editor CAS and state freshness.
+const nextEntityRevisionSql = (table: 'entities' | 'reference_sets'): string =>
+  `GREATEST(date_trunc('milliseconds', clock_timestamp()),
+    date_trunc('milliseconds', ${table}.updated_at) + INTERVAL '1 millisecond')`;
 
 export type { CreateEntityInput, Entity, UpdateEntityInput };
 export type { EntityListCursor } from '../domain/pagination.js';
 
-export interface EntityPrimaryReferenceImage {
+export interface EntityPrimaryReferenceImage extends ImageProvenance {
   entityId: string;
   ownerUserId?: string;
   refId: string;
@@ -28,8 +41,26 @@ export interface EntityPrimaryReferenceImage {
   cdnUrl: string;
 }
 
+export interface EntityReferenceAssignment {
+  entityId: string;
+  stateId: string | null;
+}
+
+export interface EntityResolvedReferenceImage extends ImageProvenance {
+  entityId: string;
+  stateId: string | null;
+  stateName: string | null;
+  stateDescription: string | null;
+  stateExists: boolean;
+  ownerUserId: string | null;
+  refId: string | null;
+  s3Key: string | null;
+  cdnUrl: string | null;
+  imageModel: string | null;
+}
+
 export interface EntityRepository {
-  create(input: CreateEntityInput): Promise<Entity>;
+  create(input: CreateEntityInput, organizationId?: string | null): Promise<Entity>;
   findByIdAndUserId(id: string, userId: string, organizationId?: string | null): Promise<Entity | null>;
   findByWorkIdAndUserId(workId: string, userId: string, organizationId?: string | null): Promise<Entity[]>;
   countByIdsAndWorkIdAndUserId(
@@ -44,6 +75,12 @@ export interface EntityRepository {
     userId: string,
     organizationId?: string | null,
   ): Promise<EntityPrimaryReferenceImage[]>;
+  findResolvedReferenceImagesByAssignmentsAndUserId?(
+    assignments: EntityReferenceAssignment[],
+    workId: string,
+    userId: string,
+    organizationId?: string | null,
+  ): Promise<EntityResolvedReferenceImage[]>;
   update(id: string, userId: string, input: UpdateEntityInput, organizationId?: string | null): Promise<Entity | null>;
   delete(id: string, userId: string, organizationId?: string | null): Promise<boolean>;
 }
@@ -129,6 +166,18 @@ interface EntityReferenceSetRow extends QueryResultRow {
   updated_at: Date;
 }
 
+interface ResolvedReferenceImageRow {
+  entity_id: string;
+  owner_user_id: string | null;
+  requested_state_id: string | null;
+  resolved_state_id: string | null;
+  state_name: string | null;
+  state_description: string | null;
+  state_reference_image: unknown;
+  reference_images: unknown;
+  primary_ref_id: string | null;
+}
+
 /**
  * Owns entity persistence plus reference_set mutations so the confirm/delete
  * flow stays transactional and user-scoped.
@@ -139,10 +188,57 @@ export class PostgresEntityRepository
     EntityReferenceRepository,
     EntityListPaginationRepository
 {
-  public constructor(private readonly client: DatabaseClient & Partial<TransactionRunner>) {}
+  public constructor(
+    private readonly client: DatabaseClient & Partial<TransactionRunner>,
+    private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+    private readonly transactionRunner?: TransactionRunner,
+  ) {}
 
-  public async create(input: CreateEntityInput): Promise<Entity> {
-    const result = await this.client.query<EntityRow>(
+  private async runLegacyPersonalWrite<T>(
+    userId: string,
+    organizationId: string | null,
+    operation: (client: DatabaseClient) => Promise<T>,
+  ): Promise<T> {
+    if (this.schemaProfile !== 'legacy_2debe_v1' || organizationId !== null) {
+      return operation(this.client);
+    }
+    const runner = this.transactionRunner ?? this.client;
+    if (typeof runner.transaction !== 'function') {
+      throw new ConfigurationError('Legacy personal entity writes require transaction support');
+    }
+    return runner.transaction(async (client) => {
+      await assertLegacyPersonalWriteAllowed(client, { userId, organizationId });
+      return operation(client);
+    });
+  }
+
+  public async create(input: CreateEntityInput, organizationId: string | null = null): Promise<Entity> {
+    return this.runLegacyPersonalWrite(input.userId, organizationId, async (client) => {
+      const scopedInsert = this.schemaProfile === 'legacy_2debe_v1'
+        ? `SELECT $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, 'draft'
+           FROM works
+           WHERE works.id = $1
+             AND (
+               ($9::uuid IS NULL AND works.organization_id IS NULL AND works.user_id = $2)
+               OR ($9::uuid IS NOT NULL AND works.organization_id = $9::uuid AND EXISTS (
+                 SELECT 1 FROM organization_members
+                 WHERE organization_members.organization_id = works.organization_id
+                   AND organization_members.user_id = $2 AND organization_members.status = 'active'
+               ))
+             )`
+        : `VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, 'draft')`;
+      const values: readonly unknown[] = [
+        input.workId,
+        input.userId,
+        input.entityType,
+        input.name,
+        input.freeDescription,
+        input.promptSupplement,
+        JSON.stringify(input.structuredFields),
+        JSON.stringify(input.speechProfile),
+        ...(this.schemaProfile === 'legacy_2debe_v1' ? [organizationId] : []),
+      ];
+      const result = await client.query<EntityRow>(
       `
       WITH inserted_entity AS (
         INSERT INTO entities (
@@ -156,7 +252,7 @@ export class PostgresEntityRepository
           speech_profile,
           status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, 'draft')
+        ${scopedInsert}
         RETURNING *
       ),
       inserted_reference_set AS (
@@ -167,19 +263,14 @@ export class PostgresEntityRepository
       SELECT *
       FROM inserted_entity
       `,
-      [
-        input.workId,
-        input.userId,
-        input.entityType,
-        input.name,
-        input.freeDescription,
-        input.promptSupplement,
-        JSON.stringify(input.structuredFields),
-        JSON.stringify(input.speechProfile),
-      ],
+      values,
     );
 
+    if (this.schemaProfile === 'legacy_2debe_v1' && result.rows[0] === undefined) {
+      throw new NotFoundError('Work not found');
+    }
     return mapEntityRow(result.rows[0]);
+    });
   }
 
   public async findByIdAndUserId(
@@ -468,6 +559,7 @@ export class PostgresEntityRepository
 
       return [
         {
+          ...primaryReference,
           entityId: row.entity_id,
           ownerUserId: row.owner_user_id ?? userId,
           refId: row.primary_ref_id,
@@ -478,6 +570,80 @@ export class PostgresEntityRepository
     });
   }
 
+  public async findResolvedReferenceImagesByAssignmentsAndUserId(
+    assignments: EntityReferenceAssignment[],
+    workId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityResolvedReferenceImage[]> {
+    if (assignments.length === 0) {
+      return [];
+    }
+
+    const requestedAssignments = Array.from(new Map(
+      assignments.map((assignment) => [referenceAssignmentKey(assignment), assignment]),
+    ).values());
+    const legacyStateSelect = this.schemaProfile === 'legacy_2debe_v1'
+      ? `NULL::text AS state_name,
+              NULL::text AS state_description,
+              NULL::jsonb AS state_reference_image`
+      : `entity_states.name AS state_name,
+              entity_states.description AS state_description,
+              ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })} AS state_reference_image`;
+    const result = await this.client.query<QueryResultRow & ResolvedReferenceImageRow>(
+      `
+      WITH requested(entity_id, state_id) AS (
+        SELECT entity_id, state_id
+        FROM jsonb_to_recordset($1::jsonb) AS input(entity_id uuid, state_id text)
+      )
+      SELECT entities.id AS entity_id,
+             entities.user_id AS owner_user_id,
+             requested.state_id AS requested_state_id,
+             entity_states.id AS resolved_state_id,
+              ${legacyStateSelect},
+             reference_sets.reference_images,
+             reference_sets.primary_ref_id
+      FROM requested
+      INNER JOIN entities ON entities.id = requested.entity_id
+      INNER JOIN works ON works.id = entities.work_id
+      LEFT JOIN entity_states
+        ON entity_states.id = CASE
+          WHEN requested.state_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          THEN requested.state_id::uuid
+          ELSE NULL
+        END
+       AND entity_states.entity_id = entities.id
+      LEFT JOIN reference_sets ON reference_sets.entity_id = entities.id
+      WHERE entities.work_id = $2
+        AND (
+          ($4::uuid IS NULL AND works.organization_id IS NULL AND entities.user_id = $3)
+          OR (
+            $4::uuid IS NOT NULL
+            AND works.organization_id = $4::uuid
+            AND EXISTS (
+              SELECT 1
+              FROM organization_members
+              WHERE organization_members.organization_id = works.organization_id
+                AND organization_members.user_id = $3
+                AND organization_members.status = 'active'
+            )
+          )
+        )
+      `,
+      [
+        JSON.stringify(requestedAssignments.map((assignment) => ({
+          entity_id: assignment.entityId,
+          state_id: assignment.stateId,
+        }))),
+        workId,
+        userId,
+        organizationId,
+      ],
+    );
+
+    return result.rows.map(mapResolvedReferenceImage);
+  }
+
   public async saveConfirmedReferences(input: {
     entityId: string;
     userId: string;
@@ -486,12 +652,19 @@ export class PostgresEntityRepository
     primaryRefId: string;
     promptSupplement?: string | null;
   }): Promise<EntityReferenceSet | null> {
-    const runner = this.client.transaction?.bind(this.client);
+    const runner = this.transactionRunner?.transaction.bind(this.transactionRunner)
+      ?? this.client.transaction?.bind(this.client);
     if (runner === undefined) {
       throw new Error('EntityRepository requires transaction support to save references');
     }
 
     return runner(async (transactionClient) => {
+      if (this.schemaProfile === 'legacy_2debe_v1') {
+        await assertLegacyPersonalWriteAllowed(transactionClient, {
+          userId: input.userId,
+          organizationId: input.organizationId ?? null,
+        });
+      }
       const current = await transactionClient.query<EntityReferenceSetRow>(
         `
         SELECT reference_sets.entity_id,
@@ -542,7 +715,7 @@ export class PostgresEntityRepository
         SET reference_images = $3::jsonb,
             primary_ref_id = $4,
             status = $5,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('reference_sets')}
         FROM entities
         INNER JOIN works ON works.id = entities.work_id
         WHERE reference_sets.entity_id = $1
@@ -585,7 +758,7 @@ export class PostgresEntityRepository
               ELSE prompt_supplement
             END,
             status = $5,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('entities')}
         WHERE id = $1
           AND (
             ($6::uuid IS NULL AND user_id = $2 AND work_id IN (
@@ -628,12 +801,19 @@ export class PostgresEntityRepository
     organizationId?: string | null;
     refId: string;
   }): Promise<EntityReferenceSet | null> {
-    const runner = this.client.transaction?.bind(this.client);
+    const runner = this.transactionRunner?.transaction.bind(this.transactionRunner)
+      ?? this.client.transaction?.bind(this.client);
     if (runner === undefined) {
       throw new Error('EntityRepository requires transaction support to delete references');
     }
 
     return runner(async (transactionClient) => {
+      if (this.schemaProfile === 'legacy_2debe_v1') {
+        await assertLegacyPersonalWriteAllowed(transactionClient, {
+          userId: input.userId,
+          organizationId: input.organizationId ?? null,
+        });
+      }
       const current = await transactionClient.query<EntityReferenceSetRow>(
         `
         SELECT reference_sets.entity_id,
@@ -685,7 +865,7 @@ export class PostgresEntityRepository
         SET reference_images = $3::jsonb,
             primary_ref_id = $4,
             status = $5,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('reference_sets')}
         FROM entities
         INNER JOIN works ON works.id = entities.work_id
         WHERE reference_sets.entity_id = $1
@@ -724,7 +904,7 @@ export class PostgresEntityRepository
         `
         UPDATE entities
         SET status = $3,
-            updated_at = NOW()
+            updated_at = ${nextEntityRevisionSql('entities')}
         WHERE id = $1
           AND (
             ($4::uuid IS NULL AND user_id = $2 AND work_id IN (
@@ -795,7 +975,8 @@ export class PostgresEntityRepository
     input: UpdateEntityInput,
     organizationId: string | null = null,
   ): Promise<Entity | null> {
-    const result = await this.client.query<EntityRow>(
+    return this.runLegacyPersonalWrite(userId, organizationId, async (client) => {
+      const result = await client.query<EntityRow>(
       `
       UPDATE entities
       SET entity_type = COALESCE($3, entity_type),
@@ -804,8 +985,9 @@ export class PostgresEntityRepository
           prompt_supplement = CASE WHEN $7::boolean THEN $8 ELSE prompt_supplement END,
           structured_fields = CASE WHEN $9::boolean THEN $10::jsonb ELSE structured_fields END,
           speech_profile = CASE WHEN $11::boolean THEN $12::jsonb ELSE speech_profile END,
-          updated_at = NOW()
+          updated_at = ${nextEntityRevisionSql('entities')}
       WHERE id = $1
+        AND ($14::timestamptz IS NULL OR date_trunc('milliseconds', entities.updated_at) = $14::timestamptz)
         AND (
           ($13::uuid IS NULL AND user_id = $2 AND work_id IN (
               SELECT id
@@ -841,14 +1023,17 @@ export class PostgresEntityRepository
         input.speechProfile !== undefined,
         JSON.stringify(input.speechProfile ?? {}),
         organizationId,
+        input.expectedUpdatedAt ?? null,
       ],
     );
 
-    return result.rows[0] === undefined ? null : mapEntityRow(result.rows[0]);
+      return result.rows[0] === undefined ? null : mapEntityRow(result.rows[0]);
+    });
   }
 
   public async delete(id: string, userId: string, organizationId: string | null = null): Promise<boolean> {
-    const result = await this.client.query(
+    return this.runLegacyPersonalWrite(userId, organizationId, async (client) => {
+      const result = await client.query(
       `
       DELETE FROM entities
       WHERE id = $1
@@ -875,7 +1060,8 @@ export class PostgresEntityRepository
       [id, userId, organizationId],
     );
 
-    return (result.rowCount ?? 0) > 0;
+      return (result.rowCount ?? 0) > 0;
+    });
   }
 }
 
@@ -950,6 +1136,7 @@ function parseReferenceImages(value: unknown): EntityReferenceImage[] {
 
     return [
       {
+        ...readImageProvenance(entry),
         refId: entry.ref_id,
         s3Key: entry.s3_key,
         cdnUrl: entry.cdn_url,
@@ -963,8 +1150,106 @@ function parseReferenceImages(value: unknown): EntityReferenceImage[] {
   });
 }
 
+function mapResolvedReferenceImage(row: ResolvedReferenceImageRow): EntityResolvedReferenceImage {
+  if (row.requested_state_id !== null) {
+    // Pages saved before state references were supported can contain free-form state IDs.
+    // They previously rendered with the base reference and must keep doing so.
+    const isLegacyStateId = !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      row.requested_state_id,
+    );
+    const descriptor = row.state_name !== null
+      && row.state_description !== null
+      && row.primary_ref_id !== null
+      ? parseStateReferenceImage(row.state_reference_image)
+      : null;
+    const validDescriptor = descriptor !== null
+      && descriptor.baseRefId === row.primary_ref_id
+      && descriptor.inputFingerprint === computeStateReferenceFingerprint({
+        entityId: row.entity_id,
+        stateId: row.requested_state_id,
+        name: row.state_name ?? '',
+        description: row.state_description ?? '',
+        baseRefId: row.primary_ref_id ?? '',
+      })
+      ? descriptor
+      : null;
+    const legacyReference = row.state_description === null
+      && row.primary_ref_id !== null
+      && (row.resolved_state_id !== null || isLegacyStateId)
+      ? parseReferenceImages(row.reference_images).find((image) => image.refId === row.primary_ref_id)
+      : undefined;
+
+    return {
+      entityId: row.entity_id,
+      stateId: row.requested_state_id,
+      stateName: row.state_name,
+      stateDescription: row.state_description,
+      stateExists: row.resolved_state_id !== null || isLegacyStateId,
+      ownerUserId: validDescriptor?.ownerUserId ?? (legacyReference === undefined ? null : row.owner_user_id),
+      refId: validDescriptor?.refId ?? legacyReference?.refId ?? null,
+      s3Key: validDescriptor?.s3Key ?? legacyReference?.s3Key ?? null,
+      cdnUrl: legacyReference?.cdnUrl ?? null,
+      imageModel: validDescriptor?.imageModel ?? legacyReference?.imageModel ?? null,
+      providerModelId: validDescriptor?.providerModelId ?? legacyReference?.providerModelId ?? null,
+      provider: validDescriptor?.provider ?? legacyReference?.provider ?? null,
+    };
+  }
+
+  const primaryReference = row.primary_ref_id === null
+    ? undefined
+    : parseReferenceImages(row.reference_images).find((image) => image.refId === row.primary_ref_id);
+  return {
+    entityId: row.entity_id,
+    stateId: null,
+    stateName: null,
+    stateDescription: null,
+    stateExists: true,
+    ownerUserId: row.owner_user_id,
+    refId: primaryReference?.refId ?? null,
+    s3Key: primaryReference?.s3Key ?? null,
+    cdnUrl: primaryReference?.cdnUrl ?? null,
+    imageModel: primaryReference?.imageModel ?? null,
+    providerModelId: primaryReference?.providerModelId ?? null,
+    provider: primaryReference?.provider ?? null,
+  };
+}
+
+function parseStateReferenceImage(value: unknown): ImageProvenance & {
+  refId: string;
+  s3Key: string;
+  ownerUserId: string;
+  imageModel: string;
+  baseRefId: string;
+  inputFingerprint: string;
+} | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const descriptor = value as Record<string, unknown>;
+  const requiredKeys = [
+    'ref_id', 's3_key', 'storage_owner_user_id', 'image_model', 'base_ref_id', 'created_at', 'input_fingerprint',
+  ] as const;
+  if (!requiredKeys.every((key) => typeof descriptor[key] === 'string' && descriptor[key].length > 0)) {
+    return null;
+  }
+  return {
+    ...readImageProvenance(value),
+    refId: descriptor.ref_id as string,
+    s3Key: descriptor.s3_key as string,
+    ownerUserId: descriptor.storage_owner_user_id as string,
+    imageModel: descriptor.image_model as string,
+    baseRefId: descriptor.base_ref_id as string,
+    inputFingerprint: descriptor.input_fingerprint as string,
+  };
+}
+
+function referenceAssignmentKey(assignment: EntityReferenceAssignment): string {
+  return `${assignment.entityId}:${assignment.stateId ?? 'default'}`;
+}
+
 function toReferenceImageRecord(image: EntityReferenceImage): Record<string, unknown> {
   return {
+    ...toImageProvenanceRecord(image),
     ref_id: image.refId,
     s3_key: image.s3Key,
     cdn_url: image.cdnUrl,

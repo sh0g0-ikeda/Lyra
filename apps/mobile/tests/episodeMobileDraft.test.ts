@@ -87,4 +87,16 @@ describe('episode Mobile full-draft compatibility', () => {
       story_input_mode: 'full'
     });
   });
+  it('開始状態を操作しない保存では旧API互換でfieldを省略する', () => {
+    const payload = buildEpisodeMobileUpdatePayload({ episode: structuredEpisode, draft: episodeMobileDraft(structuredEpisode), estimatedPages: 8, title: '第1話' });
+    expect(payload).not.toHaveProperty('starting_entity_states');
+  });
+
+  it('開始状態を明示的に空へ変更した場合だけ空配列を保存する', () => {
+    const payload = buildEpisodeMobileUpdatePayload({ episode: structuredEpisode, draft: episodeMobileDraft(structuredEpisode), estimatedPages: 8, title: '第1話', startingEntityStates: [] });
+    expect(payload).toHaveProperty('starting_entity_states', []);
+    expect(payload).not.toHaveProperty('introduction');
+    expect(payload).not.toHaveProperty('entities_involved');
+  });
+
 });

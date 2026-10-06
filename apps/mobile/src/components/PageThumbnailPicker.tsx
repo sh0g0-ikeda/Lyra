@@ -8,6 +8,8 @@ import {
   imageSourceListIdentity,
   type RemoteImageSource
 } from '@/domain/imageSourceCandidates';
+import { canDisplayMobileImage, imageAccessNotice } from '@/domain/imageAccess';
+import { canUseMobilePageImage } from '@/domain/mobilePageImageAccess';
 import type { PageRecord } from '@/domain/types';
 import { t } from '@/lib/i18n';
 
@@ -76,11 +78,12 @@ export function PageThumbnailPicker({
             pageNumber: page.page_number,
             status
           });
-          const sources =
-            page.generated_image === null ? [] : imageSourcesFor(page);
+          const imageAllowed = canDisplayMobileImage(page.generated_image);
+          const sources = canUseMobilePageImage(page) ? imageSourcesFor(page) : [];
           return (
             <View style={[styles.item, selected ? styles.itemSelected : null]}>
               <Pressable
+                accessibilityHint={imageAllowed ? undefined : imageAccessNotice(language)}
                 accessibilityLabel={label}
                 accessibilityRole="button"
                 accessibilityState={{ selected }}

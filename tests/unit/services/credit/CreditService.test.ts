@@ -233,6 +233,29 @@ describe('CreditService', () => {
       purchasedDelta: 10,
     });
   });
+  it('期限切れで購入枠へ全額返還したjobを再試行しても残高と台帳が増えない', async () => {
+    const repository = new InMemoryCreditRepository();
+    repository.setBalance({userId:'user-1',monthlyCredits:0,purchasedCredits:0,monthlyExpiresAt:new Date('2026-05-01T00:00:00.000Z')});
+    repository.ledger.push({userId:'user-1',type:'consume',amount:-10,monthlyDelta:-10,purchasedDelta:0,monthlyAfter:0,purchasedAfter:0,description:'expired charge',jobId:'job-expired'});
+    const service = new CreditService(repository, () => new Date('2026-06-01T00:00:00.000Z'));
+    const input={userId:'user-1',amount:10,description:'refund retry',jobId:'job-expired'};
+    await service.refundCredits(input);
+    expect(await service.refundCredits(input)).toMatchObject({monthlyCredits:0,purchasedCredits:10,totalCredits:10});
+    expect(repository.ledger.filter(entry=>entry.type==='refund')).toHaveLength(1);
+  });
+
+  it('期限切れ月次の部分返還を再開しても月次枠を復活させず合計消費額だけ戻る', async () => {
+    const repository=new InMemoryCreditRepository();
+    repository.setBalance({userId:'user-1',monthlyCredits:0,purchasedCredits:0,monthlyExpiresAt:new Date('2026-05-01T00:00:00.000Z')});
+    repository.ledger.push({userId:'user-1',type:'consume',amount:-10,monthlyDelta:-10,purchasedDelta:0,monthlyAfter:0,purchasedAfter:0,description:'expired monthly',jobId:'partial-expired'});
+    const service=new CreditService(repository,()=>new Date('2026-06-01T00:00:00.000Z'));
+    await service.refundCredits({userId:'user-1',amount:3,description:'partial',jobId:'partial-expired'});
+    const input={userId:'user-1',amount:10,description:'remaining retry',jobId:'partial-expired'};
+    expect(await service.refundCredits(input)).toMatchObject({monthlyCredits:0,purchasedCredits:10,totalCredits:10});
+    expect(await service.refundCredits(input)).toMatchObject({monthlyCredits:0,purchasedCredits:10,totalCredits:10});
+    expect(repository.ledger.filter(entry=>entry.type==='refund').map(entry=>[entry.amount,entry.monthlyDelta,entry.purchasedDelta])).toEqual([[3,0,3],[7,0,7]]);
+  });
+
   it('初回ボーナスの場合に購入クレジットへ30cr付与される', async () => {
     const repository = new InMemoryCreditRepository();
     const service = new CreditService(repository);

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Image,
   Linking,
+  Platform,
   Pressable,
   StatusBar,
   StyleSheet,
@@ -19,6 +20,9 @@ import { isAuthConfigured } from '@/lib/config';
 import { t } from '@/lib/i18n';
 import { signInWithCognito } from '@/lib/auth';
 import { userErrorMessage } from '@/lib/userMessages';
+import { useGoogleAuthCapabilities } from '@/hooks/useGoogleAuthCapabilities';
+import { googleAuthMessages } from '@/lib/googleAuthMessages';
+import { googleAllowedOnPlatform } from '@/lib/googleIdentityLink';
 import { useAppState } from '@/state/appState';
 
 const heroImage = require('../../assets/start_lyra.jpg') as ImageSourcePropType;
@@ -41,6 +45,10 @@ interface AuthScreenProps {
 
 export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): React.JSX.Element {
   const { language, setTokens } = useAppState();
+  const capabilities = useGoogleAuthCapabilities();
+  const copy = googleAuthMessages(language);
+  const googleEnabled = !capabilities.isError && googleAllowedOnPlatform(capabilities.data, Platform.OS, 'google_sign_in');
+  const signingIn = useRef(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState(true);
@@ -58,15 +66,22 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
     return () => clearTimeout(timeoutId);
   }, [splashOpacity]);
 
-  const signIn = async (): Promise<void> => {
+  const signIn = async (google = false): Promise<void> => {
+    if (signingIn.current) return;
+    signingIn.current = true;
     setLoading(true);
     setErrorMessage(null);
     try {
-      const tokens = await signInWithCognito();
+      if (google) {
+        const current = await capabilities.refetch();
+        if (current.isError || !googleAllowedOnPlatform(current.data, Platform.OS, 'google_sign_in')) throw new Error('GOOGLE_DISABLED');
+      }
+      const tokens = await signInWithCognito(google ? { identityProvider: 'Google' } : undefined);
       await setTokens(tokens);
     } catch (error) {
-      setErrorMessage(userErrorMessage(error, language));
+      setErrorMessage(google ? copy.unavailable : userErrorMessage(error, language));
     } finally {
+      signingIn.current = false;
       setLoading(false);
     }
   };
@@ -114,6 +129,10 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
         onPress={() => void signIn()}
         testID="auth-login-button"
       />
+      {googleEnabled ? <>
+        <PrimaryButton disabled={!isAuthConfigured() || loading} label={copy.google} onPress={() => void signIn(true)} testID="auth-google-button" variant="secondary" />
+        <Text style={styles.subtitle}>{copy.existing}</Text>
+      </> : null}
       <View accessibilityLabel={t(language, "generated.screens.AuthScreen.legal.and.support.d411b8e1")} style={styles.legalLinks}>
         <Pressable
           accessibilityRole="link"

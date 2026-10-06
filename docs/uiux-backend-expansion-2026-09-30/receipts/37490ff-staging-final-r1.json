@@ -1,0 +1,396 @@
+{
+  "sourceCommit": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
+  "observedAt": "2026-10-05T14:27:23.806Z",
+  "productionReady": false,
+  "productionChanged": false,
+  "latestCandidateDeployed": true,
+  "explicitPayloadApprovalReceived": true,
+  "publish": {
+    "file": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/stage-oci-validation-publish-37490ff-r2-receipt.json",
+    "sha256": "178e721ae1e2a50cabb24f99defc0ffca25df90f24c0657ed78facd3d1faf5a7",
+    "value": {
+      "at": "2026-10-05T14:13:51.121Z",
+      "sourceCommit": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
+      "repository": "452284481392.dkr.ecr.ap-northeast-1.amazonaws.com/lyra-staging-20261003-api",
+      "imageDigest": "sha256:30570be3c364fc74d31c5f8d11033c0563c4b4c349ca229b1e4badf07efd5244",
+      "tag": "validation-37490ff6a7a1b2dd7af12c520ff264ae768065c2",
+      "baseDigest": "sha256:adcf8b9b5c5ed1a29541b5de82511806cc6ddab344968fc65e379f96f8ccc8a8",
+      "artifactReceiptSha256": "9528edd716f2513185bae7d2d7eab8452af282f3a96cbd8efdfe0a2095767010",
+      "uploaded": [
+        {
+          "name": "layer",
+          "digest": "sha256:8aae94af231a6b8f24c26f29392e91b5e6535c424848ea86c4897e4129477f00",
+          "alreadyPresent": false
+        },
+        {
+          "name": "config",
+          "digest": "sha256:8c1e8f201d3e4329ce5c1ae8d1a8137a7f2f9e7d310580d252b9a040d3fdccfc",
+          "alreadyPresent": false
+        }
+      ],
+      "recoveredExistingSameDigest": false,
+      "readbackVerified": true,
+      "iamChanges": 0,
+      "lambdaChanges": 0,
+      "productionMutations": 0,
+      "credentialsWrittenOrPrinted": false,
+      "secretsIncluded": false,
+      "databaseIncluded": false,
+      "onlyStaging": true,
+      "validationOnly": true,
+      "productionReleaseEligible": false,
+      "runtimeDeploymentPerformed": false
+    }
+  },
+  "review": {
+    "file": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/oci-runtime-image-37490ff-r2-review-2026-10-05T14-15-15-761Z.json",
+    "sha256": "7b4be75c99e2081770337cea222ffab2749a819aaafe76d9bb4fb74983022e30",
+    "value": {
+      "phase": "change-set-reviewed",
+      "onlyStaging": true,
+      "sourceCommit": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
+      "baseDigest": "sha256:adcf8b9b5c5ed1a29541b5de82511806cc6ddab344968fc65e379f96f8ccc8a8",
+      "previousRuntimeDigest": "sha256:6754dce8fab618e66a43d6181ebd572f5a776adf1ed2b73e53be09eb05f9e095",
+      "image": "452284481392.dkr.ecr.ap-northeast-1.amazonaws.com/lyra-staging-20261003-api@sha256:30570be3c364fc74d31c5f8d11033c0563c4b4c349ca229b1e4badf07efd5244",
+      "publishReceiptSha256": "f890cc5f4899579b2bfd0fcdd720ea8a4dfff76d19fd71132030ef76a455307d",
+      "createFile": "oci-runtime-image-37490ff-r2-create-2026-10-05T14-14-34-941Z.json",
+      "createReceiptSha256": "d5ecb77703a93245a91c2980819e358d93cc3701534937e9ceb6ea4d3d1cbe3a",
+      "stackId": "arn:aws:cloudformation:ap-northeast-1:452284481392:stack/lyra-staging-20261003-runtime/a5d15700-be7f-11f1-b220-0afffdf50acd",
+      "changeSetId": "arn:aws:cloudformation:ap-northeast-1:452284481392:changeSet/oci-runtime-37490ff6a7a1/0a213af7-220d-4e83-a143-9a3a01afc56e",
+      "templateSha256": "7723334603a94702b63172cc871213a326b3043ac5a6c63c66afdf6646686e3b",
+      "taskFingerprints": {
+        "ApiTaskDefinition": "6067418c2605325c16b3995790a70ea8a675efe4c3e09f55a3a659eb07d11c12",
+        "DeletionTaskDefinition": "d32c475e982f01138d1fd44b9bb06f12f79ebec555334d136141304021786bb3",
+        "ExportTaskDefinition": "6834de5f175309369fcfe564cf0c6709e5138c5b0f1bec9cd172de4f3b4d7cad",
+        "GenerationTaskDefinition": "eec1394f2d1b978ffad4de64c516026d39c2257cb47189c63bf104c018680eb9",
+        "MigrationTaskDefinition": "e391b5a98bbe44c44ea60cc27edada6ea46bb34ae29187eb4c23b0527a3998f3"
+      },
+      "parameterBaseline": {
+        "parameterNames": [
+          "ApiLogGroupName",
+          "ApiSG",
+          "ApiTargetGroupArn",
+          "AssetsBucketName",
+          "ClusterArn",
+          "ContainerImage",
+          "DesiredApiCount",
+          "DesiredDeletionCount",
+          "DesiredExportCount",
+          "DesiredGenerationCount",
+          "ExpiresAt",
+          "ExportQueueArn",
+          "GenerationQueueArn",
+          "KmsKeyArn",
+          "ProductionDeniedArns",
+          "PublicSubnetAId",
+          "PublicSubnetCId",
+          "ResourcePrefix",
+          "RuntimeSecretArn",
+          "WorkerLogGroupName",
+          "WorkerSG",
+          "WorkloadBoundaryArn"
+        ],
+        "nonImageParameterHashes": {
+          "ResourcePrefix": "7bffe835b79df11232cd4c93f232db554d28f4000f3d8b08f0f10dffa9316022",
+          "ClusterArn": "c97aaa17f5236ff5695aae43857d8dfcc46e8ab8f2d6abfadf45d8a2a78056d1",
+          "DesiredGenerationCount": "98089e6d36f78e9766c9ea34d5acb3611f3a92cd81c5eb102095d924ffc7d08b",
+          "PublicSubnetAId": "cdf51a1ef64a632bf3666ac1d99eff3321747aef1cd5c7ecddf69ae62cf7a97b",
+          "DesiredExportCount": "98089e6d36f78e9766c9ea34d5acb3611f3a92cd81c5eb102095d924ffc7d08b",
+          "ApiSG": "d15fcd3052eb2f86f30309035ce7ba0c14c635a32494955959391fd1dab30298",
+          "WorkerSG": "e5529c91c4337b52d242b9ba82a7171fdc6899a16748d125b8f5ffabbb1950f9",
+          "WorkloadBoundaryArn": "53b3baeecef7eabe91963f8387c9b0523d1f0488be82f86270b107d8136073ec",
+          "ApiTargetGroupArn": "8a5bca6074b7620e751fe889e9ab731160182b20ec90ae624dc0b5ca70be25fc",
+          "RuntimeSecretArn": "8b47330eb849601bc2137a3f86f7355dd890f4142162280401dd25d57fb94499",
+          "PublicSubnetCId": "d3666f257a351dc031c0d7acb447dc478bd28ef42fe9f5b7a79fbc9b09163f26",
+          "DesiredApiCount": "391552c099c101b131feaf24c5795a6a15bc8ec82015424e0d2b4274a369a0bf",
+          "ProductionDeniedArns": "46df0c4d56aed4c723868db8fc9e93598f04af70388e2f310aa5046d6d1eddf4",
+          "DesiredDeletionCount": "98089e6d36f78e9766c9ea34d5acb3611f3a92cd81c5eb102095d924ffc7d08b",
+          "KmsKeyArn": "8ac62aa97a701bb1a49a2c94fd1e73a4ce7f881b9501366004468e335278a22f",
+          "AssetsBucketName": "602a7c00f10b681a18105ad4e6bb7bb0a209d2693f45bc06f70cbac6447de3c4",
+          "WorkerLogGroupName": "ae1b615c75c3db216acfaf5d0b9843c2dbc87ed7e4f63406a379e2d8fb1cd19b",
+          "ApiLogGroupName": "99cd2ea73e8c7e3b06b0ca64722ffce2257b2a88a317f83b9a317f661176e3a2",
+          "GenerationQueueArn": "69a80dee9d2badb817ef487ddd69be5aff4ad3e9aa8e7beaeead3eaab194bf9b",
+          "ExpiresAt": "3828b4cd2d8b7bf8a432fac56321886aeadd12a910338cf8de31b13908f0be54",
+          "ExportQueueArn": "cabb5e67518266b6a122f6061bdc511e1b397e23919ee0182098d66991ef8aa8"
+        }
+      },
+      "changes": [
+        {
+          "logicalId": "ApiService",
+          "type": "AWS::ECS::Service",
+          "action": "Modify",
+          "replacement": "False"
+        },
+        {
+          "logicalId": "ApiTaskDefinition",
+          "type": "AWS::ECS::TaskDefinition",
+          "action": "Modify",
+          "replacement": "True"
+        },
+        {
+          "logicalId": "DeletionService",
+          "type": "AWS::ECS::Service",
+          "action": "Modify",
+          "replacement": "False"
+        },
+        {
+          "logicalId": "DeletionTaskDefinition",
+          "type": "AWS::ECS::TaskDefinition",
+          "action": "Modify",
+          "replacement": "True"
+        },
+        {
+          "logicalId": "ExportService",
+          "type": "AWS::ECS::Service",
+          "action": "Modify",
+          "replacement": "False"
+        },
+        {
+          "logicalId": "ExportTaskDefinition",
+          "type": "AWS::ECS::TaskDefinition",
+          "action": "Modify",
+          "replacement": "True"
+        },
+        {
+          "logicalId": "GenerationService",
+          "type": "AWS::ECS::Service",
+          "action": "Modify",
+          "replacement": "False"
+        },
+        {
+          "logicalId": "GenerationTaskDefinition",
+          "type": "AWS::ECS::TaskDefinition",
+          "action": "Modify",
+          "replacement": "True"
+        },
+        {
+          "logicalId": "MigrationTaskDefinition",
+          "type": "AWS::ECS::TaskDefinition",
+          "action": "Modify",
+          "replacement": "True"
+        }
+      ],
+      "parameterNames": [
+        "ApiLogGroupName",
+        "ApiSG",
+        "ApiTargetGroupArn",
+        "AssetsBucketName",
+        "ClusterArn",
+        "ContainerImage",
+        "DesiredApiCount",
+        "DesiredDeletionCount",
+        "DesiredExportCount",
+        "DesiredGenerationCount",
+        "ExpiresAt",
+        "ExportQueueArn",
+        "GenerationQueueArn",
+        "KmsKeyArn",
+        "ProductionDeniedArns",
+        "PublicSubnetAId",
+        "PublicSubnetCId",
+        "ResourcePrefix",
+        "RuntimeSecretArn",
+        "WorkerLogGroupName",
+        "WorkerSG",
+        "WorkloadBoundaryArn"
+      ],
+      "iamChanges": 0,
+      "lambdaChanges": 0
+    }
+  },
+  "runtime": {
+    "file": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/oci-runtime-image-37490ff-r2-status-2026-10-05T14-20-50-456Z.json",
+    "sha256": "e5a1c3ebc0a12483054e48e80de2d30ece0774b057ad1f62ea258d23bcde31a2",
+    "value": {
+      "phase": "runtime-verified",
+      "onlyStaging": true,
+      "sourceCommit": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
+      "baseDigest": "sha256:adcf8b9b5c5ed1a29541b5de82511806cc6ddab344968fc65e379f96f8ccc8a8",
+      "previousRuntimeDigest": "sha256:6754dce8fab618e66a43d6181ebd572f5a776adf1ed2b73e53be09eb05f9e095",
+      "image": "452284481392.dkr.ecr.ap-northeast-1.amazonaws.com/lyra-staging-20261003-api@sha256:30570be3c364fc74d31c5f8d11033c0563c4b4c349ca229b1e4badf07efd5244",
+      "publishReceiptSha256": "f890cc5f4899579b2bfd0fcdd720ea8a4dfff76d19fd71132030ef76a455307d",
+      "createFile": "oci-runtime-image-37490ff-r2-create-2026-10-05T14-14-34-941Z.json",
+      "createReceiptSha256": "d5ecb77703a93245a91c2980819e358d93cc3701534937e9ceb6ea4d3d1cbe3a",
+      "operationFile": "oci-runtime-image-37490ff-r2-execute-intent.json",
+      "operationReceiptSha256": "2cf3290ac3344764cc2246bd8cb24fcb8487585c36aa9bd7e99ed26335be1473",
+      "stackStatus": "UPDATE_COMPLETE",
+      "taskDefinitionFingerprints": {
+        "ApiTaskDefinition": "6067418c2605325c16b3995790a70ea8a675efe4c3e09f55a3a659eb07d11c12",
+        "DeletionTaskDefinition": "d32c475e982f01138d1fd44b9bb06f12f79ebec555334d136141304021786bb3",
+        "ExportTaskDefinition": "6834de5f175309369fcfe564cf0c6709e5138c5b0f1bec9cd172de4f3b4d7cad",
+        "GenerationTaskDefinition": "eec1394f2d1b978ffad4de64c516026d39c2257cb47189c63bf104c018680eb9",
+        "MigrationTaskDefinition": "e391b5a98bbe44c44ea60cc27edada6ea46bb34ae29187eb4c23b0527a3998f3"
+      },
+      "api": {
+        "desired": 1,
+        "running": 1,
+        "pending": 0,
+        "imageDigest": "sha256:30570be3c364fc74d31c5f8d11033c0563c4b4c349ca229b1e4badf07efd5244"
+      },
+      "workersIdle": true,
+      "health": {
+        "healthz": 200,
+        "readyz": 200
+      },
+      "iamChanges": 0,
+      "lambdaChanges": 0
+    }
+  },
+  "readonlyQA": {
+    "file": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/37490ff-deployed-readonly-qa-r1.json",
+    "sha256": "896b708d5152b25a3e7bb501950da7533976576b8320501e8266069172f92d54",
+    "value": {
+      "observedAt": "2026-10-05T14:25:46.082Z",
+      "url": "https://d2dw83tkmziksr.cloudfront.net/",
+      "observedSourceCommit": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
+      "imageDigest": "sha256:30570be3c364fc74d31c5f8d11033c0563c4b4c349ca229b1e4badf07efd5244",
+      "runtimeReceipt": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/staging-live/oci-runtime-image-37490ff-r2-status-2026-10-05T14-20-50-456Z.json",
+      "runtimeReceiptSha256": "e5a1c3ebc0a12483054e48e80de2d30ece0774b057ad1f62ea258d23bcde31a2",
+      "browserBundle": "/assets/index-Biblhijp.js",
+      "compiledBundleSha256": "09186c0839c0df63b265afa401483c148a2ebf12af059d1b64d7487f00a40be3",
+      "browserControl": "CUA Chrome existing staging tab",
+      "routineLoginSessionRestored": true,
+      "personalWorksVisible": 4,
+      "savedStoryTitle": "手動保存と画面復帰の確認",
+      "savedStoryInputUnchanged": true,
+      "savedStoryTargetPages": 15,
+      "referenceCharacterCountInOwnQaWork": 2,
+      "confirmedReferenceImage": {
+        "loaded": true,
+        "width": 1024,
+        "height": 1536,
+        "lazyLoading": true,
+        "sourceAssigned": true
+      },
+      "existingPageRead": {
+        "episode": "白黒生成の確認",
+        "page": 1,
+        "frames": 3,
+        "panels": 3,
+        "savedPanelInputVisible": true,
+        "normalColorButtonVisible": true,
+        "normalMonochromeButtonVisible": true,
+        "regenerationInvoked": false
+      },
+      "hy4CharacterAndPageButtons": {
+        "colorDisabled": true,
+        "monochromeDisabled": true,
+        "providerDisclaimerVisible": true
+      },
+      "creditDisplay": {
+        "personalBefore": 9,
+        "organization": 0,
+        "personalAfter": 9,
+        "organizationScopeRoundTripPassed": true
+      },
+      "screenNavigation": {
+        "desktop": [
+          "ストーリー",
+          "キャラクター",
+          "ページ"
+        ],
+        "responsiveWeb": [
+          "ストーリー",
+          "キャラクター",
+          "ページ",
+          "アカウント",
+          "ガイド"
+        ],
+        "accountOpened": true,
+        "temporaryViewport": {
+          "width": 390,
+          "height": 844
+        },
+        "viewportReset": true,
+        "storyRestoredAtFinish": true
+      },
+      "consoleErrorLogsReturned": 0,
+      "consoleLogLimit": 10,
+      "previousP9FailureStillVisible": true,
+      "writeActionInvoked": false,
+      "providerRequestsInitiated": 0,
+      "purchaseRequestsInitiated": 0,
+      "accountOrPermissionChangeInvoked": false,
+      "readonlyChecksPassed": true,
+      "liveOrganizationGenerationSettlementVerified": false,
+      "physicalDeviceVerified": false,
+      "fullReleaseAcceptancePassed": false,
+      "productionReady": false,
+      "productionChanged": false,
+      "limitations": [
+        "Readonly browser QA only; no new save/delete/generate/import/purchase",
+        "Organization generation/refund settlement verified by local E2E, not a real live job in this run",
+        "Responsive browser navigation is not native APK device verification",
+        "Existing 15-page P9 quality failure retained; no provider rerun",
+        "Google/linking/billing/S3/deletion/export OFF gates and representative DB acceptance remain unverified"
+      ]
+    }
+  },
+  "previousLocalCompletion": {
+    "file": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/37490ff-local-completion-records-r1-receipt.json",
+    "sha256": "1137742cfec7bf5471010e4e12135d2bcea986a301f1607bcfd0061f11ac4d42",
+    "value": {
+      "sourceCommit": "37490ff6a7a1b2dd7af12c520ff264ae768065c2",
+      "finalSha": "ca0e91bdbee3622c01b0a5be89a83d2f42bf41db",
+      "packet": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/review-37490ff-local-completion-r1",
+      "observedAt": "2026-10-05T14:09:34.251Z",
+      "productionReady": false,
+      "latestCandidateDeployed": false,
+      "currentStageSource": "c3431926b5d2222aa50b6bf225066042d3f6be46",
+      "publicGithubChanged": false,
+      "files": [
+        {
+          "file": "changes.patch",
+          "sha256": "0fe6a81c2076e8895660fb7c5c5f9d0d9e3a1eb52db2f6b86f237d31096809e9"
+        },
+        {
+          "file": "latest-change.patch",
+          "sha256": "fc29521d65a497bd9a4f59294c958d6d695ea18d756c1d13ba64f16bf84fe80c"
+        },
+        {
+          "file": "PR本文.md",
+          "sha256": "1ecf65612915b6b6aff15aa0b4b6cf8ecb9c3402e52cf2f7146aabf49212e9b6"
+        },
+        {
+          "file": "review.bundle",
+          "sha256": "8b6356151b9627207f8bd98b8d587d20f453710832119a43693a3d6d16b89bcc"
+        }
+      ]
+    }
+  },
+  "gateEvidence": [
+    {
+      "file": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/37490ff-web-smoke-r1-receipt.json",
+      "sha256": "50ceec262f9464ee38b5963ddebfbfd832c7ce76a7e5f4864cc2eb17fbced246"
+    },
+    {
+      "file": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/37490ff-frontend-r3-receipt.json",
+      "sha256": "85aaeb6dc9b1d3d9cdb14fcda6c14f6a3b20817f8c741bf64258cc1665d4b7d0"
+    },
+    {
+      "file": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/37490ff-unchanged-modules-r2.json",
+      "sha256": "e8382286a40094e8c3f462c22bf83a7eca294a7a1619360f3f9f49c20d4dac76"
+    }
+  ],
+  "originalProtection": {
+    "checkedAt": "2026-10-05T14:27:23.791Z",
+    "baselineHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "currentHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "baselinePaths": 28,
+    "changedBaselinePaths": [],
+    "unrelatedAdditionalPath": "store-assets/google-play",
+    "discardedChanges": false
+  },
+  "liveOrganizationGenerationSettlementVerified": false,
+  "physicalDeviceVerified": false,
+  "publicGithubChanged": false,
+  "remaining": [
+    "legacyDB deletion ownership/schema decision and mixed-writer rollback evidence",
+    "M2 representative production snapshot copy/restore refused; no bypass",
+    "P9 designated long-story quality failure/provider acceptance refused; no replacement proof",
+    "Google/linking/billing/refund/S3 live acceptance unverified; gates stay OFF",
+    "published old mobile and staging APK physical acceptance unverified",
+    "shutdown/cleanup and fixed-cost expiry evidence incomplete",
+    "public GitHub update refused; local review packet only"
+  ]
+}

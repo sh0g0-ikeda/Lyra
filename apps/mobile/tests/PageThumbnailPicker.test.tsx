@@ -166,4 +166,37 @@ describe('PageThumbnailPicker', () => {
     });
     expect(onEndReached).toHaveBeenCalledTimes(1);
   });
+
+  it('Hy4画像はCDN候補の取得・描画・拡大を止めてページ選択を維持する', () => {
+    const restricted = page('hy4-page', 1, true);
+    restricted.generated_image = { ...restricted.generated_image!, image_model: 'hy4-preview', provider: 'tencent', mobile_access: 'web_only' };
+    const imageSourcesFor = vi.fn(() => [{ uri: 'https://cdn.lyra.test/restricted.png' }]);
+    const onSelect = vi.fn();
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<PageThumbnailPicker emptyLabel="ページなし" imageSourcesFor={imageSourcesFor} language="ja" onPreview={vi.fn()} onSelect={onSelect} pages={[restricted]} selectedId={null} statusLabelFor={(status) => status} />);
+    });
+    expect(imageSourcesFor).not.toHaveBeenCalled();
+    expect(renderer!.root.findAllByType('expo-image')).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ accessibilityLabel: '1ページを拡大表示' })).toHaveLength(0);
+    const selection = renderer!.root.findByProps({ accessibilityLabel: '1ページ、generated' });
+    expect(selection.props.accessibilityHint).toBe('このページはアプリでは表示できません。一部のコンテンツはweb版でのみ利用できます');
+    act(() => selection.props.onPress());
+    expect(onSelect).toHaveBeenCalledWith('hy4-page');
+  });
+
+  it('通常画像からHy4へ更新された場合に以前の画像と拡大ボタンを残さない', () => {
+    const ordinary = page('page-1', 1, true);
+    ordinary.generated_image = { ...ordinary.generated_image!, image_model: 'gpt-image-2', provider: 'openai' };
+    const props = { emptyLabel: 'No pages', imageSourcesFor: vi.fn(() => [{ uri: 'https://cdn.lyra.test/stale.png' }]), language: 'en' as const, onPreview: vi.fn(), onSelect: vi.fn(), selectedId: null, statusLabelFor: (status: PageRecord['status']) => status };
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<PageThumbnailPicker {...props} pages={[ordinary]} />); });
+    expect(renderer!.root.findAllByType('expo-image')).toHaveLength(1);
+    props.imageSourcesFor.mockClear();
+    const restricted = { ...ordinary, generated_image: { ...ordinary.generated_image!, image_model: 'hy4-preview', provider: 'tencent' } };
+    act(() => { renderer!.update(<PageThumbnailPicker {...props} pages={[restricted]} />); });
+    expect(props.imageSourcesFor).not.toHaveBeenCalled();
+    expect(renderer!.root.findAllByType('expo-image')).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ accessibilityLabel: 'Enlarge page 1' })).toHaveLength(0);
+  });
 });

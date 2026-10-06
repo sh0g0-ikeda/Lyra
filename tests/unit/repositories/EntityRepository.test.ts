@@ -1,11 +1,13 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
+import { computeStateReferenceFingerprint } from '../../../src/domain/state/StateReferenceFingerprint.js';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEntityRepository } from '../../../src/repositories/EntityRepository.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
   public valuesList: Array<readonly unknown[] | undefined> = [];
+  public rows: QueryResultRow[] = [row()];
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -19,7 +21,7 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
       rowCount: 1,
       oid: 0,
       fields: [],
-      rows: [row()] as unknown as T[],
+      rows: this.rows as T[],
     };
   }
 
@@ -138,6 +140,133 @@ describe('PostgresEntityRepository', () => {
 
     expect(client.queries[0]).toContain('entities.user_id = $2');
     expect(client.valuesList[0]).toEqual(['entity-1', 'user-1', 'ref-1', null]);
+  });
+
+  it('状態別参照はentity・work・active organization membershipで絞る', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEntityRepository(client);
+
+    await repository.findResolvedReferenceImagesByAssignmentsAndUserId?.(
+      [{ entityId: 'entity-1', stateId: 'state-1' }],
+      'work-1',
+      'user-1',
+      '99999999-9999-4999-8999-999999999999',
+    );
+
+    expect(client.queries[0]).toContain('WHEN requested.state_id ~*');
+    expect(client.queries[0]).toContain('THEN requested.state_id::uuid');
+    expect(client.queries[0]).toContain('entity_states.entity_id = entities.id');
+    expect(client.queries[0]).toContain('entities.work_id = $2');
+    expect(client.queries[0]).toContain("organization_members.status = 'active'");
+    expect(client.valuesList[0]).toEqual([
+      JSON.stringify([{ entity_id: 'entity-1', state_id: 'state-1' }]),
+      'work-1',
+      'user-1',
+      '99999999-9999-4999-8999-999999999999',
+    ]);
+  });
+
+  it('旧ページのUUIDでないstate IDの場合はSQL変換せず既定画像を維持する', async () => {
+    const client = new QueryCapturingClient();
+    client.rows = [{
+      entity_id: 'entity-1', owner_user_id: 'user-1', requested_state_id: 'legacy-invalid-id',
+      resolved_state_id: null, state_name: null, state_description: null,
+      state_reference_image: null,
+      reference_images: [{
+        ref_id: 'base-ref', s3_key: 'saved/user-1/entities/entity-1/base-ref.png',
+        cdn_url: 'https://img.lyra.test/base.png', source: 'generated',
+        image_model: 'hy4-preview', provider_model_id: 'hy4-preview', provider: 'tencent',
+      }],
+      primary_ref_id: 'base-ref',
+    }];
+    const repository = new PostgresEntityRepository(client);
+
+    const result = await repository.findResolvedReferenceImagesByAssignmentsAndUserId?.(
+      [{ entityId: 'entity-1', stateId: 'legacy-invalid-id' }], 'work-1', 'user-1',
+    );
+
+    expect(client.queries[0]).toContain('state_id text');
+    expect(result?.[0]).toMatchObject({
+      stateId: 'legacy-invalid-id', stateExists: true,
+      refId: 'base-ref', s3Key: 'saved/user-1/entities/entity-1/base-ref.png',
+      imageModel: 'hy4-preview', providerModelId: 'hy4-preview', provider: 'tencent',
+    });
+  });
+
+  it('状態descriptorが完全でbaseとfingerprintが一致する場合だけ状態画像を返す', async () => {
+    const client = new QueryCapturingClient();
+    client.rows = [{
+      entity_id: 'entity-1', owner_user_id: 'user-1', requested_state_id: 'state-1',
+      resolved_state_id: 'state-1', state_name: '外傷', state_description: '左頬に傷',
+      state_reference_image: {
+        ref_id: 'state-ref-1', s3_key: 'saved/user-1/entities/entity-1/state-ref-1.png',
+        storage_owner_user_id: 'user-1', image_model: 'gpt-image-2', base_ref_id: 'base-ref',
+        provider_model_id: 'gpt-image-2', provider: 'openai',
+        created_at: '2026-09-30T00:00:00.000Z',
+        input_fingerprint: computeStateReferenceFingerprint({
+          entityId: 'entity-1', stateId: 'state-1', name: '外傷', description: '左頬に傷', baseRefId: 'base-ref',
+        }),
+      },
+      reference_images: [], primary_ref_id: 'base-ref',
+    }];
+    const repository = new PostgresEntityRepository(client);
+
+    const result = await repository.findResolvedReferenceImagesByAssignmentsAndUserId?.(
+      [{ entityId: 'entity-1', stateId: 'state-1' }], 'work-1', 'user-1',
+    );
+
+    expect(result?.[0]).toMatchObject({
+      stateExists: true,
+      refId: 'state-ref-1',
+      s3Key: 'saved/user-1/entities/entity-1/state-ref-1.png',
+      ownerUserId: 'user-1',
+      imageModel: 'gpt-image-2', providerModelId: 'gpt-image-2', provider: 'openai',
+    });
+  });
+
+  it('default割当はactive primaryのprovider provenanceを保持する', async () => {
+    const client = new QueryCapturingClient();
+    client.rows = [{
+      entity_id: 'entity-1', owner_user_id: 'user-1', requested_state_id: null,
+      resolved_state_id: null, state_name: null, state_description: null,
+      state_reference_image: null,
+      reference_images: [{
+        ref_id: 'hy4-ref', s3_key: 'saved/user-1/entities/entity-1/hy4-ref.png',
+        cdn_url: 'https://img.lyra.test/hy4.png', source: 'generated',
+        image_model: 'hy4-preview', provider_model_id: 'hy4-preview', provider: 'tencent',
+      }],
+      primary_ref_id: 'hy4-ref',
+    }];
+    const repository = new PostgresEntityRepository(client);
+
+    const result = await repository.findResolvedReferenceImagesByAssignmentsAndUserId?.(
+      [{ entityId: 'entity-1', stateId: null }], 'work-1', 'user-1',
+    );
+
+    expect(result?.[0]).toMatchObject({
+      refId: 'hy4-ref', imageModel: 'hy4-preview', providerModelId: 'hy4-preview', provider: 'tencent',
+    });
+  });
+
+  it('状態descriptorが欠落またはstaleなら状態画像を返さない', async () => {
+    const client = new QueryCapturingClient();
+    client.rows = [{
+      entity_id: 'entity-1', owner_user_id: 'user-1', requested_state_id: 'state-1',
+      resolved_state_id: 'state-1', state_name: '外傷', state_description: '左頬に傷',
+      state_reference_image: {
+        ref_id: 'state-ref-1', s3_key: 'saved/user-1/entities/entity-1/state-ref-1.png',
+        storage_owner_user_id: 'user-1', image_model: 'gpt-image-2', base_ref_id: 'old-ref',
+        created_at: '2026-09-30T00:00:00.000Z', input_fingerprint: 'stale',
+      },
+      reference_images: [], primary_ref_id: 'base-ref',
+    }];
+    const repository = new PostgresEntityRepository(client);
+
+    const result = await repository.findResolvedReferenceImagesByAssignmentsAndUserId?.(
+      [{ entityId: 'entity-1', stateId: 'state-1' }], 'work-1', 'user-1',
+    );
+
+    expect(result?.[0]).toMatchObject({ stateExists: true, refId: null, s3Key: null });
   });
 });
 

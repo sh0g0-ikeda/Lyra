@@ -164,12 +164,51 @@ class FakePageService implements PageServicePort {
     throw new Error('not implemented');
   }
 
+  public autofillCalls = 0;
   public async autofillEpisodeFromStory(): Promise<EpisodePagePlanApplyResult> {
+    this.autofillCalls += 1;
     return this.autofillResult;
   }
 }
 
 describe('EpisodePageSkeletonWorkerService', () => {
+  // Spec 5/11: explicit legacy strategy owns admission, attempt CAS, graph writes
+  // and terminal settlement in one transaction; canonical ports stay unchanged.
+  it('legacy atomic portを選ぶ場合は分離commit保存terminal経路を呼ばない', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    const service = new FakePageSkeletonService();
+    const cancellation = new FakeCancellationControl();
+    let commits = 0;
+    const atomic = {
+      settleEpisodePageSkeletonAttempt: async () => 'active' as const,
+      commitPreparedEpisodePageSkeleton: async () => {
+        commits += 1;
+        return { pagesCreated: 1, panelsCreated: 1, replacedExisting: false };
+      },
+    };
+    const worker = new EpisodePageSkeletonWorkerService(repository, service, undefined, cancellation, atomic);
+    expect(await worker.processJob('job')).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(commits).toBe(1);
+    expect(service.persistCalls).toEqual([]);
+    expect(repository.completed).toBeNull();
+    expect(repository.progressUpdates).toEqual([]);
+    expect(cancellation.beginCommitCalls).toBe(0);
+    expect(cancellation.finalizeCalls).toBe(0);
+  });
+
+  it('legacy確定後attemptを失った場合はgeneric failとcancelで別試行を上書きしない', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    const cancellation = new FakeCancellationControl();
+    let settlements = 0;
+    const atomic = {
+      settleEpisodePageSkeletonAttempt: async () => ++settlements === 1 ? 'active' as const : 'lost' as const,
+      commitPreparedEpisodePageSkeleton: async () => { throw new Error('stale attempt'); },
+    };
+    const worker = new EpisodePageSkeletonWorkerService(repository, new FakePageSkeletonService(), undefined, cancellation, atomic);
+    expect(await worker.processJob('job')).toEqual({ status: 'skipped' });
+    expect(repository.failed).toBeNull();
+    expect(cancellation.finalizeCalls).toBe(0);
+  });
   it('disables compiler fallback before saving queued page skeletons', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     const pageSkeletonService = new FakePageSkeletonService();
@@ -191,7 +230,7 @@ describe('EpisodePageSkeletonWorkerService', () => {
     expect(repository.failed).toBeNull();
   });
 
-  it('rolls back a newly created skeleton when story plan application cannot use the compiler', async () => {
+  it('旧jobがapply_story_plan=trueでも新規skeletonからautofillを自動実行しない', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     repository.job = {
       ...repository.job!,
@@ -218,19 +257,15 @@ describe('EpisodePageSkeletonWorkerService', () => {
 
     const result = await worker.processJob('55555555-5555-4555-8555-555555555555');
 
-    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
-    expect(repository.completed).toBeNull();
-    expect(repository.failed).not.toBeNull();
-    expect(pageSkeletonService.rollbackCalls).toEqual([
-      {
-        userId: 'user-1',
-        episodeId: '33333333-3333-4333-8333-333333333333',
-        expectedPageCount: 2,
-      },
-    ]);
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(repository.completed).toMatchObject({ storyPlanApplied: false, storyPlanResult: null });
+    expect(pageService.autofillCalls).toBe(0);
+    expect(repository.failed).toBeNull();
+    expect(pageService.autofillCalls).toBe(0);
+    expect(pageSkeletonService.rollbackCalls).toEqual([]);
   });
 
-  it('does not rollback overwritten pages when story plan application fails', async () => {
+  it('旧jobがapply_story_plan=trueでも置換skeletonからautofillを自動実行しない', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     repository.job = {
       ...repository.job!,
@@ -257,7 +292,8 @@ describe('EpisodePageSkeletonWorkerService', () => {
 
     const result = await worker.processJob('55555555-5555-4555-8555-555555555555');
 
-    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(pageService.autofillCalls).toBe(0);
     expect(pageSkeletonService.rollbackCalls).toEqual([]);
   });
 

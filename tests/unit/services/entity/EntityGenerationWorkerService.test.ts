@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
 import type { EntityReferenceContext } from '../../../../src/domain/types/entityReference.js';
+import type {
+  ConfirmedEntityStateReference,
+  ConfirmEntityStateReferenceInput,
+  EntityStateReferenceContextCandidate,
+} from '../../../../src/domain/types/entityStateReference.js';
+import { computeStateReferenceFingerprint } from '../../../../src/domain/state/StateReferenceFingerprint.js';
 import type { GenerationJob } from '../../../../src/domain/types/job.js';
 import type { StoredImageLoaderPort } from '../../../../src/infrastructure/aws/S3StoredImageLoader.js';
 import type { EntityReferenceRepository } from '../../../../src/repositories/EntityRepository.js';
+import type { EntityStateReferenceRepository } from '../../../../src/repositories/EntityStateReferenceRepository.js';
 import type {
   CompleteEntityGenerationInput,
   EntityGenerationExecutionRepository,
@@ -123,6 +130,27 @@ class FakeEntityReferenceRepository implements EntityReferenceRepository {
   }
 }
 
+class FakeEntityStateReferenceRepository implements EntityStateReferenceRepository {
+  public context: EntityStateReferenceContextCandidate = buildStateContext();
+  public lookups: Array<{ entityId: string; stateId: string; userId: string; organizationId: string | null }> = [];
+
+  public async findContextByIdAndUserId(
+    entityId: string,
+    stateId: string,
+    userId: string,
+    organizationId: string | null = null,
+  ): Promise<EntityStateReferenceContextCandidate> {
+    this.lookups.push({ entityId, stateId, userId, organizationId });
+    return this.context;
+  }
+
+  public async confirmReference(
+    _input: ConfirmEntityStateReferenceInput,
+  ): Promise<ConfirmedEntityStateReference> {
+    throw new Error('not used');
+  }
+}
+
 class FakePromptBuilder implements EntityReferencePromptBuilderPort {
   public buildGenerationPrompt(): string {
     return 'entity prompt';
@@ -130,6 +158,14 @@ class FakePromptBuilder implements EntityReferencePromptBuilderPort {
 
   public buildCompilerBrief(): string {
     return 'Target image: manga full-body character reference';
+  }
+
+  public buildStateGenerationPrompt(): string {
+    return 'entity state prompt';
+  }
+
+  public buildStateCompilerBrief(): string {
+    return 'Target image: manga entity state reference';
   }
 }
 
@@ -311,6 +347,106 @@ class FakeOrganizationService {
 }
 
 describe('EntityGenerationWorkerService', () => {
+  it('明示Hy4 jobはOpenAI generatorを呼ばずfailedにして一度返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({ params: {
+      entity_id: 'entity-1',
+      entity_type: 'character',
+      previous_entity_status: 'draft',
+      image_model: 'hy4-preview',
+      provider_model_id: 'hy4-preview',
+      provider: 'tencent',
+    } });
+    const referenceGenerator = new FakeReferenceGenerator();
+    const storedImageLoader = new FakeStoredImageLoader();
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository,
+      referenceGenerator,
+      storedImageLoader,
+      creditService,
+      imageModel: 'gpt-image-2',
+    });
+
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(referenceGenerator.input).toBeNull();
+    expect(storedImageLoader.loadedS3Keys).toEqual([]);
+    expect(creditService.refunded).toMatchObject({ userId: 'user-1', amount: 8, jobId: 'job-1' });
+  });
+
+  it('quote対応workerがない場合はproviderを呼ばず失敗・返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job!.params.quote_id = 'quote-1';
+    const referenceGenerator = new FakeReferenceGenerator();
+    const creditService = new FakeCreditService();
+    const service = buildService({ executionRepository, referenceGenerator, creditService });
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(referenceGenerator.input).toBeNull();
+    expect(creditService.refunded?.jobId).toBe('job-1');
+  });
+
+  it('state jobはserver解決したbase primaryだけを入力にして旧base経路と分岐する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildStateJob();
+    const stateRepository = new FakeEntityStateReferenceRepository();
+    const entityRepository = new FakeEntityReferenceRepository();
+    const storedImageLoader = new FakeStoredImageLoader();
+    const promptCompiler = new FakePromptCompiler();
+    const referenceGenerator = new FakeReferenceGenerator();
+    const service = buildService({
+      executionRepository,
+      stateRepository,
+      entityRepository,
+      storedImageLoader,
+      promptCompiler,
+      referenceGenerator,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(entityRepository.lookups).toHaveLength(0);
+    expect(stateRepository.lookups).toEqual([{
+      entityId: 'entity-1',
+      stateId: 'state-1',
+      userId: 'user-1',
+      organizationId: null,
+    }]);
+    expect(storedImageLoader.loadedS3Keys).toEqual([
+      'saved/entity-owner-1/entities/entity-1/base-ref-1.png',
+    ]);
+    expect(promptCompiler.draftPrompt).toBe('entity state prompt');
+    expect(referenceGenerator.input?.inputImages).toEqual([
+      { dataUrl: 'data:image/png;base64,dXBsb2FkZWQtc291cmNl' },
+    ]);
+    expect(referenceGenerator.input?.prompt).toContain('frozen state description');
+    expect(executionRepository.completed?.candidates).toHaveLength(1);
+  });
+
+  it('state jobのrevisionが変わった場合はprovider前にfailed化して1クレジット返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildStateJob();
+    const stateRepository = new FakeEntityStateReferenceRepository();
+    stateRepository.context = {
+      ...stateRepository.context,
+      stateRevision: '2026-04-25T00:00:00.001Z',
+    };
+    const creditService = new FakeCreditService();
+    const referenceGenerator = new FakeReferenceGenerator();
+    const service = buildService({
+      executionRepository,
+      stateRepository,
+      creditService,
+      referenceGenerator,
+    });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(referenceGenerator.input).toBeNull();
+    expect(creditService.refunded).toMatchObject({ amount: 1, jobId: 'job-1' });
+    expect(executionRepository.completed).toBeNull();
+  });
   it('entity_generate job を処理して candidates を保存する', async () => {
     const executionRepository = new FakeExecutionRepository();
     const referenceGenerator = new FakeReferenceGenerator();
@@ -829,6 +965,7 @@ function buildService(overrides: {
   imageModel?: string;
   organizationService?: FakeOrganizationService;
   cancellationControl?: FakeCancellationControl;
+  stateRepository?: FakeEntityStateReferenceRepository;
 } = {}): EntityGenerationWorkerService {
   return new EntityGenerationWorkerService(
     overrides.executionRepository ?? new FakeExecutionRepository(),
@@ -843,6 +980,7 @@ function buildService(overrides: {
     true,
     overrides.organizationService as unknown as OrganizationServicePort | undefined,
     overrides.cancellationControl,
+    overrides.stateRepository,
   );
 }
 
@@ -874,4 +1012,58 @@ function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
     commitStartedAt: null,
     ...overrides,
   };
+}
+
+function buildStateContext(): EntityStateReferenceContextCandidate {
+  return {
+    entityId: 'entity-1',
+    workId: 'work-1',
+    entityOwnerUserId: 'entity-owner-1',
+    entityType: 'character',
+    entityName: 'Mizuki',
+    entityFreeDescription: 'Black long hair swordswoman',
+    entityStructuredFields: { art_style: 'anime' },
+    entityPromptSupplement: 'anime heroine',
+    entityStatus: 'ready',
+    stateId: 'state-1',
+    stateName: '外傷',
+    stateDescription: '左頬に傷',
+    stateRevision: now.toISOString(),
+    baseReference: {
+      refId: 'base-ref-1',
+      s3Key: 'saved/entity-owner-1/entities/entity-1/base-ref-1.png',
+      storageOwnerUserId: 'entity-owner-1',
+    },
+    referenceImage: null,
+  };
+}
+
+function buildStateJob(): GenerationJob {
+  const state = buildStateContext();
+  if (state.stateName === null || state.stateDescription === null || state.baseReference === null) {
+    throw new Error('invalid state test fixture');
+  }
+  return buildJob({
+    creditCost: 1,
+    params: {
+      target: 'entity_state',
+      entity_id: state.entityId,
+      entity_type: state.entityType,
+      previous_entity_status: state.entityStatus,
+      entity_state_id: state.stateId,
+      base_primary_ref_id: state.baseReference.refId,
+      state_input_fingerprint: computeStateReferenceFingerprint({
+        entityId: state.entityId,
+        stateId: state.stateId,
+        name: state.stateName,
+        description: state.stateDescription,
+        baseRefId: state.baseReference.refId,
+      }),
+      state_revision: state.stateRevision,
+      state_name: state.stateName,
+      state_description: state.stateDescription,
+      image_model: 'gpt-image-2',
+      pricing_version: 'entity-state-reference-v1',
+    },
+  });
 }

@@ -3,12 +3,17 @@ import { AppState, Linking, Platform, StyleSheet, Switch, Text, View } from 'rea
 import { useFocusEffect } from '@react-navigation/native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { GoogleIdentityLinkPanel } from '@/components/GoogleIdentityLinkPanel';
 import { FormField } from '@/components/FormField';
 import { JobStatusCard } from '@/components/JobStatusCard';
 import { MobileStoreBillingPanel } from '@/components/MobileStoreBillingPanel';
 import { Notice } from '@/components/Notice';
+import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
+import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
+import type { ErrorOperation } from '@/lib/operationErrorContext';
 import { OrganizationManagementModal } from '@/components/OrganizationManagementModal';
 import { OrganizationManagementPanel } from '@/components/OrganizationManagementPanel';
+import { billingPlanMessage } from '@/lib/billingPlanMessages';
 import { PersonalBillingSummary } from '@/components/PersonalBillingSummary';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { RecordPicker } from '@/components/RecordPicker';
@@ -132,7 +137,7 @@ export function AccountScreen(): React.JSX.Element {
       return createNativeStoreBillingAdapter({
         backend: createMobileStoreBillingBackend(api),
         products: mobileStoreProducts,
-        sdk: createExpoIapSdk()
+        sdk: createExpoIapSdk(nativeMobileStore ?? undefined)
       });
     },
     [api, mobileStoreProducts]
@@ -279,6 +284,14 @@ export function AccountScreen(): React.JSX.Element {
     }
   });
   const jobs = jobsQuery.data?.pages.flatMap((page) => page.jobs) ?? [];
+  useResetOnScopeChange(JSON.stringify([sessionKey, organizationId]), [
+    cancelJobMutation.reset, hideJobMutation.reset, retryJobMutation.reset
+  ]);
+  const jobActionFailures = [
+    { operation: 'cancelJob', mutation: cancelJobMutation },
+    { operation: 'hideJob', mutation: hideJobMutation },
+    { operation: 'retryJob', mutation: retryJobMutation }
+  ] satisfies { operation: ErrorOperation; mutation: Pick<typeof cancelJobMutation, 'error' | 'variables' | 'isError'> }[];
 
   const loadDeletionPreview = async (): Promise<void> => {
     setDeletionResult(null);
@@ -397,6 +410,8 @@ export function AccountScreen(): React.JSX.Element {
         <Text style={styles.metric}>{session?.user.email ?? '-'}</Text>
         <Text style={styles.caption}>{session?.user.display_name ?? session?.user.id ?? '-'}</Text>
       </Section>
+
+      <GoogleIdentityLinkPanel key={session?.user.id ?? sessionKey} onSignInAgain={confirmLogout} />
 
       {organizationFeaturesEnabled ? (
         <Section
@@ -545,13 +560,14 @@ export function AccountScreen(): React.JSX.Element {
           </View>
         </View>
         <View style={styles.usage}>
-          <Text style={styles.caption}>{t(language, "generated.screens.AccountScreen.character.preview.import.1.credit.c94447dd")}</Text>
-          <Text style={styles.caption}>{t(language, "generated.screens.AccountScreen.page.generation.3.credits.c308dc72")}</Text>
-          <Text style={styles.caption}>{t(language, "generated.screens.AccountScreen.text.ai.actions.0.credits.d7c4fd44")}</Text>
+          <Text style={styles.caption}>{billingPlanMessage(language, 'prices')}</Text>
         </View>
         <PersonalBillingSummary
           cancelAtPeriodEnd={balanceQuery.data?.cancel_at_period_end ?? false}
           currentPeriodEnd={balanceQuery.data?.current_period_end ?? null}
+          currentPlan={balanceQuery.data?.plan_code === 'free' || balanceQuery.data?.plan_code === 'standard' || balanceQuery.data?.plan_code === 'premium' ? balanceQuery.data.plan_code : undefined}
+          scheduledPlan={balanceQuery.data?.scheduled_plan_code}
+          scheduledPlanEffectiveAt={balanceQuery.data?.scheduled_plan_effective_at}
           language={language}
           onManage={() => {
             if (nativeSubscriptionManagementUrl !== null) {
@@ -603,6 +619,9 @@ export function AccountScreen(): React.JSX.Element {
         ) : (
           <MobileStoreBillingPanel
             adapter={mobileStoreBillingAdapter}
+            currentPlan={balanceQuery.data?.plan_code === 'free' || balanceQuery.data?.plan_code === 'standard' || balanceQuery.data?.plan_code === 'premium' ? balanceQuery.data.plan_code : undefined}
+            scheduledPlan={balanceQuery.data?.scheduled_plan_code}
+            scheduledPlanEffectiveAt={balanceQuery.data?.scheduled_plan_effective_at}
             language={language}
             onVerified={refresh}
           />
@@ -642,9 +661,17 @@ export function AccountScreen(): React.JSX.Element {
             />
           ))
         )}
-        {cancelJobMutation.isError ? <Notice message={userErrorMessage(cancelJobMutation.error, language)} tone="danger" /> : null}
-        {hideJobMutation.isError ? <Notice message={userErrorMessage(hideJobMutation.error, language)} tone="danger" /> : null}
-        {retryJobMutation.isError ? <Notice message={userErrorMessage(retryJobMutation.error, language)} tone="danger" /> : null}
+        {jobActionFailures.filter(({ mutation }) => mutation.isError).map(({ operation, mutation }) => (
+          <ActionableErrorNotice
+            key={operation}
+            actions={{ retry: () => { void refreshJobs(); } }}
+            context={{ operation, targetLabel: mutation.variables?.id }}
+            error={mutation.error}
+            language={language}
+            retryMode="refresh"
+            target="retry"
+          />
+        ))}
         {jobsQuery.hasNextPage ? (
           <PrimaryButton
             label={t(language, "generated.screens.AccountScreen.load.more.72433fbc")}

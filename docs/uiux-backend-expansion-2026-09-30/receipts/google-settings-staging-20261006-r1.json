@@ -1,0 +1,256 @@
+{
+  "schemaVersion": 1,
+  "at": "2026-10-06T03:15:26.914Z",
+  "scope": "isolated-staging-google-settings",
+  "productSource": "014463a1becc38b0d910f494c53c06bfdfdd2dfa",
+  "productImage": "sha256:115221bde22f9ce2ec2da06852dbf6caf4e3058cee61f7ce42aded163d43eec9",
+  "googleCapabilities": {
+    "version": 2,
+    "google_sign_in": false,
+    "google_linking": false,
+    "google_ios": false
+  },
+  "collisionGuard": {
+    "connected": true,
+    "actualAwsCases": 7,
+    "allExpectedOutcomesMatched": true,
+    "googleProviderCalls": 0,
+    "userCreateOrLinkCalls": 0,
+    "reservedConcurrencyConfigured": false,
+    "sharedAccountConcurrency": 10,
+    "approvedScope": "bounded staging QA only",
+    "manualRetainedResources": [
+      "lambda",
+      "iam-role",
+      "14-day-log-group"
+    ]
+  },
+  "apiLinkIam": {
+    "configured": true,
+    "actions": [
+      "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminLinkProviderForUser"
+    ],
+    "poolArn": "arn:aws:cognito-idp:ap-northeast-1:452284481392:userpool/ap-northeast-1_qZM5rxoco"
+  },
+  "expiry": {
+    "configuration": {
+      "at": "2026-10-06T02:43:45.450Z",
+      "state": "UPDATE_COMPLETE",
+      "servicesUnchanged": true,
+      "scheduleEnabled": false,
+      "googleEnabled": false,
+      "productionMutations": 0,
+      "expiryTaskDefinitionArn": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-google-link-expiry:3",
+      "scheduleArn": "arn:aws:scheduler:ap-northeast-1:452284481392:schedule/lyra-staging-20261003-google-auth/lyra-staging-20261003-google-link-expiry"
+    },
+    "oneoff": {
+      "at": "2026-10-06T02:48:01.767Z",
+      "task": {
+        "arn": "arn:aws:ecs:ap-northeast-1:452284481392:task/lyra-staging-20261003-cluster/385347aae1cc4fb5bd1b8ec95ebe7117",
+        "def": "arn:aws:ecs:ap-northeast-1:452284481392:task-definition/lyra-staging-20261003-google-link-expiry:3",
+        "status": "STOPPED",
+        "stop": "EssentialContainerExited",
+        "containers": [
+          {
+            "name": "google-link-expiry",
+            "status": "STOPPED",
+            "exit": 0
+          }
+        ]
+      },
+      "actualDatabaseExecution": true,
+      "essentialExitCode": 0,
+      "providerCalls": 0,
+      "productionMutations": 0,
+      "scheduled": false
+    },
+    "counts": {
+      "at": "2026-10-06T02:49:28.474Z",
+      "batches": [
+        {
+          "dry_run": false,
+          "expired_exchange_material": 0
+        }
+      ],
+      "expiredExchangeMaterial": 0,
+      "failureMetrics": 0,
+      "taskStopped": true,
+      "essentialExitCode": 0,
+      "googleProviderCalls": 0,
+      "privateLogMessagesRetained": 0
+    },
+    "scheduleEnabled": false,
+    "failedAttempts": [
+      "r1 CFN AwsvpcConfiguration and name resolution",
+      "r2 EndDate precision; dependent group deletion permission",
+      "r3 CFN GetAtt Arn read default group"
+    ],
+    "rollbackCompleted": true,
+    "unusedRetainedTaskDefinitionRevisions": [
+      1,
+      2
+    ],
+    "latestTaskDefinitionRevision": 3
+  },
+  "nativeWebAcceptance": {
+    "emailLoginAfterGuardConnection": true,
+    "displayedWorks": 4,
+    "displayedPersonalCredits": 9,
+    "savedDraftVisible": true,
+    "saveGeneratePurchaseDeleteOperations": 0,
+    "scope": "visible staging account only"
+  },
+  "localOps": {
+    "totals": [
+      "# tests 179",
+      "# pass 179",
+      "# fail 0",
+      "# cancelled 0",
+      "# skipped 0",
+      "# todo 0",
+      "# duration_ms 6359.235"
+    ],
+    "logSha256": "e1150343c71b613d916bf200171e67820ed871622dc1a54b9b3897ca2d7f4a7b",
+    "concurrency": 1,
+    "skipped": null,
+    "directV2InstallPg18": {
+      "passed": true,
+      "logSha256": "5e02981422b4ad0402b320281c35dacbb06f6c6384aae6aa5b8bc48ce410476d",
+      "counts": 8,
+      "googleEligibleFixtures": 2,
+      "googleExcludedFixtures": 2,
+      "readPrivilegesAndRollbackVerified": true
+    },
+    "schema047FixturePassed": true,
+    "testOnlyConnectionWiring": {
+      "localPorts": [
+        15433,
+        15435
+      ],
+      "expectedValuesAndSqlUnchanged": true,
+      "tddException": "pure test connection wiring"
+    },
+    "disposablePg18Stopped": {
+      "port": 15435,
+      "pid": 20032,
+      "stoppedAfterFinal179Pass": true,
+      "otherClustersChanged": false
+    }
+  },
+  "drainDeployment": {
+    "constantProofLambdaExists": false,
+    "lifecycleExecutorArnConfigured": false,
+    "lifecycleScheduleEnabled": false,
+    "executorArtifactSha256": "40e4547fe150ded356001b107771c1616120554d1d62a1fecba65e7849221a6a",
+    "executorS3Upload": {
+      "at": "2026-10-06T02:55:03.768Z",
+      "bucket": "lyra-staging-20261003-build-452284481392",
+      "key": "lifecycle-code/drain-proof/40e4547fe150ded356001b107771c1616120554d1d62a1fecba65e7849221a6a/executor.zip",
+      "versionId": "FMWVZ3vmLofQusd5euYWwbNHdu5SQMqS",
+      "sha256": "40e4547fe150ded356001b107771c1616120554d1d62a1fecba65e7849221a6a",
+      "bytes": 13329440,
+      "checksumVerified": true,
+      "credentialsIncluded": false,
+      "dbMutations": 0,
+      "productionMutations": 0
+    },
+    "lifecycleArtifactSha256": "aa48cc56223adffdc13cb8d05b307b510de52a24019c18d4d9c2757cebb7fa46",
+    "lifecycleCodeDeployed": false,
+    "productionIamDenyResourcesPreserved": 44
+  },
+  "blockedOrIncomplete": [
+    "Google branding final terms confirmation and two OAuth clients absent",
+    "Google IdP and link credentials absent; no real Google acceptance",
+    "DB reader/proof first v2 install, constrained IAM, lifecycle integration and shutdown rehearsal not deployed",
+    "Android physical acceptance and iOS separate client/policy acceptance not completed",
+    "production bridge, mixed old/new data writers and rollback still NO-GO"
+  ],
+  "originalWorkProtection": {
+    "checkedAt": "2026-10-06T03:15:26.826Z",
+    "baselineHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "currentHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "baselinePaths": 28,
+    "changedBaselinePaths": [],
+    "unrelatedAdditionalPath": "store-assets/google-play",
+    "discardedChanges": false
+  },
+  "productionReady": false,
+  "productionMutations": 0,
+  "mainMerge": 0,
+  "storeSubmission": 0,
+  "secretsIncluded": false,
+  "finalReadback": {
+    "at": "2026-10-06T03:08:23.934Z",
+    "capabilities": {
+      "version": 2,
+      "google_sign_in": false,
+      "google_linking": false,
+      "google_ios": false
+    },
+    "apiStatus": 200,
+    "cacheControl": "no-store",
+    "services": {
+      "failures": [],
+      "services": [
+        {
+          "name": "lyra-staging-20261003-api",
+          "desired": 1,
+          "running": 1,
+          "pending": 0
+        },
+        {
+          "name": "lyra-staging-20261003-generation",
+          "desired": 0,
+          "running": 0,
+          "pending": 0
+        },
+        {
+          "name": "lyra-staging-20261003-export",
+          "desired": 0,
+          "running": 0,
+          "pending": 0
+        },
+        {
+          "name": "lyra-staging-20261003-deletion",
+          "desired": 0,
+          "running": 0,
+          "pending": 0
+        }
+      ]
+    },
+    "expiry": {
+      "Arn": "arn:aws:scheduler:ap-northeast-1:452284481392:schedule/lyra-staging-20261003-google-auth/lyra-staging-20261003-google-link-expiry",
+      "State": "DISABLED"
+    },
+    "pool": {
+      "Id": "ap-northeast-1_qZM5rxoco",
+      "PreSignUp": "arn:aws:lambda:ap-northeast-1:452284481392:function:lyra-staging-20261003-google-presignup"
+    },
+    "googleIdentityProviderConfigured": false,
+    "proofPackageSourceHashesMatch": true,
+    "mutations": 0,
+    "credentialReads": 0,
+    "productionAccess": 0
+  },
+  "localInitialInstaller": {
+    "at": "2026-10-06T03:14:39.308Z",
+    "sourceHashes": {
+      "prepare-google-drain-v2-initial-install-r1.mjs": "0da0effa177779d2cb6e6cfd8aecad1c8e446c059cbf712c80ce8efd72214625",
+      "prepare-google-drain-v2-initial-install-r1.test.mjs": "f43ce62ed72b77f6f13addf6b72dc6dc4acbf0765f9609109a3c9c2238879aa4"
+    },
+    "mockTestsPassed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "logSha256": "80fadf464e8830856fe93cfcb0f81cc54882324f5bc693d3455c53629e662811",
+    "generatedProgramParsePassed": true,
+    "overrideBytes": 7771,
+    "syntheticPreconditionsUsedOnlyForParsing": true,
+    "requestsWrittenOrSent": 0,
+    "actualInstallationPerformed": false,
+    "awsCalls": 0,
+    "dbCalls": 0,
+    "credentialReads": 0,
+    "independentReviewPassed": true
+  }
+}

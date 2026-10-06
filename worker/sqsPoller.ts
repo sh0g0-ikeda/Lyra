@@ -10,6 +10,11 @@ import {
   type WorkerBatchResult,
   type WorkerDependencies,
 } from './index.js';
+import {
+  createTaskScaleInProtectionFromEnvironment,
+  TaskScaleInProtectionError,
+  type TaskScaleInProtection,
+} from './ecsTaskScaleInProtection.js';
 
 export interface SqsPollerClient {
   send(command: ReceiveMessageCommand | DeleteMessageBatchCommand | ChangeMessageVisibilityBatchCommand): Promise<{
@@ -38,6 +43,11 @@ const DEFAULT_WAIT_TIME_SECONDS = 20;
 const DEFAULT_VISIBILITY_TIMEOUT_SECONDS = 1800;
 const MIN_VISIBILITY_EXTENSION_INTERVAL_MS = 60_000;
 const DEFAULT_IDLE_DELAY_MS = 1000;
+const TASK_PROTECTION_EXPIRY_BUFFER_MINUTES = 5;
+const MIN_TASK_PROTECTION_EXPIRY_MINUTES = 120;
+const MAX_TASK_PROTECTION_EXPIRY_MINUTES = 2_880;
+const TASK_PROTECTION_FAILURE_DELAY_MS = 30_000;
+const MIN_TASK_PROTECTION_REFRESH_INTERVAL_MS = 60_000;
 
 /**
  * ECS/Fargate worker loop for the same SQS payload contract used by the
@@ -51,6 +61,8 @@ export class GenerationQueuePoller {
     private readonly client: SqsPollerClient,
     private readonly dependencies: WorkerDependencies,
     private readonly options: GenerationQueuePollerOptions,
+    private readonly taskProtection: TaskScaleInProtection =
+      createTaskScaleInProtectionFromEnvironment(process.env),
   ) {}
 
   public stop(): void {
@@ -59,7 +71,24 @@ export class GenerationQueuePoller {
 
   public async run(): Promise<void> {
     while (!this.shouldStop) {
-      const result = await this.pollOnce();
+      let result: GenerationQueuePollResult;
+      try {
+        result = await this.pollOnce();
+      } catch (error) {
+        if (
+          error instanceof TaskScaleInProtectionError &&
+          error.operation === 'protect' &&
+          !this.shouldStop
+        ) {
+          console.warn(
+            '[generation-worker] task protection unavailable; delaying before retry',
+            sanitizePersistedErrorMessage(error, 'Task protection unavailable'),
+          );
+          await sleep(TASK_PROTECTION_FAILURE_DELAY_MS);
+          continue;
+        }
+        throw error;
+      }
       if (result.receivedCount === 0 && !this.shouldStop) {
         await sleep(this.options.idleDelayMs ?? DEFAULT_IDLE_DELAY_MS);
       }
@@ -67,46 +96,117 @@ export class GenerationQueuePoller {
   }
 
   public async pollOnce(): Promise<GenerationQueuePollResult> {
-    const messages = await this.receiveMessages();
-    if (messages.length === 0) {
-      return {
-        receivedCount: 0,
-        deletedCount: 0,
-        retryCount: 0,
-        handlerResult: null,
-      };
+    if (this.shouldStop) {
+      return emptyPollResult();
     }
 
-    const stopVisibilityExtension = this.startVisibilityExtension(messages);
-    let handlerResult: WorkerBatchResult;
+    const protectionExpiryMinutes = this.taskProtectionExpiryMinutes();
+    await this.taskProtection.protect(protectionExpiryMinutes);
     try {
-      handlerResult = await handleGenerationQueue(
-        {
-          Records: messages.map((message) => ({
-            messageId: message.MessageId,
-            body: message.Body ?? '',
-          })),
-        },
-        this.dependencies,
-      );
-    } finally {
-      stopVisibilityExtension();
-    }
-    const retryMessageIds = new Set(
-      handlerResult.batchItemFailures.map((failure) => failure.itemIdentifier),
-    );
-    const messagesToDelete = messages.filter(
-      (message) => message.ReceiptHandle !== undefined &&
-        (message.MessageId === undefined || !retryMessageIds.has(message.MessageId)),
-    );
-    const deletedCount = await this.deleteMessages(messagesToDelete);
+      const messages = await this.receiveMessages();
+      if (messages.length === 0) {
+        return emptyPollResult();
+      }
+      if (this.shouldStop) {
+        await this.returnMessagesForRetry(messages);
+        return {
+          receivedCount: messages.length,
+          deletedCount: 0,
+          retryCount: messages.length,
+          handlerResult: null,
+        };
+      }
 
-    return {
-      receivedCount: messages.length,
-      deletedCount,
-      retryCount: retryMessageIds.size,
-      handlerResult,
+      const stopVisibilityExtension = this.startVisibilityExtension(messages);
+      const stopProtectionRefresh = this.startProtectionRefresh(protectionExpiryMinutes);
+      let handlerResult: WorkerBatchResult;
+      try {
+        handlerResult = await handleGenerationQueue(
+          {
+            Records: messages.map((message) => ({
+              messageId: message.MessageId,
+              body: message.Body ?? '',
+            })),
+          },
+          this.dependencies,
+        );
+      } finally {
+        stopVisibilityExtension();
+        await stopProtectionRefresh();
+      }
+      const retryMessageIds = new Set(
+        handlerResult.batchItemFailures.map((failure) => failure.itemIdentifier),
+      );
+      const messagesToDelete = messages.filter(
+        (message) => message.ReceiptHandle !== undefined &&
+          (message.MessageId === undefined || !retryMessageIds.has(message.MessageId)),
+      );
+      const deletedCount = await this.deleteMessages(messagesToDelete);
+
+      return {
+        receivedCount: messages.length,
+        deletedCount,
+        retryCount: retryMessageIds.size,
+        handlerResult,
+      };
+    } finally {
+      try {
+        await this.taskProtection.unprotect();
+      } catch (error) {
+        this.stop();
+        console.error(
+          '[generation-worker] failed to release task protection; stopping worker',
+          sanitizePersistedErrorMessage(error, 'Task protection release failed'),
+        );
+        throw error;
+      }
+    }
+  }
+
+  private startProtectionRefresh(expiresInMinutes: number): () => Promise<void> {
+    let refreshFailure: unknown;
+    let refreshInFlight: Promise<void> | undefined;
+    const intervalMs = Math.max(
+      MIN_TASK_PROTECTION_REFRESH_INTERVAL_MS,
+      Math.floor((expiresInMinutes * 60_000) / 2),
+    );
+    const timer = setInterval(() => {
+      if (refreshInFlight !== undefined) {
+        return;
+      }
+      refreshInFlight = this.taskProtection.protect(expiresInMinutes)
+        .catch((error: unknown) => {
+          refreshFailure = error;
+          this.stop();
+          console.error(
+            '[generation-worker] failed to refresh task protection; stopping after current work',
+            sanitizePersistedErrorMessage(error, 'Task protection refresh failed'),
+          );
+        })
+        .finally(() => {
+          refreshInFlight = undefined;
+        });
+    }, intervalMs);
+    unrefTimer(timer);
+
+    return async (): Promise<void> => {
+      clearInterval(timer);
+      await refreshInFlight;
+      if (refreshFailure !== undefined) {
+        throw refreshFailure;
+      }
     };
+  }
+
+  private taskProtectionExpiryMinutes(): number {
+    return Math.min(
+      MAX_TASK_PROTECTION_EXPIRY_MINUTES,
+      Math.max(
+        MIN_TASK_PROTECTION_EXPIRY_MINUTES,
+        Math.ceil(this.effectiveVisibilityTimeoutSeconds() / 60) +
+          TASK_PROTECTION_EXPIRY_BUFFER_MINUTES,
+      ),
+    );
   }
 
   private async receiveMessages(): Promise<Message[]> {
@@ -173,6 +273,41 @@ export class GenerationQueuePoller {
     }
   }
 
+  private async returnMessagesForRetry(messages: Message[]): Promise<void> {
+    const entries = buildVisibilityEntries(messages);
+    if (entries.length === 0) {
+      return;
+    }
+
+    try {
+      const response = await this.client.send(
+        new ChangeMessageVisibilityBatchCommand({
+          QueueUrl: this.options.queueUrl,
+          Entries: entries.map((entry) => ({
+            ...entry,
+            VisibilityTimeout: 0,
+          })),
+        }),
+      );
+      if (response.Failed !== undefined && response.Failed.length > 0) {
+        console.warn(
+          '[generation-worker] failed to immediately return one or more stopped messages for retry',
+          response.Failed.map((failure) =>
+            sanitizePersistedErrorMessage(
+              failure.Message ?? failure.Id ?? 'ChangeMessageVisibilityBatch failed',
+              'Retry visibility reset failed',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      console.warn(
+        '[generation-worker] failed to immediately return stopped messages for retry',
+        sanitizePersistedErrorMessage(error, 'Retry visibility reset failed'),
+      );
+    }
+  }
+
   private effectiveVisibilityTimeoutSeconds(): number {
     return this.options.visibilityTimeoutSeconds ?? DEFAULT_VISIBILITY_TIMEOUT_SECONDS;
   }
@@ -213,6 +348,15 @@ export class GenerationQueuePoller {
 
     return entries.length - (response.Failed?.length ?? 0);
   }
+}
+
+function emptyPollResult(): GenerationQueuePollResult {
+  return {
+    receivedCount: 0,
+    deletedCount: 0,
+    retryCount: 0,
+    handlerResult: null,
+  };
 }
 
 function buildVisibilityEntries(messages: Message[]): Array<{ Id: string; ReceiptHandle: string }> {

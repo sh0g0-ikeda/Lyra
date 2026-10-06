@@ -1,3 +1,4 @@
+import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { QueryResultRow } from 'pg';
 import { MOBILE_PUSH_TOKEN_REGISTRY_LOCK_KEY } from '../domain/constants/mobilePush.js';
 import type {
@@ -73,7 +74,14 @@ export async function enqueueTerminalGenerationJobNotificationAfterRegistryLock(
   client: DatabaseClient,
   job: TerminalGenerationJobNotificationSnapshot,
   terminalStatus: PushNotificationTerminalStatus,
+  schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
 ): Promise<PushNotificationOutboxEnqueueResult | null> {
+  // The immutable legacy 034 trigger owns terminal notifications in the same
+  // transaction. Explicit canonical insertion would duplicate ownership and
+  // reference columns absent from that schema. This does not settle the job.
+  if (schemaProfile === 'legacy_2debe_v1') {
+    return null;
+  }
   if (
     job.cancel_requested_at !== null
     || job.cancelled_at !== null

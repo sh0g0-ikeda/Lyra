@@ -1,4 +1,6 @@
-﻿import type { QueryResultRow } from 'pg';
+import { readableStateReferenceSql } from './FencedStateReferenceReadGuard.js';
+﻿import { readImageProvenance, toImageProvenanceRecord } from '../domain/generation/ImageAccessPolicy.js';
+import type { QueryResultRow } from 'pg';
 import type {
   EpisodePagePlanContext,
   EpisodePagePlanSceneEntityStateContext,
@@ -20,9 +22,13 @@ import type { PageGenerationMode } from '../domain/types/pageGeneration.js';
 import { ConfigurationError } from '../domain/errors/index.js';
 import type { PageListCursor } from '../domain/pagination.js';
 import { readStyleReferenceMetadata } from '../domain/types/styleReference.js';
-import type { DatabaseClient } from '../lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import type { RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignment.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
+import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
+import { parseStateReferenceDescriptor } from './EntityStateReferenceRepository.js';
+import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
 
 export type { PageGenerationContext, PageGenerationStateUpdate };
 export type { PageListCursor } from '../domain/pagination.js';
@@ -94,6 +100,7 @@ interface GenerationContextRow extends QueryResultRow {
   status: PageStatus;
   frame_count: number;
   panel_entities: unknown;
+  has_variant_state: boolean;
 }
 
 interface PromptContextRow extends QueryResultRow {
@@ -103,11 +110,15 @@ interface PromptContextRow extends QueryResultRow {
   episode_purpose: string | null;
   scene_summaries: unknown;
   layout_config: unknown;
+  story_source_scene_ids?: unknown;
+  story_page_purpose?: unknown;
+  story_continuity_note?: unknown;
   dialogue_mode: string;
   page_dialogue_toggle: boolean;
 }
 
 interface AutofillContextRow extends QueryResultRow {
+  layout_config: unknown;
   page_id: string;
   work_id: string;
   episode_id: string;
@@ -145,11 +156,14 @@ interface EpisodePlanContextRow extends QueryResultRow {
   chapter_key_beats: unknown;
   episode_title: string | null;
   episode_purpose: string | null;
+  story_full_draft: string | null;
   introduction: string | null;
   middle: string | null;
   climax: string | null;
   ending_hook: string | null;
   estimated_pages: number;
+  starting_entity_states: unknown;
+  state_library: unknown;
   scenes: unknown;
   entities: unknown;
 }
@@ -159,6 +173,9 @@ interface PageSummaryRow extends QueryResultRow {
   episode_id: string;
   page_number: number;
   layout_config: unknown;
+  story_source_scene_ids?: unknown;
+  story_page_purpose?: unknown;
+  story_continuity_note?: unknown;
   dialogue_mode: string;
   page_dialogue_toggle: boolean;
   generation_mode: string | null;
@@ -175,10 +192,145 @@ interface UpdateRow extends QueryResultRow {
   id: string;
 }
 
+export type PageStoryMetadataStorageMode = 'canonical' | 'legacyPhysical';
+
 export class PostgresPageRepository
   implements PageRepository, PageListPaginationRepository
 {
-  public constructor(private readonly client: DatabaseClient) {}
+  private readonly storyMetadataStorageMode: PageStoryMetadataStorageMode;
+  private readonly legacySchemaProfile: boolean;
+
+  public constructor(
+    private readonly client: DatabaseClient & Partial<TransactionRunner>,
+    private readonly mode: PageStoryMetadataStorageMode | RepositorySchemaProfile = 'canonical',
+    private readonly transactionRunner?: TransactionRunner,
+  ) {
+    this.storyMetadataStorageMode = mode === 'legacyPhysical' || mode === 'legacy_2debe_v1'
+      ? 'legacyPhysical'
+      : 'canonical';
+    this.legacySchemaProfile = mode === 'legacy_2debe_v1';
+  }
+
+  private async runLegacyPersonalPageWrite<T>(
+    userId: string,
+    organizationId: string | null,
+    work: (client: DatabaseClient) => Promise<T>,
+  ): Promise<T> {
+    if (!this.legacySchemaProfile || organizationId !== null) {
+      return work(this.client);
+    }
+    const runner = this.transactionRunner ?? (
+      typeof this.client.transaction === 'function'
+        ? { transaction: this.client.transaction.bind(this.client) }
+        : undefined
+    );
+    if (runner === undefined) {
+      throw new ConfigurationError('Legacy personal Page writes require transaction support');
+    }
+    return runner.transaction(async (transactionClient) => {
+      await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      return work(transactionClient);
+    });
+  }
+
+  private episodeStartingEntityStatesSelect(): string {
+    return this.legacySchemaProfile
+      ? `'[]'::jsonb AS starting_entity_states`
+      : 'episodes.starting_entity_states';
+  }
+
+  private stateLibrarySelect(): string {
+    if (this.legacySchemaProfile) {
+      return `'[]'::jsonb AS state_library`;
+    }
+    return `(
+                SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                  'state_id', entity_states.id,
+                  'entity_id', entity_states.entity_id,
+                  'name', entity_states.name,
+                  'description', entity_states.description,
+                  'revision', COALESCE(entity_states.updated_at, entity_states.created_at),
+                  'base_ref_id', reference_sets.primary_ref_id,
+                  'base_ref_updated_at', reference_sets.updated_at,
+                  'base_image_present', EXISTS (
+                    SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(reference_sets.reference_images) = 'array' THEN reference_sets.reference_images ELSE '[]'::jsonb END) AS base_image(value)
+                    WHERE base_image.value->>'ref_id' = reference_sets.primary_ref_id AND NULLIF(base_image.value->>'s3_key', '') IS NOT NULL
+                  ),
+                  'reference_image', ${readableStateReferenceSql({ descriptor: 'entity_states.reference_image', entityId: 'entities.id', stateId: 'entity_states.id', organizationId: 'works.organization_id' })}
+                ) ORDER BY entity_states.created_at ASC, entity_states.id ASC), '[]'::jsonb)
+                FROM entity_states
+                INNER JOIN entities ON entities.id = entity_states.entity_id
+                LEFT JOIN reference_sets ON reference_sets.entity_id = entities.id
+                WHERE entities.work_id = chapters.work_id
+              ) AS state_library`;
+  }
+
+  private storyMetadataSelectColumns(): string {
+    return this.storyMetadataStorageMode === 'legacyPhysical'
+      ? `,
+             pages.story_source_scene_ids,
+             pages.story_page_purpose,
+             pages.story_continuity_note,
+`
+      : `,
+`;
+  }
+
+  private readStorySourceSceneIds(
+    row: Pick<PageSummaryRow, 'story_source_scene_ids'>,
+    layoutConfig: Record<string, unknown>,
+  ): string[] {
+    return this.storyMetadataStorageMode === 'legacyPhysical'
+      ? toStringArray(row.story_source_scene_ids)
+      : readStorySourceSceneIds(layoutConfig);
+  }
+
+  private readStoryPagePurpose(
+    row: Pick<PageSummaryRow | PromptContextRow, 'story_page_purpose'>,
+    layoutConfig: Record<string, unknown>,
+  ): string | null {
+    return this.storyMetadataStorageMode === 'legacyPhysical'
+      ? normalizeNullableText(readNullableString(row.story_page_purpose))
+      : readStoryPagePurpose(layoutConfig);
+  }
+
+  private readStoryContinuityNote(
+    row: Pick<PageSummaryRow | PromptContextRow, 'story_continuity_note'>,
+    layoutConfig: Record<string, unknown>,
+  ): string | null {
+    return this.storyMetadataStorageMode === 'legacyPhysical'
+      ? normalizeNullableText(readNullableString(row.story_continuity_note))
+      : readStoryContinuityNote(layoutConfig);
+  }
+
+  private storyMetadataUpdateClause(): string {
+    return this.storyMetadataStorageMode === 'legacyPhysical'
+      ? `
+          story_source_scene_ids = CASE WHEN $7::boolean THEN $8::uuid[] ELSE pages.story_source_scene_ids END,
+          story_page_purpose = CASE WHEN $9::boolean THEN $10::text ELSE pages.story_page_purpose END,
+          story_continuity_note = CASE WHEN $11::boolean THEN $12::text ELSE pages.story_continuity_note END,
+`
+      : '';
+  }
+
+  private storyMetadataUpdateValues(input: UpdatePageSettingsInput): readonly unknown[] {
+    if (this.storyMetadataStorageMode !== 'legacyPhysical') {
+      return [];
+    }
+
+    return [
+      input.storySourceSceneIds !== undefined,
+      input.storySourceSceneIds ?? null,
+      input.storyPagePurpose !== undefined,
+      input.storyPagePurpose ?? null,
+      input.storyContinuityNote !== undefined,
+      input.storyContinuityNote ?? null,
+    ];
+  }
+
+  private updatePageSettingsOrganizationParameterIndex(): 7 | 13 {
+    return this.storyMetadataStorageMode === 'legacyPhysical' ? 13 : 7;
+  }
 
   public async findPagesByEpisodeIdAndUserId(
     episodeId: string,
@@ -190,8 +342,7 @@ export class PostgresPageRepository
       SELECT pages.id,
              pages.episode_id,
              pages.page_number,
-             pages.layout_config,
-             pages.dialogue_mode,
+             pages.layout_config${this.storyMetadataSelectColumns()}             pages.dialogue_mode,
              pages.page_dialogue_toggle,
              pages.generation_mode,
              pages.generated_image,
@@ -236,9 +387,9 @@ export class PostgresPageRepository
         episodeId: row.episode_id,
         pageNumber: row.page_number,
         layoutConfig,
-        storySourceSceneIds: readStorySourceSceneIds(layoutConfig),
-        storyPagePurpose: readStoryPagePurpose(layoutConfig),
-        storyContinuityNote: readStoryContinuityNote(layoutConfig),
+        storySourceSceneIds: this.readStorySourceSceneIds(row, layoutConfig),
+        storyPagePurpose: this.readStoryPagePurpose(row, layoutConfig),
+        storyContinuityNote: this.readStoryContinuityNote(row, layoutConfig),
         dialogueMode: toPageDialogueMode(row.dialogue_mode),
         pageDialogueToggle: row.page_dialogue_toggle,
         generationMode: toPageGenerationMode(row.generation_mode),
@@ -272,8 +423,7 @@ export class PostgresPageRepository
       SELECT pages.id,
              pages.episode_id,
              pages.page_number,
-             pages.layout_config,
-             pages.dialogue_mode,
+             pages.layout_config${this.storyMetadataSelectColumns()}             pages.dialogue_mode,
              pages.page_dialogue_toggle,
              pages.generation_mode,
              pages.generated_image,
@@ -337,9 +487,9 @@ export class PostgresPageRepository
         episodeId: row.episode_id,
         pageNumber: row.page_number,
         layoutConfig,
-        storySourceSceneIds: readStorySourceSceneIds(layoutConfig),
-        storyPagePurpose: readStoryPagePurpose(layoutConfig),
-        storyContinuityNote: readStoryContinuityNote(layoutConfig),
+        storySourceSceneIds: this.readStorySourceSceneIds(row, layoutConfig),
+        storyPagePurpose: this.readStoryPagePurpose(row, layoutConfig),
+        storyContinuityNote: this.readStoryContinuityNote(row, layoutConfig),
         dialogueMode: toPageDialogueMode(row.dialogue_mode),
         pageDialogueToggle: row.page_dialogue_toggle,
         generationMode: toPageGenerationMode(row.generation_mode),
@@ -375,8 +525,7 @@ export class PostgresPageRepository
       SELECT pages.id,
              pages.episode_id,
              pages.page_number,
-             pages.layout_config,
-             pages.dialogue_mode,
+             pages.layout_config${this.storyMetadataSelectColumns()}             pages.dialogue_mode,
              pages.page_dialogue_toggle,
              pages.generation_mode,
              pages.generated_image,
@@ -424,9 +573,9 @@ export class PostgresPageRepository
           episodeId: row.episode_id,
           pageNumber: row.page_number,
           layoutConfig,
-          storySourceSceneIds: readStorySourceSceneIds(layoutConfig),
-          storyPagePurpose: readStoryPagePurpose(layoutConfig),
-          storyContinuityNote: readStoryContinuityNote(layoutConfig),
+          storySourceSceneIds: this.readStorySourceSceneIds(row, layoutConfig),
+          storyPagePurpose: this.readStoryPagePurpose(row, layoutConfig),
+          storyContinuityNote: this.readStoryContinuityNote(row, layoutConfig),
           dialogueMode: toPageDialogueMode(row.dialogue_mode),
           pageDialogueToggle: row.page_dialogue_toggle,
           generationMode: toPageGenerationMode(row.generation_mode),
@@ -468,7 +617,17 @@ export class PostgresPageRepository
                  ORDER BY panels."order"
                ) FILTER (WHERE panels.id IS NOT NULL),
                '[]'::jsonb
-             ) AS panel_entities
+             ) AS panel_entities,
+             EXISTS (
+               SELECT 1
+               FROM panels AS state_panels
+               CROSS JOIN LATERAL jsonb_array_elements(
+                 CASE WHEN jsonb_typeof(state_panels.entities) = 'array'
+                   THEN state_panels.entities ELSE '[]'::jsonb END
+               ) AS assigned(value)
+               WHERE state_panels.page_id = pages.id
+                 AND assigned.value->>'state_id' IS NOT NULL
+             ) AS has_variant_state
       FROM pages
       INNER JOIN episodes ON episodes.id = pages.episode_id
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -507,6 +666,7 @@ export class PostgresPageRepository
           status: row.status,
           frameCount: row.frame_count,
           panels: toPageGenerationPanels(row.panel_entities),
+          hasVariantState: row.has_variant_state,
         };
   }
 
@@ -548,8 +708,7 @@ export class PostgresPageRepository
                FROM scenes
                WHERE scenes.episode_id = episodes.id
              ) AS scene_summaries,
-             pages.layout_config,
-             pages.dialogue_mode,
+             pages.layout_config${this.storyMetadataSelectColumns()}             pages.dialogue_mode,
              pages.page_dialogue_toggle
       FROM pages
       INNER JOIN episodes ON episodes.id = pages.episode_id
@@ -586,8 +745,8 @@ export class PostgresPageRepository
           pageNumber: row.page_number,
           episodePurpose: normalizeNullableText(row.episode_purpose),
           sceneSummaries: toStringArray(row.scene_summaries),
-          storyPagePurpose: readStoryPagePurpose(layoutConfig),
-          storyContinuityNote: readStoryContinuityNote(layoutConfig),
+          storyPagePurpose: this.readStoryPagePurpose(row, layoutConfig),
+          storyContinuityNote: this.readStoryContinuityNote(row, layoutConfig),
           layoutConfig,
           styleReference: readStyleReferenceMetadata(layoutConfig.style_reference),
           dialogueMode: toPageDialogueMode(row.dialogue_mode),
@@ -607,6 +766,7 @@ export class PostgresPageRepository
              episodes.id AS episode_id,
              chapters.id AS chapter_id,
              pages.page_number,
+             pages.layout_config,
              (
                SELECT COUNT(*)::int
                FROM pages AS episode_pages
@@ -746,6 +906,7 @@ export class PostgresPageRepository
       pageNumber: row.page_number,
       totalPagesInEpisode: row.total_pages_in_episode,
       frameCount: row.frame_count,
+      layoutConfig: toJsonObject(row.layout_config),
       status: row.status,
       dialogueMode: toPageDialogueMode(row.dialogue_mode),
       pageDialogueToggle: row.page_dialogue_toggle,
@@ -784,11 +945,14 @@ export class PostgresPageRepository
              chapters.key_beats AS chapter_key_beats,
              episodes.title AS episode_title,
              episodes.purpose AS episode_purpose,
+             episodes.story_full_draft,
              episodes.introduction,
              episodes.middle,
              episodes.climax,
              episodes.ending_hook,
              episodes.estimated_pages,
+              ${this.episodeStartingEntityStatesSelect()},
+              ${this.stateLibrarySelect()},
              (
                SELECT COALESCE(
                  jsonb_agg(
@@ -961,14 +1125,17 @@ export class PostgresPageRepository
       episode: {
         title: normalizeNullableText(row.episode_title),
         purpose: normalizeNullableText(row.episode_purpose),
+        storyFullDraft: normalizeNullableText(row.story_full_draft),
         introduction: normalizeNullableText(row.introduction),
         middle: normalizeNullableText(row.middle),
         climax: normalizeNullableText(row.climax),
         endingHook: normalizeNullableText(row.ending_hook),
         estimatedPages: row.estimated_pages,
+        startingEntityStates: toEpisodeStartingEntityStates(row.starting_entity_states),
       },
       scenes: toEpisodePlanScenes(row.scenes),
       entities: toAutofillEntities(row.entities),
+      stateLibrary: toEpisodeStateLibrary(row.state_library),
       pages: pagesResult.rows.map((pageRow) => ({
         pageId: pageRow.page_id as string,
         pageNumber: pageRow.page_number as number,
@@ -988,7 +1155,8 @@ export class PostgresPageRepository
     input: UpdatePageSettingsInput,
     organizationId: string | null = null,
   ): Promise<PageSummary | null> {
-    await this.client.query(
+    return this.runLegacyPersonalPageWrite(userId, organizationId, async (transactionClient) => {
+      await transactionClient.query(
       `
       UPDATE pages
       SET dialogue_mode = COALESCE($3::text, pages.dialogue_mode),
@@ -996,7 +1164,7 @@ export class PostgresPageRepository
           layout_config = CASE
             WHEN $5::boolean = false THEN pages.layout_config
             ELSE $6::jsonb
-          END,
+          END,${this.storyMetadataUpdateClause()}
           updated_at = NOW()
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -1004,10 +1172,10 @@ export class PostgresPageRepository
       WHERE pages.id = $1
         AND pages.episode_id = episodes.id
         AND (
-          ($7::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
+          ($${this.updatePageSettingsOrganizationParameterIndex()}::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
           OR (
-            $7::uuid IS NOT NULL
-            AND works.organization_id = $7::uuid
+            $${this.updatePageSettingsOrganizationParameterIndex()}::uuid IS NOT NULL
+            AND works.organization_id = $${this.updatePageSettingsOrganizationParameterIndex()}::uuid
             AND EXISTS (
               SELECT 1
               FROM organization_members
@@ -1024,12 +1192,20 @@ export class PostgresPageRepository
         input.dialogueMode ?? null,
         input.pageDialogueToggle ?? null,
         input.layoutConfig !== undefined,
-        input.layoutConfig === undefined ? null : JSON.stringify(input.layoutConfig),
+        input.layoutConfig === undefined
+          ? null
+          : JSON.stringify(input.layoutConfig),
+        ...this.storyMetadataUpdateValues(input),
         organizationId,
       ],
-    );
+      );
 
-    return this.findPageByIdAndUserId(pageId, userId, organizationId);
+      return new PostgresPageRepository(transactionClient, this.mode).findPageByIdAndUserId(
+        pageId,
+        userId,
+        organizationId,
+      );
+    });
   }
 
   public async updateGenerationState(
@@ -1092,7 +1268,7 @@ export class PostgresPageRepository
             'cdn_url', $6::text,
             'generation_mode', $7::text,
             'generated_at', $8::text
-          ),
+          ) || $10::jsonb,
           updated_at = NOW()
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
@@ -1125,6 +1301,7 @@ export class PostgresPageRepository
         input.generatedImage.generationMode,
         input.generatedImage.generatedAt,
         organizationId,
+        JSON.stringify(toImageProvenanceRecord(input.generatedImage)),
       ],
     );
 
@@ -1156,6 +1333,7 @@ function toGeneratedPageImage(value: unknown): GeneratedPageImage | null {
     cdnUrl,
     generationMode,
     generatedAt,
+    ...readImageProvenance(value),
   };
 }
 
@@ -1622,4 +1800,76 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 
 function readNullableString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+function toEpisodeStartingEntityStates(
+  value: unknown,
+): NonNullable<EpisodePagePlanContext['episode']['startingEntityStates']> {
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new ConfigurationError('Episode starting state data is invalid');
+  }
+  const states: NonNullable<EpisodePagePlanContext['episode']['startingEntityStates']> = [];
+  const seenEntityIds = new Set<string>();
+  for (const entry of value) {
+    if (!isJsonObject(entry)
+      || typeof entry.entity_id !== 'string'
+      || !isNullableString(entry.state_id)
+      || seenEntityIds.has(entry.entity_id)) {
+      throw new ConfigurationError('Episode starting state data is invalid');
+    }
+    seenEntityIds.add(entry.entity_id);
+    states.push({ entityId: entry.entity_id, stateId: entry.state_id });
+  }
+  return states;
+}
+
+function toEpisodeStateLibrary(
+  value: unknown,
+): NonNullable<EpisodePagePlanContext['stateLibrary']> {
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new ConfigurationError('Episode state library data is invalid');
+  }
+  return value.map((entry) => {
+    if (!isJsonObject(entry)
+      || typeof entry.entity_id !== 'string'
+      || typeof entry.state_id !== 'string') {
+      throw new ConfigurationError('Episode state library data is invalid');
+    }
+    const name = readNullableString(entry.name);
+    const description = readNullableString(entry.description);
+    const baseRefId = readNullableString(entry.base_ref_id);
+    const descriptor = parseStateReferenceDescriptor(entry.reference_image);
+    const referenceReady = name !== null
+      && name.length > 0
+      && description !== null
+      && description.length > 0
+      && baseRefId !== null
+      && entry.base_image_present === true
+      && descriptor !== null
+      && descriptor.baseRefId === baseRefId
+      && descriptor.inputFingerprint === computeStateReferenceFingerprint({
+        entityId: entry.entity_id,
+        stateId: entry.state_id,
+        name,
+        description,
+        baseRefId,
+      });
+    return {
+      entityId: entry.entity_id,
+      stateId: entry.state_id,
+      name,
+      description,
+      revision: readNullableString(entry.revision),
+      baseRefId,
+      baseRefUpdatedAt: readNullableString(entry.base_ref_updated_at),
+      referenceImage: descriptor,
+      referenceReady,
+    };
+  });
 }

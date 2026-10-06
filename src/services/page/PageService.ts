@@ -1,3 +1,5 @@
+import { describeSavedFrameCapacity } from './EpisodePlanContinuity.js';
+import { normalizeAutofillDialogueReadingOrder } from '../../domain/policies/autofillDialogueReadingOrder.js';
 ﻿import {
   ConfigurationError,
   ConflictError,
@@ -11,6 +13,7 @@ import {
   inferEntityIdsFromTexts,
 } from '../../domain/entityAliases.js';
 import type { AppLanguage } from '../../domain/types/language.js';
+import type { GenerationJob } from '../../domain/types/job.js';
 import { STORY_PROMPT_CONTEXT_LIMITS } from '../../domain/storyPromptCompaction.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import {
@@ -33,6 +36,7 @@ import type {
 } from '../../domain/types/page.js';
 import type { PanelComposition, PanelDialogueLine, UpdatePanelInput } from '../../domain/types/panel.js';
 import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
+import type { EpisodeStateTransition, StateAssignmentPolicy } from '../../domain/types/episodeStateTransition.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
@@ -41,18 +45,31 @@ import { resolveStyleReferenceForPersistence } from '../style/styleReferencePers
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
 import type { PageAutofillCompilerPort } from './PageAutofillCompiler.js';
 import type { EpisodePagePlanCompilerPort } from './EpisodePagePlanCompiler.js';
+import type { EpisodeStateTransitionCompilerPort } from './EpisodeStateTransitionCompiler.js';
 import {
   EpisodeBeatPlanOutputLimitError,
   type CompiledEpisodeBeatPlan,
+  type CompiledEpisodeSourceRequirements,
   type EpisodeBeatPlanCompilerPort,
   type EpisodeBeatPlanOutline,
   type EpisodeBeatPlanOutlineCompilerPort,
   type EpisodeBeatPlanPage,
 } from './EpisodeBeatPlanCompiler.js';
+import {
+  buildAuditCompatibilityPlanFromSourceRequirements,
+  buildEpisodeSourceRequirementExtractionPacks,
+  prepareEpisodeSourceRequirementExtraction,
+  validateEpisodeSourceRequirements,
+  type EpisodeSourceRequirementExtraction,
+  type EpisodeSourceRequirements,
+} from './EpisodeSourceRequirements.js';
 import type {
   EpisodePlanPersistencePort,
   EpisodePlanPersistenceResources,
 } from './EpisodePlanPersistence.js';
+import { resolveEpisodePlanStateAssignments } from './EpisodeStateApplicationPlan.js';
+import { EpisodeStatePlanError } from './EpisodeStateAssignmentResolver.js';
+import { validateEpisodeStateTransitionPlan } from './EpisodeStateTransitionPlan.js';
 import type {
   EpisodePlanAudit,
   EpisodePlanAuditIssue,
@@ -67,7 +84,8 @@ import {
   buildEpisodeBeatPlanOutlineCompilerBrief,
   buildEpisodeBeatPlanSegmentCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
-  buildEpisodePlanAuditBrief,
+  buildFullStoryDraftSourceSection,
+  buildEpisodePlanAuditArtifacts,
   detectDeterministicContinuityIssues,
   fingerprintEpisodePlanningContext,
   mergeEpisodePlanAuditIssues,
@@ -95,10 +113,18 @@ export interface PageServicePort {
     progressReporter?: EpisodePagePlanProgressReporter,
     organizationId?: string | null,
     executionControl?: EpisodePagePlanExecutionControl,
+    stateOptions?: EpisodeStateAutofillOptions,
   ): Promise<EpisodePagePlanApplyResult>;
 }
 
+export interface EpisodeStateAutofillOptions {
+  statePlanVersion: 'episode_state_plan_v1';
+  stateAssignmentPolicy: StateAssignmentPolicy;
+}
+
 export interface EpisodePagePlanExecutionControl {
+  jobId?: string;
+  storyAutofillAttempt?: GenerationJob;
   checkpoint(): Promise<void>;
   beginCommit(): Promise<void>;
 }
@@ -140,6 +166,7 @@ interface EpisodePlanExecutionResult {
   compilerModel: string | null;
   compilerPromptVersion: string | null;
   compilerError: string | null;
+  stateTransitions?: EpisodeStateTransition[];
 }
 
 interface PanelMergeResult {
@@ -169,6 +196,7 @@ export class PageService implements PageServicePort {
     private readonly episodePlanContinuityV3Enabled = false,
     private readonly episodePlanReliabilityOptions: EpisodePlanReliabilityOptions = {},
     private readonly episodePlanPersistence?: EpisodePlanPersistencePort,
+    private readonly episodeStateTransitionCompiler?: EpisodeStateTransitionCompilerPort,
   ) {}
 
   public async updatePageSettings(
@@ -382,8 +410,25 @@ export class PageService implements PageServicePort {
     progressReporter?: EpisodePagePlanProgressReporter,
     organizationId: string | null = null,
     executionControl?: EpisodePagePlanExecutionControl,
+    stateOptions?: EpisodeStateAutofillOptions,
   ): Promise<EpisodePagePlanApplyResult> {
     await executionControl?.checkpoint();
+    const storyAutofillJobId = executionControl?.jobId;
+    if (storyAutofillJobId !== undefined && this.episodePlanPersistence === undefined) {
+      throw new ConfigurationError('Episode story autofill atomic persistence is not configured');
+    }
+    if (stateOptions !== undefined && (
+      !this.episodePlanContinuityV3Enabled
+      || this.episodePlanReliabilityOptions.inlineRepairEnabled !== true
+      || this.episodePlanPersistence === undefined
+      || this.episodePagePlanCompiler === undefined
+      || this.episodeBeatPlanCompiler === undefined
+      || this.episodePlanAuditCompiler === undefined
+      || this.episodeStateTransitionCompiler === undefined
+      || executionControl?.jobId === undefined
+    )) {
+      throw new ConfigurationError('Episode state autofill v1 is not fully configured');
+    }
     if (
       this.panelRepository === undefined ||
       this.panelEntityAssignmentService === undefined
@@ -415,6 +460,7 @@ export class PageService implements PageServicePort {
     );
 
     const deferLayoutPersistence =
+      stateOptions !== undefined ||
       executionControl !== undefined ||
       this.episodePlanReliabilityOptions.adaptivePackingEnabled === true ||
       this.episodePlanReliabilityOptions.inlineRepairEnabled === true;
@@ -440,10 +486,33 @@ export class PageService implements PageServicePort {
       context,
       language,
       controlledProgressReporter,
+      stateOptions,
+      executionControl,
     );
     await executionControl?.checkpoint();
     if (!compiled.compilerUsed) {
+      if (stateOptions !== undefined) {
+        throw new ConfigurationError('Episode state autofill compiler did not complete');
+      }
       return buildSkippedEpisodePlanApplyResult(compiled.compilerError);
+    }
+
+    const stateTransitions = compiled.stateTransitions ?? null;
+    if (stateOptions !== undefined && stateTransitions !== null) {
+      const normalized = normalizeEpisodePlanToContext(context, compiled.suggestion, language);
+      validateEpisodePlanAgainstContext(context, normalized);
+      validateEpisodeStateTransitionPlan(context, { transitions: stateTransitions, unresolved: [] });
+      resolveEpisodePlanStateAssignments({
+        pages: context.pages,
+        suggestion: normalized,
+        startingStates: context.episode.startingEntityStates ?? [],
+        transitions: stateTransitions,
+        policy: stateOptions.stateAssignmentPolicy,
+      });
+      await executionControl?.checkpoint();
+    }
+    if (stateOptions !== undefined && stateTransitions === null) {
+      throw new ConfigurationError('Episode state plan was not compiled');
     }
 
     if (
@@ -452,7 +521,14 @@ export class PageService implements PageServicePort {
     ) {
       await executionControl?.checkpoint();
       return episodePlanPersistence.withLockedEpisodePlan(
-        { episodeId, userId, organizationId },
+        {
+          episodeId,
+          userId,
+          organizationId,
+          ...(executionControl?.storyAutofillAttempt === undefined
+            ? {}
+            : { storyAutofillAttempt: executionControl.storyAutofillAttempt }),
+        },
         async (lockedContext, resources) => {
           if (fingerprintEpisodePlanningContext(lockedContext) !== contextFingerprint) {
             throw new ConflictError(
@@ -460,21 +536,70 @@ export class PageService implements PageServicePort {
             );
           }
 
-          await executionControl?.beginCommit();
-          await reportEpisodePlanProgress(progressReporter, {
+          let stateAssignmentsByPanelId: ReadonlyMap<string, readonly PanelEntityAssignment[]> | undefined;
+          if (stateOptions !== undefined && stateTransitions !== null) {
+            if (resources.completeStoryAutofillJob === undefined) {
+              throw new ConfigurationError('Episode state autofill job finalizer is not configured');
+            }
+            const normalized = normalizeEpisodePlanToContext(lockedContext, compiled.suggestion, language);
+            validateEpisodePlanAgainstContext(lockedContext, normalized);
+            validateEpisodeStateTransitionPlan(lockedContext, {
+              transitions: stateTransitions,
+              unresolved: [],
+            });
+            stateAssignmentsByPanelId = resolveEpisodePlanStateAssignments({
+              pages: lockedContext.pages,
+              suggestion: normalized,
+              startingStates: lockedContext.episode.startingEntityStates ?? [],
+              transitions: stateTransitions,
+              policy: stateOptions.stateAssignmentPolicy,
+            });
+          }
+
+          if (resources.storyAutofillCommitStarted !== true) {
+            await executionControl?.beginCommit();
+          }
+          const applyingProgress: EpisodePagePlanProgress = {
             stage: 'applying',
             message: 'Saving story plan to pages and panels. This process can take around 20 minutes.',
             currentChunk: null,
             totalChunks: null,
-          });
-          return this.applyEpisodePlanSuggestion(
+          };
+          if (resources.updateStoryAutofillProgress === undefined) {
+            await reportEpisodePlanProgress(progressReporter, applyingProgress);
+          } else if (!await resources.updateStoryAutofillProgress(applyingProgress)) {
+            throw new ConflictError('Episode story autofill progress could not be committed atomically');
+          }
+          const result = await this.applyEpisodePlanSuggestion(
             lockedContext,
             userId,
             compiled,
             language,
             organizationId,
             resources,
+            stateAssignmentsByPanelId,
           );
+          const finalResult = stateOptions === undefined || stateTransitions === null
+            ? result
+            : {
+                ...result,
+                stateTransitions,
+                statePlanVersion: stateOptions.statePlanVersion,
+                stateAssignmentPolicy: stateOptions.stateAssignmentPolicy,
+              };
+          if (storyAutofillJobId !== undefined) {
+            if (resources.completeStoryAutofillJob === undefined) {
+              throw new ConfigurationError('Episode story autofill job finalizer is not configured');
+            }
+            const completed = await resources.completeStoryAutofillJob(
+              storyAutofillJobId, userId, finalResult,
+            );
+            if (!completed) {
+              throw new ConflictError('Episode story autofill job could not be completed atomically');
+            }
+            return { ...finalResult, jobCompletedAtomically: true };
+          }
+          return finalResult;
         },
       );
     }
@@ -552,13 +677,20 @@ export class PageService implements PageServicePort {
     context: EpisodePagePlanContext,
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
+    stateOptions?: EpisodeStateAutofillOptions,
+    executionControl?: EpisodePagePlanExecutionControl,
   ): Promise<EpisodePlanExecutionResult> {
+    const beforeDetailPlanRetry = executionControl === undefined
+      ? undefined
+      : () => executionControl.checkpoint();
     if (this.episodePlanContinuityV3Enabled) {
       try {
         return await this.compileEpisodePlanWithContinuityV3(
           context,
           language,
           progressReporter,
+          stateOptions,
+          executionControl,
         );
       } catch (error) {
         if (!(error instanceof ConfigurationError)) {
@@ -592,7 +724,12 @@ export class PageService implements PageServicePort {
         currentChunk: 1,
         totalChunks: 1,
       });
-      const compiled = await this.compileEpisodePlanSafely(context, language);
+      const compiled = await this.compileEpisodePlanSafely(
+        context,
+        language,
+        undefined,
+        beforeDetailPlanRetry,
+      );
       if (compiled.compilerUsed) {
         await reportEpisodePlanProgress(progressReporter, {
           stage: 'compiled_chunk',
@@ -622,7 +759,12 @@ export class PageService implements PageServicePort {
         totalChunks: pageChunks.length,
       });
       const chunkContext = buildEpisodePlanChunkContext(context, pages);
-      const compiled = await this.compileEpisodePlanSafely(chunkContext, language);
+      const compiled = await this.compileEpisodePlanSafely(
+        chunkContext,
+        language,
+        undefined,
+        beforeDetailPlanRetry,
+      );
       if (!compiled.compilerUsed) {
         return compiled;
       }
@@ -654,6 +796,8 @@ export class PageService implements PageServicePort {
     context: EpisodePagePlanContext,
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
+    stateOptions?: EpisodeStateAutofillOptions,
+    executionControl?: EpisodePagePlanExecutionControl,
   ): Promise<EpisodePlanExecutionResult> {
     if (this.episodeBeatPlanCompiler === undefined || this.episodePlanAuditCompiler === undefined) {
       throw new ConfigurationError('Episode continuity v3 compilers are not configured');
@@ -665,12 +809,67 @@ export class PageService implements PageServicePort {
       currentChunk: null,
       totalChunks: null,
     });
-    const compiledBeatPlan = await this.compileEpisodeBeatPlanWithCapacity(
-      context,
-      language,
-      progressReporter,
-    );
+    const sourceRequirementExtraction = stateOptions === undefined &&
+        this.episodeBeatPlanCompiler.compileSourceRequirements !== undefined
+      ? prepareEpisodeSourceRequirementExtraction({
+          storyFullDraft: context.episode.storyFullDraft ?? '',
+          pages: context.pages.map((page) => ({ pageId: page.pageId, pageNumber: page.pageNumber })),
+        })
+      : null;
+    const legacyBeatPacks = packEpisodeBeatPlanLedgerPages(context.pages);
+    const sourceRequirementPacks = sourceRequirementExtraction === null
+      ? null
+      : buildEpisodeSourceRequirementExtractionPacks(
+          sourceRequirementExtraction,
+          legacyBeatPacks.map((pack) => pack.map((page) => ({
+            pageId: page.pageId,
+            pageNumber: page.pageNumber,
+          }))),
+        );
+    const compiledSourceRequirements = sourceRequirementPacks === null
+      ? null
+      : await this.compileEpisodeSourceRequirements(
+          sourceRequirementExtraction!,
+          sourceRequirementPacks,
+          language,
+          executionControl,
+        );
+    const sourceOwnedPageContext = compiledSourceRequirements !== null;
+    const compiledBeatPlan = compiledSourceRequirements === null
+      ? await this.compileEpisodeBeatPlanWithCapacity(context, language, progressReporter)
+      : {
+          plan: buildAuditCompatibilityPlanFromSourceRequirements(
+            context.pages.map((page) => ({ pageId: page.pageId, pageNumber: page.pageNumber })),
+            compiledSourceRequirements.requirements,
+          ),
+          compilerProvider: compiledSourceRequirements.compilerProvider,
+          compilerModel: compiledSourceRequirements.compilerModel,
+          compilerPromptVersion: compiledSourceRequirements.compilerPromptVersion,
+        } satisfies CompiledEpisodeBeatPlan;
     validateEpisodeBeatPlanCoverage(context, compiledBeatPlan.plan);
+
+    const stateTransitions = stateOptions === undefined
+      ? undefined
+      : validateEpisodeStateTransitionPlan(context, (
+          await this.episodeStateTransitionCompiler!.compileStateTransitions({
+            context,
+            beatPlan: compiledBeatPlan.plan,
+            language,
+            beforeRetry: executionControl === undefined
+              ? undefined
+              : () => executionControl.checkpoint(),
+          })
+        ).plan);
+    const stateLedger = stateTransitions === undefined
+      ? undefined
+      : formatEpisodeStateTransitionLedger(stateTransitions);
+    // Resolve this once from the complete episode context. Chunk contexts do not
+    // contain every source header and must never decide this trusted prompt mode.
+    // Source ownership is enabled only after complete preflight and validated
+    // extraction. Character-state opt-in intentionally retains the legacy ledger.
+    const beforeDetailPlanRetry = executionControl === undefined
+      ? undefined
+      : () => executionControl.checkpoint();
 
     const pageChunks = this.buildEpisodePlanPagePacks(context);
     console.info('episode_page_plan_continuity_v3_started', {
@@ -691,12 +890,19 @@ export class PageService implements PageServicePort {
       const compiled = await this.compileEpisodePlanSafely(
         chunkContext,
         language,
-        buildEpisodeDetailContinuitySupplement({
+        appendEpisodeStateLedger(buildEpisodeDetailContinuitySupplement({
           context,
           plan: compiledBeatPlan.plan,
           currentPageIds: new Set(pages.map((page) => page.pageId)),
           completedPages: compiledChunks.flatMap((result) => result.suggestion.pages),
-        }),
+          sourceOwnedPageContext,
+          ...(compiledSourceRequirements === null
+            ? {}
+            : { sourceRequirements: compiledSourceRequirements.requirements }),
+        }), stateLedger),
+        beforeDetailPlanRetry,
+        sourceOwnedPageContext,
+        compiledSourceRequirements?.requirements,
       );
       if (!compiled.compilerUsed) {
         return compiled;
@@ -712,13 +918,16 @@ export class PageService implements PageServicePort {
 
     let combined = combineEpisodePlanExecutionResults(compiledChunks);
     if (this.episodePlanReliabilityOptions.inlineRepairEnabled === true) {
-      return this.reviewAndRepairEpisodePlanInline(
+      const reviewed = await this.reviewAndRepairEpisodePlanInline(
         context,
         compiledBeatPlan.plan,
         combined,
         language,
         progressReporter,
+        stateLedger,
+        sourceOwnedPageContext,
       );
+      return { ...reviewed, stateTransitions };
     }
 
     let audit = await this.auditEpisodePlanWithContinuityV3(
@@ -729,10 +938,12 @@ export class PageService implements PageServicePort {
       progressReporter,
       1,
       2,
+      stateLedger,
+      sourceOwnedPageContext,
     );
     let blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
     if (blockingIssues.length === 0) {
-      return combined;
+      return { ...combined, stateTransitions };
     }
 
     const affectedChunkIndexes = resolveAffectedEpisodePlanChunkIndexes(
@@ -765,7 +976,7 @@ export class PageService implements PageServicePort {
       const repaired = await this.compileEpisodePlanSafely(
         buildEpisodePlanChunkContext(context, pages),
         language,
-        buildEpisodeDetailContinuitySupplement({
+        appendEpisodeStateLedger(buildEpisodeDetailContinuitySupplement({
           context,
           plan: compiledBeatPlan.plan,
           currentPageIds,
@@ -774,7 +985,14 @@ export class PageService implements PageServicePort {
           ),
           currentDraftPages,
           repairIssues: chunkIssues,
-        }),
+          sourceOwnedPageContext,
+          ...(compiledSourceRequirements === null
+            ? {}
+            : { sourceRequirements: compiledSourceRequirements.requirements }),
+        }), stateLedger),
+        beforeDetailPlanRetry,
+        sourceOwnedPageContext,
+        compiledSourceRequirements?.requirements,
       );
       if (!repaired.compilerUsed) {
         return repaired;
@@ -796,15 +1014,59 @@ export class PageService implements PageServicePort {
       progressReporter,
       2,
       2,
+      stateLedger,
+      sourceOwnedPageContext,
     );
     blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
     if (blockingIssues.length > 0) {
-      throw new ConfigurationError(
-        `Episode continuity audit still found ${blockingIssues.length} issue(s) after bounded repair`,
-      );
+      if (stateLedger !== undefined) {
+        throw new ConfigurationError(
+          `Episode continuity audit still found ${blockingIssues.length} issue(s) after bounded repair`,
+        );
+      }
+      this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
+      console.warn('episode_page_plan_continuity_v3_bounded_review_completed', {
+        episodeId: context.episodeId,
+        repairPassCount: 1,
+        secondAuditReportedErrorCount: blockingIssues.length,
+        issueCodes: blockingIssues.map((issue) => issue.code),
+        affectedPageIds: Array.from(
+          new Set(blockingIssues.flatMap((issue) => issue.pageIds)),
+        ),
+      });
     }
 
-    return combined;
+    return { ...combined, stateTransitions };
+  }
+
+  private async compileEpisodeSourceRequirements(
+    completeExtraction: EpisodeSourceRequirementExtraction,
+    packs: readonly EpisodeSourceRequirementExtraction[],
+    language: AppLanguage,
+    executionControl?: EpisodePagePlanExecutionControl,
+  ): Promise<CompiledEpisodeSourceRequirements> {
+    const compile = this.episodeBeatPlanCompiler?.compileSourceRequirements;
+    if (compile === undefined) {
+      throw new ConfigurationError('Episode source requirement compiler is not configured');
+    }
+    const compiled: CompiledEpisodeSourceRequirements[] = [];
+    for (const extraction of packs) {
+      await executionControl?.checkpoint();
+      compiled.push(await compile.call(this.episodeBeatPlanCompiler, { extraction, language }));
+    }
+    const requirements = validateEpisodeSourceRequirements(completeExtraction, {
+      requirements: compiled.flatMap((result) => result.requirements.requirements),
+    });
+    const first = compiled[0];
+    if (first === undefined) {
+      throw new ConfigurationError('Episode source requirement compiler returned no packs');
+    }
+    return {
+      requirements,
+      compilerProvider: 'openai',
+      compilerModel: mergeCompilerMetadata(compiled.map((result) => result.compilerModel)) ?? first.compilerModel,
+      compilerPromptVersion: mergeCompilerMetadata(compiled.map((result) => result.compilerPromptVersion)) ?? first.compilerPromptVersion,
+    };
   }
 
   private async compileEpisodeBeatPlanWithCapacity(
@@ -967,6 +1229,8 @@ export class PageService implements PageServicePort {
     combined: EpisodePlanExecutionResult,
     language: AppLanguage,
     progressReporter?: EpisodePagePlanProgressReporter,
+    stateLedger?: string,
+    sourceOwnedPageContext = false,
   ): Promise<EpisodePlanExecutionResult> {
     const firstAudit = await this.auditEpisodePlanWithContinuityV3(
       context,
@@ -976,13 +1240,34 @@ export class PageService implements PageServicePort {
       progressReporter,
       1,
       2,
+      stateLedger,
+      sourceOwnedPageContext,
     );
     logEpisodePlanAuditSummary(context.episodeId, 1, firstAudit);
     if (!hasBlockingEpisodePlanAuditIssues(firstAudit.issues)) {
+      if (stateLedger !== undefined) {
+        const secondAudit = await this.auditEpisodePlanWithContinuityV3(
+          context, plan, combined.suggestion, language, progressReporter, 2, 2, stateLedger,
+          sourceOwnedPageContext,
+        );
+        logEpisodePlanAuditSummary(context.episodeId, 2, secondAudit);
+        if (!secondAudit.accepted || hasBlockingEpisodePlanAuditIssues(secondAudit.issues)) {
+          throw new EpisodeStatePlanError(
+            'STATE_MAPPING_AMBIGUOUS',
+            'Episode state boundaries need review before the story plan can be saved',
+          );
+        }
+      }
       return combined;
     }
 
     if ((firstAudit.pageRepairs?.length ?? 0) + (firstAudit.panelRepairs?.length ?? 0) === 0) {
+      if (stateLedger !== undefined) {
+        throw new EpisodeStatePlanError(
+          'STATE_MAPPING_AMBIGUOUS',
+          'Episode state boundaries need review before the story plan can be saved',
+        );
+      }
       throw new ConfigurationError(
         'Episode continuity audit returned errors without a field-level repair',
       );
@@ -1015,9 +1300,14 @@ export class PageService implements PageServicePort {
         progressReporter,
         2,
         2,
+        stateLedger,
+        sourceOwnedPageContext,
       );
     } catch (error) {
       if (!(error instanceof ConfigurationError)) {
+        throw error;
+      }
+      if (stateLedger !== undefined) {
         throw error;
       }
       this.assertDeterministicallyValidEpisodePlan(context, repairedCombined.suggestion);
@@ -1033,6 +1323,12 @@ export class PageService implements PageServicePort {
     logEpisodePlanAuditSummary(context.episodeId, 2, finalAudit);
     if (!hasBlockingEpisodePlanAuditIssues(finalAudit.issues)) {
       return repairedCombined;
+    }
+    if (stateLedger !== undefined) {
+      throw new EpisodeStatePlanError(
+        'STATE_MAPPING_AMBIGUOUS',
+        'Episode state boundaries need review before the story plan can be saved',
+      );
     }
 
     const reportedErrors = finalAudit.issues.filter(
@@ -1142,6 +1438,8 @@ export class PageService implements PageServicePort {
     progressReporter: EpisodePagePlanProgressReporter | undefined,
     auditPass: number,
     totalAuditPasses: number,
+    stateLedger?: string,
+    sourceOwnedPageContext = false,
   ): Promise<EpisodePlanAudit> {
     console.info('episode_page_plan_continuity_v3_audit_started', {
       episodeId: context.episodeId,
@@ -1154,10 +1452,29 @@ export class PageService implements PageServicePort {
       currentChunk: null,
       totalChunks: null,
     });
+    const auditArtifacts = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language,
+      sourceOwnedPageContext,
+    });
     const compiledAudit = await this.episodePlanAuditCompiler!.auditPlan({
-      compilerBrief: buildEpisodePlanAuditBrief({ context, plan, suggestion, language }),
+      compilerBrief: appendEpisodeStateLedger(
+        auditArtifacts.compilerBrief,
+        stateLedger,
+      ),
       language,
       pageIds: context.pages.map((page) => page.pageId),
+      coverageCatalog: auditArtifacts.coverageCatalog,
+      sourceOwnedPageContext,
+      ...(stateLedger === undefined ? {} : {
+        groundingAuthorities: [{
+          ref: 'validated_state',
+          text: stateLedger,
+          kind: 'validated_state' as const,
+        }],
+      }),
       beforeRetry: async () => {
         await reportEpisodePlanProgress(progressReporter, {
           stage: 'auditing_episode',
@@ -1231,6 +1548,9 @@ export class PageService implements PageServicePort {
     context: EpisodePagePlanContext,
     language: AppLanguage,
     continuitySupplement?: string,
+    beforeRetry?: () => Promise<void>,
+    sourceOwnedPageContext = false,
+    sourceRequirements?: EpisodeSourceRequirements,
   ): Promise<EpisodePlanExecutionResult> {
     const baseCompilerBrief = buildEpisodePlanCompilerBrief(context, language);
     const compilerBrief = continuitySupplement === undefined
@@ -1239,7 +1559,16 @@ export class PageService implements PageServicePort {
     const fallbackSuggestion = buildFallbackEpisodePlanSuggestion(context, language);
 
     try {
-      const compiled = await this.episodePagePlanCompiler!.compilePlan({ compilerBrief, language });
+      const compiled = await this.episodePagePlanCompiler!.compilePlan({
+        compilerBrief,
+        language,
+        ...(sourceOwnedPageContext ? { sourceOwnedPageContext: true } : {}),
+        ...(sourceRequirements === undefined ? {} : { sourceRequirements }),
+        ...(sourceRequirements === undefined
+          ? {}
+          : { sourceRequirementPlacementPageIds: context.pages.map((page) => page.pageId) }),
+        ...(beforeRetry === undefined ? {} : { beforeRetry }),
+      });
       return {
         suggestion: repairEpisodePlanSuggestionAgainstContext(
           context,
@@ -1282,6 +1611,7 @@ export class PageService implements PageServicePort {
     language: AppLanguage,
     organizationId: string | null,
     resources?: EpisodePlanPersistenceResources,
+    stateAssignmentsByPanelId?: ReadonlyMap<string, readonly PanelEntityAssignment[]>,
   ): Promise<EpisodePagePlanApplyResult> {
     const pageRepository = resources?.pageRepository ?? this.pageRepository;
     const panelRepository = resources?.panelRepository ?? this.panelRepository;
@@ -1293,6 +1623,11 @@ export class PageService implements PageServicePort {
 
     const normalizedSuggestion = normalizeEpisodePlanToContext(context, compiled.suggestion, language);
     validateEpisodePlanAgainstContext(context, normalizedSuggestion);
+    // Legacy requests cannot opt into replacing manual state choices. Preflight the
+    // entire plan before writes, including when no atomic persistence port exists.
+    const legacyAssignmentsByPanelId = stateAssignmentsByPanelId === undefined
+      ? preserveLegacyEpisodeStateAssignments(context, normalizedSuggestion)
+      : undefined;
 
     const pagesById = new Map(context.pages.map((page) => [page.pageId, page] as const));
     const entityLookup = new Map(context.entities.map((entity) => [entity.id, entity] as const));
@@ -1392,17 +1727,29 @@ export class PageService implements PageServicePort {
           }
         }
 
-        if (merge.assignments !== null) {
+        const stateAssignments = stateAssignmentsByPanelId?.get(panel.id);
+        if (stateAssignmentsByPanelId !== undefined && stateAssignments === undefined) {
+          throw new ConfigurationError('Episode state application is missing a panel');
+        }
+        const assignmentsToSave = stateAssignmentsByPanelId === undefined
+          ? legacyAssignmentsByPanelId?.get(panel.id) ?? merge.assignments
+          : stateAssignments !== undefined && (
+              merge.assignments !== null
+              || JSON.stringify(stateAssignments) !== JSON.stringify(panel.entities)
+            )
+            ? [...stateAssignments]
+            : null;
+        if (assignmentsToSave !== null) {
           await panelEntityAssignmentService.replacePanelEntityAssignments(
             userId,
             panel.id,
-            merge.assignments,
+            assignmentsToSave,
             organizationId,
           );
-          updatedAssignmentCount += merge.assignments.length;
+          updatedAssignmentCount += assignmentsToSave.length;
         }
 
-        if (merge.panelUpdate !== null || merge.assignments !== null) {
+        if (merge.panelUpdate !== null || assignmentsToSave !== null) {
           updatedPanelCount += 1;
           filledFieldCount += merge.filledFieldCount;
         }
@@ -1639,7 +1986,7 @@ function toRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function buildNextPageLayoutConfig(
+export function buildNextPageLayoutConfig(
   page: PageSummary,
   input: UpdatePageSettingsInput,
 ): Record<string, unknown> | undefined {
@@ -1789,6 +2136,29 @@ function inferPageLeadEntityIdFromPanelSuggestions(
   });
 
   return ranked[0]?.[0] ?? null;
+}
+
+function formatEpisodeStateTransitionLedger(transitions: readonly EpisodeStateTransition[]): string {
+  return [
+    '[IMMUTABLE CHARACTER STATE BOUNDARIES]',
+    ...(transitions.length === 0
+      ? ['(none proposed)']
+      : transitions.map((transition) => [
+          `entity_id=${transition.entityId}`,
+          `state_id=${transition.stateId ?? 'default'}`,
+          `starts_at_panel_id=${transition.startsAtPanelId}`,
+          `source_field=${transition.sourceField}`,
+          `source_scene_id=${transition.sourceSceneId ?? 'none'}`,
+          `source_quote=${transition.sourceQuote}`,
+        ].join(' | '))),
+    'These boundaries include the starting panel. Keep the state through later panels until another boundary for that character.',
+    'Do not invent or remove a state change while compiling or repairing page fields.',
+    'Audit the boundaries against the saved story. A missing or contradictory change is a blocking timeline_discontinuity without a page field repair.',
+  ].join('\n');
+}
+
+function appendEpisodeStateLedger(base: string, stateLedger: string | undefined): string {
+  return stateLedger === undefined ? base : `${base}\n\n${stateLedger}`;
 }
 
 function normalizeEpisodePlanToContext(
@@ -1986,7 +2356,10 @@ function completePanelSuggestionWithFallback(
     sfxText: coalesceText(source?.sfxText, fallbackCreative?.sfxText),
     backgroundNote: coalesceText(source?.backgroundNote, fallbackCreative?.backgroundNote),
     panelNotes: coalesceText(source?.panelNotes, fallbackCreative?.panelNotes),
-    entities: coalesceAssignments(source?.entities, fallbackCreative?.entities),
+    // A present legacy/provider panel may intentionally omit this field (no
+    // change) or provide [] (clear). Only a wholly missing panel may inherit
+    // fallback assignments.
+    entities: source === undefined ? fallbackCreative?.entities : source.entities,
   };
 }
 
@@ -2099,9 +2472,6 @@ function repairPanelSuggestionAgainstFallback(
     includeFallbackCreativeFields: options?.includeFallbackCreativeFields === true,
   });
   const allowFallbackCreativeRepair = options?.includeFallbackCreativeFields === true;
-  const repairedEntities = shouldRepairEmptyEntityAssignments(source, fallback, allowFallbackCreativeRepair)
-    ? fallback?.entities
-    : completed.entities;
   const fallbackComposition = fallback?.composition;
   const repairedSituation = shouldRepairGenericCompilerText(completed.situationText)
     ? repairCreativeText(undefined, fallback?.situationText, [], allowFallbackCreativeRepair)
@@ -2173,31 +2543,8 @@ function repairPanelSuggestionAgainstFallback(
           },
     backgroundNote: repairedBackground,
     panelNotes: repairedPanelNotes,
-    entities: repairedEntities,
+    entities: completed.entities,
   };
-}
-
-function shouldRepairEmptyEntityAssignments(
-  source: PageAutofillPanelSuggestion | undefined,
-  fallback: PageAutofillPanelSuggestion | undefined,
-  allowFallbackCreativeRepair: boolean,
-): boolean {
-  if (!allowFallbackCreativeRepair || !Array.isArray(source?.entities) || source.entities.length > 0) {
-    return false;
-  }
-  if (!Array.isArray(fallback?.entities) || fallback.entities.length === 0) {
-    return false;
-  }
-
-  return (
-    shouldRepairGenericCompilerText(source.backgroundNote) ||
-    shouldRepairGenericCompilerText(source.composition?.compositionPrompt) ||
-    shouldRepairGenericCompilerText(source.composition?.customNote) ||
-    shouldRepairRedundantFieldText(source.backgroundNote, [
-      source.situationText,
-      source.composition?.compositionPrompt,
-    ])
-  );
 }
 
 function repairCreativeText(
@@ -2271,19 +2618,6 @@ function coalesceDialogue(
   return fallback;
 }
 
-function coalesceAssignments(
-  source: PageAutofillPanelSuggestion['entities'],
-  fallback: PageAutofillPanelSuggestion['entities'],
-): PageAutofillPanelSuggestion['entities'] {
-  if (Array.isArray(source)) {
-    return source;
-  }
-  if (Array.isArray(fallback) && fallback.length > 0) {
-    return fallback;
-  }
-  return fallback;
-}
-
 function mergePageSettings(
   context: PageAutofillContext,
   suggestion: PageAutofillSuggestion['page'],
@@ -2337,6 +2671,56 @@ function mergePageSettings(
   }
 
   return Object.keys(update).length === 0 ? null : update;
+}
+
+/** Keeps manual state choices without freezing legacy autofill's creative fields. */
+function preserveLegacyEpisodeStateAssignments(
+  context: EpisodePagePlanContext,
+  suggestion: EpisodePagePlanSuggestion,
+): ReadonlyMap<string, PanelEntityAssignment[]> {
+  const assignmentsByPanelId = new Map<string, PanelEntityAssignment[]>();
+  const pagesById = new Map(context.pages.map((page) => [page.pageId, page] as const));
+  for (const pageSuggestion of suggestion.pages) {
+    const panelsByOrder = new Map(
+      pagesById.get(pageSuggestion.pageId)!.panels.map((panel) => [panel.order, panel] as const),
+    );
+    for (const panelSuggestion of pageSuggestion.panels) {
+      const panel = panelsByOrder.get(panelSuggestion.order)!;
+      const proposed = panelSuggestion.entities;
+      if (proposed === undefined) {
+        continue;
+      }
+      if (proposed.length === 0) {
+        if (panel.entities.some((assignment) => assignment.stateId !== null)) {
+          throw new EpisodeStatePlanError(
+            'STATE_ASSIGNMENT_CONFLICT',
+            `Legacy story autofill would remove a manually selected state at panel ${panel.id}`,
+          );
+        }
+        assignmentsByPanelId.set(panel.id, []);
+        continue;
+      }
+      const proposedEntityIds = new Set(proposed.map((assignment) => assignment.entityId));
+      const manualStates = new Map<string, string>();
+      for (const assignment of panel.entities) {
+        if (assignment.stateId === null) {
+          continue;
+        }
+        if (!proposedEntityIds.has(assignment.entityId)) {
+          throw new EpisodeStatePlanError(
+            'STATE_ASSIGNMENT_CONFLICT',
+            `Legacy story autofill would remove a manually selected state at panel ${panel.id}`,
+          );
+        }
+        manualStates.set(assignment.entityId, assignment.stateId);
+      }
+      assignmentsByPanelId.set(panel.id, proposed.map((assignment) => ({
+        ...assignment,
+        stateId: manualStates.get(assignment.entityId) ?? assignment.stateId,
+      })));
+    }
+  }
+  return assignmentsByPanelId;
 }
 
 function mergePanelSuggestion(
@@ -2404,7 +2788,7 @@ function mergePanelSuggestion(
     suggestion.dialogue.length > 0 &&
     (overwriteExisting || panel.dialogue.length === 0 || dialogueLooksLowQuality(panel.dialogue))
   ) {
-    update.dialogue = suggestion.dialogue;
+    update.dialogue = normalizeAutofillDialogueReadingOrder(suggestion.dialogue);
     filledFieldCount += 1;
   }
 
@@ -2438,9 +2822,8 @@ function mergePanelSuggestion(
   }
 
   const assignments =
-    (overwriteExisting || panel.entities.length === 0) &&
     Array.isArray(suggestion.entities) &&
-    suggestion.entities.length > 0
+    (overwriteExisting || (panel.entities.length === 0 && suggestion.entities.length > 0))
       ? suggestion.entities
       : null;
   if (assignments !== null) {
@@ -2658,8 +3041,6 @@ function enrichPanelSuggestionForGeneration(
     normalizeDialogueLines(suggestion.dialogue),
     entityAssignments,
     context.entityLookup,
-    context.storyLeadEntityId ?? null,
-    context.pageLeadEntityId ?? null,
   );
 
   return {
@@ -2885,52 +3266,20 @@ function normalizeDialogueLines(
   return normalized;
 }
 
+// Visibility and voice identity are independent. Never guess an unknown voice.
 function repairDialogueLinesForPanel(
   lines: PageAutofillPanelSuggestion['dialogue'],
   assignments: PanelEntityAssignment[],
   entityLookup: Map<string, PageAutofillContext['entities'][number]>,
-  storyLeadEntityId: string | null,
-  pageLeadEntityId: string | null,
 ): PageAutofillPanelSuggestion['dialogue'] {
-  if (!Array.isArray(lines) || lines.length === 0) {
-    return lines;
-  }
-
-  const assignmentIds = new Set(assignments.map((assignment) => assignment.entityId));
-  const primaryEntityId =
-    assignments.find((assignment) => assignment.role === 'primary')?.entityId ??
-    assignments[0]?.entityId ??
-    null;
-
+  if (!Array.isArray(lines) || lines.length === 0) return lines;
   return lines.flatMap((line) => {
+    if (line.entityId !== null && !entityLookup.has(line.entityId)) {
+      throw new ValidationError('Generated dialogue referenced an entity outside the work');
+    }
     if (line.type === 'narration') {
-      return splitCharacterQuotedNarration(line, assignments, entityLookup) ?? {
-        ...line,
-        entityId: null,
-      };
+      return splitCharacterQuotedNarration(line, assignments, entityLookup) ?? { ...line, entityId: null };
     }
-
-    // Speaker dialogue must reference a visible panel assignment before it reaches panel validation.
-    if (requiresDialogueSpeaker(line.type) && !assignmentIds.has(line.entityId ?? '')) {
-      const repairedEntityId = selectVisibleDialogueSpeaker(
-        assignmentIds,
-        storyLeadEntityId,
-        pageLeadEntityId,
-        primaryEntityId,
-      );
-      if (repairedEntityId === null) {
-        return {
-          ...line,
-          type: 'narration',
-          entityId: null,
-        };
-      }
-      return {
-        ...line,
-        entityId: repairedEntityId,
-      };
-    }
-
     return line;
   });
 }
@@ -3031,24 +3380,6 @@ function normalizeNarrationRemainder(value: string): string | null {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function selectVisibleDialogueSpeaker(
-  assignmentIds: Set<string>,
-  storyLeadEntityId: string | null,
-  pageLeadEntityId: string | null,
-  primaryEntityId: string | null,
-): string | null {
-  for (const candidate of [storyLeadEntityId, pageLeadEntityId, primaryEntityId]) {
-    if (candidate !== null && assignmentIds.has(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function requiresDialogueSpeaker(type: PanelDialogueLine['type']): boolean {
-  return type === 'speech' || type === 'thought' || type === 'shout' || type === 'whisper';
 }
 
 function normalizeDialogueText(value: string): string {
@@ -3359,6 +3690,8 @@ function buildAutofillCompilerBrief(
     `Ending hook: ${compactBriefText(context.endingHook)}`,
     `Current dialogue mode: ${context.dialogueMode}`,
     `Current page dialogue toggle: ${context.pageDialogueToggle ? 'on' : 'off'}`,
+    '[FRAME CAPACITY]',
+    describeSavedFrameCapacity(context.layoutConfig, context.frameCount),
     '',
     '[SCENES]',
     sceneLines.length > 0 ? sceneLines : '(none)',
@@ -3485,6 +3818,7 @@ function buildEpisodePlanCompilerBrief(
       return [
         `Page ${page.pageNumber} (${page.pageId})`,
         `frame_count=${page.frameCount}`,
+        `frame_capacity=${describeSavedFrameCapacity(page.layoutConfig, page.frameCount)}`,
         `dialogue_mode=${page.dialogueMode}`,
         `page_dialogue_toggle=${page.pageDialogueToggle ? 'on' : 'off'}`,
         panelLines,
@@ -3518,6 +3852,7 @@ function buildEpisodePlanCompilerBrief(
     `Climax: ${compactBriefText(context.episode.climax)}`,
     `Ending hook: ${compactBriefText(context.episode.endingHook)}`,
     `Estimated pages: ${context.episode.estimatedPages}`,
+    ...buildFullStoryDraftSourceSection(context),
     '',
     '[SCENES]',
     sceneLines.length > 0 ? sceneLines : '(none)',
@@ -3690,23 +4025,6 @@ function buildFallbackEpisodePlanSuggestion(
             .filter((value, index, array) => array.indexOf(value) === index);
           const shotType = fallbackShotTypeForRole(panelPlan.role ?? 'action');
           const angle = fallbackAngleForRole(panelPlan.role ?? 'action');
-          const dialogue = buildFallbackDialogueLines(
-            [
-              panelBeat,
-              pageBeat,
-              pagePurpose,
-              continuityNote,
-              scene?.location,
-              scene?.time,
-              scene?.atmosphere,
-            ],
-            context.entities,
-            panelEntityIds,
-            panelPlan,
-            panel.order,
-            language,
-          );
-
           return {
             order: panel.order,
             panelRole: panelPlan.role,
@@ -3743,7 +4061,9 @@ function buildFallbackEpisodePlanSuggestion(
             },
             dialogueInPanel:
               page.dialogueMode !== 'balloon_only' && panelPlan.focus !== 'setting',
-            dialogue,
+            // Episode arc and ledger prose are planning context. A successful
+            // compiler omission is intentional silence, not fallback dialogue.
+            dialogue: undefined,
             backgroundNote: buildFallbackBackground(scene, panelPlan, language),
             panelNotes:
               panelPlan.focus === 'setting'

@@ -1,5 +1,5 @@
 appId: ${APP_ID}
-name: "E2E-16: save-and-generate atomicity/409 conflict"
+name: "E2E-16: quoted generation/409 conflict"
 tags: [staging, page, conflict]
 ---
 - runFlow:
@@ -7,7 +7,11 @@ tags: [staging, page, conflict]
 - runFlow:
     file: ../helpers/open-pages.yaml
 - tapOn: ${E2E_CONFLICT_PAGE_LABEL}
+- tapOn:
+    id: page-step-create
 - tapOn: ${E2E_SAVE_AND_GENERATE_LABEL}
+- runFlow:
+    file: ../helpers/accept-page-quote.yaml
 - extendedWaitUntil:
     visible: ${E2E_CONFLICT_LABEL}
     timeout: 45000

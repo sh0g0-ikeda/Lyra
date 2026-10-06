@@ -29,10 +29,7 @@ const compatibilityExport = `export {
   organizationUpdateResponseSchema,
   organizationWorkspaceDetailSchema,
   organizationWorkspacesResponseSchema,
-  pageGenerationReadinessSchema,
   pageLayoutTemplatesResponseSchema,
-  pushTokenRegistrationSchema,
-  saveAndGeneratePageResponseSchema,
 } from './mobileCompatibilitySchemas';
 `;
 
@@ -41,7 +38,8 @@ describe('Mobile API contract generation', () => {
     const canonical = normalizeNewlines(
       await readFile('packages/api-contract/src/mobileApiSchemas.ts', 'utf8'),
     );
-    const generated = await readFile('apps/mobile/src/domain/apiSchemas.ts', 'utf8');
+    // Git's checkout line endings do not change the generated contract.
+    const generated = normalizeNewlines(await readFile('apps/mobile/src/domain/apiSchemas.ts', 'utf8'));
 
     expect(generated).toBe(`${generatedHeader}${canonical}\n${compatibilityExport}`);
   });

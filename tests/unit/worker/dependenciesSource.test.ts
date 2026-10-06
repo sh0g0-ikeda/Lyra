@@ -34,6 +34,18 @@ describe('worker dependency policy', () => {
       source.indexOf("if (env.SQS_QUEUE_URL_GENERATION === undefined)"),
     );
   });
+
+  it('production worker起動前にtask protection opt-in設定を検証する', () => {
+    const source = readFileSync(join(process.cwd(), 'scripts', 'startProductionWorker.ts'), 'utf8');
+
+    expect(source).toContain('assertTaskScaleInProtectionEnvironment(process.env);');
+    expect(source.indexOf('await loadRuntimeSecretEnv();')).toBeLessThan(
+      source.indexOf('assertTaskScaleInProtectionEnvironment(process.env);'),
+    );
+    expect(source.indexOf('assertTaskScaleInProtectionEnvironment(process.env);')).toBeLessThan(
+      source.indexOf("await import('./runGenerationWorker.js');"),
+    );
+  });
 });
 
 function countOccurrences(source: string, pattern: string): number {

@@ -6,6 +6,8 @@ tags: [staging, dialogue, balloon]
     file: ../helpers/launch-authenticated.yaml
 - runFlow:
     file: ../helpers/open-pages.yaml
+- tapOn:
+    id: page-step-settings
 - tapOn: ${E2E_EXTERNAL_DIALOGUE_LABEL}
 - assertVisible: ${E2E_BALLOON_REQUIRED_LABEL}
 - tapOn: ${E2E_BALLOON_COMPLETE_LABEL}

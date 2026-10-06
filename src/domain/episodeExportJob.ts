@@ -1,3 +1,4 @@
+import { readImageProvenance, toImageProvenanceRecord, type ImageProvenance } from './generation/ImageAccessPolicy.js';
 import { createHash } from 'node:crypto';
 import { ConfigurationError, ValidationError } from './errors/index.js';
 
@@ -28,7 +29,7 @@ export const EPISODE_EXPORT_MAX_PROCESSING_ATTEMPTS = 5;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SAFE_IMAGE_KEY_EXTENSION_PATTERN = /\.(?:png|jpe?g|webp)$/iu;
 
-export interface EpisodeExportPageSnapshot {
+export interface EpisodeExportPageSnapshot extends ImageProvenance {
   pageId: string;
   pageNumber: number;
   s3Key: string;
@@ -178,7 +179,7 @@ export function parseEpisodeExportPageSnapshot(
     if (inferEpisodeExportImageMimeType(s3Key) !== mimeType) {
       throw new ValidationError('Episode export page snapshot is invalid');
     }
-    return { pageId, pageNumber, s3Key, mimeType };
+    return { pageId, pageNumber, s3Key, mimeType, ...readImageProvenance(entry) };
   });
 
   if (new Set(parsed.map((page) => page.pageId)).size !== parsed.length) {
@@ -194,8 +195,9 @@ export function toPersistedEpisodeExportPageSnapshot(
   page_number: number;
   s3_key: string;
   mime_type: EpisodeExportImageMimeType;
-}> {
+} & Record<string, unknown>> {
   return pages.map((page) => ({
+    ...toImageProvenanceRecord(page),
     page_id: page.pageId,
     page_number: page.pageNumber,
     s3_key: page.s3Key,

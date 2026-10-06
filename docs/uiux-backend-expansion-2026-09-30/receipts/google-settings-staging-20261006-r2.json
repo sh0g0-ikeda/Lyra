@@ -1,0 +1,158 @@
+{
+  "schema": "lyra.google-settings-staging-r2",
+  "at": "2026-10-06T04:40:01.025Z",
+  "baseIntegrationSha": "039c8a0e90546d26ed5c6a2afa88bf7f570197b6",
+  "productSourceSha": "014463a1becc38b0d910f494c53c06bfdfdd2dfa",
+  "productionReady": false,
+  "productionChanges": 0,
+  "mainMerges": 0,
+  "storeSubmissions": 0,
+  "approvals": {
+    "googleTermsTwoOAuthAndStagingConnection": "approved_executed",
+    "exactStagingCognitoFiveIdpActions": "approved_applied_verified",
+    "fourDrainIamDocuments": "approved_validation_only",
+    "repairedPassRoleBoundary": "approved_validation_only",
+    "encryptedManualSnapshotCopy": "approved_available",
+    "isolatedRestoreAndManagedMasterSecret": "request_6_pending",
+    "narrowedLogBoundaryAwsValidation": "request_7_pending"
+  },
+  "google": {
+    "project": "lyra-auth-staging-20261006",
+    "twoSeparateWebOAuthClientsCreated": true,
+    "scopes": [
+      "openid",
+      "email"
+    ],
+    "publishingStatus": "TESTING",
+    "testUserCount": 1,
+    "cognitoFoundationStatus": "UPDATE_COMPLETE",
+    "providerConnected": true,
+    "existingNativeAndWebClientsUpdatedWithoutReplacement": true,
+    "callbacksAndExistingNativeSettingsPreserved": true,
+    "preSignupGuardRetained": true,
+    "cognitoOAuthSecretStageKey": true,
+    "linkSettingsStoredInExistingRuntimeSecret": true,
+    "nonGoogleSecretValuesAndPreviousVersionPreserved": true,
+    "applicationCapabilities": {
+      "version": 2,
+      "google_sign_in": false,
+      "google_linking": false,
+      "google_ios": false
+    },
+    "hostedUiGoogleVisible": true,
+    "hostedUiGoogleIsNotDisabledByApplicationCapabilities": true,
+    "actualGoogleLoginOrLinkingPassed": false,
+    "physicalAndroidPassed": false,
+    "iosApproved": false
+  },
+  "regression": {
+    "nativeEmailLogoutLoginPassed": true,
+    "visibleWorks": 4,
+    "visibleCredits": 9,
+    "savedDraftVisible": true,
+    "internalUserIdIndependentlyMeasured": false,
+    "browserSaveGeneratePurchaseDeleteOperations": 0,
+    "mobileAndPackagesGitDiffFromApk6daa8ba": 0
+  },
+  "failuresPreserved": [
+    {
+      "stage": "initial_provider_connect",
+      "failure": "AWS-managed default key did not match existing stage-key IAM conditions",
+      "rollback": "UPDATE_ROLLBACK_COMPLETE",
+      "resolution": "only stage Google secret KMS association repaired; original version retained; exact same 3-resource change retried successfully"
+    },
+    {
+      "stage": "iam_validation",
+      "failure": "initial aggregate-resource parser corrected; original log-stream positive remains denied",
+      "resolution": "CFN PassRole repaired and 21/22 simulations match; request7 narrows log boundary for validation only"
+    },
+    {
+      "stage": "native_email_qa",
+      "failure": "browser input rejected invalid email field",
+      "resolution": "exact input replacement; native login passed"
+    },
+    {
+      "stage": "local_pg_setup",
+      "failure": "sandbox start did not start; initial elevated start used default5432",
+      "resolution": "only newly owned PID34412 stopped; exact loopback15435/PID4408 started, tested, then stopped; other cluster unchanged"
+    },
+    {
+      "stage": "ops_command_wiring",
+      "failure": "test-list formatting failed before Node test execution",
+      "resolution": "list formatting corrected; final whole Ops suite executed once"
+    }
+  ],
+  "m2": {
+    "manualCopyAvailable": true,
+    "copyReceiptVerifiedAt": "2026-10-06T03:59:15.109Z",
+    "encrypted": true,
+    "engine": "postgres",
+    "engineVersion": "18.3",
+    "storageGiB": 20,
+    "restoreExecuted": false,
+    "cloneDbConnections": 0,
+    "cloneMigrations": 0,
+    "managedMasterCredentialCreated": false
+  },
+  "drain": {
+    "permanentReaderDeployed": false,
+    "proofLambdaDeployed": false,
+    "googleAwareLifecycleDeployed": false,
+    "allAutomaticSchedulesRemainDisabled": true,
+    "cfnIamAnalyzerBlocking": 0,
+    "cfnIamSimulations": 22,
+    "cfnIamMatched": 21,
+    "narrowedLogCandidateUnvalidated": true,
+    "templateValidationPassed": true,
+    "templateSha256": "e5971de738dfc5ec5419b14dc475818d884a9b91488db57b98357ce2c79090b3",
+    "sharedQuotaQaDefault": false,
+    "normalReservedConcurrency": 1,
+    "explicitQaExceptionRestrictedToExactStage": true,
+    "sharedPoolIsNotFunctionConcurrencyLimit": true,
+    "quotaInsufficientRollbackMustRetainQaExceptionOrDeleteStack": true
+  },
+  "checks": {
+    "localOps": {
+      "testFiles": 18,
+      "tests": 181,
+      "pass": 181,
+      "fail": 0,
+      "skipped": 0,
+      "rawLogSha256": "8c7e80fbf4a8037dfd0e0465cc2633ed0a4444e677b9c1bf57b7f57c5989b074"
+    },
+    "pureProviderRecoveryRuntimeRestore": {
+      "tests": 15,
+      "pass": 15,
+      "fail": 0,
+      "skipped": 0
+    },
+    "affectedTemplateContracts": {
+      "tests": 36,
+      "pass": 36,
+      "fail": 0,
+      "skipped": 0
+    },
+    "previousProductGatesNotRerunThisStep": true
+  },
+  "remaining": [
+    "Google-aware drain reader/proof/lifecycle deployment and shutdown rehearsal",
+    "real Google sign-in/link fault acceptance and physical Android/iOS",
+    "M2 representative copy restore/migration/old-writer/rollback",
+    "long15 semantic acceptance and approved P9 provider diagnostic",
+    "real billing/store/S3 acceptance",
+    "public GitHub update remains separately blocked"
+  ],
+  "evidenceHashes": {
+    "google-activation-r2/google-ui-settings-proof.json": "b260c31ce7f967ab19bcb625ad12fdcba8f8f9043e6e8fa0c7f5b12d0b52e14b",
+    "google-activation-r2/provider-connect/provider-failure-events.json": "93e448425c9745ac403732e83d023fb52bacfaff836363ec834a772deac60499",
+    "google-activation-r2/provider-connect/kms-repair-verified.json": "ac47f456f3a72eb58895d498c8aeccbb67ec7550214a8fe94ce1ebc46122a9b4",
+    "google-activation-r2/provider-connect-r3/provider-verified.json": "12ed10bd8b71dbf642da8b706a002a2d4df38f8e889bdf96373f92b17fab42dd",
+    "google-activation-r2/runtime-connect-r3/runtime-settings-verified.json": "ad08218b8ea495c2b330dc4b1c4c9d72f339f4104f115d937c983901daef39b6",
+    "google-activation-r2/native-email-after-google.json": "661ebdea30963bbc2b89e2a75972c90a27177d9823944f477dc1a16bba50a06c",
+    "google-activation-r2/native-email-after-google.png": "8a8f61a05dc0059cd06b9d1172345fae00c4415ac968fe0dff09a590ece340dc",
+    "google-activation-r2/m2-copy-status.json": "a37318f9e4d8fac8048af8ba1074a9b77236388a33544415a91b90ec5e23a143",
+    "google-activation-r2/iam-validation-repaired/receipt.json": "6d76f89673810381590dc1df661afda22d018db3f0570dad172cce255df69606",
+    "google-activation-r2/drain-template-validation-r3.json": "aca79d8421285517977cfd31e5688a1bd63b0f1efc2f10ff5941c46acc5d95cb",
+    "google-activation-r2/local-ops-final-r3/raw-test.log": "8c7e80fbf4a8037dfd0e0465cc2633ed0a4444e677b9c1bf57b7f57c5989b074"
+  }
+}

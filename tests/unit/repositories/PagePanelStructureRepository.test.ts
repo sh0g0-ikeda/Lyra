@@ -77,6 +77,44 @@ class StructureQueryClient implements DatabaseClient, TransactionRunner {
 }
 
 describe('PostgresPagePanelStructureRepository', () => {
+  it('選択コマの直後へ追加する場合に末尾で空コマ作成後安全な二段階順序更新をする', async () => {
+    const client = new StructureQueryClient();
+    client.balloonUpdatedCount = 1;
+    const repository = new PostgresPagePanelStructureRepository(client);
+
+    const result = await repository.apply('user-1', 'page-1', {
+      ...appendInput([p1, p2]),
+      operation: { type: 'insert_after', panelId: p1 },
+    });
+
+    expect(result).toMatchObject({
+      panelIds: [p1, createdPanelId, p2],
+      createdPanelId,
+      balloonReferenceUpdatedCount: 1,
+      balloonReferenceClearedCount: 0,
+    });
+    expect(result.frames.map((frame) => frame.panelId)).toEqual([p1, createdPanelId, p2]);
+    const insertIndex = client.queries.findIndex((query) => query.includes('INSERT INTO panels'));
+    expect(client.valuesList[insertIndex]).toEqual(['page-1', 3]);
+    const reorderIndex = client.queries.findIndex((query) => query.includes('SET "order" = -requested_order'));
+    expect(reorderIndex).toBeGreaterThan(insertIndex);
+    expect(client.valuesList[reorderIndex]).toEqual(['page-1', [p1, createdPanelId, p2]]);
+    const balloonIndex = client.queries.findIndex((query) => query.includes('UPDATE balloons'));
+    expect(client.valuesList[balloonIndex]).toEqual(['page-1', [2], [3]]);
+    expect(client.queries.some((query) => query.includes('DELETE FROM panels'))).toBe(false);
+  });
+
+  it('直後追加の選択コマがページ外の場合に一切更新しない', async () => {
+    const client = new StructureQueryClient();
+    const repository = new PostgresPagePanelStructureRepository(client);
+
+    await expect(repository.apply('user-1', 'page-1', {
+      ...appendInput([p1, p2]),
+      operation: { type: 'insert_after', panelId: p3 },
+    })).rejects.toBeInstanceOf(ConflictError);
+    expect(client.queries.some(isMutationQuery)).toBe(false);
+  });
+
   it('保存前のPanel順が変わっている場合に一切更新しない', async () => {
     const client = new StructureQueryClient();
     const repository = new PostgresPagePanelStructureRepository(client);
@@ -232,5 +270,5 @@ function rows<T extends QueryResultRow>(rowValues: QueryResultRow[]): QueryResul
 }
 
 function isMutationQuery(query: string): boolean {
-  return /^\s*(?:INSERT|UPDATE|DELETE)\b/u.test(query);
+  return /\b(?:INSERT INTO|UPDATE (?!OF\b)|DELETE FROM)\b/u.test(query);
 }
