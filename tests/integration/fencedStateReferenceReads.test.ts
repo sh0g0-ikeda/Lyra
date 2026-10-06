@@ -106,18 +106,21 @@ describePostgres('fenced state reference read and retention integration', () => 
   }
 
   it('requires exact confirmed evidence for presentation, generation and episode readiness', async () => {
-    const f=await fixture(); const attempt=await admit(f);
+    let f=await fixture(); let attempt=await admit(f);
     await setDescriptor(f,toPersistedDescriptor(attempt.input.descriptor));
     expect((await resolved(f))?.s3Key).toBeNull();
     expect((await new PostgresSceneRepository(database).findEntityStatesByEntityIdAndUserId(f.entityId,f.userId))[0]?.referenceImage).toBeNull();
     expect((await new PostgresPageRepository(database).findEpisodePlanningContextByIdAndUserId(f.episodeId,f.userId))?.stateLibrary?.[0]).toMatchObject({referenceImage:null,referenceReady:false});
     expect((await new PostgresEntityStateReferenceRepository(database).findContextByIdAndUserId(f.entityId,f.stateId,f.userId))?.referenceImage).toBeNull();
-    const story=new PostgresStoryRepository(database,database); const states=[{entityId:f.entityId,stateId:f.stateId}];
+    const story=new PostgresStoryRepository(database,database); let states=[{entityId:f.entityId,stateId:f.stateId}];
     expect(await story.validateEpisodeStartingEntityStates(f.episodeId,f.userId,states)).toBe(false);
     expect(await rejectionOf(story.updateEpisode(f.episodeId,f.userId,{startingEntityStates:states}))).toMatchObject({code:'CONFLICT'});
     await setDescriptor(f,null);
-    await journal.authorizeDispatch(attempt);
-    await journal.confirmObservedImage(attempt,{kind:'image',...receiptIdentity(attempt),digest:source.digest,mimeType:source.mimeType,sizeBytes:source.sizeBytes});
+    // Legacy descriptor writes advance 048's revision; the admitted preview stays stale.
+    expect(await rejectionOf(journal.authorizeDispatch(attempt))).toMatchObject({code:'CONFLICT'});
+    // Verify positive read evidence with a fresh, unchanged state and a new preview.
+    f=await fixture(); attempt=await confirm(f);
+    states=[{entityId:f.entityId,stateId:f.stateId}];
     expect((await resolved(f))?.s3Key).toBe(attempt.intent.s3Key);
     const exactScope={s3Key:attempt.intent.s3Key,entityId:f.entityId,actorUserId:f.userId,organizationId:f.organizationId,
       stateId:f.stateId,refId:f.descriptor.refId,imageModel:f.descriptor.imageModel};

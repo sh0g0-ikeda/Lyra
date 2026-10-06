@@ -321,15 +321,19 @@ async function seed(pool: Pool, organization = false): Promise<ConfirmEntityStat
   return seedCandidate(pool, { userId, organizationId, entityId, stateId }, originalRevision, 'A cheek scar');
 }
 async function editAndSeedCandidate(pool: Pool, input: ConfirmEntityStateReferenceInput): Promise<ConfirmEntityStateReferenceInput> {
-  await pool.query("UPDATE entity_states SET description='Changed appearance',updated_at=$2 WHERE id=$1", [input.stateId,changedRevision]);
-  return seedCandidate(pool, input, changedRevision, 'Changed appearance');
+  const updated = await pool.query<{ updated_at: Date }>("UPDATE entity_states SET description='Changed appearance',updated_at=$2 WHERE id=$1 RETURNING updated_at", [input.stateId,changedRevision]);
+  const revision = updated.rows[0]?.updated_at;
+  if (revision === undefined) throw new Error('Missing edited state revision');
+  return seedCandidate(pool, input, revision.toISOString(), 'Changed appearance');
 }
 async function candidateForOtherMember(pool: Pool, input: ConfirmEntityStateReferenceInput): Promise<ConfirmEntityStateReferenceInput> {
   const userId = randomUUID();
   await pool.query('INSERT INTO users (id,supabase_id,email) VALUES ($1,$2,$3)', [userId, `recovering-${userId}`, `${userId}@example.invalid`]);
   await pool.query("INSERT INTO organization_members (organization_id,user_id,role,status,joined_at) VALUES ($1,$2,'editor','active',NOW())", [input.organizationId,userId]);
-  await pool.query("UPDATE entity_states SET description='Changed appearance',updated_at=$2 WHERE id=$1", [input.stateId,changedRevision]);
-  return seedCandidate(pool, { ...input, userId }, changedRevision, 'Changed appearance');
+  const updated = await pool.query<{ updated_at: Date }>("UPDATE entity_states SET description='Changed appearance',updated_at=$2 WHERE id=$1 RETURNING updated_at", [input.stateId,changedRevision]);
+  const revision = updated.rows[0]?.updated_at;
+  if (revision === undefined) throw new Error('Missing edited state revision');
+  return seedCandidate(pool, { ...input, userId }, revision.toISOString(), 'Changed appearance');
 }
 async function seedCandidate(pool: Pool, scope: Pick<ConfirmEntityStateReferenceInput, 'userId' | 'organizationId' | 'entityId' | 'stateId'>,
   revision: string, description: string): Promise<ConfirmEntityStateReferenceInput> {

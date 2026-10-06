@@ -38,7 +38,7 @@ describePostgres('release compatibility preflight', () => {
 
   afterAll(async () => {
     await synthetic?.close();
-  });
+  }, 120_000);
 
   it('047現行historyとinvariantを単一read-only snapshotで検査し空journalを許可する', async () => {
     const before = Number((await pool.query('SELECT COUNT(*)::int AS count FROM schema_migrations')).rows[0]?.count);
