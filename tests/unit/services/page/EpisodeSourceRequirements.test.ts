@@ -57,7 +57,7 @@ describe('EpisodeSourceRequirements', () => {
 
   });
 
-  it('既存8-page beat packは24k byte以下のworst-case extraction contractに収まる', () => {
+  it('8-page beat packを4ページ以下のsource packへ分割する', () => {
     const pages = Array.from({ length: 8 }, (_, index) => ({
       pageId: `${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111`,
       pageNumber: index + 1,
@@ -69,10 +69,33 @@ describe('EpisodeSourceRequirements', () => {
     const packs = buildEpisodeSourceRequirementExtractionPacks(prepared, [pages]);
 
     expect(packs).not.toBeNull();
-    expect(packs?.[0]?.estimatedWorstCaseOutputBytes).toBeLessThanOrEqual(24_000);
+    expect(packs).toHaveLength(2);
+    expect(packs?.map((pack) => pack.pages.map((page) => page.pageNumber)))
+      .toEqual([[1, 2, 3, 4], [5, 6, 7, 8]]);
+    expect(packs?.every((pack) => pack.pages.length <= 4 &&
+      pack.units.filter((unit) => unit.text.trim().length > 0).length <= 40 &&
+      pack.estimatedWorstCaseOutputBytes <= 24_000)).toBe(true);
   });
 
-  it('15-page原文のglobal unitは既存2 packの容量へ追加callなしで事前配分される', () => {
+  it('1ページだけで40 nonblank unitを超えても従来byte上限内なら単独packを維持する', () => {
+    const pages = [{ pageId: PAGE_1, pageNumber: 1 }];
+    const prepared = prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: `1ページ目：${Array.from({ length: 41 }, (_, index) => `出来事${index + 1}。`).join('')}`,
+      pages,
+    })!;
+
+    const packs = buildEpisodeSourceRequirementExtractionPacks(prepared, [pages]);
+
+    expect(prepared.units.filter((unit) => unit.text.trim().length > 0).length).toBe(41);
+    expect(packs).toHaveLength(1);
+    expect(packs?.[0]?.pages).toEqual(pages);
+    expect(packs?.[0]?.units.filter((unit) => unit.text.trim().length > 0)).toHaveLength(41);
+    expect(packs?.[0]?.estimatedWorstCaseOutputBytes).toBeLessThanOrEqual(24_000);
+    expect(new TextEncoder().encode(JSON.stringify(packs?.[0]?.compilerBrief)).byteLength)
+      .toBeLessThanOrEqual(32_768);
+  });
+
+  it('15-page原文のglobal unitは4-page source packの容量へ追加callなしで事前配分される', () => {
     const pages = Array.from({ length: 15 }, (_, index) => ({
       pageId: `${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111`,
       pageNumber: index + 1,
@@ -98,10 +121,11 @@ describe('EpisodeSourceRequirements', () => {
     ]);
 
     expect(packs).not.toBeNull();
-    expect(packs?.map((pack) => pack.estimatedWorstCaseOutputBytes)).toEqual([18_743, 18_930]);
-    expect(packs?.map((pack) => pack.units.filter((unit) =>
-      unit.scope === 'global' && unit.text.trim().length > 0).length))
-      .toEqual([3, 6]);
+    expect(packs).toHaveLength(4);
+    expect(packs?.every((pack) => pack.estimatedWorstCaseOutputBytes <= 24_000 &&
+      pack.units.filter((unit) => unit.text.trim().length > 0).length <= 40)).toBe(true);
+    expect(packs?.reduce((count, pack) => count + pack.units.filter((unit) =>
+      unit.scope === 'global' && unit.text.trim().length > 0).length, 0)).toBe(9);
     expect(packs?.flatMap((pack) => pack.units).map((unit) => unit.unitId)).toHaveLength(
       new Set(prepared.units.map((unit) => unit.unitId)).size,
     );

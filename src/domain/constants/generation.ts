@@ -106,7 +106,14 @@ export const EPISODE_BEAT_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_BEAT_PLAN_COMPILER_MAX_TOKENS = 32_000;
 export const EPISODE_BEAT_PLAN_COMPILER_VERSION = 'episode_beat_plan_v10';
 export const EPISODE_BEAT_PLAN_OUTLINE_COMPILER_VERSION = 'episode_beat_outline_v6';
-export const EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION = 'episode_source_requirements_v7';
+// Source extraction is partitioned before a paid call. A multi-page request must
+// stay within four pages and forty nonblank units. A single page is indivisible
+// and retains the prior byte/output ceilings even when it contains over forty units.
+export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_PAGES_PER_PACK = 4;
+export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_NONBLANK_UNITS_PER_MULTI_PAGE_PACK = 40;
+// v8 invalidates source-extraction cache identity because the provider input pack
+// boundaries changed even though the compact response schema remains unchanged.
+export const EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION = 'episode_source_requirements_v8';
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_INPUT_BYTES = 32_768;
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES = 315;
 

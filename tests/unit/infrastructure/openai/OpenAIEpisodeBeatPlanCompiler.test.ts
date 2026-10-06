@@ -305,7 +305,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         { event: '小石を除く', result: null, conditionalUntil: null, requiredByEnd: true },
       ],
     });
-    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v7');
+    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v8');
     const requestInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
     expect(requestInput[0]?.content[0]?.text).toContain('extraction only');
     expect(requestInput[1]?.content[0]?.text).toContain(unit.text);

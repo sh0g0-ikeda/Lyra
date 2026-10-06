@@ -1,6 +1,8 @@
 import { Buffer } from 'node:buffer';
 import {
   EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_INPUT_BYTES,
+  EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_NONBLANK_UNITS_PER_MULTI_PAGE_PACK,
+  EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_PAGES_PER_PACK,
   EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES,
 } from '../../domain/constants/generation.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
@@ -175,7 +177,11 @@ export function buildEpisodeSourceRequirementExtractionPacks(
   extraction: EpisodeSourceRequirementExtraction,
   pagePacks: readonly (readonly EpisodeSourceRequirementPageRef[])[],
 ): EpisodeSourceRequirementExtraction[] | null {
-  const packDrafts = pagePacks.map((pages) => {
+  const sourcePagePacks = splitSourceRequirementPagePacks(extraction, pagePacks);
+  if (sourcePagePacks === null) {
+    return null;
+  }
+  const packDrafts = sourcePagePacks.map((pages) => {
     const pageIds = new Set(pages.map((page) => page.pageId));
     const units = extraction.units.filter((unit) =>
       unit.pageId !== null && pageIds.has(unit.pageId),
@@ -187,10 +193,11 @@ export function buildEpisodeSourceRequirementExtractionPacks(
     const draft = globalUnit.text.trim().length === 0
       ? packDrafts[0]
       : [...packDrafts]
-          .sort((left, right) => remainingRequirementCapacity(right) - remainingRequirementCapacity(left))[0];
+          .sort((left, right) => remainingSourcePackCapacity(right) - remainingSourcePackCapacity(left) ||
+            left.pages[0]!.pageNumber - right.pages[0]!.pageNumber)[0];
     const owner = draft?.pages[0];
     if (draft === undefined || owner === undefined ||
-        (globalUnit.text.trim().length > 0 && remainingRequirementCapacity(draft) < 1)) {
+        (globalUnit.text.trim().length > 0 && remainingSourcePackCapacity(draft) < 1)) {
       return null;
     }
     draft.units.push({ ...globalUnit, pageId: owner.pageId, pageNumber: owner.pageNumber });
@@ -208,14 +215,74 @@ export function buildEpisodeSourceRequirementExtractionPacks(
       estimatedWorstCaseOutputBytes,
     };
   });
-  const seenUnitIds = new Set(packed.flatMap((pack) => pack.units.map((unit) => unit.unitId)));
-  if (packed.length !== pagePacks.length || seenUnitIds.size !== extraction.units.length ||
+  const packedUnits = packed.flatMap((pack) => pack.units);
+  const seenUnitIds = new Set(packedUnits.map((unit) => unit.unitId));
+  if (packed.length !== sourcePagePacks.length || packedUnits.length !== extraction.units.length ||
+      seenUnitIds.size !== extraction.units.length ||
       packed.some((pack) => pack.units.length === 0 ||
+        pack.pages.length > EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_PAGES_PER_PACK ||
+        (pack.pages.length > 1 && pack.units.filter((unit) => unit.text.trim().length > 0).length >
+          EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_NONBLANK_UNITS_PER_MULTI_PAGE_PACK) ||
         pack.estimatedWorstCaseOutputBytes > MAX_REQUIREMENT_PROVIDER_OUTPUT_BYTES ||
         Buffer.byteLength(JSON.stringify(pack.compilerBrief), 'utf8') > EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_INPUT_BYTES)) {
     return null;
   }
   return packed;
+}
+
+function splitSourceRequirementPagePacks(
+  extraction: EpisodeSourceRequirementExtraction,
+  pagePacks: readonly (readonly EpisodeSourceRequirementPageRef[])[],
+): EpisodeSourceRequirementPageRef[][] | null {
+  const requestedPages = pagePacks.flat();
+  if (requestedPages.length !== extraction.pages.length ||
+      requestedPages.some((page, index) => page.pageId !== extraction.pages[index]?.pageId ||
+        page.pageNumber !== extraction.pages[index]?.pageNumber)) {
+    return null;
+  }
+  const nonblankUnitsByPageId = new Map(extraction.pages.map((page) => [
+    page.pageId,
+    extraction.units.filter((unit) => unit.pageId === page.pageId && unit.text.trim().length > 0).length,
+  ] as const));
+  const output: EpisodeSourceRequirementPageRef[][] = [];
+  for (const pagePack of pagePacks) {
+    let current: EpisodeSourceRequirementPageRef[] = [];
+    let currentNonblankUnits = 0;
+    for (const page of pagePack) {
+      const pageNonblankUnits = nonblankUnitsByPageId.get(page.pageId);
+      if (pageNonblankUnits === undefined) {
+        return null;
+      }
+      if (current.length > 0 &&
+          (current.length >= EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_PAGES_PER_PACK ||
+           currentNonblankUnits + pageNonblankUnits >
+             EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_NONBLANK_UNITS_PER_MULTI_PAGE_PACK)) {
+        output.push(current);
+        current = [];
+        currentNonblankUnits = 0;
+      }
+      current.push(page);
+      currentNonblankUnits += pageNonblankUnits;
+    }
+    if (current.length > 0) {
+      output.push(current);
+    }
+  }
+  return output.length === 0 ? null : output;
+}
+
+function remainingSourcePackCapacity(draft: {
+  pages: readonly EpisodeSourceRequirementPageRef[];
+  units: readonly EpisodeSourceUnit[];
+}): number {
+  const used = draft.units.filter((unit) => unit.text.trim().length > 0).length;
+  if (draft.pages.length === 1) {
+    return remainingRequirementCapacity(draft);
+  }
+  return Math.min(
+    remainingRequirementCapacity(draft),
+    EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_NONBLANK_UNITS_PER_MULTI_PAGE_PACK - used,
+  );
 }
 
 function remainingRequirementCapacity(draft: {

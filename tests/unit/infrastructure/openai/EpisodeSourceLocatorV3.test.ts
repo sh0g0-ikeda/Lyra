@@ -167,7 +167,7 @@ describe('原文fragment ID v4の受入契約', () => {
     expect(buildEpisodeSourceRequirementExtractionPacks(extraction, [pages.slice(0, 1), pages.slice(1)])).toBeNull();
   });
 
-  it('人工15ページ137unitを53+54件の2packに収め実postJson全体も64KiB内に収める', async () => {
+  it('人工15ページ137unitを4ページ・40 nonblank unit以下のpackに分け全unitを保持する', async () => {
     const pages = Array.from({ length: 15 }, (_value, index) => ({
       pageId: String(index + 1).padStart(8, '0') + '-1111-4111-8111-111111111111',
       pageNumber: index + 1,
@@ -178,8 +178,17 @@ describe('原文fragment ID v4の受入契約', () => {
     expect(extraction.units.map(unit => unit.text).join('')).toBe(ARTIFICIAL_STORY);
     expect(extraction.units.filter(unit => unit.text.trim().length > 0)).toHaveLength(107);
     const packs = buildEpisodeSourceRequirementExtractionPacks(extraction, [pages.slice(0, 8), pages.slice(8)])!;
-    expect(packs).toHaveLength(2);
-    expect(packs.map(pack => rowsFor(pack).length)).toEqual([53, 54]);
+    expect(packs).toHaveLength(4);
+    expect(packs.every((pack) => pack.pages.length <= 4)).toBe(true);
+    expect(packs.every((pack) => rowsFor(pack).length <= 40)).toBe(true);
+    expect(packs.flatMap((pack) => pack.units)).toHaveLength(extraction.units.length);
+    expect(new Set(packs.flatMap((pack) => pack.units.map((unit) => unit.unitId))).size)
+      .toBe(extraction.units.length);
+    const trustedRank = new Map(extraction.units.map((unit, index) => [unit.unitId, index] as const));
+    for (const pack of packs) {
+      const ranks = pack.units.map((unit) => trustedRank.get(unit.unitId)!);
+      expect(ranks).toEqual([...ranks].sort((left, right) => left - right));
+    }
     const requests: Array<Record<string, unknown>> = [];
     for (const pack of packs) {
       await compile(pack, rowsFor(pack), requests);

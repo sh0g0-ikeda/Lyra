@@ -2119,7 +2119,11 @@ describe('PageService', () => {
     );
 
     expect(result.compilerUsed).toBe(true);
-    expect(sourceCompiler.sourceProviderCalls).toBeGreaterThan(0);
+    expect(sourceCompiler.sourceProviderCalls).toBe(4);
+    expect(sourceCompiler.sourceRequirementInputs).toHaveLength(4);
+    expect(sourceCompiler.sourceRequirementInputs.every((input) =>
+      input.extraction.pages.length <= 4 &&
+      input.extraction.units.filter((unit) => unit.text.trim().length > 0).length <= 40)).toBe(true);
     expect(sourceCompiler.sourceRequirementInputs.every((input) =>
       input.extraction.compilerBrief.includes('"fragments"'))).toBe(true);
     expect(beginCommitCount).toBe(1);

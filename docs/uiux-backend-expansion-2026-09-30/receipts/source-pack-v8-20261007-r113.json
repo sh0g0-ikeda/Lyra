@@ -1,0 +1,118 @@
+{
+  "schema": "lyra.source-pack-v8-parent-review/v1",
+  "status": "PASS_LOCAL_NOT_LIVE",
+  "sourceHeadBefore": "892e29f326f66958fd405ee011fe7ff425e4e63e",
+  "sourceReceiptSha256": "e4db2859dfb286d8b3c08e5e24a52ea7799b675ad85b8ee50b20942afe02db5d",
+  "files": [
+    {
+      "path": "src/domain/constants/generation.ts",
+      "sha256": "18c1493a4659f5a170a3c66d39d2e77b5246f05d62a3d2fab0aa1379705104d4"
+    },
+    {
+      "path": "src/services/page/EpisodeSourceRequirements.ts",
+      "sha256": "b9c96a327499edc543547312a8a65a990df7f98930e396cf0e9a487cfc85b04f"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/EpisodeSourceLocatorV3.test.ts",
+      "sha256": "6a087e67518463ac8f8894132498e52c4d120603676e6f6cded162782f883da2"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.test.ts",
+      "sha256": "08c548b7515000d297d179c54e4c02e0fea65fea2ac3d2a3053077337cec29c3"
+    },
+    {
+      "path": "tests/unit/services/page/EpisodeSourceRequirements.test.ts",
+      "sha256": "12133e59ad26ecb91681fc1da4e7d9d73cd099138b6e92c95e5ad404d8220c12"
+    },
+    {
+      "path": "tests/unit/services/page/PageService.test.ts",
+      "sha256": "a4ae0eaf3eef68e1a1576af5bfbc7a9230cbd933a2bbb9c11971ff4f371bfb77"
+    }
+  ],
+  "compatibility": {
+    "multiPageMaxPages": 4,
+    "multiPageMaxNonblankUnits": 40,
+    "singlePageOver40": "allowed_when_existing_24k_output_and_32KiB_input_bounds_pass",
+    "singlePageSplit": false,
+    "providerModelChanged": false,
+    "providerTimeoutChanged": false,
+    "semanticValidationChanged": false,
+    "workerCreditFlowChanged": false,
+    "compilerVersion": "episode_source_requirements_v8"
+  },
+  "acceptance": {
+    "singlePageCompatibility": {
+      "nonblankUnits": 41,
+      "packs": 1,
+      "existingOutputByteCeiling": 24000,
+      "existingInputByteCeiling": 32768,
+      "passed": true
+    },
+    "artificialFixture": {
+      "pages": 15,
+      "panels": 60,
+      "sourceUnits": 137,
+      "nonblankSourceUnits": 107,
+      "blankSourceUnits": 30,
+      "packs": 4,
+      "lossless": true,
+      "unitIdsUnique": true,
+      "trustedOrderStableWithinEachPack": true
+    },
+    "atomicPersistence": {
+      "sourceProviderCalls": 4,
+      "beginCommitCalls": 1,
+      "persistenceCalls": 1,
+      "updatedPages": 15,
+      "updatedPanels": 60
+    },
+    "invalidSourceRequirement": {
+      "sourceProviderCalls": 1,
+      "beginCommitCalls": 0,
+      "persistenceCalls": 0,
+      "updatedPages": 0,
+      "updatedPanels": 0
+    }
+  },
+  "verification": {
+    "compatibilityRed": {
+      "outcome": "EXPECTED_FAILURE",
+      "testFilesFailed": 1,
+      "testsPassed": 16,
+      "testsFailed": 1,
+      "log": "red.log",
+      "sha256": "b620670d3c875e65ba1d17b9b9088b59730d006b63d5a172e253ec283b2fe3c3"
+    },
+    "compatibilityGreen": {
+      "outcome": "PASS",
+      "testFilesPassed": 1,
+      "testsPassed": 17,
+      "log": "green-unit.log",
+      "sha256": "7ef47a95e8fa7b85f2f1d0b625226e7efdd554fc8e89c7ebde8a3dde99a88f90"
+    },
+    "sourceRegression": {
+      "outcome": "PASS",
+      "testFilesPassed": 10,
+      "testsPassed": 174,
+      "testsFailed": 0,
+      "log": "final-tests.log",
+      "sha256": "38d469d3ac9a38890a3be4015acedf374a02d153689f7cb6bff1e70db8e17608"
+    },
+    "typecheck": {
+      "command": "node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit --pretty false",
+      "exitCode": 0,
+      "log": "typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "gitDiffCheck": "PASS"
+  },
+  "parentVerification": {
+    "tests": 147,
+    "failed": 0,
+    "assertions": 728,
+    "files": 4,
+    "logSha256": "786f3ae7a1a4583773ec94f18650916d94da791c850650cb10ca225b508e69c7"
+  },
+  "providerLive": "NOT_PASSED",
+  "productionChanges": 0
+}
