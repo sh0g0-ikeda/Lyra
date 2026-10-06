@@ -1,0 +1,114 @@
+{
+  "schema": "lyra.staging-progress-r38/v1",
+  "at": "2026-10-06T17:41:43.093Z",
+  "head": "67ef1f0dff7852a4f4adf9716f092df7ae9b48e7",
+  "stageSourceSha": "03bc182b18686808cfba1f29c101c4e1b4deef48",
+  "productionReady": false,
+  "productionChanges": 0,
+  "mainMerged": false,
+  "storeSubmitted": false,
+  "runtimeFlags": {
+    "status": "PASS_ACTUAL_STAGING",
+    "at": "2026-10-06T17:19:19.829Z",
+    "configured": {
+      "AUTO_RUN_MIGRATIONS": false,
+      "GENERATION_QUOTES_ENABLED": true,
+      "GENERATION_ENABLED": true,
+      "PAGE_GENERATION_ENABLED": true,
+      "ENTITY_GENERATION_ENABLED": true,
+      "ENTITY_STATE_REFERENCE_GENERATION_ENABLED": false,
+      "STATE_REFERENCE_COPY_V2_ADMISSION_ENABLED": false,
+      "GOOGLE_SIGN_IN_ENABLED": true,
+      "GOOGLE_IDENTITY_LINK_ENABLED": true,
+      "GOOGLE_IOS_ENABLED": false,
+      "MOBILE_STORE_BILLING_ENABLED": false
+    },
+    "effective": {
+      "AUTO_RUN_MIGRATIONS": false,
+      "GENERATION_QUOTES_ENABLED": true,
+      "GENERATION_ENABLED": true,
+      "PAGE_GENERATION_ENABLED": true,
+      "ENTITY_GENERATION_ENABLED": true,
+      "ENTITY_STATE_REFERENCE_GENERATION_ENABLED": false,
+      "STATE_REFERENCE_COPY_V2_ADMISSION_ENABLED": false,
+      "GOOGLE_SIGN_IN_ENABLED": true,
+      "GOOGLE_IDENTITY_LINK_ENABLED": true,
+      "GOOGLE_IOS_ENABLED": false,
+      "MOBILE_STORE_BILLING_ENABLED": false
+    },
+    "flagsChanged": false,
+    "databaseConnections": 0,
+    "providerCalls": 0,
+    "pcSecretReads": 0,
+    "taskSecretReads": 1,
+    "receiptSha256": "764fe4551846fc6a0d32084b3a4167b7234f9154cad9eb94fda4ea9298c0ed59"
+  },
+  "real15Provider": {
+    "status": "FAILED_SOURCE_REFERENCE",
+    "sourceSha": "67ef1f0dff7852a4f4adf9716f092df7ae9b48e7",
+    "startedAt": "2026-10-06T17:27:53.127Z",
+    "finishedAt": "2026-10-06T17:28:25.600Z",
+    "httpCalls": 1,
+    "sourceRequirementCalls": 1,
+    "beatCalls": 0,
+    "detailCalls": 0,
+    "auditCalls": 0,
+    "commitCalls": 0,
+    "creditMutationCalls": 0,
+    "diagnostic": {
+      "safeCode": "INVALID_LOCATOR",
+      "i": 50,
+      "u": 50,
+      "field": "e",
+      "index": 0,
+      "firstId": 1,
+      "lastId": 18,
+      "unitCodePointLength": 17
+    },
+    "secondaryHarnessFailure": "TRACE_SOURCE_UNIT_COVERAGE_INCOMPLETE",
+    "durableSave": "NOT_PASSED",
+    "receiptSha256": "d98f1e38100100d48b99d5c8baa34194317a0b4703f60b3259ce16977f2c7715"
+  },
+  "production44Local": {
+    "status": "PASS_LOCAL_SLICE_ACTIVATION_BLOCKED",
+    "integrationAndTargetedTests": 92,
+    "repositoryAndRuntimeUnitTests": 464,
+    "backendBuild": "PASS",
+    "clusterStopped": true,
+    "cancellationRepositoryReview": "GO_LOCAL_PATCH_ONLY",
+    "mixedWriterReadiness": false,
+    "activation": false,
+    "unresolved": [
+      "cancelled net-debit recurring reconciliation reachability",
+      "old terminal writer notification absence",
+      "old push lowercase error constraint mismatch",
+      "old retry and old consumer stale generation delivery"
+    ],
+    "receiptSha256": "d2534d8babbe4f06bba68c6779915e18a529c076b1fea06cfa9afa47cbb95426"
+  },
+  "selectedRuntimeIdentity": {
+    "status": "PASS_CURRENT_PINNED_IMAGES_AND_SELECTED_MODULES",
+    "metadataCheckedAt": "2026-10-06T17:11:20.915Z",
+    "modules": 38,
+    "exactMatches": 38,
+    "oldSourceSha": "2debe8c3c22633ed077e7b189ddcfa8b209a00dc",
+    "fullSourceOrDependencyIdentityProven": false
+  },
+  "originalProtection": {
+    "head": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "paths": 28,
+    "unchanged": true,
+    "checkedAt": "2026-10-06T17:40:39.095Z"
+  },
+  "remaining": [
+    "source-v4 exact fragment selection and real 15-page durable save",
+    "cancelled net-debit recurring recovery and actual entrypoint",
+    "old/new push consumer compatibility and notification recovery",
+    "production44 capability admission/factory propagation and additive migrations",
+    "representative-copy mixed writer/rollback/data invariants",
+    "database safe-drain lifecycle acceptance",
+    "billing notification real acceptance",
+    "Android/iOS physical acceptance and iOS Google policy/client",
+    "full final gates and staging update for latest code"
+  ]
+}

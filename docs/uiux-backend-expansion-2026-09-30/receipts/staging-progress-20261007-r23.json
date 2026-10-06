@@ -1,0 +1,51 @@
+{
+  "recordedAt": "2026-10-06T15:03:56.327Z",
+  "sourceSha": "03bc182b18686808cfba1f29c101c4e1b4deef48",
+  "web": {
+    "testEnvironmentOnly": true,
+    "normalLoginSession": true,
+    "jobType": "page_generate",
+    "jobShortId": "ee539819",
+    "queued": true,
+    "completed": true,
+    "buttonsPreventRepeatWhileActive": true,
+    "savedImage": {
+      "loaded": true,
+      "width": 1024,
+      "height": 1536,
+      "enlargement": true,
+      "color": true
+    },
+    "testCreditsBefore": 9,
+    "testCreditsAfter": 6,
+    "publishedUserCreditsTouched": false,
+    "pageGenerationCancelUiAvailable": false,
+    "cancelAndRefundAcceptance": false,
+    "providerWireCapture": false
+  },
+  "stage": {
+    "taskDefinitionRevision": 15,
+    "imageDigest": "sha256:5d6fd0e949ac31f681511a1f6c3517d21aad81387be3958ee082b66950fbfed1",
+    "automaticScaleUpObserved": true,
+    "automaticScaleDownObserved": true,
+    "idle": {
+      "desired": 0,
+      "running": 0,
+      "pending": 0
+    },
+    "productionChanges": 0
+  },
+  "m2": {
+    "previousFailureReceiptPreserved": true,
+    "supplementaryCleanup": "CLEANUP_RECONCILED",
+    "ownedIamTargetsDeleted": 4,
+    "iamMutationCount": 8,
+    "secretReadsOnPc": 0,
+    "databaseConnectionsDuringCleanup": 0,
+    "fullAbsenceVerified": false,
+    "stackDeleteCompleteTombstoneRetained": true,
+    "newReadOnlyProbeStarted": true,
+    "lineageCatalogAcceptance": false
+  },
+  "productionReady": false
+}

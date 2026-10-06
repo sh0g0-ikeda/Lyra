@@ -1,0 +1,97 @@
+{
+  "schema": "lyra.staging-progress-r33/v1",
+  "at": "2026-10-06T17:09:48.362Z",
+  "head": "67ef1f0dff7852a4f4adf9716f092df7ae9b48e7",
+  "stageSourceSha": "03bc182b18686808cfba1f29c101c4e1b4deef48",
+  "localCommits": [
+    {
+      "sha": "ca3f20d02159f8766c1369fbe9ea334f985ab198",
+      "message": "fix(story): Resolve source citations from trusted Unicode positions",
+      "paths": 7
+    },
+    {
+      "sha": "67ef1f0dff7852a4f4adf9716f092df7ae9b48e7",
+      "message": "fix(runtime): Propagate attested persistence through production startup",
+      "paths": 8
+    }
+  ],
+  "verification": {
+    "sourceLocatorAndBootstrap": {
+      "tests": 150,
+      "files": 6,
+      "status": "PASS",
+      "logSha256": "5631c587a2742c4479f71d102c5a5dd4c4c53c8c8a09e18939f690500006fb22"
+    },
+    "backendTypeScript": {
+      "status": "PASS",
+      "output": "task-specific outDir; default dist EPERM; identical compiler and source",
+      "emittedFiles": 870
+    },
+    "mobileAuth": {
+      "tests": 47,
+      "files": 7,
+      "status": "PASS",
+      "source": "ab34933",
+      "mobileSourceChangedSince": false,
+      "logSha256": "2cfc5f13c9fe367a1a20c533d384979bde1190eb7f757658a759901d0152490f"
+    },
+    "fullFinalProductGates": "NOT_RERUN_AFTER_CURRENT_CHANGES",
+    "real15Provider": "NOT_RUN_ON_SOURCE_V3",
+    "real15DurableSave": "NOT_PASSED"
+  },
+  "clonedDatabaseProbe": {
+    "status": "PASS_CLEANED",
+    "readOnly": true,
+    "invocations": 1,
+    "removalVerified": true,
+    "cleanupProblems": 0,
+    "fullAbsenceVerified": false,
+    "pcSecretReads": 0,
+    "sqlWrites": 0,
+    "migrations": 0,
+    "productionMutations": 0
+  },
+  "schemaClassification": {
+    "status": "PASS_LOCAL_CATALOG_MATCH_STOPPED",
+    "fingerprint": "e251fbef54b20d70659e207bdc4ee89bcaac66cc48008fe6300144d57ce18e23",
+    "migrationCount": 44,
+    "matchedUnknown": {
+      "relations": 0,
+      "columns": 34,
+      "constraints": 69,
+      "indexes": 8,
+      "triggers": 3,
+      "functions": 2,
+      "namespaceArtifacts": 2
+    },
+    "remainingDifferences": 0,
+    "localClusterStopped": true,
+    "otherPortsTouched": false,
+    "adapterAndMixedWriterAcceptance": "IN_PROGRESS_NOT_PASSED"
+  },
+  "runtimeFlags": {
+    "r27": "FAILED_STOPPED",
+    "r31": "FAILED_STOPPED_AT_IDENTITY",
+    "cause": "installed nested STS SDK has no GetCallerIdentityCommand",
+    "r34": "OFFLINE_10_TESTS_PASS_ACTUAL_PENDING",
+    "stageFlagsChanged": false
+  },
+  "originalWorkProtection": {
+    "head": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "paths": 28,
+    "unchanged": true,
+    "checkedAt": "2026-10-06T17:08:26.105Z"
+  },
+  "productionReady": false,
+  "productionChanges": 0,
+  "mainMerged": false,
+  "storeSubmitted": false,
+  "remaining": [
+    "actual44 profile/adapters and mixed writers/rollback",
+    "real provider all 15 pages and durable staging save",
+    "current runtime flags readback",
+    "database safe-drain lifecycle acceptance",
+    "billing notification real acceptance",
+    "Android/iOS physical acceptance and iOS Google policy/client"
+  ]
+}

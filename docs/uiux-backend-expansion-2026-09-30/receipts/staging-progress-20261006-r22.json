@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-06T14:42:20.372Z",
+  "sourceSha": "03bc182b18686808cfba1f29c101c4e1b4deef48",
+  "sourceChanges": [
+    "ops/staging/foundation.json",
+    "ops/staging/assets-lifecycle.contract.test.mjs"
+  ],
+  "storage": {
+    "status": "PASS_STAGING_IMAGE_LIFECYCLE_CONFIG",
+    "versioning": "Enabled",
+    "publicAccessBlocked": true,
+    "temporaryExpirationDays": 1,
+    "pendingAccountAssetsPrefix": "saved/",
+    "pendingAccountAssetsExpirationDays": 1,
+    "incompleteMultipartAbortDays": 1,
+    "rules": 3,
+    "stateV2MarkersIncluded": false,
+    "physicalDeletionTimingMeasured": false,
+    "historicalUntaggedVersionErasureProven": false,
+    "stateCopyAcceptance": false,
+    "productionChanges": 0
+  },
+  "tests": {
+    "lifecycleContract": {
+      "redFailed": 3,
+      "redPassed": 1,
+      "greenPassed": 4
+    },
+    "controllerPassed": 5,
+    "foundationResources": 54,
+    "independentReview": "GO"
+  },
+  "m2": {
+    "r13InvocationAttempts": 0,
+    "r13Failure": "ReservedConcurrentExecutions 1 would reduce minimum unreserved execution below 10",
+    "r21ReadOnlyPreflight": "FAILED_ROLE_TAGS_INVALID_BEFORE_MUTATION",
+    "r21IamMutations": 0,
+    "actualCloneCatalogAccepted": false
+  },
+  "long15": {
+    "r15": "FAILED_FULL_DRAFT_NOT_FORWARDED_BEFORE_HTTP",
+    "r16": "FAILED_OBSERVER_SOURCE_NOT_FORWARDED_BEFORE_HTTP",
+    "r15HttpCalls": 0,
+    "r16HttpCalls": 0,
+    "r17FullCompilerPreflight": "IN_PROGRESS",
+    "real15PageAcceptance": false
+  },
+  "productionReady": false,
+  "productionChanges": 0
+}

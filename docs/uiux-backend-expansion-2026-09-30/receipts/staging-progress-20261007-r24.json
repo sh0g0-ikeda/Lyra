@@ -1,0 +1,61 @@
+{
+  "recordedAt": "2026-10-06T15:33:40.870Z",
+  "sourceSha": "03bc182b18686808cfba1f29c101c4e1b4deef48",
+  "long15": {
+    "offlineActualClientFullFixture": true,
+    "sourcePacks": 2,
+    "sourceUnits": 137,
+    "ownerPages": 15,
+    "offlineAtomicCompletion": true,
+    "realProviderStatus": "rejected",
+    "httpCalls": 2,
+    "usage": {
+      "inputTokens": 8903,
+      "outputTokens": 13246,
+      "reasoningTokens": 8680
+    },
+    "compilerError": "Global source requirement context must preserve the complete trimmed source unit",
+    "beginCommitCalls": 0,
+    "updatedPages": 0,
+    "updatedPanels": 0,
+    "providerFallbackAccepted": false,
+    "existingUserDataUsed": false,
+    "creditMutation": false,
+    "rootCause": "global context locator does not cover complete trimmed trusted source unit; exact guard rejects before persistence",
+    "responsePack1Passed": true,
+    "responsePack2Failed": true,
+    "failedUnitIdentified": false,
+    "productFix": "pending"
+  },
+  "m2": {
+    "r14Status": "FAILED_CLEANED",
+    "r14InvocationAttempts": 0,
+    "r14RemovalVerified": true,
+    "r14FullAbsenceVerified": false,
+    "r14StackTombstone": true,
+    "r14Failure": "Lambda exact tags expected owner4 but AWS returned template/owner8 plus exact CloudFormation3",
+    "r15FreshNonce": true,
+    "r15FunctionTagsRegression": {
+      "red": 3,
+      "green": 7
+    },
+    "r15LocalTests": 73,
+    "r15PreviousCleanupPrerequisite": true,
+    "r15Started": true,
+    "actualCatalogAcceptance": false
+  },
+  "storage": {
+    "currentStageInspection": "prepared all true; exact lifecycle3 rules verified",
+    "parentReviewRejectedUnusedGuard": true,
+    "stsBudgetRegressionFixed": true,
+    "offlineTests": 11,
+    "oneoffRuntimeAcceptance": false
+  },
+  "originalProtection": {
+    "head": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "unchangedDirtyPaths": 28,
+    "checkedAt": "2026-10-06T15:31:12.818Z"
+  },
+  "productionReady": false,
+  "productionChanges": 0
+}

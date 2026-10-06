@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-06T14:09:11.608Z",
+  "sourceSha": "03bc182b18686808cfba1f29c101c4e1b4deef48",
+  "ci": {
+    "runId": "37438403960",
+    "status": "SUCCESS",
+    "syntheticDatabaseProofOnly": true
+  },
+  "stage": {
+    "imageDigest": "sha256:5d6fd0e949ac31f681511a1f6c3517d21aad81387be3958ee082b66950fbfed1",
+    "webConfig": "PASS_CORRECTED_STAGING_WEB_IMAGE",
+    "apiDesired": 1,
+    "workersDesired": 0,
+    "autoMigration": false,
+    "googleSignin": true,
+    "googleLinking": true,
+    "googleIos": false,
+    "expirySchedule": "ENABLED",
+    "productionChanges": 0
+  },
+  "webAcceptance": {
+    "normalLoginBeforeLink": "PASS",
+    "explicitGoogleLink": "PASS",
+    "googleLoginAfterLink": "PASS",
+    "normalPasswordLoginAfterLink": "PASS",
+    "incorrectPasswordRejectedAndRecovered": "PASS",
+    "testWorkCount": 4,
+    "testCreditBalance": 9,
+    "savedDraftRetained": true,
+    "googleLinkCancellationRetainsLogin": "PASS",
+    "singleNativeCognitoUserLinked": true,
+    "separateGoogleUserCount": 0,
+    "internalLyraUserIdDirectlyMeasured": false,
+    "savedExistingTestDraftWithoutContentChanges": 1,
+    "imageGeneration": 0,
+    "purchases": 0,
+    "deletions": 0
+  },
+  "db": {
+    "r6ReadOnlyBaseline": "PASS",
+    "r8Cleanup": "PASS_CLEANED",
+    "r12": "FAILED_CLEANED_BEFORE_MUTATION",
+    "r13": "READ_ONLY_PROBE_NOT_STARTED_CLEANUP_PENDING",
+    "r13InvocationAttempts": 0,
+    "actualLineageCatalogAcceptance": false,
+    "sqlWrites": 0,
+    "migrations": 0,
+    "mixedOldNewWriters": false,
+    "rollbackAcceptance": false
+  },
+  "long15": {
+    "offlineActualService": "PASS_15_PAGES_60_PANELS",
+    "beforeCommitFailureAtomicity": "PASS",
+    "fullRealApiAcceptance": false,
+    "previousP9ApprovalExhausted": true
+  },
+  "originalCheckout": {
+    "head": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "protectedPaths": 28,
+    "changedProtectedPaths": [],
+    "checkedAt": "2026-10-06T14:08:22.606Z",
+    "discarded": false
+  },
+  "remaining": [
+    "Actual cloned production lineage/catalog and C0 runtime compatibility",
+    "Mixed old/new writer and rollback acceptance without migration046",
+    "Full real15-page semantic and durable stage job acceptance",
+    "Storage/billing/lifecycle real acceptance",
+    "Android and iOS physical acceptance; iOS Google policy/client gate"
+  ],
+  "productionReady": false
+}

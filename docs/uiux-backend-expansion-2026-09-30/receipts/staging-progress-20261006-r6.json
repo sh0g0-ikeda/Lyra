@@ -1,0 +1,82 @@
+{
+  "schema": "lyra.staging-progress-20261006-r6",
+  "recordedAt": "2026-10-06T08:05:16.107Z",
+  "reviewedHead": "9cde44dcc9c18fcb0a5e4b4a81222c9fe0681f3a",
+  "publicPr": {
+    "url": "https://github.com/sh0g0-ikeda/Lyra/pull/216",
+    "ordinaryFastForward": true,
+    "headReadback": "9cde44dcc9c18fcb0a5e4b4a81222c9fe0681f3a",
+    "bodyReadbackMatched": true,
+    "previousReceiptSha256": "7373eba60a89ae24b84c35649ea1e6d3915b4f2df3e224032e1097430b9dcec8"
+  },
+  "publicCi": {
+    "runId": 37430987309,
+    "status": "COMPLETED",
+    "conclusion": "FAILED",
+    "liveMetadataConfirmedThisTurn": true,
+    "mobile": "PASSED",
+    "backendVitest": "PASSED",
+    "productionPgIntegration": "PASSED",
+    "backendBun": "PASSED",
+    "apiInventory": "PASSED",
+    "migrations": "PASSED",
+    "invariants": "PASSED",
+    "backendBuild": "PASSED",
+    "webLint": "PASSED",
+    "webBuild": "PASSED",
+    "browserSmoke": {
+      "passed": 75,
+      "skipped": 5,
+      "failed": 3,
+      "rawLogSha256": "53ef05f8f034cc002cbbcdd5b7c43fc9b7bc7683af779e3b342f3927690cf81c",
+      "status": "FAILED",
+      "affected": [
+        "desktop workspace/story cancellation",
+        "character/workspace cancellation",
+        "external organization membership revocation"
+      ],
+      "cause": "UNDER_INVESTIGATION",
+      "remediation": "NOT_YET_VERIFIED"
+    }
+  },
+  "executionLogProof": {
+    "status": "PASS_CLEANED",
+    "completedAt": "2026-10-06T07:53:34.249Z",
+    "receiptSha256": "f13eeb92c85da19004ba74db2c2cf765c02070990b39b328b5010947e21e50be",
+    "positiveAllowedCount": 2,
+    "negativeDeniedCount": 2,
+    "invocationAttempts": 1,
+    "ownedResourcesRemoved": 5,
+    "absenceVerified": true,
+    "authorization": "existing broad human nonproduction authorization plus exact action auto-review approval; no additional human request 16 was issued",
+    "databaseConnections": 0,
+    "secretValueReads": 0,
+    "vpcChanges": 0,
+    "productionMutations": 0,
+    "permanentDrainAcceptance": "NOT_RUN"
+  },
+  "m2": {
+    "representativeBaseline": "NOT_RUN",
+    "migration": "NOT_RUN",
+    "oldWriterAcceptance": "NOT_RUN",
+    "rollback": "NOT_RUN",
+    "endpointProposal": "LOCAL_REVIEWED_ONLY"
+  },
+  "physical": {
+    "android": "NOT_RUN",
+    "ios": "NOT_RUN",
+    "apkBuild": "READY_3b328df",
+    "googleNewLogin": "NOT_ACCEPTED",
+    "googleExplicitLink": "NOT_ACCEPTED"
+  },
+  "preservedWork": {
+    "checkedAt": "2026-10-06T08:02:18.433Z",
+    "originalHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "baselineDirtyPaths": 28,
+    "changedBaselinePaths": 0
+  },
+  "productionReady": false,
+  "productionChanges": 0,
+  "mainMerges": 0,
+  "storeSubmissions": 0
+}

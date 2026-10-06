@@ -1,0 +1,90 @@
+{
+  "recordedAt": "2026-10-06T15:54:25.774Z",
+  "sourceSha": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+  "localProductCommits": [
+    {
+      "sha": "b6dee31d8e6a3f95e218a10d037d4f1b8c92b886",
+      "change": "staging lifecycle preserves saved image versions and erasure markers"
+    },
+    {
+      "sha": "ab34933e6453569e091a63b539d1cd797b3fbc9e",
+      "change": "global source context copied deterministically from trusted source unit"
+    }
+  ],
+  "stageProductSha": "03bc182b18686808cfba1f29c101c4e1b4deef48",
+  "sourceCompilerChecks": {
+    "red": 4,
+    "tests": 11,
+    "adjacentTests": 16,
+    "typecheck": true,
+    "backendBuild": true
+  },
+  "storage": {
+    "status": "PASS",
+    "runtimeSource": "03bc182",
+    "helperSha256": "5b5f2a2cf639be33582b5b3aa9b4dbffb4d658953d766e2978a2d7398a3bc6b0",
+    "api": true,
+    "worker": true,
+    "sameKeyRejected": true,
+    "exactImageVersionDeleted": true,
+    "markerRetained": true,
+    "ambientImageWritesDenied": true,
+    "workerImageRoleDenied": true,
+    "dbAccess": false,
+    "providerCalls": 0,
+    "earlierAttempt": {
+      "status": "FAILED_BEFORE_WRITES",
+      "reason": "direct client-sts import absent; current SDK packages STS under nested-clients/sts",
+      "workerLaunched": false
+    },
+    "serviceReadback": {
+      "checkedAt": "2026-10-06T15:51Z",
+      "api": 1,
+      "generation": 0,
+      "export": 0,
+      "deletion": 0
+    }
+  },
+  "long15": {
+    "status": "failed_before_or_during_acceptance",
+    "httpCalls": 1,
+    "usage": {
+      "inputTokens": 4648,
+      "outputTokens": 7019,
+      "reasoningTokens": 4871
+    },
+    "productFailure": "Source requirement referenced an invalid source span",
+    "acceptanceFailure": "TRACE_SOURCE_UNIT_COVERAGE_INCOMPLETE",
+    "invalidUnitIdentified": false,
+    "providerBodyCaptured": false,
+    "traceMaskedEarlierFailure": true,
+    "commitCalls": 0,
+    "creditMutationCalls": 0,
+    "existingUserDataUsed": false,
+    "accepted": false
+  },
+  "m2": {
+    "status": "FAILED_CLEANED",
+    "invocationAttempts": 1,
+    "readOnlyProbe": false,
+    "catalogAccepted": false,
+    "removalVerified": true,
+    "stackTombstone": true,
+    "fullAbsenceVerified": false,
+    "concurrencyStates": [
+      0,
+      "shared-controlled-oneoff",
+      0
+    ],
+    "cleanupProblems": [],
+    "unconfirmed": [],
+    "failure": "M2_EXECUTION_FAILED",
+    "secretValuesReadOnPc": 0,
+    "sqlWrites": 0,
+    "diagnosticGap": "FunctionError or payload validation reason was not retained before raw payload deletion"
+  },
+  "productionReady": false,
+  "productionChanges": 0,
+  "mainMerge": false,
+  "storeSubmission": false
+}
