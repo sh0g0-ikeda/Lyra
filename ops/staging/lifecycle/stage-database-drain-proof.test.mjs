@@ -130,7 +130,7 @@ test('Bun override source guards the exact stage database and emits only the pre
 const databaseUrl = process.env.DATABASE_URL;
 const runPostgres = process.env.APP_ENV === 'test'
   && typeof databaseUrl === 'string'
-  && /^postgres(?:ql)?:\/\/[^/]+@(?:127\.0\.0\.1|localhost):15433\/lyra_test(?:[?]|$)/u.test(databaseUrl);
+  && /^postgres(?:ql)?:\/\/[^/]+@(?:127\.0\.0\.1|localhost):(?:15433|15435)\/lyra_test(?:[?]|$)/u.test(databaseUrl);
 
 test('schema 047 fixtures produce the exact seven fail-closed counters without persisting data', {
   skip: !runPostgres,

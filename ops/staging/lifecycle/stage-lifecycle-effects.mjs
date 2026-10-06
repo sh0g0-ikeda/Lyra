@@ -13,6 +13,14 @@ export function shouldCollectDatabaseDrainProof({action,nowUtc,state,inventory})
 
 export async function performLifecycleDecision({decision,now,writeState,perform}) {
   if(!decision.mutates) return;
+  // A deterministic RunTask retry is safe only after its start timestamp is sealed.
+  if (decision.action === 'run-google-expiry-cleanup') {
+    const startedAt = decision.nextState.googleExpiryCleanupStartedAt;
+    if (typeof startedAt !== 'string' || !Number.isFinite(Date.parse(startedAt))) {
+      throw Error('GOOGLE_EXPIRY_CLEANUP_INTENT_INVALID');
+    }
+    await writeState({ ...decision.nextState, lastAction: decision.action, lastCheckedAt: now });
+  }
   // StopDB may succeed even if the subsequent S3 write fails. Persist the sealed
   // proof and intent first so the next invocation can safely resume cleanup.
   if(decision.action==='stop-database') {

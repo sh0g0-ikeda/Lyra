@@ -7,6 +7,7 @@ import { Pool } from 'pg';
 import { DATABASE_DRAIN_PROOF_QUERY } from './stage-database-drain-proof.mjs';
 import {
   buildStageDatabaseDrainDbContract,
+  buildStageDatabaseDrainDbContractTransition,
   STAGE_DATABASE_DRAIN_QUALIFIED_QUERY,
 } from './stage-database-drain-db-contract.mjs';
 
@@ -63,13 +64,32 @@ test('install SQL exposes only the exact counter function to the fixed stage rea
   assert.doesNotMatch(contract.verifySql, /NOT installer_is_superuser\s+AND\s+\(\s+role_membership_count <> 2/u);
   assert.match(contract.verifySql, /AND prosrc = /u);
   assert.doesNotMatch(contract.installSql, /GRANT SELECT ON (?:ALL TABLES|TABLE public\.[a-z_]+ TO lyra_stage_drain_reader)/u);
-  assert.doesNotMatch(contract.teardownSql, /CASCADE|DROP TABLE|DROP DATABASE|TRUNCATE/u);
+  assert.doesNotMatch(contract.teardownSql, /CASCADE|DROP TABLE|DROP DATABASE|TRUNCATE TABLE/u);
+});
+
+test('v1 fully validated contract upgrades to v2 and rolls back within one transaction', () => {
+  const transition = buildStageDatabaseDrainDbContractTransition();
+  for (const sql of [transition.upgradeV1ToV2Sql, transition.rollbackV2ToV1Sql]) {
+    assert.match(sql, /^BEGIN;/u);
+    assert.match(sql, /COMMIT;$/u);
+    assert.match(sql, /RESET ROLE;\nREVOKE lyra_stage_drain_owner FROM lyra_staging;/u);
+    assert.match(sql, /DROP FUNCTION lyra_stage_ops\.collect_database_drain_counts\(\)/u);
+    assert.match(sql, /STAGE_DATABASE_DRAIN_FUNCTION_INVALID/u);
+    assert.ok(
+      sql.indexOf(' ON TABLE public.oauth_link_challenges ') < sql.indexOf('SET LOCAL ROLE lyra_stage_drain_owner;'),
+      'column privilege mutation must execute before switching to the bounded function owner role',
+    );
+    assert.doesNotMatch(sql, /CASCADE|DROP TABLE|DROP DATABASE|TRUNCATE TABLE/u);
+  }
+  assert.match(transition.upgradeV1ToV2Sql, /GRANT SELECT \(status, exchange_material\) ON TABLE public\.oauth_link_challenges/u);
+  assert.match(transition.upgradeV1ToV2Sql, /pending_google_identity_link_challenges text/u);
+  assert.match(transition.rollbackV2ToV1Sql, /REVOKE SELECT \(status, exchange_material\) ON TABLE public\.oauth_link_challenges/u);
 });
 
 const databaseUrl = process.env.DATABASE_URL;
 const runPostgres = process.env.APP_ENV === 'test'
   && typeof databaseUrl === 'string'
-  && /^postgres(?:ql)?:\/\/[^/]+@(?:127\.0\.0\.1|localhost):15433\/lyra_test(?:[?]|$)/u.test(databaseUrl);
+  && /^postgres(?:ql)?:\/\/[^/]+@(?:127\.0\.0\.1|localhost):(?:15433|15435)\/lyra_test(?:[?]|$)/u.test(databaseUrl);
 
 test('local PostgreSQL proves the reader can execute only the counter function and teardown is scoped', {
   skip: !runPostgres,
@@ -87,6 +107,49 @@ test('local PostgreSQL proves the reader can execute only the counter function a
        VALUES ($1, $2, $3)`,
       [rlsUserId, `stage-drain-rls-${rlsUserId}`, `stage-drain-rls-${rlsUserId}@example.invalid`],
     );
+    const googleLinkFixtures = [
+      { status: 'pending', exchangeMaterial: 'p'.repeat(64), consumed: false },
+      { status: 'processing', exchangeMaterial: 'r'.repeat(64), consumed: true },
+      // The persisted terminal status is `linked`; there is no `completed` challenge status.
+      { status: 'linked', exchangeMaterial: 'l'.repeat(64), consumed: true },
+      { status: 'pending', exchangeMaterial: null, consumed: false },
+    ];
+    for (const [index, fixture] of googleLinkFixtures.entries()) {
+      await client.query(
+        `INSERT INTO public.oauth_link_challenges
+          (id, user_id, provider, request_key, session_hash, state_hash, email_hash,
+           native_subject, native_username, exchange_material, platform, status,
+           created_at, expires_at, consumed_at)
+         VALUES ($1, $2, 'Google', $3, $4, $5, $6, $7, $8, $9, 'web', $10,
+           NOW(), NOW() + INTERVAL '5 minutes', CASE WHEN $11 THEN NOW() ELSE NULL END)`,
+        [
+          randomUUID(),
+          rlsUserId,
+          randomUUID(),
+          '1'.repeat(64),
+          String(index + 2).repeat(64),
+          'a'.repeat(64),
+          `stage-drain-subject-${index}`,
+          `stage-drain-username-${index}`,
+          fixture.exchangeMaterial,
+          fixture.status,
+          fixture.consumed,
+        ],
+      );
+    }
+    const seededGoogleLinkRows = await client.query(
+      `SELECT status, exchange_material IS NOT NULL AS has_exchange_material
+       FROM public.oauth_link_challenges
+       WHERE user_id = $1
+       ORDER BY status, has_exchange_material`,
+      [rlsUserId],
+    );
+    assert.deepEqual(seededGoogleLinkRows.rows, [
+      { status: 'linked', has_exchange_material: true },
+      { status: 'pending', has_exchange_material: false },
+      { status: 'pending', has_exchange_material: true },
+      { status: 'processing', has_exchange_material: true },
+    ]);
     await client.query(
       `INSERT INTO public.generation_jobs (id, user_id, job_type, status, generation_mode, credit_cost, params)
        VALUES ($1, $2, 'entity_generate', 'queued', 'standard', 0, '{}'::jsonb)`,
@@ -106,6 +169,7 @@ test('local PostgreSQL proves the reader can execute only the counter function a
       'mobile_push_notification_outbox',
       'mobile_push_tokens',
       'credit_ledger',
+      'oauth_link_challenges',
     ]) {
       await client.query(`GRANT SELECT ON TABLE public.${relation} TO lyra_staging WITH GRANT OPTION`);
     }
@@ -142,6 +206,34 @@ test('local PostgreSQL proves the reader can execute only the counter function a
     ]);
     await client.query(localize(contract.verifySql));
 
+    const transition = buildStageDatabaseDrainDbContractTransition();
+    const insideExistingTransaction = (sql) => {
+      const newline = String.fromCharCode(10);
+      const prefix = 'BEGIN;' + newline;
+      const suffix = newline + 'COMMIT;';
+      assert.ok(sql.startsWith(prefix));
+      assert.ok(sql.endsWith(suffix));
+      return sql.slice(prefix.length, -suffix.length);
+    };
+    const upgradeSql = localize(insideExistingTransaction(transition.upgradeV1ToV2Sql));
+    const postUpgradeVerifyAt = upgradeSql.lastIndexOf(String.fromCharCode(10) + 'DO $verify$');
+    assert.ok(postUpgradeVerifyAt > 0);
+    await client.query(upgradeSql.slice(0, postUpgradeVerifyAt));
+    assert.deepEqual(await readMemberships(), [
+      { granted_role: 'lyra_stage_drain_owner', member_role: 'lyra_staging', grantor: 10, admin_option: true, inherit_option: false, set_option: false },
+      { granted_role: 'lyra_stage_drain_reader', member_role: 'lyra_staging', grantor: 10, admin_option: true, inherit_option: false, set_option: false },
+    ]);
+    await client.query(upgradeSql.slice(postUpgradeVerifyAt));
+    const v2Contract = buildStageDatabaseDrainDbContract(password, { proofSchemaVersion: 2 });
+    await client.query('SET LOCAL SESSION AUTHORIZATION lyra_stage_drain_reader');
+    const v2Proof = await client.query(v2Contract.functionQuery);
+    assert.equal(v2Proof.rows.length, 1);
+    assert.equal(v2Proof.rows[0].pending_google_identity_link_challenges, '2');
+    await client.query('RESET SESSION AUTHORIZATION');
+    await client.query('SET LOCAL SESSION AUTHORIZATION lyra_staging');
+    await client.query(localize(insideExistingTransaction(transition.rollbackV2ToV1Sql)));
+    await client.query(localize(contract.verifySql));
+
     await client.query('RESET SESSION AUTHORIZATION');
     await client.query('SET LOCAL SESSION AUTHORIZATION lyra_stage_drain_reader');
     const proof = await client.query(contract.functionQuery);
@@ -157,7 +249,7 @@ test('local PostgreSQL proves the reader can execute only the counter function a
       pg_catalog.has_function_privilege(current_user, 'lyra_stage_ops.collect_database_drain_counts()', 'EXECUTE') AS function_execute`);
     assert.deepEqual(privileges.rows, [{ table_select: false, function_execute: true }]);
     await client.query('SAVEPOINT denied_table_read');
-    await assert.rejects(client.query('SELECT id FROM public.generation_jobs LIMIT 1'), /permission denied/u);
+    await assert.rejects(client.query('SELECT id FROM public.generation_jobs LIMIT 1'), (error) => error?.code === '42501');
     await client.query('ROLLBACK TO SAVEPOINT denied_table_read');
     await client.query('RESET SESSION AUTHORIZATION');
 
@@ -171,7 +263,7 @@ test('local PostgreSQL proves the reader can execute only the counter function a
     await client.query('SAVEPOINT hidden_active_row');
     await assert.rejects(
       client.query(contract.functionQuery),
-      /query would be affected by row-level security policy/u,
+      (error) => error?.code === '42501',
     );
     await client.query('ROLLBACK TO SAVEPOINT hidden_active_row');
     await client.query('RESET SESSION AUTHORIZATION');

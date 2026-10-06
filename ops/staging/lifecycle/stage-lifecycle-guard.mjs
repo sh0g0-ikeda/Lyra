@@ -8,12 +8,21 @@ import { CloudFormationClient, DeleteStackCommand, DescribeStacksCommand } from 
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import {
   DescribeServicesCommand,
+  DescribeTasksCommand,
   ECSClient,
   ListTagsForResourceCommand as ListEcsTagsCommand,
   ListTasksCommand,
+  RunTaskCommand,
   UpdateServiceCommand,
 } from '@aws-sdk/client-ecs';
 import { DescribeDBInstancesCommand, RDSClient, StopDBInstanceCommand } from '@aws-sdk/client-rds';
+import {
+  GetScheduleCommand,
+  GetScheduleGroupCommand,
+  ListTagsForResourceCommand as ListSchedulerTagsCommand,
+  SchedulerClient,
+  UpdateScheduleCommand,
+} from '@aws-sdk/client-scheduler';
 import { GetResourcesCommand, ResourceGroupsTaggingAPIClient } from '@aws-sdk/client-resource-groups-tagging-api';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { GetQueueAttributesCommand, ListQueueTagsCommand, SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
@@ -29,6 +38,11 @@ import {
 } from './stage-lifecycle-guard-core.mjs';
 import { createStageDatabaseDrainInvokePort } from './stage-database-drain-invoke-port.mjs';
 import { performLifecycleDecision, shouldCollectDatabaseDrainProof } from './stage-lifecycle-effects.mjs';
+import {
+  assessGoogleExpiryAwsInventory,
+  buildGoogleExpiryRunTaskRequest,
+  buildGoogleExpiryTaskRecord,
+} from './stage-google-expiry-aws-contract.mjs';
 
 const account = '452284481392';
 const region = 'ap-northeast-1';
@@ -41,6 +55,7 @@ const successKey = 'lifecycle/guard-success.json';
 const errorKey = 'lifecycle/guard-last-error.json';
 const databaseDrainProofKey = 'lifecycle/database-drain-proof.json';
 const databaseDrainCleanupReceiptKey = 'lifecycle/database-drain-cleanup.json';
+const googleExpiryTaskRecordKey = 'lifecycle/google-expiry-task.json';
 const dlqUrl = `https://sqs.${region}.amazonaws.com/${account}/${prefix}-lifecycle-dlq`;
 const exactTargetArn = 'arn:aws:application-autoscaling:ap-northeast-1:452284481392:scalable-target/0ec516a28b068004442db2e9a491f8726c9b';
 const services = ['api', 'generation', 'export', 'deletion'];
@@ -60,6 +75,7 @@ const cfn = new CloudFormationClient({ region });
 const s3 = new S3Client({ region });
 const tagging = new ResourceGroupsTaggingAPIClient({ region });
 const proofLambda = new LambdaClient({ region });
+const scheduler = new SchedulerClient({ region });
 const databaseDrainProofPort = createStageDatabaseDrainInvokePort({
   functionArn: process.env.DATABASE_DRAIN_EXECUTOR_ARN,
   lambda: proofLambda,
@@ -103,11 +119,79 @@ async function describeStack(name) {
     const response = await cfn.send(new DescribeStacksCommand({ StackName: name }));
     const stack = response.Stacks?.[0];
     if (!stack?.StackStatus) throw new Error('STACK_INVENTORY_INCOMPLETE');
-    return { exists: true, status: stack.StackStatus, owned: tagsMatch(stack.Tags) };
+    return {
+      exists: true,
+      status: stack.StackStatus,
+      owned: tagsMatch(stack.Tags),
+      parameters: mapStackValues(stack.Parameters, 'ParameterKey', 'ParameterValue'),
+      outputs: mapStackValues(stack.Outputs, 'OutputKey', 'OutputValue'),
+    };
   } catch (error) {
     if (isCloudFormationStackNotFound(error, name)) return { exists: false };
     throw error;
   }
+}
+
+
+function mapStackValues(values, keyName, valueName) {
+  if (!Array.isArray(values)) return {};
+  const result = {};
+  for (const item of values) {
+    const key = item?.[keyName];
+    const value = item?.[valueName];
+    if (typeof key !== 'string' || typeof value !== 'string' || Object.hasOwn(result, key)) {
+      throw new Error('STACK_INVENTORY_INCOMPLETE');
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+async function collectGoogleExpiryInventory(runtimeStack, foundationStack, activeTaskArns, lifecycleState) {
+  if (runtimeStack.exists === false) return { configured: false, activeTaskCount: 0 };
+  if (runtimeStack.parameters?.GoogleIdentityExpiryEnabled !== 'true') {
+    return assessGoogleExpiryAwsInventory({ runtimeStack, foundationStack });
+  }
+  const groupName = runtimeStack.outputs.GoogleLinkExpiryScheduleGroupName;
+  const scheduleName = runtimeStack.outputs.GoogleLinkExpiryScheduleName;
+  if (typeof groupName !== 'string' || typeof scheduleName !== 'string') {
+    throw new Error('GOOGLE_EXPIRY_CONFIGURATION_INVALID');
+  }
+  const [group, scheduleValue, taskRecord] = await Promise.all([
+    scheduler.send(new GetScheduleGroupCommand({ Name: groupName })),
+    scheduler.send(new GetScheduleCommand({ Name: scheduleName, GroupName: groupName })),
+    readJson(googleExpiryTaskRecordKey),
+  ]);
+  const groupTags = await scheduler.send(new ListSchedulerTagsCommand({ ResourceArn: group.Arn }));
+  const activeDescriptions = activeTaskArns.length === 0
+    ? { tasks: [], failures: [] }
+    : (await ecs.send(new DescribeTasksCommand({ cluster, tasks: activeTaskArns })));
+  if (
+    !Array.isArray(activeDescriptions.tasks)
+    || (activeDescriptions.failures?.length ?? 0) !== 0
+    || (activeDescriptions.tasks?.length ?? 0) !== activeTaskArns.length
+  ) throw new Error('GOOGLE_EXPIRY_TASK_INVALID');
+  const expiryDefinitionArn = runtimeStack.outputs.GoogleLinkExpiryTaskDefinitionArn;
+  const activeTasks = activeDescriptions.tasks.filter(({ taskDefinitionArn }) => taskDefinitionArn === expiryDefinitionArn);
+  let task = null;
+  if (taskRecord !== null && lifecycleState.googleExpiryCleanupCompletedAt === null) {
+    const described = await ecs.send(new DescribeTasksCommand({ cluster, tasks: [taskRecord.taskArn] }));
+    if ((described.failures?.length ?? 0) !== 0 || described.tasks?.length !== 1) {
+      throw new Error('GOOGLE_EXPIRY_TASK_INVALID');
+    }
+    [task] = described.tasks;
+  }
+  return assessGoogleExpiryAwsInventory({
+    runtimeStack,
+    foundationStack,
+    group,
+    groupTags,
+    schedule: scheduleValue,
+    taskRecord,
+    task,
+    activeTasks,
+    sealedCompletedAtUtc: lifecycleState.googleExpiryCleanupCompletedAt,
+  });
 }
 
 async function serviceInventory(runtimeExists) {
@@ -224,7 +308,7 @@ async function listOwnedDatabaseArns() {
   return result;
 }
 
-async function collectInventory() {
+async function collectInventory(lifecycleState) {
   const [runtimeStack, foundationStack, proofExecutorStack] = await Promise.all([
     describeStack(`${prefix}-runtime`),
     describeStack(`${prefix}-foundation`),
@@ -260,7 +344,14 @@ async function collectInventory() {
   const taskArns = [...runningTasks.taskArns, ...pendingTasks.taskArns];
   if (taskArns.some((arn) => typeof arn !== 'string' || !arn.startsWith(`arn:aws:ecs:${region}:${account}:task/${cluster}/`) || !/^[0-9a-f]{32}$/u.test(arn.split('/').at(-1)))) throw new Error('TASK_INVENTORY_IDENTITY_INVALID');
   const totalTaskCount = new Set(taskArns).size;
-  const taskCounts = { clusterTaskCount: totalTaskCount, readOnlyProofTaskCount: 0, unknownClusterTaskCount: totalTaskCount };
+  const googleExpiry = await collectGoogleExpiryInventory(runtimeStack, foundationStack, taskArns, lifecycleState);
+  const googleExpiryTaskCount = googleExpiry.activeTaskCount ?? 0;
+  const taskCounts = {
+    clusterTaskCount: totalTaskCount,
+    readOnlyProofTaskCount: 0,
+    googleExpiryTaskCount,
+    unknownClusterTaskCount: totalTaskCount - googleExpiryTaskCount,
+  };
   for (const [name, service] of Object.entries(serviceState)) {
     if (!service.owned) throw new Error(`SERVICE_NOT_OWNED_${name}`);
   }
@@ -280,6 +371,7 @@ async function collectInventory() {
       proofExecutorStack,
       databaseDrainProof,
       databaseDrainCleanupReceipt,
+      googleExpiry,
       ...taskCounts,
     },
   };
@@ -307,6 +399,7 @@ function parseState(value) {
     'databaseStopRequested',
     'runtimeDeleteRequested',
     'foundationDeleteRequested',
+    'googleExpiryConfigured',
   ];
   if (!Number.isSafeInteger(merged.zeroStreak) || merged.zeroStreak < 0) throw new Error('STATE_INVALID');
   if (booleanNames.some((name) => typeof merged[name] !== 'boolean')) throw new Error('STATE_INVALID');
@@ -316,6 +409,9 @@ function parseState(value) {
     'workersStoppedAt',
     'databaseDrainProofObservedAt',
     'databaseContractCleanupObservedAt',
+    'googleExpiryScheduleDisabledAt',
+    'googleExpiryCleanupStartedAt',
+    'googleExpiryCleanupCompletedAt',
   ]) {
     if (merged[name] !== null && (
       typeof merged[name] !== 'string' ||
@@ -326,8 +422,38 @@ function parseState(value) {
   return Object.fromEntries(Object.keys(INITIAL_STATE).map((name) => [name, merged[name]]));
 }
 
-async function perform(action) {
-  if (action === 'stop-api') {
+async function perform(action, inventory, nextState) {
+  if (action === 'disable-google-expiry-schedule') {
+    const current = inventory.googleExpiry?.configuration?.schedule;
+    if (current?.State !== 'ENABLED') throw new Error('GOOGLE_EXPIRY_SCHEDULE_INVALID');
+    const input = {
+      Name: current.Name,
+      GroupName: current.GroupName,
+      State: 'DISABLED',
+      ScheduleExpression: current.ScheduleExpression,
+      FlexibleTimeWindow: current.FlexibleTimeWindow,
+      Target: current.Target,
+      ...(current.Description === undefined ? {} : { Description: current.Description }),
+      ...(current.StartDate === undefined ? {} : { StartDate: current.StartDate }),
+      ...(current.EndDate === undefined ? {} : { EndDate: current.EndDate }),
+      ...(current.KmsKeyArn === undefined ? {} : { KmsKeyArn: current.KmsKeyArn }),
+      ...(current.ScheduleExpressionTimezone === undefined ? {} : { ScheduleExpressionTimezone: current.ScheduleExpressionTimezone }),
+    };
+    await scheduler.send(new UpdateScheduleCommand(input));
+  } else if (action === 'run-google-expiry-cleanup') {
+    const startedAtUtc = nextState.googleExpiryCleanupStartedAt;
+    const request = buildGoogleExpiryRunTaskRequest(inventory.googleExpiry?.configuration, startedAtUtc);
+    const response = await ecs.send(new RunTaskCommand(request));
+    if (response.failures?.length !== 0 || response.tasks?.length !== 1) {
+      throw new Error('GOOGLE_EXPIRY_RUN_TASK_FAILED');
+    }
+    const record = buildGoogleExpiryTaskRecord(
+      response.tasks[0],
+      startedAtUtc,
+      inventory.googleExpiry.configuration.taskDefinitionArn,
+    );
+    await writeJson(googleExpiryTaskRecordKey, record);
+  } else if (action === 'stop-api') {
     await ecs.send(new UpdateServiceCommand({ cluster, service: `${prefix}-api`, desiredCount: 0 }));
   } else if (action === 'deregister-scaling') {
     await scaling.send(new DeregisterScalableTargetCommand({
@@ -374,7 +500,7 @@ export async function handler(event = {}, context = {}) {
     }
     const now = mode === 'inspect' && event.now ? event.now : new Date().toISOString();
     const state = mode === 'inspect' ? { ...INITIAL_STATE } : parseState(await readJson(stateKey));
-    const collected = await collectInventory();
+    const collected = await collectInventory(state);
     const inventory = collected.inventory;
     const decision = decideLifecycleAction({ mode, now, state, inventory });
     if (mode === 'inspect') return { mode, now, decision, inventory, mutated: false };
@@ -386,13 +512,22 @@ export async function handler(event = {}, context = {}) {
       const safePointAtUtc = decision.nextState.workersStoppedAt ?? decision.nextState.apiStoppedAt;
       if (safePointAtUtc === null) throw new Error('DATABASE_DRAIN_PROOF_SAFE_POINT_MISSING');
       await writeJson(stateKey, { ...decision.nextState, lastAction: action, lastCheckedAt: now });
-      const proof = await databaseDrainProofPort.collect({ nowUtc: now, safePointAtUtc });
+      const proof = await databaseDrainProofPort.collect({
+        nowUtc: now,
+        safePointAtUtc,
+        proofSchemaVersion: decision.nextState.googleExpiryConfigured === true ? 2 : 1,
+      });
       await writeJson(databaseDrainProofKey, proof);
       action = 'collect-db-drain-proof';
       mutated = true;
       details = { ...details, safePointAtUtc, observedAtUtc: proof.observedAtUtc };
     } else if (decision.mutates) {
-      await performLifecycleDecision({ decision, now, writeState: (value) => writeJson(stateKey, value), perform });
+      await performLifecycleDecision({
+        decision,
+        now,
+        writeState: (value) => writeJson(stateKey, value),
+        perform: (action) => perform(action, inventory, decision.nextState),
+      });
     }
     const recorded = { ...decision.nextState, lastAction: action, lastCheckedAt: now };
     if (action === 'success') {

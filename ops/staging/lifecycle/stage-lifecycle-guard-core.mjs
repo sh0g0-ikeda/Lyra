@@ -1,3 +1,5 @@
+import { assessGoogleExpiryLifecycle } from './stage-google-expiry-lifecycle.mjs';
+
 export const RUNTIME_DELETE_AT = '2026-10-09T16:30:00.000Z';
 export const GUARD_FAIL_AT = '2026-10-09T19:15:00.000Z';
 export const ACTIVE_START_AT = '2026-10-08T16:10:00.000Z';
@@ -12,13 +14,14 @@ const DATABASE_DRAIN_PROOF_TTL_MS = 5 * 60 * 1000;
 const DATABASE_DRAIN_PROOF_FUTURE_SKEW_MS = 30 * 1000;
 const MAX_DATABASE_DRAIN_COUNTER = 1_000_000;
 export const DATABASE_DRAIN_CLEANUP_SQL_SHA256 = 'bd03c6ae31dafb6a9cf209f85804235a5bfb4d90c3f84be4cd4c8b3d7943a3eb';
+export const DATABASE_DRAIN_CLEANUP_SQL_SHA256_V2 = '2e8a1934215bcbdcb3042e970762f2f6511e5ae4a95996f4e233d8d32c6c4217';
 const DATABASE_DRAIN_CLEANUP_ABSENT_KEYS = Object.freeze([
   'readerRole',
   'ownerRole',
   'schema',
   'function',
 ]);
-const DATABASE_DRAIN_COUNT_NAMES = Object.freeze([
+const DATABASE_DRAIN_COUNT_NAMES_V1 = Object.freeze([
   'activeGenerationJobs',
   'pendingGenerationDispatches',
   'activeEpisodeExportJobs',
@@ -26,6 +29,10 @@ const DATABASE_DRAIN_COUNT_NAMES = Object.freeze([
   'activeAccountDeletionRequests',
   'pendingPushDeliveries',
   'pendingCreditRefunds',
+]);
+const DATABASE_DRAIN_COUNT_NAMES_V2 = Object.freeze([
+  ...DATABASE_DRAIN_COUNT_NAMES_V1,
+  'pendingGoogleIdentityLinkChallenges',
 ]);
 
 export const INITIAL_STATE = Object.freeze({
@@ -43,6 +50,10 @@ export const INITIAL_STATE = Object.freeze({
   databaseContractCleanupObservedAt: null,
   runtimeDeleteRequested: false,
   foundationDeleteRequested: false,
+  googleExpiryConfigured: false,
+  googleExpiryScheduleDisabledAt: null,
+  googleExpiryCleanupStartedAt: null,
+  googleExpiryCleanupCompletedAt: null,
 });
 
 function result(action, state, details = {}) {
@@ -61,7 +72,7 @@ function serviceStopped(service) {
 }
 
 export function decideLifecycleAction({ mode, now, state, inventory }) {
-  const currentState = { ...INITIAL_STATE, ...state };
+  let currentState = { ...INITIAL_STATE, ...state };
   if (mode === 'inspect') return result('inspect', currentState, { inventory });
   if (mode !== 'active') return result('error-mode', currentState, { mode });
   const nowEpoch = Date.parse(now);
@@ -78,6 +89,7 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
       notBefore: currentState.workersStoppedAt ?? currentState.apiStoppedAt,
       expectedObservedAt: currentState.databaseDrainProofObservedAt,
       requireFresh: false,
+      expectedSchemaVersion: proofSchemaVersionForState(currentState),
     });
     if (
       !currentState.databaseStopRequested ||
@@ -97,6 +109,7 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
       expectedProofObservedAt: sealedProof.observedAtUtc,
       expectedCleanupObservedAt: currentState.databaseContractCleanupObservedAt,
       requireFresh: false,
+      expectedSchemaVersion: proofSchemaVersionForState(currentState),
     });
     if (!sealedCleanup.ready) return waitForDatabaseCleanup(currentState, sealedCleanup);
     return result('success', currentState);
@@ -114,6 +127,7 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
       notBefore: currentState.workersStoppedAt ?? currentState.apiStoppedAt,
       expectedObservedAt: currentState.databaseDrainProofObservedAt,
       requireFresh: false,
+      expectedSchemaVersion: proofSchemaVersionForState(currentState),
     });
     if (
       !currentState.databaseStopRequested
@@ -128,6 +142,7 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
       expectedProofObservedAt: sealedProof.observedAtUtc,
       expectedCleanupObservedAt: currentState.databaseContractCleanupObservedAt,
       requireFresh: false,
+      expectedSchemaVersion: proofSchemaVersionForState(currentState),
     });
     if (!sealedCleanup.ready) return waitForDatabaseCleanup(currentState, sealedCleanup);
     if (inventory.extraOwnedDatabaseIds.length > 0) {
@@ -153,6 +168,21 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
   if (currentState.foundationDeleteRequested) {
     if (inventory.foundationStack.status === 'DELETE_IN_PROGRESS') return result('wait-foundation-delete', currentState);
     if (inventory.foundationStack.status === 'DELETE_FAILED') return result('error-foundation-delete', currentState);
+  }
+
+  const googleExpiry = assessGoogleExpiryLifecycle({
+    nowUtc: now,
+    state: currentState,
+    inventory: inventory.googleExpiry ?? { configured: false },
+    apiStoppedAt: currentState.apiStoppedAt,
+  });
+  currentState = { ...currentState, ...googleExpiry.nextState };
+  currentState.googleExpiryConfigured = inventory.googleExpiry?.configured === true;
+  if (!googleExpiry.ready) {
+    return result(googleExpiry.action, currentState, {
+      proofSchemaVersion: googleExpiry.proofSchemaVersion,
+      ...(googleExpiry.notBeforeUtc === undefined ? {} : { notBeforeUtc: googleExpiry.notBeforeUtc }),
+    });
   }
 
   if (inventory.api.desired > 0) {
@@ -272,6 +302,7 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
     notBefore: workersStoppedState.workersStoppedAt,
     expectedObservedAt: databaseProofSealed ? currentState.databaseDrainProofObservedAt : null,
     requireFresh: !databaseProofSealed,
+    expectedSchemaVersion: proofSchemaVersionForState(currentState),
   });
   if (!postWorkerProof.ready) return waitForDatabaseDrain(workersStoppedState, postWorkerProof);
 
@@ -283,6 +314,7 @@ export function decideLifecycleAction({ mode, now, state, inventory }) {
       ? currentState.databaseContractCleanupObservedAt
       : null,
     requireFresh: !databaseCleanupSealed,
+    expectedSchemaVersion: proofSchemaVersionForState(currentState),
   });
   const proofSealedState = {
     ...workersStoppedState,
@@ -326,6 +358,7 @@ export function assessDatabaseDrainProof({
   notBefore,
   expectedObservedAt,
   requireFresh,
+  expectedSchemaVersion = 1,
 }) {
   if (proof === null || proof === undefined) return { ready: false, reason: 'missing' };
   if (!isPlainObject(proof) || !hasExactKeys(proof, [
@@ -333,15 +366,19 @@ export function assessDatabaseDrainProof({
   ])) return { ready: false, reason: 'invalid-schema' };
   if (
     proof.kind !== 'lyra-staging-db-drain-proof' ||
-    proof.schemaVersion !== 1 ||
+    proof.schemaVersion !== expectedSchemaVersion ||
     proof.stageId !== STAGE_ID ||
     proof.clusterId !== STAGE_CLUSTER_ID ||
     proof.databaseId !== STAGE_DATABASE_ID
   ) return { ready: false, reason: 'ownership' };
-  if (!isPlainObject(proof.counters) || !hasExactKeys(proof.counters, DATABASE_DRAIN_COUNT_NAMES)) {
+  const countNames = expectedSchemaVersion === 2
+    ? DATABASE_DRAIN_COUNT_NAMES_V2
+    : DATABASE_DRAIN_COUNT_NAMES_V1;
+  if (![1, 2].includes(expectedSchemaVersion)) return { ready: false, reason: 'invalid-schema' };
+  if (!isPlainObject(proof.counters) || !hasExactKeys(proof.counters, countNames)) {
     return { ready: false, reason: 'invalid-schema' };
   }
-  for (const name of DATABASE_DRAIN_COUNT_NAMES) {
+  for (const name of countNames) {
     const count = proof.counters[name];
     if (!Number.isSafeInteger(count) || count < 0 || count > MAX_DATABASE_DRAIN_COUNTER) {
       return { ready: false, reason: 'invalid-schema' };
@@ -364,7 +401,7 @@ export function assessDatabaseDrainProof({
   if (expectedObservedAt !== null && proof.observedAtUtc !== expectedObservedAt) {
     return { ready: false, reason: 'sealed-proof-mismatch' };
   }
-  const nonzero = DATABASE_DRAIN_COUNT_NAMES.filter((name) => proof.counters[name] !== 0);
+  const nonzero = countNames.filter((name) => proof.counters[name] !== 0);
   if (nonzero.length > 0) return { ready: false, reason: 'nonzero', nonzero };
   return { ready: true, reason: 'ready', observedAtUtc: proof.observedAtUtc };
 }
@@ -375,6 +412,7 @@ export function assessDatabaseDrainCleanup({
   expectedProofObservedAt,
   expectedCleanupObservedAt,
   requireFresh,
+  expectedSchemaVersion = 1,
 }) {
   if (receipt === null || receipt === undefined) return { ready: false, reason: 'missing' };
   if (!isPlainObject(receipt) || !hasExactKeys(receipt, [
@@ -389,13 +427,17 @@ export function assessDatabaseDrainCleanup({
   ])) return { ready: false, reason: 'invalid-schema' };
   if (
     receipt.kind !== 'lyra-staging-db-drain-cleanup'
-    || receipt.schemaVersion !== 1
+    || receipt.schemaVersion !== expectedSchemaVersion
     || receipt.stageId !== STAGE_ID
     || receipt.databaseId !== STAGE_DATABASE_ID
   ) return { ready: false, reason: 'ownership' };
+  const expectedTeardownHash = expectedSchemaVersion === 2
+    ? DATABASE_DRAIN_CLEANUP_SQL_SHA256_V2
+    : DATABASE_DRAIN_CLEANUP_SQL_SHA256;
+  if (![1, 2].includes(expectedSchemaVersion)) return { ready: false, reason: 'invalid-schema' };
   if (
     receipt.proofObservedAtUtc !== expectedProofObservedAt
-    || receipt.teardownSqlSha256 !== DATABASE_DRAIN_CLEANUP_SQL_SHA256
+    || receipt.teardownSqlSha256 !== expectedTeardownHash
   ) return { ready: false, reason: 'sealed-cleanup-mismatch' };
   if (
     !isPlainObject(receipt.absent)
@@ -447,20 +489,27 @@ function assessPreWorkerProof(inventory, currentState, drainState, nowEpoch, dat
       : drainState.apiStoppedAt,
     expectedObservedAt: databaseProofSealed ? currentState.databaseDrainProofObservedAt : null,
     requireFresh: !databaseProofSealed,
+    expectedSchemaVersion: proofSchemaVersionForState(currentState),
   });
+}
+
+function proofSchemaVersionForState(state) {
+  return state.googleExpiryConfigured === true ? 2 : 1;
 }
 
 function readClusterTaskCounts(inventory) {
   const total = inventory.clusterTaskCount;
   const proof = inventory.readOnlyProofTaskCount ?? 0;
-  const unknown = inventory.unknownClusterTaskCount ?? total - proof;
+  const googleExpiry = inventory.googleExpiryTaskCount ?? 0;
+  const unknown = inventory.unknownClusterTaskCount ?? total - proof - googleExpiry;
   if (
     !Number.isSafeInteger(total) || total < 0
     || !Number.isSafeInteger(proof) || proof < 0
+    || !Number.isSafeInteger(googleExpiry) || googleExpiry < 0 || googleExpiry > 1
     || !Number.isSafeInteger(unknown) || unknown < 0
-    || proof + unknown !== total
+    || proof + googleExpiry + unknown !== total
   ) return null;
-  return { proof, unknown };
+  return { proof, googleExpiry, unknown };
 }
 
 function waitForDatabaseDrain(state, assessment) {

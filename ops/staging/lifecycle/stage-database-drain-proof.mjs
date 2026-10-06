@@ -2,14 +2,15 @@ const STAGE_ID = 'lyra-staging-20261003';
 const STAGE_CLUSTER_ID = `${STAGE_ID}-cluster`;
 const STAGE_DATABASE_ID = `${STAGE_ID}-db`;
 const PROOF_KIND = 'lyra-staging-db-drain-proof';
-const PROOF_SCHEMA_VERSION = 1;
+const PROOF_SCHEMA_VERSION_V1 = 1;
+const PROOF_SCHEMA_VERSION_V2 = 2;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 5_000;
 const MAX_STATEMENT_TIMEOUT_MS = 10_000;
 const MAX_COUNTER = 1_000_000;
 
 export const DATABASE_DRAIN_PROOF_LOG_PREFIX = 'LYRA_STAGE_DATABASE_DRAIN_PROOF ';
 
-const RESULT_COUNTERS = Object.freeze({
+const RESULT_COUNTERS_V1 = Object.freeze({
   active_generation_jobs: 'activeGenerationJobs',
   pending_generation_dispatches: 'pendingGenerationDispatches',
   active_episode_export_jobs: 'activeEpisodeExportJobs',
@@ -19,7 +20,12 @@ const RESULT_COUNTERS = Object.freeze({
   pending_credit_refunds: 'pendingCreditRefunds',
 });
 
-const RESULT_KEYS = Object.freeze(['observed_at', ...Object.keys(RESULT_COUNTERS)]);
+const RESULT_COUNTERS_V2 = Object.freeze({
+  ...RESULT_COUNTERS_V1,
+  pending_google_identity_link_challenges: 'pendingGoogleIdentityLinkChallenges',
+});
+const RESULT_KEYS_V1 = Object.freeze(['observed_at', ...Object.keys(RESULT_COUNTERS_V1)]);
+const RESULT_KEYS_V2 = Object.freeze(['observed_at', ...Object.keys(RESULT_COUNTERS_V2)]);
 
 export const DATABASE_DRAIN_PROOF_QUERY = `WITH
 active_generation AS (
@@ -145,6 +151,17 @@ CROSS JOIN active_account_deletion
 CROSS JOIN pending_push
 CROSS JOIN pending_credit_settlement`;
 
+export const DATABASE_DRAIN_PROOF_QUERY_V2 = DATABASE_DRAIN_PROOF_QUERY
+  .replace(
+    '\nSELECT\n  clock_timestamp() AS observed_at,',
+    ",\nactive_google_identity_link AS (\n  SELECT COUNT(*)::text AS count\n  FROM oauth_link_challenges\n  WHERE status IN ('pending', 'processing')\n    AND exchange_material IS NOT NULL\n)\nSELECT\n  clock_timestamp() AS observed_at,",
+  )
+  .replace(
+    '  pending_credit_settlement.count AS pending_credit_refunds\nFROM active_generation',
+    '  pending_credit_settlement.count AS pending_credit_refunds,\n  active_google_identity_link.count AS pending_google_identity_link_challenges\nFROM active_generation',
+  )
+  .concat('\nCROSS JOIN active_google_identity_link');
+
 export async function collectStageDatabaseDrainProof(
   transactionRunner,
   identity,
@@ -152,30 +169,35 @@ export async function collectStageDatabaseDrainProof(
 ) {
   assertIdentity(identity);
   const timeout = statementTimeout(options.statementTimeoutMs);
+  const schemaVersion = proofSchemaVersion(options.proofSchemaVersion);
+  const query = schemaVersion === 2 ? DATABASE_DRAIN_PROOF_QUERY_V2 : DATABASE_DRAIN_PROOF_QUERY;
   return transactionRunner.transaction(async (client) => {
     await client.query('SET TRANSACTION READ ONLY');
     await client.query(`SET LOCAL statement_timeout = '${timeout}ms'`);
-    const result = await client.query(DATABASE_DRAIN_PROOF_QUERY);
+    const result = await client.query(query);
     if (!isPlainRecord(result) || !Array.isArray(result.rows) || result.rows.length !== 1) {
       throw new Error('DATABASE_DRAIN_PROOF_RESULT_INVALID');
     }
-    return parseStageDatabaseDrainProofRow(result.rows[0], identity);
+    return parseStageDatabaseDrainProofRow(result.rows[0], identity, schemaVersion);
   });
 }
 
-export function parseStageDatabaseDrainProofRow(row, identity) {
+export function parseStageDatabaseDrainProofRow(row, identity, requestedSchemaVersion = 1) {
   assertIdentity(identity);
-  if (!isPlainRecord(row) || !hasExactKeys(row, RESULT_KEYS)) {
+  const schemaVersion = proofSchemaVersion(requestedSchemaVersion);
+  const resultCounters = schemaVersion === 2 ? RESULT_COUNTERS_V2 : RESULT_COUNTERS_V1;
+  const resultKeys = schemaVersion === 2 ? RESULT_KEYS_V2 : RESULT_KEYS_V1;
+  if (!isPlainRecord(row) || !hasExactKeys(row, resultKeys)) {
     throw new Error('DATABASE_DRAIN_PROOF_RESULT_INVALID');
   }
   const observedAtUtc = canonicalTimestamp(row.observed_at);
   const counters = {};
-  for (const [databaseName, proofName] of Object.entries(RESULT_COUNTERS)) {
+  for (const [databaseName, proofName] of Object.entries(resultCounters)) {
     counters[proofName] = parseCounter(row[databaseName]);
   }
   return {
     kind: PROOF_KIND,
-    schemaVersion: PROOF_SCHEMA_VERSION,
+    schemaVersion,
     ...identity,
     observedAtUtc,
     counters,
@@ -185,6 +207,9 @@ export function parseStageDatabaseDrainProofRow(row, identity) {
 export function buildStageDatabaseDrainProofBunSource(input) {
   assertIdentity(input);
   const timeout = statementTimeout(input?.statementTimeoutMs);
+  const schemaVersion = proofSchemaVersion(input?.proofSchemaVersion);
+  const resultCounters = schemaVersion === 2 ? RESULT_COUNTERS_V2 : RESULT_COUNTERS_V1;
+  const query = schemaVersion === 2 ? DATABASE_DRAIN_PROOF_QUERY_V2 : DATABASE_DRAIN_PROOF_QUERY;
   const databaseHost = requireDatabaseHost(input?.databaseHost, input.databaseId);
   const databaseName = requireDatabaseName(input?.databaseName);
   const serializedIdentity = JSON.stringify({
@@ -192,10 +217,10 @@ export function buildStageDatabaseDrainProofBunSource(input) {
     clusterId: input.clusterId,
     databaseId: input.databaseId,
   });
-  const serializedCounterMap = JSON.stringify(RESULT_COUNTERS);
+  const serializedCounterMap = JSON.stringify(resultCounters);
   // ECS containerOverrides are limited to 8 KiB. Preserve the query semantics
   // while removing formatting whitespace before embedding the one-off source.
-  const serializedQuery = JSON.stringify(DATABASE_DRAIN_PROOF_QUERY.replace(/\s+/gu, ' ').trim());
+  const serializedQuery = JSON.stringify(query.replace(/\s+/gu, ' ').trim());
 
   return `const E=['DATABASE_URL_MISSING','DATABASE_URL_INVALID','DATABASE_HOST_MISMATCH','DATABASE_NAME_MISMATCH','DATABASE_DRAIN_PROOF_RESULT_INVALID'],F=i=>{throw Error(E[i])};
 let z;
@@ -232,7 +257,7 @@ try {
     if(!Number.isSafeInteger(n)||n<0||n>${MAX_COUNTER})F(4);
     c[k]=n;
   }
-  const p={kind:${JSON.stringify(PROOF_KIND)},schemaVersion:${PROOF_SCHEMA_VERSION},...${serializedIdentity},observedAtUtc:o.toISOString(),counters:c};
+  const p={kind:${JSON.stringify(PROOF_KIND)},schemaVersion:${schemaVersion},...${serializedIdentity},observedAtUtc:o.toISOString(),counters:c};
   await z();z=undefined;
   console.log(${JSON.stringify(DATABASE_DRAIN_PROOF_LOG_PREFIX)}+JSON.stringify(p));
 }catch(x){
@@ -253,6 +278,14 @@ function assertIdentity(value) {
   ) {
     throw new Error('DATABASE_DRAIN_PROOF_IDENTITY_INVALID');
   }
+}
+
+function proofSchemaVersion(value) {
+  const version = value ?? 1;
+  if (version !== PROOF_SCHEMA_VERSION_V1 && version !== PROOF_SCHEMA_VERSION_V2) {
+    throw new Error('DATABASE_DRAIN_PROOF_SCHEMA_INVALID');
+  }
+  return version;
 }
 
 function statementTimeout(value) {

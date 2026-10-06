@@ -1,4 +1,7 @@
-import { DATABASE_DRAIN_PROOF_QUERY } from './stage-database-drain-proof.mjs';
+import {
+  DATABASE_DRAIN_PROOF_QUERY,
+  DATABASE_DRAIN_PROOF_QUERY_V2,
+} from './stage-database-drain-proof.mjs';
 
 const DATABASE_NAME = 'lyrastaging';
 const READER_ROLE = 'lyra_stage_drain_reader';
@@ -24,6 +27,9 @@ const RELATION_COLUMNS = Object.freeze({
 
 export const STAGE_DATABASE_DRAIN_QUALIFIED_QUERY = qualifyApplicationRelations(DATABASE_DRAIN_PROOF_QUERY);
 const FUNCTION_BODY = `\n${STAGE_DATABASE_DRAIN_QUALIFIED_QUERY}\n`;
+export const STAGE_DATABASE_DRAIN_QUALIFIED_QUERY_V2 = qualifyApplicationRelations(DATABASE_DRAIN_PROOF_QUERY_V2)
+  .replace('FROM oauth_link_challenges', 'FROM public.oauth_link_challenges');
+const FUNCTION_BODY_V2 = `\n${STAGE_DATABASE_DRAIN_QUALIFIED_QUERY_V2}\n`;
 
 const OWNER_COLUMN_GRANTS = Object.entries(RELATION_COLUMNS)
   .map(([relation, columns]) => `GRANT SELECT (${columns.join(', ')}) ON TABLE public.${relation} TO ${OWNER_ROLE};`)
@@ -444,18 +450,90 @@ ${OWNER_COLUMN_REVOKES}
 DROP ROLE ${READER_ROLE};
 DROP ROLE ${OWNER_ROLE};`;
 
-export function buildStageDatabaseDrainDbContract(password) {
+const GOOGLE_COLUMN_GRANT = 'GRANT SELECT (status, exchange_material) ON TABLE public.oauth_link_challenges TO '+OWNER_ROLE+';';
+const GOOGLE_COLUMN_REVOKE = 'REVOKE SELECT (status, exchange_material) ON TABLE public.oauth_link_challenges FROM '+OWNER_ROLE+';';
+const GOOGLE_EXPECTED_OWNER_COLUMNS = `${EXPECTED_OWNER_COLUMNS},\n      ('public', 'oauth_link_challenges', 'status'),\n      ('public', 'oauth_link_challenges', 'exchange_material')`;
+
+function databaseDrainContractVariant(schemaVersion) {
+  if (schemaVersion === 1) {
+    return { installSql: INSTALL_SQL, verifySql: VERIFY_SQL, teardownSql: TEARDOWN_SQL };
+  }
+  if (schemaVersion !== 2) throw new Error('STAGE_DATABASE_DRAIN_SCHEMA_INVALID');
+  const installSql = INSTALL_SQL
+    .replace(OWNER_COLUMN_GRANTS, `${OWNER_COLUMN_GRANTS}\n${GOOGLE_COLUMN_GRANT}`)
+    .replace(
+      '  pending_credit_refunds text\n)',
+      '  pending_credit_refunds text,\n  pending_google_identity_link_challenges text\n)',
+    )
+    .replace(FUNCTION_BODY, FUNCTION_BODY_V2);
+  const verifySql = VERIFY_SQL
+    .replace(sqlLiteral(FUNCTION_BODY), sqlLiteral(FUNCTION_BODY_V2))
+    .replaceAll(EXPECTED_OWNER_COLUMNS, GOOGLE_EXPECTED_OWNER_COLUMNS);
+  const teardownSql = TEARDOWN_SQL
+    .replace(sqlLiteral(FUNCTION_BODY), sqlLiteral(FUNCTION_BODY_V2))
+    .replace(OWNER_COLUMN_REVOKES, `${OWNER_COLUMN_REVOKES}\n${GOOGLE_COLUMN_REVOKE}`);
+  return { installSql, verifySql, teardownSql };
+}
+
+function functionDefinitionFromInstall(installSql) {
+  const start = installSql.indexOf('CREATE FUNCTION '+FUNCTION_SIGNATURE);
+  const end = installSql.indexOf('RESET ROLE;', start);
+  if (start < 0 || end < 0) throw new Error('STAGE_DATABASE_DRAIN_TRANSITION_INVALID');
+  return installSql.slice(start, end);
+}
+
+function transitionSql({ fromVerifySql, toVerifySql, targetInstallSql, privilegeSql }) {
+  const targetFunction = functionDefinitionFromInstall(targetInstallSql);
+  return `BEGIN;
+${fromVerifySql}
+DO $grant_transition_membership$
+BEGIN
+  EXECUTE 'GRANT ${OWNER_ROLE} TO ${STAGE_INSTALLER_ROLE} WITH SET TRUE, INHERIT FALSE';
+END
+$grant_transition_membership$ LANGUAGE plpgsql;
+${privilegeSql}
+SET LOCAL ROLE ${OWNER_ROLE};
+DROP FUNCTION ${FUNCTION_SIGNATURE};
+${targetFunction}
+RESET ROLE;
+REVOKE ${OWNER_ROLE} FROM ${STAGE_INSTALLER_ROLE};
+${toVerifySql}
+COMMIT;`;
+}
+
+export function buildStageDatabaseDrainDbContractTransition() {
+  const v2 = databaseDrainContractVariant(2);
+  return Object.freeze({
+    upgradeV1ToV2Sql: transitionSql({
+      fromVerifySql: VERIFY_SQL,
+      toVerifySql: v2.verifySql,
+      targetInstallSql: v2.installSql,
+      privilegeSql: GOOGLE_COLUMN_GRANT,
+    }),
+    rollbackV2ToV1Sql: transitionSql({
+      fromVerifySql: v2.verifySql,
+      toVerifySql: VERIFY_SQL,
+      targetInstallSql: INSTALL_SQL,
+      privilegeSql: GOOGLE_COLUMN_REVOKE,
+    }),
+  });
+}
+
+export function buildStageDatabaseDrainDbContract(password, options = {}) {
   if (typeof password !== 'string' || !/^[0-9a-f]{64}$/u.test(password)) {
     throw new Error('STAGE_DATABASE_DRAIN_PASSWORD_INVALID');
   }
+  const schemaVersion = options.proofSchemaVersion ?? 1;
+  const variant = databaseDrainContractVariant(schemaVersion);
   return Object.freeze({
+    schemaVersion,
     passwordCommand: Object.freeze({
       text: `SELECT pg_catalog.set_config('${PASSWORD_SETTING}', $1, true)`,
       values: Object.freeze([password]),
     }),
-    installSql: INSTALL_SQL,
-    verifySql: VERIFY_SQL,
-    teardownSql: TEARDOWN_SQL,
+    installSql: variant.installSql,
+    verifySql: variant.verifySql,
+    teardownSql: variant.teardownSql,
     functionQuery: `SELECT * FROM ${FUNCTION_SIGNATURE}`,
   });
 }

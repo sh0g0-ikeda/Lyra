@@ -14,15 +14,15 @@ export function createStageDatabaseDrainInvokePort({functionArn,lambda,invokeCom
   if(typeof functionArn!=='string'||!functionArn.startsWith(FUNCTION_PREFIX)) fail();
   const version=functionArn.slice(FUNCTION_PREFIX.length);
   if(!/^[1-9][0-9]{0,8}$/u.test(version)||typeof lambda?.send!=='function'||typeof invokeCommand!=='function') fail();
-  return { async collect({nowUtc,safePointAtUtc}) {
+  return { async collect({nowUtc,safePointAtUtc,proofSchemaVersion=1}) {
     try {
-      if(!validTime(nowUtc)||!validTime(safePointAtUtc)||Date.parse(safePointAtUtc)>Date.parse(nowUtc)) fail();
-      const response=await lambda.send(invokeCommand({FunctionName:functionArn,InvocationType:'RequestResponse',Payload:new TextEncoder().encode('{}')}),{abortSignal:AbortSignal.timeout(INVOKE_TIMEOUT_MS)});
+      if(!validTime(nowUtc)||!validTime(safePointAtUtc)||Date.parse(safePointAtUtc)>Date.parse(nowUtc)||![1,2].includes(proofSchemaVersion)) fail();
+      const response=await lambda.send(invokeCommand({FunctionName:functionArn,InvocationType:'RequestResponse',Payload:new TextEncoder().encode(proofSchemaVersion===1?'{}':JSON.stringify({schemaVersion:2}))}),{abortSignal:AbortSignal.timeout(INVOKE_TIMEOUT_MS)});
       if(response?.StatusCode!==200||response.ExecutedVersion!==version||response.FunctionError) fail();
       if(!(response.Payload instanceof Uint8Array)||response.Payload.byteLength===0||response.Payload.byteLength>MAX_PAYLOAD_BYTES) fail();
       const output=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(response.Payload));
       if(!record(output)||Object.keys(output).sort().join(',')!=='ok,proof'||output.ok!==true) fail();
-      const assessment=assessDatabaseDrainProof({proof:output.proof,nowEpoch:Date.parse(nowUtc),notBefore:safePointAtUtc,expectedObservedAt:null,requireFresh:true});
+      const assessment=assessDatabaseDrainProof({proof:output.proof,nowEpoch:Date.parse(nowUtc),notBefore:safePointAtUtc,expectedObservedAt:null,requireFresh:true,expectedSchemaVersion:proofSchemaVersion});
       if(!assessment.ready&&assessment.reason!=='nonzero') fail();
       return output.proof;
     } catch { fail(); }
