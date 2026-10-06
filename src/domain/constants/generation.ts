@@ -87,7 +87,7 @@ export const PAGE_AUTOFILL_COMPILER_VERSION = 'page_autofill_v7';
 
 export const EPISODE_PAGE_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS = 24000;
-export const EPISODE_PAGE_PLAN_COMPILER_VERSION = 'episode_page_plan_v15';
+export const EPISODE_PAGE_PLAN_COMPILER_VERSION = 'episode_page_plan_v16';
 // Matches the persisted story_full_draft API character limit.
 export const EPISODE_FULL_STORY_DRAFT_MAX_CHARS = 8_000;
 export const EPISODE_PLAN_SOURCE_REVIEW_MAX_UNITS = 256;
@@ -104,7 +104,7 @@ export const EPISODE_BEAT_PLAN_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_BEAT_PLAN_COMPILER_MAX_TOKENS = 32_000;
 export const EPISODE_BEAT_PLAN_COMPILER_VERSION = 'episode_beat_plan_v10';
 export const EPISODE_BEAT_PLAN_OUTLINE_COMPILER_VERSION = 'episode_beat_outline_v6';
-export const EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION = 'episode_source_requirements_v4';
+export const EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION = 'episode_source_requirements_v5';
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_INPUT_BYTES = 32_768;
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES = 317;
 

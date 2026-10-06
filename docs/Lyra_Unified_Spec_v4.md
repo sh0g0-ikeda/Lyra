@@ -234,7 +234,16 @@ ceiling. Pack and merged requirements use the same derived validation; compact
 provider limits remain unchanged. Detail
 output allocates page-owned requirements to panels before writing panel fields.
 Placement validation checks structural coverage and prerequisite order, not semantic
-fidelity. Normal and repair detail calls retain the same complete requirements.
+fidelity. Source record order does not itself create a temporal dependency.
+After-relations represent authored event order or actual causal prerequisites;
+continuing, negative, spatial or framing constraints can govern earlier and
+later panels and have no after-relation unless their onset is explicitly authored.
+Such constraints never create a prerequisite for an unrelated subsequent event.
+For same-page dependencies all predecessor panel orders must be at most every
+successor panel order; equality permits an authored sequence inside one panel.
+The provider-only classification remains a semantic judgment and requires actual
+source-to-draft review; structural placement success is not acceptance proof.
+Normal and repair detail calls retain the same complete requirements.
 Unsupported mappings or capacity take the complete legacy path before any paid
 call; a paid extraction failure does not start an additional legacy compiler call.
 Requirements and placements are internal and are stripped before public saving.

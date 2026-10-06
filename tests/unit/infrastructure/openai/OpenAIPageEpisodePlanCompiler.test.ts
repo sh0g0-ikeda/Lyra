@@ -101,7 +101,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
       },
       compilerProvider: 'openai',
       compilerModel: 'gpt-5',
-      compilerPromptVersion: 'episode_page_plan_v15',
+      compilerPromptVersion: 'episode_page_plan_v16',
     });
 
     const request = requests[0];
