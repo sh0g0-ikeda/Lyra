@@ -259,6 +259,14 @@ event/global meaning, but provider output must supply it. Model classification
 and live audit quality remain separate acceptance gates. Compact record admission
 now includes the added classification bytes; all source/input/decoded bounds and
 lossless coverage remain enforced.
+Source order is server-owned and restored from the trusted extraction unit
+identity within its owning page or global source. Provider record order and
+provider-authored numeric ordering cannot reorder the source. The v7 provider
+schema does not include an ordering field; shuffled records are mapped to their
+exact source units before coverage, fragment ownership and temporal validation.
+Unknown, missing or repeated units remain errors. Explicit event prerequisites
+retain their existing strict order checks. The compact record bound is 315 bytes
+with the redundant ordering field removed; input and decoded limits remain.
 Normal and repair detail calls retain the same complete requirements.
 Detail prerequisite placement validation runs inside the existing two logical
 structured attempts. Only a typed same-page panel-order failure can use the

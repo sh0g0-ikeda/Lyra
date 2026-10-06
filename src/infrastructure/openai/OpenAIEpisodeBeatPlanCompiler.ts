@@ -204,7 +204,10 @@ export class OpenAIEpisodeBeatPlanCompiler
           pageId: unit.scope === 'global' ? null : page!.pageId,
           pageNumber: unit.scope === 'global' ? null : page!.pageNumber,
           sourceUnitIds: [unit.unitId],
-          order: unit.scope === 'global' ? globalSourceUnitOrder(unit.unitId) : requirement.o,
+          // The unit identity is server-owned extraction metadata. It remains stable
+          // when global units are distributed across packs, so provider response order
+          // and generated integers cannot reorder the immutable source units.
+          order: trustedSourceUnitOrder(unit),
           events: obligations.map((obligation) => obligation.event),
           results: obligations.flatMap((obligation) => obligation.result === null ? [] : [obligation.result]),
           afterRequirementIds: requirement.a.map(requirementId),
@@ -273,7 +276,6 @@ const episodeSourceRequirementPayloadSchema = z.object({
     k: z.enum(['e', 's', 'g']),
     i: z.number().int().min(1).max(512),
     u: z.number().int().min(1).max(256),
-    o: z.number().int().min(1).max(10_000),
     e: z.array(compactSourceFragmentSchema).max(5),
     r: z.array(nullableCompactSourceFragmentSchema).max(5),
     a: z.array(z.number().int().min(1).max(512)).max(4),
@@ -296,11 +298,12 @@ function resolveCompactSourceFragment(fragmentId: string, unit: EpisodeSourceUni
   return unit.text.slice(fragment.start, fragment.end);
 }
 
-function globalSourceUnitOrder(unitId: string): number {
-  const match = /^global-u(\d+)$/u.exec(unitId);
+function trustedSourceUnitOrder(unit: EpisodeSourceUnit): number {
+  const pattern = unit.scope === 'global' ? /^global-u(\d+)$/u : /^p\d+-u(\d+)$/u;
+  const match = pattern.exec(unit.unitId);
   const order = Number(match?.[1]);
-  if (!Number.isSafeInteger(order) || order < 1) {
-    throw new ConfigurationError('Global source requirement has an invalid unit ID');
+  if (!Number.isSafeInteger(order) || order < 1 || order > 256) {
+    throw new ConfigurationError('Source requirement unit has an invalid trusted order');
   }
   return order;
 }
@@ -314,7 +317,7 @@ function buildSourceRequirementSystemPrompt(language: CompileEpisodeSourceRequir
     'u is the displayed unit ordinal. Every source reference must copy one listed globally unique fragment ID exactly. The first listed fragment in each nonblank unit is that complete trimmed unit; later fragments are deterministic exact clauses or quoted bodies. Fragment IDs are opaque tokens, not numbers to calculate or ranges to extend. The server restores each exact UTF-16 source span from the trusted fragment catalog.',
     'e identifies ordered authored events or states. r, c, and z have the same length and index: immediate result or null, continuing/negative condition or null, and required-by-page-end boolean.',
     'A k=s depiction constraint cannot be either endpoint of a. It covers the relevant panels rather than following the actions it summarizes. Keep its authored internal order and all visible stages in the detail plan. For an action occurring during a compound action, preserve its exact source condition and ordered obligations; do not claim the whole compound action finishes before the embedded action. Only emit a when all predecessor obligations complete before all successor obligations begin. Never infer completion from source sentence order.',
-    'a lists only actual temporal prerequisites or authored event-before-event relations, using prior numeric requirement IDs. Source sentence order alone is not a temporal dependency. A continuing state, negative restriction, spatial relation, camera or framing constraint may govern earlier and later panels: do not chain it after the preceding dialogue/action merely because its sentence is later. Use a=[] for a spanning constraint. Explicitly timed actions or states belong to k=e and retain their exact temporal conditions. Likewise do not use a page-wide constraint as the predecessor of an unrelated later event. Preserve every actual action sequence and causal prerequisite. i is a unique integer ID and o records source order within the owning page, without creating an after relation.',
+    'a lists only actual temporal prerequisites or authored event-before-event relations, using prior numeric requirement IDs. Source sentence order alone is not a temporal dependency. A continuing state, negative restriction, spatial relation, camera or framing constraint may govern earlier and later panels: do not chain it after the preceding dialogue/action merely because its sentence is later. Use a=[] for a spanning constraint. Explicitly timed actions or states belong to k=e and retain their exact temporal conditions. Likewise do not use a page-wide constraint as the predecessor of an unrelated later event. Preserve every actual action sequence and causal prerequisite. i is a unique integer ID. Source order is restored by the server from the displayed unit ordinal u and is not provider-authored.',
     'x holds at most one explicitly authored fragment for each prefix: 1=context, 2=emotion, 3=function, 4=camera, 5=framing. q identifies exact authored speech, thought, narration, caption, label, or title text.',
     'Use only displayed unit ordinals and fragment IDs listed inside that same unit. For each page unit, its first listed whole-unit fragment is a valid exact event choice when no narrower listed fragment preserves the complete authored obligation. Never invent, increment, clamp, combine, or copy a fragment ID from another unit.',
     `The source language is ${describeAppLanguage(language)}; offsets and source text remain unchanged.`,
@@ -332,12 +335,11 @@ function buildEpisodeSourceRequirementJsonSchema(maximumRequirements: number): R
         type: 'array', minItems: 1, maxItems: maximumRequirements,
         items: {
           type: 'object', additionalProperties: false,
-          required: ['k', 'i', 'u', 'o', 'e', 'r', 'a', 'c', 'z', 'x', 'q'],
+          required: ['k', 'i', 'u', 'e', 'r', 'a', 'c', 'z', 'x', 'q'],
           properties: {
             k: { type: 'string', enum: ['e', 's', 'g'] },
             i: { type: 'integer', minimum: 1, maximum: 512 },
             u: { type: 'integer', minimum: 1, maximum: 256 },
-            o: { type: 'integer', minimum: 1, maximum: 10_000 },
             e: { type: 'array', maxItems: 5, items: fragment },
             r: { type: 'array', maxItems: 5, items: nullableFragment },
             a: { type: 'array', maxItems: 4, items: { type: 'integer', minimum: 1, maximum: 512 } },

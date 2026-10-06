@@ -12,7 +12,7 @@ const examples=[
 async function extract(example=examples[0]!,edge:'none'|'from'|'to'='none',kind='s') {
  const extraction=prepareEpisodeSourceRequirementExtraction({storyFullDraft:example.source,pages:[{pageId:PAGE,pageNumber:example.pageNumber}]})!;
  const units=extraction.units.map((unit,index)=>({unit,ordinal:index+1})).filter(x=>x.unit.text.trim());
- const records=units.map(({unit,ordinal},index)=>({i:ordinal,u:ordinal,o:ordinal,k:index===2?kind:'e',e:index===2?[]:[unit.fragmentCatalog[0]!.id],r:index===2?[]:[null],c:index===2?[]:[null],z:index===2?[]:[true],a:index===2&&edge==='to'?[2]:index===1&&edge==='from'?[3]:index===1&&example.pageNumber===7?[1]:[],x:[],q:[]}));
+ const records=units.map(({unit,ordinal},index)=>({i:ordinal,u:ordinal,k:index===2?kind:'e',e:index===2?[]:[unit.fragmentCatalog[0]!.id],r:index===2?[]:[null],c:index===2?[]:[null],z:index===2?[]:[true],a:index===2&&edge==='to'?[2]:index===1&&edge==='from'?[3]:index===1&&example.pageNumber===7?[1]:[],x:[],q:[]}));
  const client={postJson:async()=>({body:{output_text:JSON.stringify({requirements:records},(key,value:unknown)=>kind==='missing'&&key==='k'?undefined:value)},requestId:'artificial-r58-span'})} as unknown as OpenAIClient;
  return new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({extraction,language:'ja'});
 }

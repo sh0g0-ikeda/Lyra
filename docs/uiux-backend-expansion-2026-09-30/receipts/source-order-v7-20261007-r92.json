@@ -1,0 +1,79 @@
+{
+  "schema": "lyra.source-order-v7.r92",
+  "baseHead": "ed7aff87716f90aa6bd4869086a4e3ebb5f1418a",
+  "recordedAt": "2026-10-06T21:27:54.546Z",
+  "design": {
+    "spec": "Section6 StoryAI original-source contract",
+    "input": "trusted source units plus opaque provider fragment references",
+    "output": "unchanged domain requirements with server-derived order",
+    "persistence": "no schema/DB/API/credit change",
+    "version": "episode_source_requirements_v7",
+    "detailVersion": "episode_page_plan_v18 unchanged",
+    "security": "coverage, fragment ownership, k classification and temporal edges unchanged"
+  },
+  "parent": {
+    "pass": 161,
+    "fail": 0,
+    "files": 6,
+    "expectations": 735,
+    "logSha256": "ca91461eaf39791edc05f785e5858e0aefb67b593323171d3def667d58f5ca1f",
+    "sourcePins": [
+      {
+        "path": "tests/unit/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.test.ts",
+        "sha256": "c97d7e3139656f1390b4a9fce6f2fa264023bffd6df4c782d7c6c33881e65193"
+      },
+      {
+        "path": "tests/unit/infrastructure/openai/EpisodeSourceLocatorV3.test.ts",
+        "sha256": "cd63415121f07a268d2f62eabae2c8207cf37b25f89290c9307ea82a36ecfe10"
+      },
+      {
+        "path": "tests/unit/infrastructure/openai/EpisodeSourceSpanSemantics.test.ts",
+        "sha256": "6e81029676b9b212d037a36a45083502f8f181561ceabba63b8060524dda69c7"
+      },
+      {
+        "path": "tests/unit/infrastructure/openai/EpisodeSourceTemporalScope.test.ts",
+        "sha256": "c577713a0b4b89ca70bbff397d8a3235904c6e7777dccded1c62645bc880bf02"
+      },
+      {
+        "path": "tests/unit/services/page/EpisodeSourceRequirements.test.ts",
+        "sha256": "c27fcc2e894fbedf807d193eda5cd8573f7e173e37893b8eebace25405727e8b"
+      },
+      {
+        "path": "tests/unit/services/page/PageService.test.ts",
+        "sha256": "a7223fd75c5105105c2d8ad124616e198f231c51d78d7c45758115dbf96011a1"
+      },
+      {
+        "path": "src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.ts",
+        "sha256": "dc41cd50cf9b00edad54004c3110544d86d1a16cc5be054ef9f4c1d601b1cffd"
+      },
+      {
+        "path": "src/domain/constants/generation.ts",
+        "sha256": "c9632fe8431240b0912b2e077a88311995fd8e4b39263f96968f3f24e74fb282"
+      }
+    ],
+    "externalCalls": 0,
+    "keyReads": 0
+  },
+  "child": {
+    "red": {
+      "existingPass": 11,
+      "newFail": 2,
+      "failures": [
+        "duplicate provider order",
+        "adversarial provider reorder"
+      ]
+    },
+    "green": {
+      "files": 7,
+      "pass": 163,
+      "fail": 0,
+      "expectations": 741
+    },
+    "typecheckExit": 0,
+    "diffCheckExit": 0,
+    "logPersistence": "child tool outputs only; parent saved independent targeted log"
+  },
+  "actualProviderAcceptance": "NOT_YET_RUN_FOR_V7",
+  "productionChanges": 0,
+  "previousConsumedR79Preserved": true
+}

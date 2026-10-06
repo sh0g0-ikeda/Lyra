@@ -524,7 +524,7 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
   }
 }
 
-class ActualSourceV6EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler {
+class ActualSourceV7EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler {
   public sourceProviderCalls = 0;
   public invalidFragment = false;
   private readonly actualSourceCompiler: OpenAIEpisodeBeatPlanCompiler;
@@ -534,16 +534,12 @@ class ActualSourceV6EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler 
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
         this.sourceProviderCalls += 1;
-        const sourceRows = parseSourceV6BriefRows(payload);
-        const ordersByOwner = new Map<string, number>();
+        const sourceRows = parseSourceV7BriefRows(payload);
         let invalidFragmentInjected = false;
         const foreignFragment = sourceRows.find((row) => row.fragments.length > 0)?.fragments[0]?.id;
         const requirements = sourceRows.flatMap((row) => {
           const sourceFragment = row.fragments[0]?.id;
           if (sourceFragment === undefined) return [];
-          const owner = row.scope === 'global' ? 'global' : row.pageId;
-          const order = (ordersByOwner.get(owner) ?? 0) + 1;
-          ordersByOwner.set(owner, order);
           const eventFragment = this.invalidFragment && row.scope === 'page' && !invalidFragmentInjected &&
               foreignFragment !== undefined && !row.fragments.some((fragment) => fragment.id === foreignFragment)
             ? foreignFragment
@@ -552,7 +548,6 @@ class ActualSourceV6EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler 
           return [{
             i: row.unitOrdinal,
             u: row.unitOrdinal,
-            o: order,
             k: row.scope === 'global' ? 'g' : 'e',
             e: row.scope === 'global' ? [] : [eventFragment],
             r: row.scope === 'global' ? [] : [null],
@@ -565,7 +560,7 @@ class ActualSourceV6EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler 
         });
         return {
           body: { output_text: JSON.stringify({ requirements }) },
-          requestId: 'req-source-v6-page-service',
+          requestId: 'req-source-v7-page-service',
         };
       },
     } as unknown as OpenAIClient;
@@ -580,21 +575,21 @@ class ActualSourceV6EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler 
   }
 }
 
-interface SourceV6BriefRow {
+interface SourceV7BriefRow {
   unitOrdinal: number;
   scope: 'global' | 'page';
   pageId: string;
   fragments: Array<{ id: string; text: string }>;
 }
 
-function parseSourceV6BriefRows(payload: Record<string, unknown>): SourceV6BriefRow[] {
+function parseSourceV7BriefRows(payload: Record<string, unknown>): SourceV7BriefRow[] {
   const input = payload.input;
   if (!Array.isArray(input) || !isRecord(input[1])) {
-    throw new Error('Source v6 request omitted user input');
+    throw new Error('Source v7 request omitted user input');
   }
   const content = input[1].content;
   if (!Array.isArray(content) || !isRecord(content[0]) || typeof content[0].text !== 'string') {
-    throw new Error('Source v6 request omitted compiler brief');
+    throw new Error('Source v7 request omitted compiler brief');
   }
   return content[0].text.split('\n').flatMap((line) => {
     if (!line.startsWith('{')) return [];
@@ -602,11 +597,11 @@ function parseSourceV6BriefRows(payload: Record<string, unknown>): SourceV6Brief
     if (!isRecord(parsed) || !Number.isSafeInteger(parsed.u) ||
         (parsed.scope !== 'global' && parsed.scope !== 'page') ||
         typeof parsed.page_id !== 'string' || !Array.isArray(parsed.fragments)) {
-      throw new Error('Source v6 compiler brief row is invalid');
+      throw new Error('Source v7 compiler brief row is invalid');
     }
     const fragments = parsed.fragments.map((fragment) => {
       if (!isRecord(fragment) || typeof fragment.id !== 'string' || typeof fragment.text !== 'string') {
-        throw new Error('Source v6 compiler brief fragment is invalid');
+        throw new Error('Source v7 compiler brief fragment is invalid');
       }
       return { id: fragment.id, text: fragment.text };
     });
@@ -2095,7 +2090,7 @@ describe('PageService', () => {
       panelRepository: transactionPanelRepository,
       panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
     });
-    const sourceCompiler = new ActualSourceV6EpisodeBeatPlanCompiler();
+    const sourceCompiler = new ActualSourceV7EpisodeBeatPlanCompiler();
     const service = new PageService(
       pageRepository,
       new FakePanelRepository(),
@@ -2145,7 +2140,7 @@ describe('PageService', () => {
       panelRepository: transactionPanelRepository,
       panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
     });
-    const sourceCompiler = new ActualSourceV6EpisodeBeatPlanCompiler();
+    const sourceCompiler = new ActualSourceV7EpisodeBeatPlanCompiler();
     sourceCompiler.invalidFragment = true;
     const service = new PageService(
       pageRepository,
