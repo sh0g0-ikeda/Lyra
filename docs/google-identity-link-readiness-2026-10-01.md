@@ -1,17 +1,47 @@
 # Google sign-in and explicit identity linking
 
-Status (2026-10-06): Google remains default-OFF. The isolated staging pool now
-has the collision guard attached, exact pool-scoped API link permissions, and a
-DISABLED expiry schedule. A bounded expiry task executed against the real staging
-DB, stopped with exit 0, and reported 0 expired rows. Existing email login and the
-visible account's four works/nine credits were verified after guard attachment.
+Status (2026-10-06 r2): The dedicated Google project has two distinct Web OAuth
+clients with openid/email only, TESTING status and one test account. The staging
+Cognito Google IdP and existing Native/Web clients are connected; the exact
+collision guard and native email settings are retained. The link settings were
+added to the existing stage runtime secret without changing its non-Google values,
+and its previous version remains available. Native email logout/login again shows
+the existing four works, nine credits and saved draft.
 
-Google branding final consent, both OAuth clients, IdP/link credentials and real
-Google acceptance remain incomplete. The DB drain v2 source and local PG18 tests
-are complete, and the immutable proof code was uploaded to the private staging
-build bucket, but the permanent reader/proof Lambda and Google-aware lifecycle
-configuration are not deployed. No production change, main merge or store
-submission occurred. This is not Google activation or production readiness evidence.
+Application Google capabilities remain OFF, including iOS. The configured Cognito
+Hosted UI now displays Google; application capability flags do not remove that
+provider. Real Google sign-in/link and physical device acceptance remain incomplete.
+The permanent reader/proof Lambda and Google-aware lifecycle deployment are still
+pending. The stage-encrypted production snapshot copy is available; clone restore,
+migration, old-writer and rollback rehearsal have not run. No production change,
+main merge or store submission occurred. See the r2 receipt for actual scope.
+
+## 2026-10-06 r2 settings and verification
+
+- Evidence: docs/uiux-backend-expansion-2026-09-30/receipts/google-settings-staging-20261006-r2.json.
+- Initial provider creation failed because the new OAuth secret used the default
+  AWS-managed key. CloudFormation completed rollback. Only that stage secret's
+  key association was changed to the existing stage key; values were not fetched,
+  its version was preserved, and no KMS/IAM policy was broadened. The reviewed
+  IdP Add plus two non-replacement client Modify changes then completed and all
+  prior pool/client/template/API image/count/callback fields were compared.
+- Final Ops: 181/181 PASS, 0 FAIL, 0 SKIP across all 18 files using only the owned
+  loopback PG18. Source hashes remained unchanged during the gate. That temporary
+  server was stopped; other clusters were not changed. Product suites from the
+  previous release gate were not rerun or represented as new results here.
+- The proof template retains reserved concurrency 1 by default. Its explicit
+  shared-pool QA exception is restricted to the exact staging account/Tokyo and
+  passed AWS template validation. It adds no trigger or invocation permission.
+  Shared quota does not cap the function at one invocation: deployment/runtime
+  intents must enforce stopped schedules and one manual invocation with retry 0,
+  parallelism 0 and reader connection limit 1. While quota lacks headroom, rollback
+  keeps the exception true or deletes the proof stack; it must not restore false.
+- The repaired CFN boundary removes the broad PassRole warning. All four Analyzer
+  checks have no ERROR/SECURITY_WARNING, but 21/22 simulator expectations match:
+  the original execution log-stream positive still fails. The narrower candidate
+  is pending request7, and permanent IAM/proof/reader deployment has not run.
+- Request6 is pending for private clone restore plus its own RDS-managed secret.
+  The snapshot copy alone is not migration or data-preservation acceptance.
 
 ## 2026-10-06 staging settings evidence
 
