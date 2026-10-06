@@ -1,0 +1,100 @@
+{
+  "schema": "lyra.staging-progress-r85/v1",
+  "recordedAt": "2026-10-06T21:17:47.648Z",
+  "sourceHead": "0da66a326f594219e46d9677a3476cfe81bbdc87",
+  "workingTreeHasPendingSourceAndTestFixes": true,
+  "stageSource": "03bc182b18686808cfba1f29c101c4e1b4deef48",
+  "productionReady": false,
+  "approvalWaiting": 0,
+  "productionMutations": 0,
+  "mainMerges": 0,
+  "storeSubmissions": 0,
+  "artifacts": [
+    {
+      "id": "r71Runtime",
+      "path": "google-activation-r3/runtime-flags-r71/receipt.json",
+      "sha256": "312397d2f5361ed93d4fd0c380eeb3938a7d17390afe9e3cafb0952d40b4b589"
+    },
+    {
+      "id": "r71Stopped",
+      "path": "google-activation-r3/runtime-flags-r71/stopped.json",
+      "sha256": "9e5dda3c1447bdfee8db555b983325cd8155a2ffce164ce2c246520a257b38f5"
+    },
+    {
+      "id": "r74Target",
+      "path": "google-activation-r3/m2-expanded-rehearsal-r66/target-metadata-r74.json",
+      "sha256": "d13eedd448785f7bc70832d7807af2b625a0b459c71b36b2c84474ae0dcfaad7"
+    },
+    {
+      "id": "r75Lineage",
+      "path": "google-activation-r3/m2-expanded-rehearsal-r66/lineage-r75.json",
+      "sha256": "6d7d25edba865e3d02d2dca4cc3fabbba4a2f6ba10d670429037cc41cff0123b"
+    },
+    {
+      "id": "r73PreflightFail",
+      "path": "staging-live/local-long15-coverage-ebff73a-r73-result.json",
+      "sha256": "2c465ccf926326e850540cfb9e29f253a37c78da4d44fc562903bcfb75dc431c"
+    },
+    {
+      "id": "r79ProviderFail",
+      "path": "staging-live/local-long15-coverage-0da66a3-r79-result.json",
+      "sha256": "7696c627cea817797df112cc67733d3ccdc3dbe91d909a10f4e4466e3c7466f5"
+    },
+    {
+      "id": "r81FixtureChanges",
+      "path": "native-revision-fixtures-r81/receipt.json",
+      "sha256": "7a835df5399f7f1a7e8fcf4aea2c4bb0dafc440fa71d5e2b9c562b73541f0da5"
+    },
+    {
+      "id": "r83FixtureChanges",
+      "path": "native-revision-fixtures-r83/receipt.json",
+      "sha256": "919970e0d03c1dd295bf6ecd100a84d283417b171766bd0e555c9a7322cb61a0"
+    },
+    {
+      "id": "r83NativeLog",
+      "path": "native-revision-fixtures-r83/targeted-native.log",
+      "sha256": "7d5389e1c067e0d849f4b0441791620b524594f5126a9c736944adc90ad0be15"
+    },
+    {
+      "id": "r83Cleanup",
+      "path": "native-revision-fixtures-r83/cleanup.json",
+      "sha256": "33692c50ef0c7f20ee491706aae0f18dc6c2c429ee9476cbda94cf80ede60d29"
+    },
+    {
+      "id": "r82ScopeRed",
+      "path": "google-activation-r3/m2-expanded-rehearsal-r66/scope-guard-r82/native-red-receipt.json",
+      "sha256": "f4b366f2d7124c43cc735855e12c76d19d70b046a286e556770ec3e14cef6dc2"
+    },
+    {
+      "id": "r82ScopeGreen",
+      "path": "google-activation-r3/m2-expanded-rehearsal-r66/scope-guard-r82/native-receipt.json",
+      "sha256": "c6e6a22a77b2c17821ec6e49d3e00bfa7a2259b954cb4f45e15384422377488d"
+    },
+    {
+      "id": "r82Cleanup",
+      "path": "google-activation-r3/m2-expanded-rehearsal-r66/scope-guard-r82/green-adapter-cleanup.json",
+      "sha256": "09ad5a13123a2114ce37ac155d114c2c7e91934233d47126e4f3addffcc40d43"
+    },
+    {
+      "id": "originalProtection",
+      "path": "original-protection-current.json",
+      "sha256": "6a8824d864e08f5cacfa93fe4db9a50f700445c88191e1910cab9db85af28a7e"
+    }
+  ],
+  "checks": {
+    "runtimeProof": "actual staging legacy/gpt-5 for all three stages; no profile/flag change",
+    "snapshotLineage": "historical October 1 production snapshot -> staging copy -> isolated clone; not current production contents",
+    "r73": "preflight SHA mismatch; no intent/key/HTTP; never replay",
+    "r79": "real HTTP1/source first pack only; duplicate source order rejected; persistence0/credit0; raw not retained, exact duplicate unit unidentified",
+    "r80": "full native Vitest3842PASS/7FAIL of3849; one teardown timeout; frozen historical FAIL; Bun/Web independent gates pending",
+    "r83": "3 affected native files30PASS after fixture revision fixes; stale rejection retained; PG15435 stopped",
+    "r82": "scope guard actual uuid/uuid[] columns; foreign UUID references/new identifier collisions rejected; full synthetic business suite/projection/rollback PASS; PG15436 stopped"
+  },
+  "remaining": [
+    "source-v7 implementation and fresh actual15 acceptance",
+    "actual clone migration/compatibility and cleanup",
+    "final complete tests/build/lint/Playwright after changes",
+    "latest staging migration/image and durable API/UI/auth/credits/consumer/drain acceptance",
+    "iOS dedicated auth client/policy and Android/iOS physical confirmation"
+  ]
+}
