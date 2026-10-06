@@ -1,0 +1,94 @@
+{
+  "schema": "lyra.staging-progress-20261006-r4",
+  "recordedAt": "2026-10-06T07:08:29.243Z",
+  "publicPr": {
+    "url": "https://github.com/sh0g0-ikeda/Lyra/pull/216",
+    "sourceCommit": "9e3b4a5afbfaa368a506c8a0f97c3a1833fc128c",
+    "bodySha256": "d85709643d36c34e21ffe4bf0ec0866305bd0e43f5cdccc09a9231634565b66d",
+    "ordinaryFastForwardPush": true,
+    "ci": {
+      "runId": "37425012114",
+      "backend": "FAILED",
+      "mobile": "PASSED",
+      "failedFiles": 5,
+      "failedTests": 2,
+      "skippedTests": 37,
+      "disposition": "portable test fixes in progress; required gates are not waived"
+    }
+  },
+  "runtime": {
+    "sourceCommit": "3b328df2e9e173daa7442c7342ff983d5ad311b9",
+    "targetDigest": "sha256:cc34222397a84877d996e8a32a617eb604f43d888b352db5b5d09598d2d701c5",
+    "update": "PASSED",
+    "ordinaryTaskDefinitionsUpdated": 5,
+    "servicesUpdated": 4,
+    "expiryRevisionPreserved": 3,
+    "iamAndScheduleChanges": 0,
+    "workers": 0,
+    "queuedMessages": 0,
+    "googleApplicationFlags": "OFF",
+    "automaticMigrations": "OFF"
+  },
+  "m2": {
+    "restore": "PASSED",
+    "managedSecretMetadata": "PASSED",
+    "securityGroupIngressRules": 0,
+    "securityGroupEgressRules": 0,
+    "secretValueReads": 0,
+    "databaseConnections": 0,
+    "migrations": 0,
+    "representativeMigrationAcceptance": "NOT_RUN"
+  },
+  "realBrowser": {
+    "runtimeSourceCommit": "3b328df2e9e173daa7442c7342ff983d5ad311b9",
+    "sameEmailGoogleCollisionGuide": "PASSED",
+    "nativeLoginRecovery": "PASSED",
+    "worksVisible": 4,
+    "creditBalance": 9,
+    "savedArtificialDraftVisible": true,
+    "characterNewDraftAndReturn": "PASSED",
+    "characterSavedReferenceVisible": true,
+    "normalColorAndMonochromeButtons": "PASSED",
+    "webHy4ColorAndMonochromeDisabled": "PASSED",
+    "saves": 0,
+    "generationCalls": 0,
+    "purchases": 0,
+    "deletions": 0,
+    "successfulNewGoogleLogin": "NOT_RUN",
+    "explicitGoogleLink": "NOT_RUN",
+    "physicalAndroid": "NOT_RUN"
+  },
+  "sourceRequirementFix": {
+    "status": "LOCAL_UNCOMMITTED",
+    "existingContinuityV3Gate": "DEFAULT_OFF",
+    "targetedTests": {
+      "passed": 122,
+      "failed": 0,
+      "skipped": 0
+    },
+    "finalFullCodeValidation": "IN_PROGRESS",
+    "real15PageAcceptance": "NOT_PASSED",
+    "approvedP9HttpBudgetConsumed": 3,
+    "furtherProviderCalls": 0
+  },
+  "preservedFailures": [
+    "M2 orderable metadata mismatch before dispatch",
+    "M2 status resource identity not yet present",
+    "M2 managed-secret status not yet accepted",
+    "public backend CI five-file failure",
+    "full compile attempted during unfinished CI fixture edits failed; final build pending"
+  ],
+  "inputReceiptHashes": {
+    "google-activation-r3/m2-two-step-plan-r5/final-status-2026-10-06T06-43-26-121Z.json": "79e8587ea757589174386621420094b72a9b0d3137e6a36acd2ca40b104e973e",
+    "google-activation-r3/runtime-google-image-execute-r6/status-complete-2026-10-06T06-54-36-589Z.json": "b3a96dcf593ff8795e44b66283b8f2a226b0be2b95ab9cb358cb918586a9677a",
+    "google-activation-r3/local-review-r4/public-pr-receipt-1791268848798.json": "c9c5c0cf4cc7c067546cee438dddac046f4bff1d84eb7cb06ae3d1383fca7135"
+  },
+  "privateScreenshotHashes": {
+    "native-login-recovery-3b-r5.png": "8a8f61a05dc0059cd06b9d1172345fae00c4415ac968fe0dff09a590ece340dc",
+    "web-generation-ui-3b-r6.png": "06574eafab093b499ea0214241e6bdc883a93922a455dab42e6a9bd7b354151e"
+  },
+  "productionReady": false,
+  "productionChanges": 0,
+  "mainMerges": 0,
+  "storeSubmissions": 0
+}
