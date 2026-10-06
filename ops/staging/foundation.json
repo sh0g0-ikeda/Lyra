@@ -945,6 +945,42 @@
         ],
         "BucketName": {
           "Fn::Sub": "${ResourcePrefix}-images-${AWS::AccountId}"
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "abort-incomplete-multipart-uploads-after-1-day",
+              "Status": "Enabled",
+              "Prefix": "",
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 1
+              }
+            },
+            {
+              "Id": "expire-lyra-temporary-uploads-after-1-day",
+              "Status": "Enabled",
+              "Prefix": "tmp/",
+              "ExpirationInDays": 1,
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 1
+              }
+            },
+            {
+              "Id": "expire-lyra-account-deletion-assets",
+              "Status": "Enabled",
+              "Prefix": "saved/",
+              "TagFilters": [
+                {
+                  "Key": "lyra-deletion-state",
+                  "Value": "pending"
+                }
+              ],
+              "ExpirationInDays": 1,
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 1
+              }
+            }
+          ]
         }
       }
     },
