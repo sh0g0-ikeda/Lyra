@@ -57,6 +57,81 @@
     "CodeSha256": {
       "Type": "String",
       "AllowedPattern": "^[A-Za-z0-9+/]{43}=$"
+    },
+    "BoundedSharedConcurrencyQa": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": [
+        "false",
+        "true"
+      ],
+      "Description": "Explicit exact-stage QA exception for the Lambda shared concurrency pool"
+    }
+  },
+  "Conditions": {
+    "UseBoundedSharedConcurrencyQa": {
+      "Fn::And": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "BoundedSharedConcurrencyQa"
+            },
+            "true"
+          ]
+        },
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "AWS::AccountId"
+            },
+            "452284481392"
+          ]
+        },
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "AWS::Region"
+            },
+            "ap-northeast-1"
+          ]
+        }
+      ]
+    }
+  },
+  "Rules": {
+    "BoundedSharedConcurrencyQaRequiresExactScope": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "BoundedSharedConcurrencyQa"
+          },
+          "true"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "AWS::AccountId"
+              },
+              "452284481392"
+            ]
+          },
+          "AssertDescription": "Shared concurrency QA is restricted to account 452284481392"
+        },
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "AWS::Region"
+              },
+              "ap-northeast-1"
+            ]
+          },
+          "AssertDescription": "Shared concurrency QA is restricted to ap-northeast-1"
+        }
+      ]
     }
   },
   "Resources": {
@@ -262,7 +337,15 @@
         },
         "Timeout": 10,
         "MemorySize": 128,
-        "ReservedConcurrentExecutions": 1,
+        "ReservedConcurrentExecutions": {
+          "Fn::If": [
+            "UseBoundedSharedConcurrencyQa",
+            {
+              "Ref": "AWS::NoValue"
+            },
+            1
+          ]
+        },
         "VpcConfig": {
           "SubnetIds": [
             {
