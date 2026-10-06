@@ -10,7 +10,10 @@ import type { DatabaseClient, TransactionRunner } from '../src/lib/db.js';
 import type { Env } from '../src/lib/env.js';
 import { checkDeploymentDataInvariants } from './checkDeploymentDataInvariants.js';
 
-const CURRENT_SCHEMA_VERSION = 47;
+import { CANONICAL_RUNTIME_MIGRATIONS, readRuntimeSchemaCatalogInTransaction } from '../src/lib/runtimeSchemaAttestation.js';
+import { describeProduction44ExpansionCheckpoint } from '../src/lib/production44ExpandedRuntimeSchemaAttestation.js';
+import { PRODUCTION44_EXPANSION_MIGRATIONS } from '../src/lib/production44ExpandedRuntimeSchemaDescriptor.js';
+import type { RepositorySchemaProfile } from '../src/repositories/RepositorySchemaProfile.js';
 
 export interface ReleaseCompatibilityCheckInput {
   profile: ReleaseProfile;
@@ -41,27 +44,41 @@ export interface ReleaseCompatibilityCliArguments {
 export async function checkReleaseCompatibility(
   database: DatabaseClient & TransactionRunner,
   input: ReleaseCompatibilityCheckInput,
-  options: { migrationsDir?: string } = {},
+  options: { migrationsDir?: string; schemaProfile?: RepositorySchemaProfile } = {},
 ): Promise<ReleaseCompatibilityReport> {
+  const schemaProfile = options.schemaProfile ?? 'canonical';
+  if (schemaProfile !== 'canonical' && schemaProfile !== 'production44_expanded_pg18_v1') {
+    return buildReport(input.profile, 0, null, [{ category: 'database', code: 'SCHEMA_PROFILE_UNSUPPORTED', count: 1 }]);
+  }
   const expectedMigrations = await expectedMigrationFilenames(options.migrationsDir ?? join(process.cwd(), 'migrations'));
   return database.transaction(async (client) => {
     await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
     await client.query("SET LOCAL lock_timeout = '1s'");
     await client.query("SET LOCAL statement_timeout = '5s'");
 
-    const history = await client.query<{ count: unknown }>(
-      `WITH expected(filename) AS (SELECT unnest($1::text[])), differences AS (
-         SELECT COALESCE(expected.filename, applied.filename) AS filename
-         FROM expected FULL OUTER JOIN schema_migrations AS applied USING (filename)
-         WHERE expected.filename IS NULL OR applied.filename IS NULL
-       ) SELECT COUNT(*)::int AS count FROM differences`,
-      [expectedMigrations],
-    );
-    const historyDifferenceCount = readNonNegativeSafeInteger(history.rows);
-    if (historyDifferenceCount > 0) {
-      return buildReport(input.profile, 1, null, [{
-        category: 'database', code: 'SCHEMA_HISTORY_MISMATCH', count: historyDifferenceCount,
-      }]);
+    // Spec §11 C0: an operator label is not attestation. All physical catalog
+    // parts and immutable history must match in this same read-only snapshot.
+    if (schemaProfile === 'production44_expanded_pg18_v1') {
+      const catalog = await readRuntimeSchemaCatalogInTransaction(client, { includeFunctionBodies: true, includeLegacyAttributes: true });
+      if (describeProduction44ExpansionCheckpoint(catalog) !== PRODUCTION44_EXPANSION_MIGRATIONS.length) {
+        return buildReport(input.profile, 1, null, [{ category: 'database', code: 'SCHEMA_UNSUPPORTED', count: 1 }]);
+      }
+    } else {
+      const history = await client.query<{ count: unknown }>(
+        `WITH expected(filename) AS (SELECT unnest($1::text[])), differences AS (
+           SELECT COALESCE(expected.filename, applied.filename) AS filename
+           FROM expected FULL OUTER JOIN schema_migrations AS applied USING (filename)
+           WHERE expected.filename IS NULL OR applied.filename IS NULL
+         ) SELECT COUNT(*)::int AS count FROM differences`,
+        [expectedMigrations],
+      );
+      const historyDifferenceCount = readNonNegativeSafeInteger(history.rows);
+      if (historyDifferenceCount > 0) {
+        return buildReport(input.profile, 1, null, [{
+          category: 'database', code: 'SCHEMA_HISTORY_MISMATCH', count: historyDifferenceCount,
+        }]);
+      }
+
     }
 
     const journal = await client.query<{ present: unknown }>(
@@ -141,8 +158,8 @@ export function runtimeFromEnv(environment: Env): ReleaseCompatibilityRuntime {
 
 async function expectedMigrationFilenames(migrationsDir: string): Promise<string[]> {
   const filenames = (await readdir(migrationsDir)).filter((filename) => /^\d{3}_.+\.sql$/u.test(filename)).sort();
-  if (filenames.length !== CURRENT_SCHEMA_VERSION
-    || filenames.some((filename, index) => Number(filename.slice(0, 3)) !== index + 1)) {
+  if (filenames.length !== CANONICAL_RUNTIME_MIGRATIONS.length
+    || filenames.some((filename, index) => filename !== CANONICAL_RUNTIME_MIGRATIONS[index])) {
     throw new Error('Current release migration files are unavailable');
   }
   return filenames;
@@ -189,7 +206,11 @@ async function main(): Promise<void> {
   const { closeDatabasePool, db } = await import('../src/lib/db.js');
   try {
     assertProductionRuntimeConfig(env);
-    const result = await checkReleaseCompatibility(db, { ...args, runtime: runtimeFromEnv(env) });
+    const { attestRuntimeSchema } = await import('../src/lib/runtimeSchemaAttestation.js');
+    const { assertAttestedRuntimeCapabilities } = await import('../src/lib/runtimeGuards.js');
+    const attested = await attestRuntimeSchema(db);
+    assertAttestedRuntimeCapabilities(attested, env);
+    const result = await checkReleaseCompatibility(db, { ...args, runtime: runtimeFromEnv(env) }, { schemaProfile: attested.repositoryProfile });
     console.log(JSON.stringify(result, null, 2));
     if (!result.ok) process.exitCode = 1;
   } finally {
