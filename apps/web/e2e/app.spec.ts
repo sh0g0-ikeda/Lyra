@@ -781,6 +781,7 @@ test('空の作品を経由して破棄後に戻る場合はサーバー本文�
 
 test('desktop Scope と Account Current workspace は未保存話をCancelで保持し、破棄後の同一ID往復もguardする', async ({ page }) => {
   const fixtures = storyNavigationFixtures();
+  await page.setViewportSize({ width: 1440, height: 900 });
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
   await page.route('**/api/**', (route) => mockStoryNavigationWithOrganizationApi(route, fixtures));
@@ -1284,6 +1285,7 @@ test('キャラ保存済みの入力を変えず切替える場合は確認せ�
 
 test('キャラの未保存入力がある場合にworkspaceと別作品の切替Cancelは入力を保持する', async ({ page }) => {
   const fixtures = storyNavigationFixtures();
+  await page.setViewportSize({ width: 1440, height: 900 });
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
   await page.route('**/api/**', async (route) => {
@@ -2345,6 +2347,7 @@ test('外部更新で選択中作品が消えた場合に未保存キャラを�
 
 test('外部更新で法人参加権限が消えた場合に未保存キャラをpersonalへ移さない',async({page})=>{
   let removed=false;const fixtures=storyNavigationFixtures();
+  await page.setViewportSize({width:1440,height:900});
   await seedEnglishUi(page);await seedAuthenticatedSession(page);
   await page.route('**/api/**',async route=>{
     const path=new URL(route.request().url()).pathname;

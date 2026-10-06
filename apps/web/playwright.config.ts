@@ -19,6 +19,7 @@ export default defineConfig({
     command: 'bun run dev -- --host 127.0.0.1 --port 4173',
     env: {
       VITE_DEV_AUTH_BYPASS: 'false',
+      VITE_ORGANIZATION_FEATURES_ENABLED: 'true',
       VITE_SUPABASE_ANON_KEY: '',
       VITE_SUPABASE_URL: '',
     },
