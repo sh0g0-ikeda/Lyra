@@ -2090,18 +2090,9 @@ test('スマホWebで作品一覧と編集操作を作業導線に合わせて�
     .getByRole('heading', { name: 'Workspace', exact: true })
     .locator('xpath=ancestor::section[1]');
   await expect(accountWorkspace).toBeVisible();
-  // Spec §5: both rollout configurations preserve personal access. When the
-  // organization UI is enabled, verify its actual selected scope and action.
-  const organizationFeaturesEnabled = process.env.VITE_ORGANIZATION_FEATURES_ENABLED?.trim().toLowerCase() === 'true';
-  if (organizationFeaturesEnabled) {
-    await expect(accountWorkspace.getByRole('combobox')).toHaveValue('');
-    await expect(accountWorkspace.getByRole('combobox').locator('option:checked')).toHaveText('Personal');
-    await expect(accountWorkspace.getByRole('button', { name: 'Create organization', exact: true })).toBeVisible();
-  } else {
-    await expect(accountWorkspace).toContainText('Personal use is available now.');
-    await expect(accountWorkspace.getByRole('combobox')).toHaveCount(0);
-    await expect(accountWorkspace.getByRole('button', { name: 'Create organization', exact: true })).toHaveCount(0);
-  }
+  await expect(accountWorkspace.getByRole('combobox')).toHaveValue('');
+  await expect(accountWorkspace.getByRole('combobox').locator('option:checked')).toHaveText('Personal');
+  await expect(accountWorkspace.getByRole('button', { name: 'Create organization', exact: true })).toBeVisible();
 
   await mobileNavigation.getByRole('button', { name: 'Story', exact: true }).click();
   const episodeSection = page
