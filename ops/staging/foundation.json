@@ -18,6 +18,32 @@
     "ExpiresAt": {
       "Type": "String",
       "AllowedPattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "GoogleCollisionGuardEnabled": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": [
+        "false",
+        "true"
+      ]
+    },
+    "GoogleIdentityProviderEnabled": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": [
+        "false",
+        "true"
+      ]
+    },
+    "GooglePreSignUpArn": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^arn:aws:lambda:ap-northeast-1:452284481392:function:lyra-staging-20261003-google-presignup$"
+    },
+    "GoogleOAuthSecretArn": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^arn:aws:secretsmanager:ap-northeast-1:452284481392:secret:lyra-staging-20261003-google-oauth-[A-Za-z0-9]{6}$"
     }
   },
   "Resources": {
@@ -1581,6 +1607,19 @@
           "LyraStagingId": {
             "Ref": "ResourcePrefix"
           }
+        },
+        "LambdaConfig": {
+          "Fn::If": [
+            "GoogleGuardConfigured",
+            {
+              "PreSignUp": {
+                "Ref": "GooglePreSignUpArn"
+              }
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
         }
       }
     },
@@ -1621,9 +1660,20 @@
         "LogoutURLs": [
           "lyra-mobile-staging://auth/mobile/logout"
         ],
-        "SupportedIdentityProviders": [
-          "COGNITO"
-        ],
+        "SupportedIdentityProviders": {
+          "Fn::If": [
+            "GoogleProviderConfigured",
+            [
+              "COGNITO",
+              {
+                "Ref": "GoogleIdentityProvider"
+              }
+            ],
+            [
+              "COGNITO"
+            ]
+          ]
+        },
         "PreventUserExistenceErrors": "ENABLED"
       }
     },
@@ -1656,9 +1706,20 @@
             "Fn::Sub": "https://${StagingDistribution.DomainName}/"
           }
         ],
-        "SupportedIdentityProviders": [
-          "COGNITO"
-        ],
+        "SupportedIdentityProviders": {
+          "Fn::If": [
+            "GoogleProviderConfigured",
+            [
+              "COGNITO",
+              {
+                "Ref": "GoogleIdentityProvider"
+              }
+            ],
+            [
+              "COGNITO"
+            ]
+          ]
+        },
         "PreventUserExistenceErrors": "ENABLED"
       }
     },
@@ -1684,6 +1745,30 @@
           "Ref": "WebUserPoolClient"
         },
         "UseCognitoProvidedValues": true
+      }
+    },
+    "GoogleIdentityProvider": {
+      "Type": "AWS::Cognito::UserPoolIdentityProvider",
+      "Condition": "GoogleProviderConfigured",
+      "Properties": {
+        "UserPoolId": {
+          "Ref": "StagingUserPool"
+        },
+        "ProviderName": "Google",
+        "ProviderType": "Google",
+        "ProviderDetails": {
+          "client_id": {
+            "Fn::Sub": "{{resolve:secretsmanager:${GoogleOAuthSecretArn}:SecretString:client_id}}"
+          },
+          "client_secret": {
+            "Fn::Sub": "{{resolve:secretsmanager:${GoogleOAuthSecretArn}:SecretString:client_secret}}"
+          },
+          "authorize_scopes": "openid email"
+        },
+        "AttributeMapping": {
+          "email": "email",
+          "email_verified": "email_verified"
+        }
       }
     }
   },
@@ -1915,6 +2000,103 @@
           "Arn"
         ]
       }
+    }
+  },
+  "Conditions": {
+    "GoogleGuardConfigured": {
+      "Fn::Equals": [
+        {
+          "Ref": "GoogleCollisionGuardEnabled"
+        },
+        "true"
+      ]
+    },
+    "GoogleProviderConfigured": {
+      "Fn::Equals": [
+        {
+          "Ref": "GoogleIdentityProviderEnabled"
+        },
+        "true"
+      ]
+    }
+  },
+  "Rules": {
+    "GoogleProviderRequiresGuard": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "GoogleIdentityProviderEnabled"
+          },
+          "true"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "GoogleCollisionGuardEnabled"
+              },
+              "true"
+            ]
+          },
+          "AssertDescription": "Attach and verify the collision guard before exposing Google"
+        }
+      ]
+    },
+    "GoogleGuardRequiresArn": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "GoogleCollisionGuardEnabled"
+          },
+          "true"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Equals": [
+                  {
+                    "Ref": "GooglePreSignUpArn"
+                  },
+                  ""
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "A verified unconnected stage guard ARN is required"
+        }
+      ]
+    },
+    "GoogleProviderRequiresSecret": {
+      "RuleCondition": {
+        "Fn::Equals": [
+          {
+            "Ref": "GoogleIdentityProviderEnabled"
+          },
+          "true"
+        ]
+      },
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Equals": [
+                  {
+                    "Ref": "GoogleOAuthSecretArn"
+                  },
+                  ""
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "A dedicated stage Cognito OAuth secret ARN is required"
+        }
+      ]
     }
   }
 }

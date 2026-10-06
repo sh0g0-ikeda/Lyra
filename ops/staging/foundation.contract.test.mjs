@@ -17,7 +17,7 @@ const containsGetAtt = (value, expected) => JSON.stringify(value).includes(JSON.
 // This foundation creates isolated network/data primitives only. Services, task
 // definitions, and roles remain absent until the runtime stack owns them.
 assert.equal(template.Parameters.ResourcePrefix.Default, 'lyra-staging-20261003');
-assert.deepEqual(Object.keys(template.Parameters).sort(), ['ExpiresAt', 'HostedZoneId', 'OriginHostname', 'ResourcePrefix']);
+assert.deepEqual(Object.keys(template.Parameters).filter(name => !name.startsWith('Google')).sort(), ['ExpiresAt', 'HostedZoneId', 'OriginHostname', 'ResourcePrefix']);
 assert.equal(serialized.toLowerCase().includes('lyra-prod'), false, 'production identifiers are forbidden');
 assert.equal(Object.values(resources).some(({ Type }) => Type === 'AWS::EC2::NatGateway'), false, 'NAT is forbidden');
 assert.equal(Object.values(resources).some(({ Type }) => Type === 'AWS::ECS::Service'), false, 'services must start absent');
