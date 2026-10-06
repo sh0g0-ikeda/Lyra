@@ -524,7 +524,7 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
   }
 }
 
-class ActualSourceV4EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler {
+class ActualSourceV6EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler {
   public sourceProviderCalls = 0;
   public invalidFragment = false;
   private readonly actualSourceCompiler: OpenAIEpisodeBeatPlanCompiler;
@@ -534,7 +534,7 @@ class ActualSourceV4EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler 
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
         this.sourceProviderCalls += 1;
-        const sourceRows = parseSourceV4BriefRows(payload);
+        const sourceRows = parseSourceV6BriefRows(payload);
         const ordersByOwner = new Map<string, number>();
         let invalidFragmentInjected = false;
         const foreignFragment = sourceRows.find((row) => row.fragments.length > 0)?.fragments[0]?.id;
@@ -553,6 +553,7 @@ class ActualSourceV4EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler 
             i: row.unitOrdinal,
             u: row.unitOrdinal,
             o: order,
+            k: row.scope === 'global' ? 'g' : 'e',
             e: row.scope === 'global' ? [] : [eventFragment],
             r: row.scope === 'global' ? [] : [null],
             a: [],
@@ -564,7 +565,7 @@ class ActualSourceV4EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler 
         });
         return {
           body: { output_text: JSON.stringify({ requirements }) },
-          requestId: 'req-source-v4-page-service',
+          requestId: 'req-source-v6-page-service',
         };
       },
     } as unknown as OpenAIClient;
@@ -579,21 +580,21 @@ class ActualSourceV4EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler 
   }
 }
 
-interface SourceV4BriefRow {
+interface SourceV6BriefRow {
   unitOrdinal: number;
   scope: 'global' | 'page';
   pageId: string;
   fragments: Array<{ id: string; text: string }>;
 }
 
-function parseSourceV4BriefRows(payload: Record<string, unknown>): SourceV4BriefRow[] {
+function parseSourceV6BriefRows(payload: Record<string, unknown>): SourceV6BriefRow[] {
   const input = payload.input;
   if (!Array.isArray(input) || !isRecord(input[1])) {
-    throw new Error('Source v4 request omitted user input');
+    throw new Error('Source v6 request omitted user input');
   }
   const content = input[1].content;
   if (!Array.isArray(content) || !isRecord(content[0]) || typeof content[0].text !== 'string') {
-    throw new Error('Source v4 request omitted compiler brief');
+    throw new Error('Source v6 request omitted compiler brief');
   }
   return content[0].text.split('\n').flatMap((line) => {
     if (!line.startsWith('{')) return [];
@@ -601,11 +602,11 @@ function parseSourceV4BriefRows(payload: Record<string, unknown>): SourceV4Brief
     if (!isRecord(parsed) || !Number.isSafeInteger(parsed.u) ||
         (parsed.scope !== 'global' && parsed.scope !== 'page') ||
         typeof parsed.page_id !== 'string' || !Array.isArray(parsed.fragments)) {
-      throw new Error('Source v4 compiler brief row is invalid');
+      throw new Error('Source v6 compiler brief row is invalid');
     }
     const fragments = parsed.fragments.map((fragment) => {
       if (!isRecord(fragment) || typeof fragment.id !== 'string' || typeof fragment.text !== 'string') {
-        throw new Error('Source v4 compiler brief fragment is invalid');
+        throw new Error('Source v6 compiler brief fragment is invalid');
       }
       return { id: fragment.id, text: fragment.text };
     });
@@ -2082,8 +2083,8 @@ describe('PageService', () => {
     expect(pageRepository.updatedInputs).toHaveLength(0);
   });
 
-  it('source v4実compilerは15ページ60コマをfake providerから原子的に保存する', async () => {
-    const context = buildSourceV4FifteenPageContext();
+  it('source v6実compilerは15ページ60コマをfake providerから原子的に保存する', async () => {
+    const context = buildSourceV6FifteenPageContext();
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = context;
     const transactionPageRepository = new FakePageRepository();
@@ -2094,7 +2095,7 @@ describe('PageService', () => {
       panelRepository: transactionPanelRepository,
       panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
     });
-    const sourceCompiler = new ActualSourceV4EpisodeBeatPlanCompiler();
+    const sourceCompiler = new ActualSourceV6EpisodeBeatPlanCompiler();
     const service = new PageService(
       pageRepository,
       new FakePanelRepository(),
@@ -2132,8 +2133,8 @@ describe('PageService', () => {
     expect(transactionPanelRepository.updatedPanels).toHaveLength(60);
   });
 
-  it('source v4実compilerが別unit fragmentを拒否した場合はcommitと保存を開始しない', async () => {
-    const context = buildSourceV4FifteenPageContext();
+  it('source v6実compilerが別unit fragmentを拒否した場合はcommitと保存を開始しない', async () => {
+    const context = buildSourceV6FifteenPageContext();
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = context;
     const transactionPageRepository = new FakePageRepository();
@@ -2144,7 +2145,7 @@ describe('PageService', () => {
       panelRepository: transactionPanelRepository,
       panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
     });
-    const sourceCompiler = new ActualSourceV4EpisodeBeatPlanCompiler();
+    const sourceCompiler = new ActualSourceV6EpisodeBeatPlanCompiler();
     sourceCompiler.invalidFragment = true;
     const service = new PageService(
       pageRepository,
@@ -5262,7 +5263,7 @@ function buildMultiPageEpisodePlanningContext(pageCount: number): EpisodePagePla
   };
 }
 
-function buildSourceV4FifteenPageContext(): EpisodePagePlanContext {
+function buildSourceV6FifteenPageContext(): EpisodePagePlanContext {
   const context = buildMultiPageEpisodePlanningContext(15);
   return {
     ...context,
