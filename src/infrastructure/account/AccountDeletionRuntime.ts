@@ -24,11 +24,11 @@ export function createAccountDeletionRecoveryRuntime(environment: Env, database:
       createS3AccountAssetDeletion({ region: config.region, bucket: config.bucket }), config.identityHashSecret, { stateReferenceFencing }),
   };
 }
-export function startAccountDeletionRecovery(runtime: AccountDeletionRecoveryRuntime | null): () => void {
-  if (runtime === null) return () => undefined;
+export function startAccountDeletionRecovery(runtime: AccountDeletionRecoveryRuntime | null): () => Promise<void> {
+  if (runtime === null) return async () => undefined;
   if (!Number.isSafeInteger(runtime.intervalMs) || runtime.intervalMs < 5000 || !Number.isSafeInteger(runtime.batchSize) || runtime.batchSize < 1 || runtime.batchSize > 100)
     throw new Error('Invalid account deletion recovery configuration');
-  let active = false; let stopped = false;
+  let active = false; let stopped = false; let activeRun: Promise<void> | null = null;
   const run = async (): Promise<void> => {
     if (active || stopped) return;
     active = true;
@@ -39,7 +39,7 @@ export function startAccountDeletionRecovery(runtime: AccountDeletionRecoveryRun
       console.error('Account deletion recovery failed; durable request retained');
     } finally { active = false; }
   };
-  void run();
-  const timer = setInterval(() => { void run(); }, runtime.intervalMs);timer.unref();
-  return () => { stopped = true; clearInterval(timer); };
+  activeRun = run();
+  const timer = setInterval(() => { if (!active && !stopped) activeRun = run(); }, runtime.intervalMs);timer.unref();
+  return async () => { stopped = true; clearInterval(timer); await activeRun; };
 }

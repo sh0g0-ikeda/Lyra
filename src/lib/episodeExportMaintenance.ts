@@ -3,9 +3,9 @@ import type { EpisodeExportCleanupService } from '../services/export/EpisodeExpo
 export interface EpisodeExportMaintenanceRuntime { dispatcher: Pick<EpisodeExportDispatchService, 'dispatchPending'>; cleanup: Pick<EpisodeExportCleanupService, 'cleanupExpired'>; }
 /** Bounded recovery uses existing durable outbox/worker leases and owned-key
  * cleanup. Each task has a per-process overlap guard; errors retain receipts. */
-export function startEpisodeExportMaintenance(runtime: EpisodeExportMaintenanceRuntime | null): () => void {
-  if (runtime === null) return () => undefined;
-  let stopped = false; let dispatching = false; let cleaning = false;
+export function startEpisodeExportMaintenance(runtime: EpisodeExportMaintenanceRuntime | null): () => Promise<void> {
+  if (runtime === null) return async () => undefined;
+  let stopped = false; let dispatching = false; let cleaning = false; let dispatchRun: Promise<void> | null = null; let cleanupRun: Promise<void> | null = null;
   const dispatch = async (): Promise<void> => {
     if (stopped || dispatching) return; dispatching = true;
     try { await runtime.dispatcher.dispatchPending(50); }
@@ -18,9 +18,9 @@ export function startEpisodeExportMaintenance(runtime: EpisodeExportMaintenanceR
     catch { console.error('Episode export cleanup unavailable; artifact receipts retained'); }
     finally { cleaning = false; }
   };
-  void dispatch(); void cleanup();
-  const dispatchTimer = setInterval(() => { void dispatch(); }, 30_000);
-  const cleanupTimer = setInterval(() => { void cleanup(); }, 60 * 60 * 1000);
+  dispatchRun = dispatch(); cleanupRun = cleanup();
+  const dispatchTimer = setInterval(() => { if (!dispatching && !stopped) dispatchRun = dispatch(); }, 30_000);
+  const cleanupTimer = setInterval(() => { if (!cleaning && !stopped) cleanupRun = cleanup(); }, 60 * 60 * 1000);
   dispatchTimer.unref(); cleanupTimer.unref();
-  return () => { stopped = true; clearInterval(dispatchTimer); clearInterval(cleanupTimer); };
+  return async () => { stopped = true; clearInterval(dispatchTimer); clearInterval(cleanupTimer); await Promise.all([dispatchRun, cleanupRun]); };
 }

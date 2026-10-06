@@ -14,3 +14,45 @@ async function advance(milliseconds: number): Promise<void> {
   vi.advanceTimersByTime(milliseconds);
   for (let index = 0; index < 12; index++) await Promise.resolve();
 }
+
+
+describe('通知consumerを安全に停止する', () => {
+  it('停止は進行中の送信完了を待ち新しい送信を開始しない', async () => {
+    let resolve!: (value: {claimed: number; sent: number; retried: number; dead: number; stale: number}) => void;
+    const dispatchPending = vi.fn(() => new Promise<{claimed: number; sent: number; retried: number; dead: number; stale: number}>(done => { resolve = done; }));
+    const stop = startPushNotificationMaintenance({deliveryService: {dispatchPending}, intervalMs: 5000});
+    stops.push(stop);
+    let stopped = false;
+    const pendingStop = stop();
+    expect(pendingStop).toBeInstanceOf(Promise);
+    void pendingStop.then(() => { stopped = true; });
+    await advance(15000);
+    expect(stopped).toBe(false);
+    expect(dispatchPending).toHaveBeenCalledTimes(1);
+    resolve({claimed: 0, sent: 0, retried: 0, dead: 0, stale: 0});
+    await pendingStop;
+    expect(stopped).toBe(true);
+    await advance(15000);
+    expect(dispatchPending).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('同じconsumerの複数の停止要求は同じ進行中の処理を待つ', async () => {
+    let resolve!: (value: {claimed: number; sent: number; retried: number; dead: number; stale: number}) => void;
+    const dispatchPending = vi.fn(() => new Promise<{claimed: number; sent: number; retried: number; dead: number; stale: number}>(done => { resolve = done; }));
+    const stop = startPushNotificationMaintenance({deliveryService: {dispatchPending}, intervalMs: 5000});
+    stops.push(stop);
+    const first = stop();
+    expect(first).toBeInstanceOf(Promise);
+    expect(stop()).toBe(first);
+    resolve({claimed: 0, sent: 0, retried: 0, dead: 0, stale: 0});
+    await first;
+    await stop();
+    expect(dispatchPending).toHaveBeenCalledTimes(1);
+  });
+
+  it('無効なconsumerの停止も待機可能で送信しない', async () => {
+    await startPushNotificationMaintenance(null)();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
