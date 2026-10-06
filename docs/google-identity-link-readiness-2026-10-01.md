@@ -1,12 +1,59 @@
 # Google sign-in and explicit identity linking
 
-Status (2026-10-06): implemented behind default-OFF server capabilities. The isolated
-staging Cognito domain now uses Managed Login v2 with default Native/Web branding;
-a pool-scoped branding grant was explicitly approved for the staging CloudFormation
-role. Existing email login and client configuration were verified unchanged. Google
-IdP, link credentials, collision-trigger attachment and real Google acceptance remain
-incomplete. No production change, migration or store submission was performed.
-This is not production readiness or Google activation evidence.
+Status (2026-10-06): Google remains default-OFF. The isolated staging pool now
+has the collision guard attached, exact pool-scoped API link permissions, and a
+DISABLED expiry schedule. A bounded expiry task executed against the real staging
+DB, stopped with exit 0, and reported 0 expired rows. Existing email login and the
+visible account's four works/nine credits were verified after guard attachment.
+
+Google branding final consent, both OAuth clients, IdP/link credentials and real
+Google acceptance remain incomplete. The DB drain v2 source and local PG18 tests
+are complete, and the immutable proof code was uploaded to the private staging
+build bucket, but the permanent reader/proof Lambda and Google-aware lifecycle
+configuration are not deployed. No production change, main merge or store
+submission occurred. This is not Google activation or production readiness evidence.
+
+## 2026-10-06 staging settings evidence
+
+- Evidence: docs/uiux-backend-expansion-2026-09-30/receipts/google-settings-staging-20261006-r1.json.
+- Actual Cognito guard invocation: 7 expected outcomes matched; no user creation,
+  identity-link mutation or Google provider call. Exact pool resource permission
+  and pre-signup attachment were read back after CloudFormation UPDATE_COMPLETE.
+- Reserved concurrency 2 could not be applied under the account's existing 10
+  concurrency quota. The function uses the shared quota for bounded staging QA;
+  production isolation is not approved. No quota increase or payment occurred.
+- Expiry CFN corrections were tested and retried without granting default-group
+  access: property capitalization, explicit group dependency, millisecond UTC end
+  date, dedicated-group dependent deletion, and deterministic schedule ARN output.
+  Failed additions rolled back; the final six additions preserve existing services.
+  Unused retained task-definition revisions 1/2 remain ACTIVE but were not run.
+- Final Ops: 179 tests, 179 PASS, 0 FAIL, 0 SKIP. The existing schema047
+  fixture gate also runs on the owned local PG18 port 15435; its expectations are
+  unchanged. This test-only connection wiring is the pure-wiring TDD exception.
+  Real PG18 separately proves direct v2
+  install/verify, eight counters, denied raw table/column reads, scoped teardown,
+  preserved fixture rows and whole-transaction rollback when the Google table is
+  missing. Tests share the disposable DB sequentially.
+- Fresh AWS inventory disproves a completed permanent drain deployment: only the
+  lifecycle and pre-signup Lambdas exist, no proof Lambda is configured, lifecycle
+  latest has only its artifact-hash environment key, and its schedule is DISABLED.
+  Older install/roundtrip/teardown receipts prove temporary testing, not a reader
+  left installed. The first v2 install must be paired with secret storage, proof
+  deployment, exact IAM/boundary readback and teardown ownership before mutation.
+- Prepared/uploaded proof ZIP SHA256: 40e4547fe150ded356001b107771c1616120554d1d62a1fecba65e7849221a6a.
+  Google-aware lifecycle ZIP SHA256: aa48cc56223adffdc13cb8d05b307b510de52a24019c18d4d9c2757cebb7fa46 (local only).
+  Packaging/import checks do not prove a live invocation or shutdown.
+- The manually created guard Lambda, role and 14-day log group require retained
+  resource inventory/cleanup. Automatic full shutdown and zero ongoing cost are
+  not asserted. Earlier specific M2/P9/public GitHub/IAM transmission refusals are
+  preserved; no alternative channel is used to bypass them.
+
+- Initial v2 installer preparation also passed 5 pure mock cases and generated-code
+  parsing (7771/8192 override bytes). Reviewed source/image, runtime secret/source
+  ARN, and fresh RDS metadata are exact-match gates. Missing prerequisites, wrong
+  scopes, transaction/query failure and pool-close failure fail closed. No request
+  was sent and no initial reader was installed. The disposable PG18 cluster used
+  for the 179-pass gate was stopped after testing; other clusters were unchanged.
 
 ## Protocol and preservation
 
