@@ -83,31 +83,31 @@ native('actual44 explicit forward expansion', () => {
   it('未知catalogでは履歴もDDLも変えず拒否する', async () => {
     expect(await checkpoint()).toBe(0);
     await pool.query('ALTER TABLE entity_states ADD COLUMN unknown_expansion_column text');
-    await expect(runProduction44Expansion(pool)).rejects.toThrow('CHECKPOINT_OR_MIGRATION_REJECTED');
+    await expectExpansionRejected(runProduction44Expansion(pool));
     expect((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n).toBe(44);
     await pool.query('ALTER TABLE entity_states DROP COLUMN unknown_expansion_column');
     expect(await checkpoint()).toBe(0);
   });
   it('既存普通runnerロックと別session advisory lockを尊重する', async () => {
     await pool.query("INSERT INTO schema_migration_locks(name) VALUES('schema_migrations')");
-    try { await expect(runProduction44Expansion(pool)).rejects.toThrow('CHECKPOINT_OR_MIGRATION_REJECTED'); }
+    try { await expectExpansionRejected(runProduction44Expansion(pool)); }
     finally { await pool.query('DELETE FROM schema_migration_locks'); }
     const holder = await pool.connect();
     try {
       await holder.query('SELECT pg_advisory_lock(1744048,52)');
-      await expect(runProduction44Expansion(pool)).rejects.toThrow('CHECKPOINT_OR_MIGRATION_REJECTED');
+      await expectExpansionRejected(runProduction44Expansion(pool));
     } finally { await holder.query('SELECT pg_advisory_unlock(1744048,52)'); holder.release(); }
     expect(await checkpoint()).toBe(0);
   });
   it('DDL後catalogが一致しなければそのfileとreceiptを一緒にrollbackする', async () => {
-    await expect(runProduction44Expansion({ connect: async () => {
+    await expectExpansionRejected(runProduction44Expansion({ connect: async () => {
       const session = await pool.connect();
       return { release: session.release.bind(session), query: async <T extends QueryResultRow>(sql: string, values?: readonly unknown[]) => {
         const result = await session.query<T>(sql, values === undefined ? undefined : [...values]);
         if (sql === 'INSERT INTO schema_migrations(filename) VALUES($1)') await session.query('ALTER TABLE entity_states ADD COLUMN unexpected_after_ddl text');
         return result;
       } };
-    } })).rejects.toThrow('CHECKPOINT_OR_MIGRATION_REJECTED');
+    } }));
     expect(await checkpoint()).toBe(0);
   });
   it('043ロックtimeoutはそのfileをrollbackしexact3checkpointから再開して52履歴だけとなる', async () => {
@@ -115,7 +115,7 @@ native('actual44 explicit forward expansion', () => {
     await holder.query('BEGIN');
     await holder.query('LOCK TABLE generation_jobs IN ACCESS SHARE MODE');
     const started = performance.now();
-    try { await expect(runProduction44Expansion(pool)).rejects.toThrow('CHECKPOINT_OR_MIGRATION_REJECTED'); }
+    try { await expectExpansionRejected(runProduction44Expansion(pool)); }
     finally { await holder.query('ROLLBACK'); holder.release(); }
     expect(performance.now() - started).toBeGreaterThanOrEqual(900);
     expect(performance.now() - started).toBeLessThan(15_000);
@@ -186,18 +186,29 @@ native('actual44 explicit forward expansion', () => {
   });
   it('停止中にmigration leaseが交代した場合はDDLせず新ownerのロックを消さない', async () => {
     try {
-      await expect(runProduction44Expansion({ connect: async () => {
+      await expectExpansionRejected(runProduction44Expansion({ connect: async () => {
         const session = await pool.connect();
         return { release: session.release.bind(session), query: async <T extends QueryResultRow>(sql: string, values?: readonly unknown[]) => {
           const result = await session.query<T>(sql, values === undefined ? undefined : [...values]);
           if (sql.startsWith('INSERT INTO schema_migration_locks(name)')) await pool.query("UPDATE schema_migration_locks SET locked_at=clock_timestamp()+INTERVAL '1 second' WHERE name='schema_migrations'");
           return result;
         } };
-      } })).rejects.toThrow('CHECKPOINT_OR_MIGRATION_REJECTED');
+      } }));
       expect((await pool.query('SELECT * FROM schema_migration_locks')).rows).toHaveLength(1);
     } finally { await pool.query('DELETE FROM schema_migration_locks'); }
   });
 });
+
+// Bun 1.3.14's asynchronous rejection matcher can stall I/O on a reused pg
+// connection. Await rejection first, preserving both failure and message checks.
+async function expectExpansionRejected(promise: Promise<unknown>): Promise<void> {
+  let rejected = false;
+  let rejection: unknown;
+  try { await promise; }
+  catch (error) { rejected = true; rejection = error; }
+  expect(rejected).toBe(true);
+  expect(() => { throw rejection; }).toThrow('CHECKPOINT_OR_MIGRATION_REJECTED');
+}
 
 function testDatabase(pool: Pool): DatabaseClient & TransactionRunner {
   return { query: pool.query.bind(pool), transaction: async work => {

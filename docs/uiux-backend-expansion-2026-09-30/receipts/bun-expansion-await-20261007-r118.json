@@ -1,0 +1,43 @@
+{
+  "schema": "lyra.bun-expansion-await/v1",
+  "date": "2026-10-07",
+  "sourceBefore": "e08c658467002318316083e2c5a83bcdf99f88ca",
+  "test": "tests/integration/production44Expansion.test.ts",
+  "testSha256": "340718327da20ea9724174223f9a7ab7178b4b6aeaaeb17940190270ecbf3e5e",
+  "productMigrationSha256": "0c5ebbe7761147fd7174c5bff5e5332bad69401dbdece9357e69841b62b9f4b4",
+  "productChanges": 0,
+  "changedMatchers": 6,
+  "semantics": "promise must reject; same thrown rejection must match CHECKPOINT_OR_MIGRATION_REJECTED",
+  "checks": {
+    "bun": {
+      "passed": 9,
+      "failed": 0,
+      "assertions": 46
+    },
+    "vitest": {
+      "files": 9,
+      "passed": 89,
+      "failed": 0
+    },
+    "typecheck": "PASS",
+    "diff": "PASS"
+  },
+  "evidence": {
+    "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/google-activation-r3/bun-expansion-root-r105/final-receipt.json",
+    "sha256": "b505cc79596d3f766ae0b8a16db5fce72693855cee2860278853b9dd785de69f"
+  },
+  "review": "Sol independent GO: resolved promises still fail; SQL/catalog/lock/rollback/credit/skip expectations unchanged",
+  "failedAttemptsPreserved": [
+    "Bun original async matcher hang",
+    "split SET minimum reproduction passed but original suite still hung",
+    "first nearby snapshot missing worker files: 87 pass / 2 fail; completed snapshot: 89 pass"
+  ],
+  "limitations": [
+    "Bun internal root cause location and Linux runtime reproduction not proven",
+    "full final backend gates pending",
+    "real clone rehearsal and real long15 provider still pending"
+  ],
+  "productionChanges": 0,
+  "mainMerge": 0,
+  "storeSubmission": 0
+}
