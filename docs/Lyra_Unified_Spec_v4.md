@@ -227,7 +227,11 @@ or partial context is rejected before detail or saving. This checks literal
 transport only, not semantic fidelity, and remains inside the existing continuity
 V3 gate with its default OFF. Every extraction pack's escaped input brief is
 checked against the 32 KiB source-input bound before the first paid call, and the
-compact response record and envelope bounds are checked independently. Detail
+compact response record and envelope bounds are checked independently. The
+resolved internal requirements use an extraction-derived byte ceiling for the
+permitted exact-source copies and bounded metadata, with an absolute 2 MiB
+ceiling. Pack and merged requirements use the same derived validation; compact
+provider limits remain unchanged. Detail
 output allocates page-owned requirements to panels before writing panel fields.
 Placement validation checks structural coverage and prerequisite order, not semantic
 fidelity. Normal and repair detail calls retain the same complete requirements.

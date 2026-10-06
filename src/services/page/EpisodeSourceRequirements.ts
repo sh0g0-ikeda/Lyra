@@ -13,8 +13,13 @@ const MAX_REQUIREMENTS = 512;
 // per token and 8k nominal headroom. This does not prove provider whitespace or
 // reasoning margin; oversized/unsupported source takes the pre-paid legacy path.
 const MAX_REQUIREMENT_PROVIDER_OUTPUT_BYTES = 24_000;
-const MAX_REQUIREMENT_SERIALIZED_BYTES = 64_000;
 const MAX_SOURCE_DISPLAY_CHARS = 8_000;
+// Decoded requirements can repeat only exact source fragments. A page record can
+// carry at most 35 restored copies: events/results/condition/context, four
+// attributes, four quotes, and the five aligned obligation triples. JSON can
+// escape one UTF-16 code unit to six bytes, so 8k * 35 * 6 plus bounded record
+// metadata for 256 units stays below this absolute in-memory ceiling.
+const MAX_REQUIREMENT_INTERNAL_SERIALIZED_BYTES = 2 * 1_024 * 1_024;
 // One record per nonblank lossless sentence unit. Each record carries up to five ordered
 // obligations, so page frame counts never cap source extraction.
 // The per-record coefficient is combined with 1024 + 128 * pageCount reserve.
@@ -157,7 +162,11 @@ export function prepareEpisodeSourceRequirementExtraction(input: {
     units.filter((unit) => unit.text.trim().length > 0).length,
   );
   const compilerBrief = formatExtractionBrief(pages, units);
-  return { pages, units, compilerBrief, estimatedWorstCaseOutputBytes };
+  const extraction = { pages, units, compilerBrief, estimatedWorstCaseOutputBytes };
+  if (maximumDecodedRequirementBytes(extraction) > MAX_REQUIREMENT_INTERNAL_SERIALIZED_BYTES) {
+    return null;
+  }
+  return extraction;
 }
 
 export function buildEpisodeSourceRequirementExtractionPacks(
@@ -228,7 +237,9 @@ export function validateEpisodeSourceRequirements(
   if (value.requirements.length === 0 || value.requirements.length > MAX_REQUIREMENTS) {
     throw new ConfigurationError('Source requirements exceeded the bounded contract');
   }
-  if (Buffer.byteLength(JSON.stringify(value), 'utf8') > MAX_REQUIREMENT_SERIALIZED_BYTES) {
+  const maximumDecodedBytes = maximumDecodedRequirementBytes(extraction);
+  if (maximumDecodedBytes > MAX_REQUIREMENT_INTERNAL_SERIALIZED_BYTES ||
+      Buffer.byteLength(JSON.stringify(value), 'utf8') > maximumDecodedBytes) {
     throw new ConfigurationError('Source requirements exceeded the structured output budget');
   }
   const pagesById = new Map(extraction.pages.map((page) => [page.pageId, page] as const));
@@ -468,6 +479,57 @@ function estimateRequirementOutputBytes(pageCount: number, nonblankUnitCount: nu
     requirementCount * REQUIREMENT_PROVIDER_WORST_CASE_BYTES;
 }
 
+function maximumDecodedRequirementBytes(extraction: EpisodeSourceRequirementExtraction): number {
+  const maximumRequirementId = 'r'.repeat(24);
+  const maximumRelations = Array.from({ length: 4 }, (_, index) =>
+    `${String(index + 1)}${'r'.repeat(23)}`);
+  const requirements = extraction.units
+    .filter((unit) => unit.text.trim().length > 0)
+    .map((unit): EpisodeSourceRequirement => {
+      const text = unit.text.trim();
+      const copies = (count: number): string[] => Array.from({ length: count }, () => text);
+      const common = {
+        requirementId: maximumRequirementId,
+        scope: unit.scope,
+        pageId: unit.scope === 'global' ? null : unit.pageId,
+        pageNumber: unit.scope === 'global' ? null : unit.pageNumber,
+        sourceUnitIds: [unit.unitId],
+        order: 10_000,
+        afterRequirementIds: maximumRelations,
+        emotion: text,
+        function: text,
+        camera: text,
+        framing: text,
+        quotedText: copies(4),
+      };
+      if (unit.scope === 'global') {
+        return {
+          ...common,
+          events: [],
+          results: [],
+          conditionalUntil: null,
+          requiredByEnd: false,
+          context: text,
+        };
+      }
+      return {
+        ...common,
+        events: copies(5),
+        results: copies(5),
+        conditionalUntil: text,
+        requiredByEnd: true,
+        context: text,
+        obligations: Array.from({ length: 5 }, () => ({
+          event: text,
+          result: text,
+          conditionalUntil: text,
+          requiredByEnd: true,
+        })),
+      };
+    });
+  return Buffer.byteLength(JSON.stringify({ requirements }), 'utf8');
+}
+
 function countExplicitQuotedSegments(text: string): number {
   return (text.match(/「/gu) ?? []).length +
     (text.match(/“/gu) ?? []).length +
@@ -555,5 +617,5 @@ export const EPISODE_SOURCE_REQUIREMENT_LIMITS = {
   maxProviderOutputBytes: MAX_REQUIREMENT_PROVIDER_OUTPUT_BYTES,
   maxProviderBytesPerRequirement: EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES,
   maxProviderInputBytes: EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_INPUT_BYTES,
-  maxSerializedBytes: MAX_REQUIREMENT_SERIALIZED_BYTES,
+  maxSerializedBytes: MAX_REQUIREMENT_INTERNAL_SERIALIZED_BYTES,
 } as const;
