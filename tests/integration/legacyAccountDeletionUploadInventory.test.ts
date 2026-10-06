@@ -7,45 +7,35 @@ import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresLegacyAccountDeletionRepository } from '../../src/legacy/account/LegacyAccountDeletionRepository.js';
 import { LegacyAccountDeletionServiceAdapter } from '../../src/legacy/account/LegacyAccountDeletionServiceAdapter.js';
 import { assertLegacyPersonalWriteAllowed } from '../../src/repositories/LegacyAccountDeletionWriteFence.js';
+import {
+  createSyntheticPostgresDatabase,
+  type SyntheticPostgresDatabase,
+} from './postgresTestDatabase.js';
 
 const describePostgres = process.env.APP_ENV === 'test' && process.env.DATABASE_URL ? describe : describe.skip;
 /** Spec 5/8/11: existing upload records fence deletion; temporary keys are not
  * consent-bearing saved assets. This is not proof of expired remote PUT quiescence. */
 describePostgres('legacy deletion upload inventory on dedicated old38 database', () => {
-  let admin: Pool;
   let pool: Pool;
   let database: DatabaseClient & TransactionRunner;
   let repository: PostgresLegacyAccountDeletionRepository;
-  const databaseName = `lyra_delupload_${process.pid}_${randomUUID().replaceAll('-', '')}`;
-  let created = false;
+  let synthetic: SyntheticPostgresDatabase;
 
   beforeAll(async () => {
-    const address = new URL(process.env.DATABASE_URL!);
-    if (!['127.0.0.1', 'localhost'].includes(address.hostname) || !['15432', '15433'].includes(address.port)) {
-      throw new Error('Dedicated deletion test requires an approved local PostgreSQL port');
-    }
-    address.pathname = '/postgres';
-    admin = new Pool({ connectionString: address.toString(), max: 1 });
-    if (!/^lyra_delupload_[0-9]+_[a-f0-9]{32}$/.test(databaseName)) throw new Error('Invalid synthetic database name');
-    await admin.query(`CREATE DATABASE "${databaseName}"`);
-    created = true;
-    console.info('Created dedicated synthetic database', databaseName);
-    address.pathname = `/${databaseName}`;
-    pool = new Pool({ connectionString: address.toString(), max: 8, options: '-c statement_timeout=15000' });
-    database = bindPool(pool);
+    synthetic = await createSyntheticPostgresDatabase({
+      databaseUrl: process.env.DATABASE_URL!,
+      prefix: 'delupload',
+      max: 8,
+      statementTimeoutMs: 15_000,
+    });
+    pool = synthetic.pool;
+    database = synthetic.database;
     expect(await runPendingMigrations(database, { migrationsDir: join(process.cwd(), 'tests/fixtures/production-lineage-2debe') })).toHaveLength(38);
     repository = new PostgresLegacyAccountDeletionRepository(database, database);
   }, 120_000);
 
   afterAll(async () => {
-    if (pool !== undefined) await pool.end();
-    if (admin !== undefined) {
-      if (created) {
-        await admin.query(`DROP DATABASE "${databaseName}"`);
-        console.info('Dropped dedicated synthetic database', databaseName);
-      }
-      await admin.end();
-    }
+    await synthetic?.close();
   }, 30_000);
 
   it.each([false, true])('consumed=%sでも有効なpersonal URLがある場合は同意済みclaimを拒否する', async (consumed) => {
@@ -172,12 +162,6 @@ function bindClient(client: PoolClient): DatabaseClient & TransactionRunner {
     await client.query('BEGIN');
     try { const result = await work(bindQuery(client)); await client.query('COMMIT'); return result; }
     catch (error: unknown) { await client.query('ROLLBACK'); throw error; }
-  } };
-}
-function bindPool(pool: Pool): DatabaseClient & TransactionRunner {
-  return { ...bindQuery(pool), transaction: async <T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> => {
-    const client = await pool.connect();
-    try { return await bindClient(client).transaction(work); } finally { client.release(); }
   } };
 }
 async function insertUser(pool: Pool): Promise<string> {

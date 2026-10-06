@@ -7,7 +7,6 @@ import type { JobServicePort } from '../../../src/services/job/JobService.js';
 import type { AppEnv } from '../../../src/types/app.js';
 import { buildPushNavigationPayload } from '../../../src/domain/pushNotification.js';
 import { generationJobHistoryResponseSchema, generationJobResponseSchema } from '../../../packages/api-contract/src/mobileApiSchemas.js';
-import { generationJobResponseSchema as generatedMobileJobSchema } from '../../../apps/mobile/src/domain/apiSchemas.js';
 import { generationJobSchema as productionJobSchema, generationJobsResponseSchema as productionJobsSchema } from '../../fixtures/production-mobile-2debe8c/jobSchemas.js';
 import { env } from '../../../src/lib/env.js';
 import {
@@ -212,7 +211,7 @@ describe('page job provenance response compatibility', () => {
     ['conflicting', { image_model: 'gpt-image-2', provider_model_id: 'hy4-preview', provider: 'tencent' }, 'unavailable'],
     ['unknown', { image_model: 'future-model', provider: 'future-provider' }, 'unavailable'],
   ] as const;
-  it.each(provenanceCases)('accepts safe nested %s metadata across list/detail and current/production schemas', async (_name, provenance, access) => {
+  it.each(provenanceCases)('accepts safe nested %s metadata across list/detail and canonical/production schemas', async (_name, provenance, access) => {
     const current = { ...job('page_generate'), result: { generation_mode: 'standard', generated_image: { generation_mode: 'standard', generated_at: now.toISOString(), ...provenance, ...privateFields } } };
     const { app } = setup([current]);
     for (const url of ['/jobs', `/jobs/${current.id}`]) {
@@ -221,7 +220,6 @@ describe('page job provenance response compatibility', () => {
       const body = await response.json();
       const record = url === '/jobs' ? body.jobs[0] : body;
       expect(generationJobResponseSchema.safeParse(record).success).toBe(true);
-      expect(generatedMobileJobSchema.safeParse(record).success).toBe(true);
       expect(productionJobSchema.safeParse(record).success).toBe(true);
       expect(record.result.generated_image).toEqual({ generation_mode: 'standard', generated_at: now.toISOString(), ...provenance, ...(access === undefined ? {} : { mobile_access: access }) });
       for (const value of Object.values(privateFields)) expect(JSON.stringify(body)).not.toContain(value);

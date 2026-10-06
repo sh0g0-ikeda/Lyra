@@ -11,37 +11,33 @@ import {
 } from '../../src/repositories/FencedStateReferenceRepository.js';
 import type { ReleaseCompatibilityRuntime } from '../../src/domain/release/ReleaseCompatibilityPolicy.js';
 import { checkReleaseCompatibility } from '../../scripts/checkReleaseCompatibility.js';
-import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import {
+  createSyntheticPostgresDatabase,
+  type SyntheticPostgresDatabase,
+} from './postgresTestDatabase.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describePostgres = process.env.APP_ENV === 'test' && databaseUrl !== undefined ? describe : describe.skip;
 
 describePostgres('release compatibility preflight', () => {
-  let admin: Pool;
   let pool: Pool;
   let database: TestDatabase;
-  let schema: string;
+  let synthetic: SyntheticPostgresDatabase;
 
   beforeAll(async () => {
-    admin = new Pool({ connectionString: databaseUrl });
-    schema = `release_compatibility_${process.pid}_${Date.now()}`;
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    pool = new Pool({
-      connectionString: databaseUrl,
-      options: `-c search_path=${schema},public`,
+    synthetic = await createSyntheticPostgresDatabase({
+      databaseUrl: databaseUrl!,
+      prefix: 'releasecompat',
       max: 4,
     });
+    pool = synthetic.pool;
     database = new TestDatabase(pool);
-    await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database));
+    await runPendingMigrations(database);
     database.transactionStatements.length = 0;
   }, 120_000);
 
   afterAll(async () => {
-    await pool?.end();
-    if (admin !== undefined) {
-      await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
-      await admin.end();
-    }
+    await synthetic?.close();
   });
 
   it('047現行historyとinvariantを単一read-only snapshotで検査し空journalを許可する', async () => {

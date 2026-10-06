@@ -16,8 +16,10 @@ const describePostgres = process.env.APP_ENV === 'test' && process.env.DATABASE_
   ? describe
   : describe.skip;
 const LEGACY_MIGRATIONS = join(process.cwd(), 'tests/fixtures/production-lineage-2debe');
-const OLD_REPOSITORY_PATH = 'C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/legacy-repository-profile-57d4e8d/old-2debe-r2/src/repositories/AccountDeletionRepository.ts';
+const OLD_REPOSITORY_PATH = join(process.cwd(), 'tests/fixtures/legacy-exact-repository-2debe/src/repositories/AccountDeletionRepository.ts');
 const OLD_REPOSITORY_SHA256 = '3abb9b80e5d6bd653917cecf5968f72a7aa35adac504abcbbbc4d6072e493d60';
+const OLD_DATABASE_TYPES_PATH = join(process.cwd(), 'tests/fixtures/legacy-exact-repository-2debe/src/lib/db.ts');
+const OLD_DATABASE_TYPES_SHA256 = 'c5c5db83a4c2e484ce6c7d67bb124786a42dbd6a7517c8724fa00f1bceb4359b';
 
 interface OldRequest {
   status: 'blocked' | 'processing' | 'pending_external_action' | 'completed';
@@ -51,6 +53,7 @@ describePostgres('legacy 2debe account deletion compatibility', () => {
   beforeAll(async () => {
     const oldSource = readFileSync(OLD_REPOSITORY_PATH);
     expect(createHash('sha256').update(oldSource).digest('hex')).toBe(OLD_REPOSITORY_SHA256);
+    expect(createHash('sha256').update(readFileSync(OLD_DATABASE_TYPES_PATH)).digest('hex')).toBe(OLD_DATABASE_TYPES_SHA256);
     const oldModule = await import(/* @vite-ignore */ pathToFileURL(OLD_REPOSITORY_PATH).href) as {
       PostgresAccountDeletionRepository: OldRepositoryConstructor;
     };

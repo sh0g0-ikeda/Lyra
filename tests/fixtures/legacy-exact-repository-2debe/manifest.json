@@ -1,0 +1,14 @@
+{
+  "sourceCommit": "2debe8c3c22633ed077e7b189ddcfa8b209a00dc",
+  "files": {
+    "src/repositories/AccountDeletionRepository.ts": {
+      "kind": "exact-historical-source",
+      "gitBlob": "7fa6d18fc2ece9422f6d12c3e770211c2e000c5c",
+      "sha256": "3abb9b80e5d6bd653917cecf5968f72a7aa35adac504abcbbbc4d6072e493d60"
+    },
+    "src/lib/db.ts": {
+      "kind": "fixture-type-only-dependency",
+      "sha256": "c5c5db83a4c2e484ce6c7d67bb124786a42dbd6a7517c8724fa00f1bceb4359b"
+    }
+  }
+}

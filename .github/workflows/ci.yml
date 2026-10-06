@@ -14,6 +14,7 @@ jobs:
       NODE_ENV: test
       DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/lyra_test
       DATABASE_SSL_MODE: disable
+      LYRA_CI_TEST_DATABASE_ADMIN_ALLOWED: 'true'
     services:
       postgres:
         image: postgres:16-alpine

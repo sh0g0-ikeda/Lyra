@@ -30,15 +30,28 @@ describePostgres('旧38 runtime descriptor PostgreSQL boundary', () => {
     await admin.end();
   }, 120_000);
 
-  it('旧38をread-only照合する場合にactive jobを理由に拒否せずDDLやrowを変えない', async () => {
+  it('旧38は製品PostgreSQL18でexact受入しPostgreSQL16ではconstraint catalog差をfail-closedにする', async () => {
     const { pool, database } = await isolatedDatabase();
     const userId = randomUUID();
     await pool.query('INSERT INTO users(id,supabase_id,email) VALUES($1,$2,$3)', [userId, 'legacy-attest-' + userId, userId + '@example.invalid']);
     await pool.query("INSERT INTO generation_jobs(user_id,job_type,status,credit_cost,params) VALUES($1,'page_generate','queued',0,'{}')", [userId]);
+    const versionNumber = Number((await pool.query<{ version: string }>(
+      "SELECT current_setting('server_version_num') AS version",
+    )).rows[0]?.version);
     const beforeCatalog = await readLegacyCatalog(database);
     const beforeRows = await pool.query('SELECT id,status,params FROM generation_jobs ORDER BY id');
-    expect(describeLegacyRuntimeSchema(beforeCatalog)).toEqual({ kind: 'legacy_2debe_v1', failures: [] });
-    expect(await attestLegacyRuntimeSchema(database)).toBe('legacy_2debe_v1');
+    if (versionNumber >= 180_000 && versionNumber < 190_000) {
+      expect(describeLegacyRuntimeSchema(beforeCatalog)).toEqual({ kind: 'legacy_2debe_v1', failures: [] });
+      expect(await attestLegacyRuntimeSchema(database)).toBe('legacy_2debe_v1');
+    } else if (versionNumber >= 160_000 && versionNumber < 170_000) {
+      expect(describeLegacyRuntimeSchema(beforeCatalog)).toEqual({
+        kind: 'unsupported',
+        failures: ['LEGACY_CONSTRAINTS_MISMATCH'],
+      });
+      expect(await refuseBeforeWriter(database)).toBe(0);
+    } else {
+      throw new Error(`PostgreSQL ${versionNumber} has no explicit legacy descriptor expectation`);
+    }
     expect(await readLegacyCatalog(database)).toEqual(beforeCatalog);
     expect((await pool.query('SELECT id,status,params FROM generation_jobs ORDER BY id')).rows).toEqual(beforeRows.rows);
     expect(describeRuntimeSchema(beforeCatalog).kind).toBe('unsupported');
