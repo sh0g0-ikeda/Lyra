@@ -8,7 +8,7 @@ import { env } from '../src/lib/env.js';
 import { closeDatabasePool, db } from '../src/lib/db.js';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
-import { attestCanonicalRuntimeSchema } from '../src/lib/runtimeSchemaAttestation.js';
+import { attestCanonicalRuntimeSchema, startAttestedCanonicalRuntime, type AttestedCanonicalRuntime } from '../src/lib/runtimeSchemaAttestation.js';
 import {
   GENERATION_RECOVERY_BATCH_LIMIT,
   ENTITY_GENERATION_STALE_AFTER_MS,
@@ -39,17 +39,23 @@ async function main(): Promise<void> {
   if (env.SQS_QUEUE_URL_GENERATION === undefined) {
     throw new ConfigurationError('SQS_QUEUE_URL_GENERATION is required for generation worker polling');
   }
-  await attestCanonicalRuntimeSchema(db);
+  const queueUrl = env.SQS_QUEUE_URL_GENERATION;
+  await startAttestedCanonicalRuntime({
+    attest: () => attestCanonicalRuntimeSchema(db),
+    start: (runtime) => startWorkerRuntime(runtime, queueUrl),
+  });
+}
 
+async function startWorkerRuntime(runtime: AttestedCanonicalRuntime, queueUrl: string): Promise<void> {
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
-  const recoveryRunner = new GenerationWorkerRecoveryRunner(organizationService);
+  const recoveryRunner = new GenerationWorkerRecoveryRunner(organizationService, runtime);
   await recoveryRunner.run('startup');
 
   const poller = new GenerationQueuePoller(
     new SQSClient(env.AWS_REGION === undefined ? {} : { region: env.AWS_REGION }),
-    resolveWorkerDependencies(),
+    resolveWorkerDependencies({}, runtime),
     {
-      queueUrl: env.SQS_QUEUE_URL_GENERATION,
+      queueUrl,
       maxNumberOfMessages: env.SQS_GENERATION_MAX_NUMBER_OF_MESSAGES,
       visibilityTimeoutSeconds: env.SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS,
     },
@@ -82,7 +88,10 @@ async function main(): Promise<void> {
 class GenerationWorkerRecoveryRunner {
   private inFlight = false;
 
-  public constructor(private readonly organizationService: OrganizationServicePort) {}
+  public constructor(
+    private readonly organizationService: OrganizationServicePort,
+    private readonly runtime: AttestedCanonicalRuntime,
+  ) {}
 
   public async run(reason: 'startup' | 'periodic'): Promise<void> {
     if (this.inFlight) {
@@ -106,7 +115,7 @@ class GenerationWorkerRecoveryRunner {
       }
       const recoveredPageCount = await new PageGenerationRecoveryService(
         new PostgresPageGenerationRecoveryRepository(db),
-        new PostgresPageGenerationExecutionRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+        new PostgresPageGenerationExecutionRepository(db, this.runtime.repositoryProfile),
         creditService,
         PAGE_GENERATION_STALE_AFTER_MS,
         GENERATION_RECOVERY_BATCH_LIMIT,
@@ -114,7 +123,7 @@ class GenerationWorkerRecoveryRunner {
       ).recoverAllStaleJobs();
       const recoveredEntityCount = await new EntityGenerationRecoveryService(
         new PostgresEntityGenerationRecoveryRepository(db),
-        new PostgresEntityGenerationExecutionRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+        new PostgresEntityGenerationExecutionRepository(db, this.runtime.repositoryProfile),
         creditService,
         ENTITY_GENERATION_STALE_AFTER_MS,
         GENERATION_RECOVERY_BATCH_LIMIT,

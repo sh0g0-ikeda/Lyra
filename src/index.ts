@@ -20,12 +20,19 @@ import { db } from './lib/db.js';
 import { env } from './lib/env.js';
 import { runPendingMigrations } from './lib/migrations.js';
 import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
-import { prepareCanonicalRuntimeSchema } from './lib/runtimeSchemaAttestation.js';
+import { prepareCanonicalRuntimeSchema, startAttestedCanonicalRuntime, type AttestedCanonicalRuntime } from './lib/runtimeSchemaAttestation.js';
 import { sanitizePersistedErrorMessage } from './lib/errorSanitizer.js';
 import { createFencedStateReferenceRuntime } from './infrastructure/state/FencedStateReferenceRuntime.js';
 
 async function main(): Promise<void> {
   assertProductionRuntimeConfig(env);
+  await startAttestedCanonicalRuntime({
+    attest: prepareRuntimeSchema,
+    start: startRuntime,
+  });
+}
+
+async function prepareRuntimeSchema(): Promise<'canonical_fresh_v1'> {
   const schema = await prepareCanonicalRuntimeSchema({
     database: db,
     autoRunMigrations: env.AUTO_RUN_MIGRATIONS,
@@ -36,16 +43,20 @@ async function main(): Promise<void> {
   } else if (!env.AUTO_RUN_MIGRATIONS) {
     console.warn('[migrations] startup migration auto-run is disabled');
   }
+  return schema.descriptor;
+}
+
+async function startRuntime(runtime: AttestedCanonicalRuntime): Promise<void> {
   const fencedStateReferenceRuntime = createFencedStateReferenceRuntime(env, db);
 
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
-  const generationJobCancellationControl = new PostgresGenerationJobRepository(db, env.LYRA_PERSISTENCE_PROFILE);
+  const generationJobCancellationControl = new PostgresGenerationJobRepository(db, runtime.repositoryProfile);
 
   try {
     const creditService = new CreditService(new PostgresCreditRepository(db, db));
     const recoveredCount = await new PageGenerationRecoveryService(
       new PostgresPageGenerationRecoveryRepository(db),
-      new PostgresPageGenerationExecutionRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+      new PostgresPageGenerationExecutionRepository(db, runtime.repositoryProfile),
       creditService,
       undefined,
       undefined,
@@ -66,7 +77,7 @@ async function main(): Promise<void> {
   try {
     const recoveredCount = await new EntityGenerationRecoveryService(
       new PostgresEntityGenerationRecoveryRepository(db),
-      new PostgresEntityGenerationExecutionRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+      new PostgresEntityGenerationExecutionRepository(db, runtime.repositoryProfile),
       new CreditService(new PostgresCreditRepository(db, db)),
       undefined,
       undefined,
@@ -90,7 +101,7 @@ async function main(): Promise<void> {
 
   serve(
     {
-      fetch: createApp({ fencedStateReferenceRuntime }).fetch,
+      fetch: createApp({ fencedStateReferenceRuntime, attestedRuntime: runtime }).fetch,
       port: env.PORT,
     },
     (info) => {

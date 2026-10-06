@@ -333,6 +333,8 @@ import {
 } from './infrastructure/state/FencedStateReferenceRuntime.js';
 
 export interface AppDependencies {
+  /** Supplied by verified boot entrypoints; omitted by existing isolated test DI. */
+  attestedRuntime?: import('./lib/runtimeSchemaAttestation.js').AttestedCanonicalRuntime;
   aiContentReportService?: AiContentReportServicePort;
   organizationSafetyReportService?: OrganizationSafetyReportServicePort;
   accountDeletionService?: AccountDeletionServicePort;
@@ -838,6 +840,7 @@ function resolveDependencies(
       | 'webStaticDir'
       | 'readinessCheck'
       | 'fencedStateReferenceRuntime'
+      | 'attestedRuntime'
     >
   >,
   'storyEpisodeImprovementPlanner'
@@ -853,7 +856,7 @@ function resolveDependencies(
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
 } {
   const fencedStateReferenceRuntime = dependencies.fencedStateReferenceRuntime ?? createFencedStateReferenceRuntime(env, db);
-  const persistenceProfile = env.LYRA_PERSISTENCE_PROFILE;
+  const persistenceProfile = dependencies.attestedRuntime?.repositoryProfile ?? env.LYRA_PERSISTENCE_PROFILE;
   const creditRepository = new PostgresCreditRepository(db, db);
   const aiContentReportService =
     dependencies.aiContentReportService ?? new AiContentReportService(new StructuredLogAiContentReportSink());
@@ -923,7 +926,7 @@ function resolveDependencies(
     capacityLimits: { perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT, global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT },
   });
   const inlineWorkerDependencies =
-    localAssetConfig !== null ? resolveWorkerDependencies() : null;
+    localAssetConfig !== null ? resolveWorkerDependencies({}, dependencies.attestedRuntime) : null;
   const billingCreditGrantService =
     dependencies.billingCreditGrantService ?? new BillingCreditGrantService(creditRepository);
   const compositionGalleryService =
@@ -1127,6 +1130,7 @@ function resolveDependencies(
   const entityReferenceUploadService =
     dependencies.entityReferenceUploadService
     ?? resolveConfiguredEntityReferenceUploadService(
+      persistenceProfile,
       entityRepository,
       entityReferenceService,
       organizationService,
@@ -1448,6 +1452,7 @@ function resolveEntityImageStorage(): EntityImageStoragePort {
 }
 
 function resolveConfiguredEntityReferenceUploadService(
+  persistenceProfile: import('./repositories/RepositorySchemaProfile.js').RepositorySchemaProfile,
   entityRepository: PostgresEntityRepository,
   entityReferenceService: EntityReferenceServicePort,
   organizationService: OrganizationServicePort,
@@ -1462,8 +1467,8 @@ function resolveConfiguredEntityReferenceUploadService(
   }
 
   return new EntityReferenceUploadService({
-    persistenceProfile: env.LYRA_PERSISTENCE_PROFILE,
-    uploadTokenRepository: new PostgresEntityReferenceUploadTokenRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+    persistenceProfile,
+    uploadTokenRepository: new PostgresEntityReferenceUploadTokenRepository(db, persistenceProfile),
     uploadStorage: new S3EntityReferenceUploadStorage(
       createPageImageStorageClient(env.AWS_REGION),
       {

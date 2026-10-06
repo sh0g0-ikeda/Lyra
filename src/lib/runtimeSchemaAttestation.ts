@@ -396,6 +396,25 @@ export async function readRuntimeSchemaCatalog(
   });
 }
 
+export interface AttestedCanonicalRuntime {
+  readonly descriptor: 'canonical_fresh_v1';
+  readonly repositoryProfile: 'canonical';
+}
+
+/** Spec §11: no writer is constructed before attestation, and its profile is
+ * carried into startup rather than read again from mutable configuration.
+ * This deliberately does not admit a legacy descriptor or enable legacy use. */
+export async function startAttestedCanonicalRuntime<T>(input: {
+  attest: () => Promise<'canonical_fresh_v1'>;
+  start: (runtime: AttestedCanonicalRuntime) => T | Promise<T>;
+}): Promise<T> {
+  const descriptor = await input.attest();
+  if (descriptor !== 'canonical_fresh_v1') {
+    throw new ConfigurationError('Runtime schema attestation failed: SCHEMA_UNSUPPORTED');
+  }
+  return input.start(Object.freeze({ descriptor, repositoryProfile: 'canonical' }));
+}
+
 export async function attestCanonicalRuntimeSchema(database: TransactionRunner): Promise<'canonical_fresh_v1'> {
   let catalog: RuntimeSchemaCatalog;
   try {

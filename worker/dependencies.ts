@@ -85,7 +85,8 @@ import { LocalPreviewEntityReferenceGenerator } from '../src/infrastructure/loca
 import { resolveLocalAssetConfig } from '../src/infrastructure/local/LocalAssetFiles.js';
 import { env } from '../src/lib/env.js';
 import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
-import { attestCanonicalRuntimeSchema } from '../src/lib/runtimeSchemaAttestation.js';
+import { attestCanonicalRuntimeSchema, startAttestedCanonicalRuntime, type AttestedCanonicalRuntime } from '../src/lib/runtimeSchemaAttestation.js';
+import type { RepositorySchemaProfile } from '../src/repositories/RepositorySchemaProfile.js';
 import {
   PageGenerationInputImageBuilder,
   type PageGenerationInputImageBuilderPort,
@@ -174,15 +175,18 @@ export async function resolveAttestedWorkerDependencies(
   overrides: WorkerDependencyOverrides = {},
 ): Promise<WorkerDependencies> {
   assertProductionRuntimeConfig(env);
-  await attestCanonicalRuntimeSchema(db);
-  return resolveWorkerDependencies(overrides);
+  return startAttestedCanonicalRuntime({
+    attest: () => attestCanonicalRuntimeSchema(db),
+    start: (runtime) => resolveWorkerDependencies(overrides, runtime),
+  });
 }
 
 export function resolveWorkerDependencies(
   overrides: WorkerDependencyOverrides = {},
+  attestedRuntime?: AttestedCanonicalRuntime,
 ): WorkerDependencies {
   assertProductionRuntimeConfig(env);
-  const persistenceProfile = env.LYRA_PERSISTENCE_PROFILE;
+  const persistenceProfile = attestedRuntime?.repositoryProfile ?? env.LYRA_PERSISTENCE_PROFILE;
   const episodeExportWorkerService = overrides.episodeExportWorkerService ?? resolveConfiguredExportWorker();
 
   if (overrides.pageGenerationWorkerService !== undefined || overrides.episodeExportWorkerService !== undefined || overrides.quotedImportWorkerService !== undefined) {
@@ -257,7 +261,7 @@ export function resolveWorkerDependencies(
   const pagePromptCompiler =
     overrides.pagePromptCompiler ?? resolvePagePromptCompiler();
   const pageGenerationInputImageBuilder =
-    overrides.pageGenerationInputImageBuilder ?? resolvePageGenerationInputImageBuilder();
+    overrides.pageGenerationInputImageBuilder ?? resolvePageGenerationInputImageBuilder(persistenceProfile);
   const pageGenerationPlanner =
     overrides.pageGenerationPlanner ?? resolvePageGenerationPlanner();
   const pageImageRenderer =
@@ -386,12 +390,12 @@ function resolvePagePromptCompiler(): PagePromptCompilerPort {
   return new OpenAIPagePromptCompiler(client);
 }
 
-function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuilderPort {
+function resolvePageGenerationInputImageBuilder(persistenceProfile: RepositorySchemaProfile): PageGenerationInputImageBuilderPort {
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
   if (localAssetConfig !== null) {
     return new PageGenerationInputImageBuilder(
-      new PostgresPageRepository(db, env.LYRA_PERSISTENCE_PROFILE),
-      new PostgresEntityRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+      new PostgresPageRepository(db, persistenceProfile),
+      new PostgresEntityRepository(db, persistenceProfile),
       new LocalFileStoredImageLoader(localAssetConfig),
       new LayoutGuideImageRenderer(),
     );
@@ -402,8 +406,8 @@ function resolvePageGenerationInputImageBuilder(): PageGenerationInputImageBuild
   }
 
   return new PageGenerationInputImageBuilder(
-    new PostgresPageRepository(db, env.LYRA_PERSISTENCE_PROFILE),
-    new PostgresEntityRepository(db, env.LYRA_PERSISTENCE_PROFILE),
+    new PostgresPageRepository(db, persistenceProfile),
+    new PostgresEntityRepository(db, persistenceProfile),
     new S3StoredImageLoader(createPageImageStorageClient(env.AWS_REGION), env.S3_BUCKET_IMAGES),
     new LayoutGuideImageRenderer(),
   );
