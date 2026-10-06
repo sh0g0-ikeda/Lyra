@@ -1,20 +1,40 @@
 # Google sign-in and explicit identity linking
 
-Status (2026-10-06 r2): The dedicated Google project has two distinct Web OAuth
-clients with openid/email only, TESTING status and one test account. The staging
-Cognito Google IdP and existing Native/Web clients are connected; the exact
-collision guard and native email settings are retained. The link settings were
-added to the existing stage runtime secret without changing its non-Google values,
-and its previous version remains available. Native email logout/login again shows
-the existing four works, nine credits and saved draft.
+Status (2026-10-06 r3): Google staging settings are connected; application flags and
+iOS remain OFF. Source 3b328df2e9e173daa7442c7342ff983d5ad311b9 adds safe same-email collision guidance in Web
+and Mobile and excludes OAuth state mismatch. All15 local gates pass: backend
+Node/Bun each3570, Mobile1059, Web83 plus Googlemock4, types/lint/build and exports.
+Web type/lint/build reuse identical-source executions; smoke83 and Bun hash/parser
+reconciliation preserve original logs and failed wrapper receipts.
 
-Application Google capabilities remain OFF, including iOS. The configured Cognito
-Hosted UI now displays Google; application capability flags do not remove that
-provider. Real Google sign-in/link and physical device acceptance remain incomplete.
-The permanent reader/proof Lambda and Google-aware lifecycle deployment are still
-pending. The stage-encrypted production snapshot copy is available; clone restore,
-migration, old-writer and rollback rehearsal have not run. No production change,
-main merge or store submission occurred. See the r2 receipt for actual scope.
+The new staging APK is FINISHED, package com.lyra.mobile.staging. ZIP, staging
+settings, public-certificate compatibility and Google apksig cryptographic
+signature checks pass. Physical-device and real Google/link acceptance are pending.
+Build: https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/81fc74ff-9ef4-49a6-8c56-4c2f0ff0f88d
+
+Source3b's compiled429 backend/28 Web files have been published to the approved
+private ECR and readback verified. Runtime update has NOT executed: the preview
+also modifies Google expiry role/boundary/schedule references, exceeding image-only
+approval11. Current stage image remains115221. A narrower no-IAM proposal is under
+review; the corrected client guidance has not yet passed remote acceptance.
+
+Request6's PostgreSQL restore failed because managed credentials cannot be created
+in that restore API call. Approved request13 separates restore and enable-secret,
+with SG ingress/egress0 and no DB connection/secret read. Fresh preflight must pass
+before dispatch. Request7 IAM simulation failed; conditional request8 is unexecuted.
+P9 diagnostics consumed3 approved real HTTP requests in total and did not pass:
+global source meaning was lost, followed by receipt and transport failures.
+No full15-page or actual image-generation acceptance is claimed.
+
+Native email recovery showed4 works/9 credits/saved draft; independent internal
+user-ID matching, successful Google login/link and physical-device acceptance are
+unproven. Permanent drain/proof/lifecycle, representative migration/old-writer/
+rollback, deletion-owner protocol and external billing/store/S3 remain release
+gates. productionReady=false; production/main/store operations0.
+
+Evidence: docs/uiux-backend-expansion-2026-09-30/receipts/google-collision-staging-20261006-r3.json.
+Spec sections4/5/8/9/10 govern auth, tenancy, output safety, availability and
+verification. The older settings evidence below remains historical.
 
 ## 2026-10-06 r2 settings and verification
 

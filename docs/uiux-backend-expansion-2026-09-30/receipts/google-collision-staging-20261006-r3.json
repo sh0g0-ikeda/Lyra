@@ -1,0 +1,324 @@
+{
+  "schema": "lyra.google-collision-staging-r3",
+  "at": "2026-10-06T06:27:32.798Z",
+  "productSourceSha": "3b328df2e9e173daa7442c7342ff983d5ad311b9",
+  "productionReady": false,
+  "productionChanges": 0,
+  "mainMerges": 0,
+  "storeSubmissions": 0,
+  "change": {
+    "webMobileExactExistingAccountGuidance": true,
+    "stateMismatchExcluded": true,
+    "apiDatabaseCreditContractsChanged": false
+  },
+  "localChecks": {
+    "all15GatesPassed": true,
+    "backend": {
+      "sourceAggregateSha256": "07f181cf48ab1b9aaeedf2fadfebb9dc63d4b14f86cc287694b6910ec80d7c31",
+      "runSha256": "8abc043b705466d32e0d6f41ee98e037cc71d5bc4aac5ea21c22cfc4dc257b32",
+      "summarySha256": "2321ec4355ecee5f6eab44a257de43a606ec93aa4efa8c7dfde96b072b8b800a",
+      "checks": [
+        {
+          "name": "backend-vitest-all",
+          "counts": {
+            "tests": 3570,
+            "passed": 3570,
+            "failed": 0,
+            "skipped": 0
+          },
+          "rawLogSha256": "f5371d9bf75666f54734a965ae542202b9a72cc3398a520e711581d332bb3862",
+          "startedAt": "2026-10-06T05:12:25.232Z",
+          "finishedAt": "2026-10-06T05:18:20.044Z",
+          "execution": "executed-r3"
+        },
+        {
+          "name": "backend-bun-all",
+          "counts": {
+            "tests": 3570,
+            "passed": 3570,
+            "failed": 0,
+            "skipped": 0
+          },
+          "rawLogSha256": "94645f87d948fafd4d110e83bcfb58700260116857066e1b085f5bfbf426e0d8",
+          "startedAt": "2026-10-06T05:18:20.046Z",
+          "finishedAt": "2026-10-06T05:20:49.869Z",
+          "execution": "executed-r3",
+          "encodingReconciliation": {
+            "receiptSha256": "9f67da25c723f9ebd39c77282002d3aad0f6cfaa3c22038fb09b43bfcff05fb6",
+            "rawLogSha256": "94645f87d948fafd4d110e83bcfb58700260116857066e1b085f5bfbf426e0d8",
+            "recordedDecodedUtf8Sha256": "61322a9c23cf2c7fbf36a44e1b1b8481974e04b5c454784d710e49ecf3500df8",
+            "replacementCharacterCount": 19,
+            "counts": {
+              "tests": 3570,
+              "passed": 3570,
+              "failed": 0,
+              "skipped": 0,
+              "files": 415
+            },
+            "reconciliation": "bun-utf8-decoded-hash-to-original-bytes"
+          }
+        },
+        {
+          "name": "backend-tsc-build",
+          "counts": null,
+          "rawLogSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "startedAt": "2026-10-06T05:20:49.872Z",
+          "finishedAt": "2026-10-06T05:21:12.490Z",
+          "execution": "executed-r3"
+        }
+      ]
+    },
+    "mobile": {
+      "sourceAggregateSha256": "d45e0052140a6df91f18aa442e1515c891d7b24fd1b83b2ad2602bdf619c601f",
+      "runSha256": "0cae7179f55758b7e58e53a1c6f115c2bf8b94f4f788c2533182af445c8bc52f",
+      "summarySha256": "ffb0061c4304399402cd90456c648b8bf4c8dc8ab354be554f4310ff04cd27a3",
+      "checks": [
+        {
+          "name": "mobile-tests",
+          "counts": {
+            "tests": 1059,
+            "passed": 1059,
+            "failed": 0,
+            "skipped": 0
+          },
+          "rawLogSha256": "87fe808db94b2a8413421017aa49c688c04fd42dfa510ada669ed1f92d5d9780",
+          "startedAt": "2026-10-06T05:12:21.441Z",
+          "finishedAt": "2026-10-06T05:12:48.507Z",
+          "execution": "executed-r3"
+        },
+        {
+          "name": "mobile-typecheck",
+          "counts": null,
+          "rawLogSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "startedAt": "2026-10-06T05:12:48.509Z",
+          "finishedAt": "2026-10-06T05:13:02.090Z",
+          "execution": "executed-r3"
+        },
+        {
+          "name": "mobile-lint",
+          "counts": null,
+          "rawLogSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "startedAt": "2026-10-06T05:13:02.091Z",
+          "finishedAt": "2026-10-06T05:13:55.852Z",
+          "execution": "executed-r3"
+        },
+        {
+          "name": "mobile-contracts",
+          "counts": null,
+          "rawLogSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "startedAt": "2026-10-06T05:13:55.853Z",
+          "finishedAt": "2026-10-06T05:13:57.191Z",
+          "execution": "executed-r3"
+        },
+        {
+          "name": "mobile-mojibake",
+          "counts": null,
+          "rawLogSha256": "038d411a000ae02d6942e315fc660ed46eb217fabc42eeddfa9857c50bc9a852",
+          "startedAt": "2026-10-06T05:13:57.193Z",
+          "finishedAt": "2026-10-06T05:13:58.890Z",
+          "execution": "executed-r3"
+        },
+        {
+          "name": "mobile-android-export",
+          "counts": null,
+          "rawLogSha256": "3b966ccacf618501642ec1f720d6a0634b0ec8651f066d67b4d88e80114cedae",
+          "startedAt": "2026-10-06T05:13:58.891Z",
+          "finishedAt": "2026-10-06T05:15:20.125Z",
+          "execution": "executed-r3"
+        },
+        {
+          "name": "mobile-ios-export",
+          "counts": null,
+          "rawLogSha256": "761b7d97ea2f40f9208e0ff44c2569b698e2cddded08b4b083d78b032ac3e954",
+          "startedAt": "2026-10-06T05:15:20.125Z",
+          "finishedAt": "2026-10-06T05:15:46.367Z",
+          "execution": "executed-r3"
+        }
+      ]
+    },
+    "web": {
+      "sourceAggregateSha256": "ba446966143f196dc9e29dd901f2eac90f3e7cba5fd864e572d90f4621a77e08",
+      "runSha256": "b9a8e07523b78e238b5e57c5be95bdc806534e91ccdc7d07fa2d279263462e03",
+      "summarySha256": "ead10b072ee34449a3eefbe823a535063472138f3aa38dd2585b92afe333b568",
+      "checks": [
+        {
+          "name": "web-typecheck",
+          "counts": null,
+          "rawLogSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "startedAt": "2026-10-06T05:16:12.205Z",
+          "finishedAt": "2026-10-06T05:16:19.564Z",
+          "execution": "reused-r4-same-source",
+          "reusedFrom": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/google-activation-r3/web-final-r4/01-web-typecheck.json"
+        },
+        {
+          "name": "web-lint",
+          "counts": null,
+          "rawLogSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "startedAt": "2026-10-06T05:16:19.565Z",
+          "finishedAt": "2026-10-06T05:17:04.652Z",
+          "execution": "reused-r4-same-source",
+          "reusedFrom": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/google-activation-r3/web-final-r4/02-web-lint.json"
+        },
+        {
+          "name": "web-build",
+          "counts": null,
+          "rawLogSha256": "036b9990e89f2f780b2d40b81e1cb73223a3199e09f1e2e690a9a9d997c6a57d",
+          "startedAt": "2026-10-06T05:17:04.653Z",
+          "finishedAt": "2026-10-06T05:17:06.232Z",
+          "execution": "reused-r4-same-source",
+          "reusedFrom": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/google-activation-r3/web-final-r4/03-web-build.json"
+        },
+        {
+          "name": "web-smoke83",
+          "counts": {
+            "tests": 83,
+            "passed": 83,
+            "failed": 0,
+            "skipped": 0
+          },
+          "rawLogSha256": "bdbadb4747a90e8ce8776b963bc6971e4a7c390d3412a016805ddb88bb349f14",
+          "startedAt": "2026-10-06T05:26:24.430Z",
+          "finishedAt": "2026-10-06T05:29:57.924Z",
+          "execution": "reconciled-r5-parser-same-raw-log"
+        },
+        {
+          "name": "web-google-mock4",
+          "counts": {
+            "tests": 4,
+            "passed": 4,
+            "failed": 0,
+            "skipped": 0
+          },
+          "rawLogSha256": "0c89812ae3a77b2d34b831f69ef56596594b13ed97b75fc298317b3ef2e47cd7",
+          "startedAt": "2026-10-06T05:36:36.262Z",
+          "finishedAt": "2026-10-06T05:36:52.115Z",
+          "execution": "executed-r6"
+        }
+      ]
+    }
+  },
+  "harness": {
+    "originalFailuresPreserved": true,
+    "webTypeLintBuildReusedFromSameSource": true,
+    "web83OriginalRawReconciled": true,
+    "googleMock4Executed": true,
+    "bunRawUtf8HashReconciliationFixedOriginalOnly": true
+  },
+  "stage": {
+    "ecrSource": "3b328df2e9e173daa7442c7342ff983d5ad311b9",
+    "imageDigest": "sha256:cc34222397a84877d996e8a32a617eb604f43d888b352db5b5d09598d2d701c5",
+    "ecrReadbackVerified": true,
+    "backendFiles": 429,
+    "webFiles": 28,
+    "uploadBytes": 2153893,
+    "imageUpdateExecuted": false,
+    "currentImageDigest": "sha256:115221bde22f9ce2ec2da06852dbf6caf4e3058cee61f7ce42aded163d43eec9",
+    "reason": "image-only proposal unexpectedly modifies expiry role/boundary/schedule references; exact current13-resource proposal rejected before execute",
+    "googleFlagsOff": true,
+    "iosOff": true,
+    "workersZero": true,
+    "autoMigrationsOff": true,
+    "preUpdateExtraGuardsPassed": true,
+    "newGuidanceRemoteAccepted": false
+  },
+  "apk": {
+    "sourceSha": "3b328df2e9e173daa7442c7342ff983d5ad311b9",
+    "id": "81fc74ff-9ef4-49a6-8c56-4c2f0ff0f88d",
+    "buildPage": "https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/81fc74ff-9ef4-49a6-8c56-4c2f0ff0f88d",
+    "status": "FINISHED",
+    "package": "com.lyra.mobile.staging",
+    "artifact": "https://expo.dev/artifacts/eas/e1PcIo0KMhAcXdCiNbqsCzs-aJmw1MqY8s6NVWMNPwQ.apk",
+    "sha256": "52cdd8dc6ec001c4caeec64c66274d17e98940d2b9514f791b67d35efc94106a",
+    "bytes": 107226888,
+    "zipCrcPassed": true,
+    "stagingSettingsPassed": true,
+    "cryptographicSignatureVerified": true,
+    "previousStagingPackageAndCertificateEqual": true,
+    "physicalAccepted": false
+  },
+  "realGoogle": {
+    "settingsConnected": true,
+    "hostedUiGoogleVisibleDespiteFlagsOff": true,
+    "sameEmailGuardDenied": true,
+    "nativeEmailRecoveryPassed": true,
+    "visibleWorks": 4,
+    "visibleCredits": 9,
+    "savedDraftVisible": true,
+    "internalUserIdIndependentProof": false,
+    "fullSignInLinkAccepted": false,
+    "logInspectionPartial": true,
+    "saveGeneratePurchaseDelete": 0
+  },
+  "requests": {
+    "6": "approved; exact dispatch rejected InvalidParameterValue; no DB created",
+    "7": "approved; Analyzer blocking0 but real Simulator positives implicitDeny; not passed",
+    "8": "approved; unexecuted because7 failed",
+    "9": "approved;2 HTTP; extraction17 requirements but global semantic loss; detail receipt AssertionError",
+    "10": "approved;APK completed and verified",
+    "11": "approved;ECR completed;runtime execution blocked by actual dependent IAM changes",
+    "13": "approved amended2-step fixed inputs;fresh preflight required before dispatch",
+    "14": "approved;1 HTTP; transport failure; no save/DB; combined9+14 maximum3 exhausted"
+  },
+  "m2": {
+    "restoreFailedReason": "PostgreSQL restore API rejects ManageMasterUserPassword; two-step restore then enable prepared",
+    "twoStepMockTestsPassed": 8,
+    "awsPreflightFailure": "ORDERABLE_INVALID; collector diagnosis pending; same static API query reports supported PG18.3 micro/gp3/20GiB",
+    "dbRestored": false,
+    "dbConnections": 0,
+    "secretValueReads": 0,
+    "migrations": 0,
+    "networkRulesChanged": 0
+  },
+  "p9": {
+    "diagnostic": {
+      "kind": "source-requirement-p9-r7-detail-diagnostic-result",
+      "sourceSha": "f776a18bd7e4f7d9b10b2ba1563b348aed8863fb",
+      "status": "rejected_diagnostic",
+      "providerCalls": 1,
+      "actualHttpCalls": 1,
+      "automaticRetries": 0,
+      "semanticReviewPending": true,
+      "saveCalls": 0,
+      "dbCalls": 0,
+      "productionChanged": false,
+      "fullEpisodeAcceptance": false,
+      "credentialsRecorded": false,
+      "failure": {
+        "phase": "transport",
+        "safeCode": "PROVIDER_TRANSPORT_FAILED",
+        "errorType": "SafeDiagnosticError",
+        "finding": null
+      }
+    },
+    "globalUnits": 9,
+    "globalUnitsWithoutMeaningFields": 8,
+    "referencedUnits": 17,
+    "requirements": 17,
+    "sourceCoverageGateOff": true,
+    "full15PageAccepted": false
+  },
+  "remaining": [
+    "Image-only staging update without IAM changes or separately approved exact dependent references",
+    "Permanent drain reader/proof and Google-aware lifecycle with shutdown acceptance before flags ON",
+    "Representative DB migration, credits/data preservation, old-client/old-writer and rollback",
+    "Legacy deletion owner protocol; no unsafe guard removal or new048 deployment",
+    "Real Google login/link and failure-path acceptance; Android physical/iOS",
+    "15-page semantic preservation; synthetic diagnostic failure is not real full generation success",
+    "Live billing/store notifications/S3; public PR/CI; one-week idle shutdown/cost proof"
+  ],
+  "hy4": {
+    "deferred": true,
+    "webDisabledButtons": true,
+    "replacementModelSelected": false,
+    "mobileFreeGenerationUi": false
+  },
+  "originalCheckout": {
+    "checkedAt": "2026-10-06T06:24:49.880Z",
+    "baselineHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "currentHead": "85625cde07e9e0a90a6ac389d099355a573e93ca",
+    "baselinePaths": 28,
+    "changedBaselinePaths": [],
+    "unrelatedAdditionalPath": "store-assets/google-play",
+    "discardedChanges": false
+  }
+}
