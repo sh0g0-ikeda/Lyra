@@ -19,6 +19,7 @@ import {
 
 type BaseTranslationKey =
   | 'account'
+  | 'accountLinkRequired'
   | 'apiSetupRequired'
   | 'applyDraft'
   | 'applyStoryPlan'
@@ -109,6 +110,7 @@ type BaseTranslationKey =
 const baseTranslations: Record<UiLanguage, Record<BaseTranslationKey, string>> = {
   ja: {
     account: 'アカウント',
+    accountLinkRequired: 'このメールアドレスは登録済みです。これまでの方法でログインしてください。Googleログインを使うには、アカウント画面から連携する必要があります。',
     apiSetupRequired: 'API URL と Cognito 設定を .env に入れてください。',
     applyDraft: '改善案を反映',
     applyStoryPlan: '話全体を反映',
@@ -198,6 +200,7 @@ const baseTranslations: Record<UiLanguage, Record<BaseTranslationKey, string>> =
   },
   en: {
     account: 'Account',
+    accountLinkRequired: 'This email address is already registered. Sign in with your existing method. To use Google sign-in, link Google from your account.',
     apiSetupRequired: 'Set the API URL and Cognito values in .env.',
     applyDraft: 'Apply draft',
     applyStoryPlan: 'Apply story plan',

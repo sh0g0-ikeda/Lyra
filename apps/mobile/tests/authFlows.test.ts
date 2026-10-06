@@ -36,8 +36,61 @@ describe('Cognito sign-in options', () => {
     const { reauthenticateWithCognito } = await import('@/lib/auth');
     mocks.prompt.mockResolvedValue({ type: 'cancel' });
     await expect(reauthenticateWithCognito()).rejects.toThrow();
+    mocks.prompt.mockResolvedValue({ type: 'dismiss' });
+    await expect(reauthenticateWithCognito()).rejects.toThrow();
     mocks.prompt.mockResolvedValue({ type: 'success', params: {} });
     await expect(reauthenticateWithCognito()).rejects.toThrow();
     expect(mocks.fetch).not.toHaveBeenCalled(); expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { error: 'ACCOUNT_LINK_REQUIRED' },
+    { error: 'invalid_request', error_description: 'PreSignUp failed with error Use the existing sign-in method and link this provider from your account. (Service: AWSCognitoIdentityProvider)' }
+  ])('既知のcollisionだけを安全なAuthError markerへ変換しtokenを保存しない', async (params) => {
+    const { signInWithCognito } = await import('@/lib/auth');
+    mocks.prompt.mockResolvedValue({ type: 'error', params });
+
+    await expect(signInWithCognito({ identityProvider: 'Google' })).rejects.toMatchObject({
+      name: 'AuthError',
+      code: 'ACCOUNT_LINK_REQUIRED'
+    });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it('未知のprovider errorはraw説明を捨て既存の汎用失敗を保つ', async () => {
+    const { signInWithCognito } = await import('@/lib/auth');
+    mocks.prompt.mockResolvedValue({
+      type: 'error',
+      params: { error: 'invalid_request', error_description: 'user@example.test internal_key=secret' }
+    });
+
+    await expect(signInWithCognito({ identityProvider: 'Google' })).rejects.toMatchObject({
+      name: 'AuthError',
+      message: 'Cognito sign-in was cancelled or failed.',
+      code: null
+    });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it('state mismatchは既知guard文を含んでも連携案内へ上書きしない', async () => {
+    const { signInWithCognito } = await import('@/lib/auth');
+    mocks.prompt.mockResolvedValue({
+      type: 'error',
+      error: { code: 'state_mismatch' },
+      params: {
+        error: 'access_denied',
+        error_description: 'Use the existing sign-in method and link this provider from your account.'
+      }
+    });
+
+    await expect(signInWithCognito({ identityProvider: 'Google' })).rejects.toMatchObject({
+      name: 'AuthError',
+      message: 'Cognito sign-in was cancelled or failed.',
+      code: null
+    });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
   });
 });

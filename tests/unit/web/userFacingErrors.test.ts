@@ -137,6 +137,31 @@ describe('userFacingErrors', () => {
 
     expect(message).not.toContain('生成処理');
   });
+
+  it('ACCOUNT_LINK_REQUIREDだけを既存ログインと明示連携の案内へ変換する', () => {
+    expect(formatUserFacingErrorMessage({ code: 'ACCOUNT_LINK_REQUIRED', status: 409 }, 'ja')).toBe(
+      'このメールアドレスは登録済みです。これまでの方法でログインしてください。Googleログインを使うには、アカウント画面から連携する必要があります。',
+    );
+    expect(
+      formatUserFacingErrorMessage(
+        {
+          message:
+            'PreSignUp failed with error Use the existing sign-in method and link this provider from your account. (Service: AWSCognitoIdentityProvider)',
+        },
+        'en',
+      ),
+    ).toBe(
+      'This email address is already registered. Sign in with your existing method. To use Google sign-in, link Google from your account.',
+    );
+  });
+
+  it('未知のprovider文やメールアドレスを連携案内として表示しない', () => {
+    const raw = 'Provider said user@example.test should link an account with internal_key=secret';
+    const message = formatUserFacingErrorMessage({ message: raw }, 'en');
+    expect(message).toBe('The operation failed. Save your changes, wait a moment, then try again.');
+    expect(message).not.toContain('user@example.test');
+    expect(message).not.toContain('secret');
+  });
 });
 
 function apiError(message: string, status: number, code: string | null): Error & { status: number; code: string | null } {

@@ -35,6 +35,10 @@ const messages = {
     en: 'Email verification is not complete. Open the verification email, then sign in again.',
     ja: 'メール確認が完了していません。確認メールのリンクを開いてから、もう一度ログインしてください。',
   },
+  accountLinkRequired: {
+    en: 'This email address is already registered. Sign in with your existing method. To use Google sign-in, link Google from your account.',
+    ja: 'このメールアドレスは登録済みです。これまでの方法でログインしてください。Googleログインを使うには、アカウント画面から連携する必要があります。',
+  },
   forbidden: {
     en: 'This account cannot perform that operation. Check that you are signed in with the correct account.',
     ja: 'このアカウントではその操作を実行できません。正しいアカウントでログインしているか確認してください。',
@@ -264,6 +268,12 @@ export function formatUserFacingErrorMessage(
 }
 
 function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: string): LocalizedMessage | null {
+  if (
+    normalizedCode === 'ACCOUNT_LINK_REQUIRED' ||
+    normalizedMessage.includes('use the existing sign in method and link this provider from your account.')
+  ) {
+    return messages.accountLinkRequired;
+  }
   if (normalizedCode === 'PAGE_REFERENCE_MODEL_INCOMPATIBLE' || normalizedCode === 'ENTITY_REFERENCE_MODEL_INCOMPATIBLE') {
     return messages.referenceModelIncompatible;
   }
@@ -503,6 +513,9 @@ function shouldKeepBackendMessage(
   normalizedMessage: string,
   language: UserFacingErrorLanguage,
 ): boolean {
+  if (containsEmailAddress(rawMessage)) {
+    return false;
+  }
   if (language !== 'ja') {
     return !looksLikeDeveloperMessage(normalizedMessage);
   }
@@ -523,6 +536,7 @@ function looksLikeDeveloperMessage(normalizedMessage: string): boolean {
     'json',
     'openai',
     'postgres',
+    'provider',
     'runtime',
     'schema',
     'sqs',
@@ -531,6 +545,10 @@ function looksLikeDeveloperMessage(normalizedMessage: string): boolean {
     'undefined',
     'uuid',
   ]);
+}
+
+function containsEmailAddress(value: string): boolean {
+  return /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/u.test(value);
 }
 
 function isErrorWithApiFields(error: unknown): error is ErrorWithApiFields {

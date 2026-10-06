@@ -44,4 +44,28 @@ describe('userErrorMessage', () => {
     expect(userErrorMessage(new ApiError('raw', 409, 'RESOURCE_STALE'), 'ja')).toContain('入力内容は保持');
     expect(userErrorMessage(new ApiError('raw', 409, 'RESOURCE_STALE'), 'en')).toContain('draft is preserved');
   });
+
+  it('APIとAuthErrorのACCOUNT_LINK_REQUIREDを明示連携案内へ変換する', () => {
+    expect(userErrorMessage(new ApiError('raw', 409, 'ACCOUNT_LINK_REQUIRED'), 'ja')).toBe(
+      'このメールアドレスは登録済みです。これまでの方法でログインしてください。Googleログインを使うには、アカウント画面から連携する必要があります。'
+    );
+    const authError = Object.assign(new Error('safe marker'), {
+      name: 'AuthError',
+      code: 'ACCOUNT_LINK_REQUIRED'
+    });
+    expect(userErrorMessage(authError, 'en')).toBe(
+      'This email address is already registered. Sign in with your existing method. To use Google sign-in, link Google from your account.'
+    );
+  });
+
+  it('未知のAuthError本文はメールやprovider情報を漏らさない', () => {
+    const error = Object.assign(new Error('user@example.test provider_key=secret'), {
+      name: 'AuthError',
+      code: null
+    });
+    const message = userErrorMessage(error, 'en');
+    expect(message).toBe('The action failed. Check your connection and input, then try again.');
+    expect(message).not.toContain('user@example.test');
+    expect(message).not.toContain('secret');
+  });
 });

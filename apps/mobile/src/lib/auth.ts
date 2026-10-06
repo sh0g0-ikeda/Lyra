@@ -18,13 +18,31 @@ interface CognitoTokenResponse {
 
 export class AuthError extends Error {
   public readonly fatal: boolean;
+  public readonly code: 'ACCOUNT_LINK_REQUIRED' | null;
 
-  public constructor(message: string, fatal = false) {
+  public constructor(message: string, fatal = false, code: 'ACCOUNT_LINK_REQUIRED' | null = null) {
     super(message);
     this.name = 'AuthError';
     this.fatal = fatal;
+    this.code = code;
   }
 }
+
+const ACCOUNT_LINK_REQUIRED_PROVIDER_MESSAGE =
+  'Use the existing sign-in method and link this provider from your account.';
+
+const isAccountLinkRequiredResult = (result: AuthSession.AuthSessionResult): boolean => {
+  if (result.type !== 'error') {
+    return false;
+  }
+  if (result.error?.code === 'state_mismatch') {
+    return false;
+  }
+  return (
+    result.params.error?.trim().toUpperCase() === 'ACCOUNT_LINK_REQUIRED' ||
+    result.params.error_description?.includes(ACCOUNT_LINK_REQUIRED_PROVIDER_MESSAGE) === true
+  );
+};
 
 const normalizeDomain = (domain: string): string => domain.replace(/\/+$/, '');
 
@@ -122,6 +140,9 @@ const authorizeWithCognito = async (options: CognitoSignInOptions & { reauthenti
 
   const result = await request.promptAsync(discovery);
   if (result.type !== 'success') {
+    if (isAccountLinkRequiredResult(result)) {
+      throw new AuthError('ACCOUNT_LINK_REQUIRED', false, 'ACCOUNT_LINK_REQUIRED');
+    }
     throw new AuthError('Cognito sign-in was cancelled or failed.');
   }
 

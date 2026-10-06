@@ -32,3 +32,16 @@ test('explicit linking uses fresh proof, fixed callback and authenticated receip
  await popup.goto('http://127.0.0.1:4174/auth/identity-link?challenge_id='+challenge).catch(error=>{if(!popup.isClosed())throw error;});
  await expect(page.getByText('Google is linked to this account.',{exact:false})).toBeVisible();expect(startToken).toBe('Bearer '+fresh);expect(statusToken).toBe('Bearer '+fresh);expect(await page.evaluate(()=>sessionStorage.getItem('lyra:web:cognito-session'))).toBe(currentBefore);await expect(page.getByRole('button',{name:'Sign out to sign in again'})).toBeVisible();
 });
+
+test('既存メール衝突のGoogle拒否では通常ログインと明示連携を案内する', async ({context,page}) => {
+ await setup(context,page,false);let exchanges=0;
+ await context.route('https://cognito.fixture.invalid/oauth2/token',route=>{exchanges++;return route.abort();});
+ const description='PreSignUp failed with error Use the existing sign-in method and link this provider from your account..';
+ await page.goto('/?error=access_denied&error_description='+encodeURIComponent(description));
+ await expect(page.getByText('This email address is already registered. Sign in with your existing method. To use Google sign-in, link Google from your account.',{exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Sign in or create an account'})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Continue with Google'})).toHaveCount(0);
+ expect(new URL(page.url()).search).toBe('');expect(exchanges).toBe(0);
+ expect(await page.evaluate(()=>sessionStorage.getItem('lyra:web:cognito-session'))).toBeNull();
+ await expect(page.getByText('PreSignUp failed',{exact:false})).toHaveCount(0);
+});
