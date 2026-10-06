@@ -4,6 +4,7 @@ import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient
 import { OpenAIEpisodeBeatPlanCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
 import { EpisodeBeatPlanOutputLimitError } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
 import {
+  buildEpisodeSourceRequirementExtractionPacks,
   EPISODE_SOURCE_REQUIREMENT_LIMITS,
   prepareEpisodeSourceRequirementExtraction,
 } from '../../../../src/services/page/EpisodeSourceRequirements.js';
@@ -350,14 +351,16 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     });
     const input = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
     expect(input[0]?.content[0]?.text).toContain('do not turn them into page-owned visible events');
-    expect(input[0]?.content[0]?.text).toContain('complete trimmed global unit');
+    expect(input[0]?.content[0]?.text).toContain(
+      'injects the complete trimmed global unit deterministically',
+    );
     expect(input[1]?.content[0]?.text).toContain('scope=global');
   });
 
   it.each([
     ['empty', null],
     ['partial', '全頁同じ衣装'],
-  ])('global source unitの%s contextを拒否する', async (_label, contextText) => {
+  ])('global source unitの%s locatorでもtrusted unit全文をcontextへ復元する', async (_label, contextText) => {
     const pageId = '11111111-1111-4111-8111-111111111111';
     const extraction = prepareEpisodeSourceRequirementExtraction({
       storyFullDraft: '全頁同じ衣装。\n1ページ目：開始する。',
@@ -384,12 +387,114 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       }),
     } as unknown as OpenAIClient;
 
+    const result = await new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({
+      extraction,
+      language: 'ja',
+    });
+
+    expect(result.requirements.requirements[0]).toMatchObject({
+      scope: 'global',
+      context: globalText.trim(),
+    });
+    expect(result.requirements.requirements[1]).toMatchObject({
+      scope: 'page',
+      events: ['開始する'],
+    });
+  });
+
+  it('global contextをdeterministic注入してもproviderのinvalid locatorを拒否する', async () => {
+    const pageId = '11111111-1111-4111-8111-111111111111';
+    const extraction = prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: '全頁同じ衣装。\n1ページ目：開始する。',
+      pages: [{ pageId, pageNumber: 1 }],
+    })!;
+    const globalOrdinal = extraction.units.findIndex((unit) => unit.scope === 'global') + 1;
+    const pageOrdinal = extraction.units.findIndex((unit) => unit.scope === 'page') + 1;
+    const globalText = extraction.units[globalOrdinal - 1]!.text;
+    const pageText = extraction.units[pageOrdinal - 1]!.text;
+    const pageEventStart = pageText.indexOf('開始する');
+    const client = {
+      postJson: async () => ({
+        body: { output_text: JSON.stringify({ requirements: [{
+          i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
+          x: [`1:0:${globalText.length + 1}`], q: [],
+        }, {
+          i: 2, u: pageOrdinal, o: 1,
+          e: [`${pageEventStart}:${pageEventStart + '開始する'.length}`], r: [null],
+          a: [], c: [null], z: [true], x: [], q: [],
+        }] }) },
+        requestId: 'req-invalid-global-locator',
+      }),
+    } as unknown as OpenAIClient;
+
     await expect(new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({
       extraction,
       language: 'ja',
-    })).rejects.toThrow(
-      'Global source requirement context must preserve the complete trimmed source unit',
+    })).rejects.toThrow('Source requirement referenced an invalid source span');
+  });
+
+  it('複数packのglobal unitを各trusted unit全文へ復元しpage eventは原文spanのまま保つ', async () => {
+    const pages = [
+      { pageId: '11111111-1111-4111-8111-111111111111', pageNumber: 1 },
+      { pageId: '22222222-2222-4222-8222-222222222222', pageNumber: 2 },
+    ];
+    const extraction = prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: '全体条件A。全体条件B。\n1ページ目：開始する。\n2ページ目：終了する。',
+      pages,
+    })!;
+    const packs = buildEpisodeSourceRequirementExtractionPacks(extraction, [
+      pages.slice(0, 1),
+      pages.slice(1),
+    ])!;
+    expect(packs).toHaveLength(2);
+    expect(packs.every((pack) => pack.units.some((unit) => unit.scope === 'global'))).toBe(true);
+
+    const compiled = await Promise.all(packs.map(async (pack, packIndex) => {
+      const client = {
+        postJson: async () => ({
+          body: { output_text: JSON.stringify({
+            requirements: pack.units
+              .map((unit, unitIndex) => ({ unit, unitIndex }))
+              .filter(({ unit }) => unit.text.trim().length > 0)
+              .map(({ unit, unitIndex }, requirementIndex) => {
+                const trimmed = unit.text.trim();
+                const start = unit.text.indexOf(trimmed);
+                return unit.scope === 'global'
+                  ? {
+                      i: requirementIndex + 1, u: unitIndex + 1, o: 1,
+                      e: [], r: [], a: [], c: [], z: [], x: [], q: [],
+                    }
+                  : {
+                      i: requirementIndex + 1, u: unitIndex + 1, o: 1,
+                      e: [`${start}:${start + trimmed.length}`], r: [null],
+                      a: [], c: [null], z: [true], x: [], q: [],
+                    };
+              }),
+          }) },
+          requestId: `req-multiple-pack-${packIndex + 1}`,
+        }),
+      } as unknown as OpenAIClient;
+      return new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({
+        extraction: pack,
+        language: 'ja',
+      });
+    }));
+
+    const requirements = compiled.flatMap((result) => result.requirements.requirements);
+    const globalByUnitId = new Map(
+      requirements
+        .filter((requirement) => requirement.scope === 'global')
+        .map((requirement) => [requirement.sourceUnitIds[0], requirement.context] as const),
     );
+    for (const unit of extraction.units.filter((candidate) => candidate.scope === 'global' &&
+      candidate.text.trim().length > 0)) {
+      expect(globalByUnitId.get(unit.unitId)).toBe(unit.text.trim());
+    }
+    expect(requirements.filter((requirement) => requirement.scope === 'page')
+      .map((requirement) => requirement.events[0])).toEqual([
+      '1ページ目：開始する。',
+      '2ページ目：終了する。',
+    ]);
   });
 
   it('source requirement schemaの最大field payloadは408 bytes/recordのpreflight上限内に収まる', () => {
