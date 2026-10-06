@@ -1,0 +1,112 @@
+{
+  "task": "r58 source spanning-constraint classification",
+  "head": "ceecd75bb1c5bd4adc4b71f8a52c08750f94e75e",
+  "recordedAt": "2026-10-06T20:14:22.742Z",
+  "products": [
+    {
+      "path": "src/services/page/EpisodeSourceRequirements.ts",
+      "sha256": "bc7f2ce041feaf54cce97a04c6be2336215caad1404faf276adc6ce18ad6c592"
+    },
+    {
+      "path": "src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.ts",
+      "sha256": "aef372eb8f081bd81a62a78180023d608f11cb96352c427957c9c8c37df31668"
+    },
+    {
+      "path": "src/infrastructure/openai/OpenAIPageEpisodePlanCompiler.ts",
+      "sha256": "2fa29a55ff41f6f061e2c34a5df67a203c41ead49a0a0134d035038cca3f8885"
+    },
+    {
+      "path": "src/domain/constants/generation.ts",
+      "sha256": "b9d36508eafa98c3bf44815ed0a3ac3a609812b6faa9e2f60f96c033d21e1571"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/unit/infrastructure/openai/EpisodeSourceSpanSemantics.test.ts",
+      "sha256": "949c84001e9d21ab739bd93e69c4ee4137d13b0e116e5e9b5c5c4f0ceeacbd3c"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/EpisodeSourceR58Replay.test.ts",
+      "sha256": "84b69e677b0a0675da2ff3ed0fec66c44b9b45b8053c2425cc075f95eca0ed10"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/EpisodeSourceLocatorV3.test.ts",
+      "sha256": "44be35db3a75b772b8a75db969a1f50178e8f8845291d6c899d64f35eb85b2da"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/EpisodeSourceTemporalScope.test.ts",
+      "sha256": "cdf109487d12b5ff9d99fef904a1c0e3d9207497bc653c9992d3365ca7ff3e7b"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.test.ts",
+      "sha256": "eb7f40aa1cd09e8cf853310f3d0d7ee6da73cc572d3a1d1399d5180fcd5f11bb"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/OpenAIPageEpisodePlanCompiler.test.ts",
+      "sha256": "6732276c4c3867ca2477916666c768ff5e16868882cd21b3369c0c7817daa306"
+    },
+    {
+      "path": "tests/unit/services/page/EpisodeSourceRequirements.test.ts",
+      "sha256": "3533f2bebc71c6afeb8a4657e8de2da7fb22b0e84a91bf0e293618524933e8a2"
+    }
+  ],
+  "checks": {
+    "red": {
+      "failed": 5,
+      "passed": 2
+    },
+    "green": {
+      "files": 9,
+      "passed": 86
+    },
+    "noEmitExitCode": 0,
+    "diffCheckExitCode": 0
+  },
+  "logs": [
+    {
+      "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/source-span-semantics-red.log",
+      "sha256": "f84fc13532b1d543004d76af6eaa9800781898b2866ad0e50f8348d92bf8c330"
+    },
+    {
+      "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/source-span-semantics-target-final.log",
+      "sha256": "b99b2c481e3b44835f58e6c7a2bd3f1261639e32bb761490f9dfd43e0c8f60c3"
+    },
+    {
+      "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/source-span-semantics-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "contract": {
+    "sourceVersion": "episode_source_requirements_v6",
+    "detailVersion": "episode_page_plan_v18",
+    "providerMaxRecordBytes": 325,
+    "artificialUnits": 137,
+    "nonblankRequirements": 107,
+    "blankUnits": 30,
+    "packs": [
+      54,
+      53
+    ],
+    "briefMaxBytes": 32768,
+    "finalRequestMaxBytes": 65536
+  },
+  "limits": [
+    "No API/DB/remote/commit/shared dist writes",
+    "Exact r58 raw replay validates structural placement; it does not establish semantic success",
+    "p9 completion regression exercises grounded mocked audit response through existing compiler; live model omission detection is unverified",
+    "Wrong semantic classification still requires original-source audit; no silent relation stripping or retry inflation"
+  ],
+  "changedFiles": [
+    "src/services/page/EpisodeSourceRequirements.ts",
+    "src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.ts",
+    "src/infrastructure/openai/OpenAIPageEpisodePlanCompiler.ts",
+    "src/domain/constants/generation.ts",
+    "tests/unit/infrastructure/openai/EpisodeSourceSpanSemantics.test.ts",
+    "tests/unit/infrastructure/openai/EpisodeSourceR58Replay.test.ts",
+    "tests/unit/infrastructure/openai/EpisodeSourceLocatorV3.test.ts",
+    "tests/unit/infrastructure/openai/EpisodeSourceTemporalScope.test.ts",
+    "tests/unit/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.test.ts",
+    "tests/unit/infrastructure/openai/OpenAIPageEpisodePlanCompiler.test.ts",
+    "tests/unit/services/page/EpisodeSourceRequirements.test.ts"
+  ]
+}

@@ -225,7 +225,8 @@ global; extraction pack assignment does not make it a page-visible event. Every
 global requirement carries its complete trimmed original unit in context. Empty
 or partial context is rejected before detail or saving. This checks literal
 transport only, not semantic fidelity, and remains inside the existing continuity
-V3 gate with its default OFF. Every extraction pack's escaped input brief is
+V3 gate. Its parsed environment default is true; actual deployed settings must
+be checked separately. Every extraction pack's escaped input brief is
 checked against the 32 KiB source-input bound before the first paid call, and the
 compact response record and envelope bounds are checked independently. The
 resolved internal requirements use an extraction-derived byte ceiling for the
@@ -243,6 +244,21 @@ For same-page dependencies all predecessor panel orders must be at most every
 successor panel order; equality permits an authored sequence inside one panel.
 The provider-only classification remains a semantic judgment and requires actual
 source-to-draft review; structural placement success is not acceptance proof.
+Source extraction requires an explicit event, spanning-constraint or global
+classification in every provider record. A spanning constraint preserves the
+complete trusted original unit, remains mandatory in page placement and audit,
+and carries no event/result/conditional-obligation arrays. Its required-by-end
+flag means satisfaction of the depiction constraint; it is not a temporal event
+endpoint. Temporal edges involving a spanning constraint or global context are
+rejected before detail generation, rather than silently removed. Actual event
+edges retain the same order validation. Unsupported compound completion edges
+are not invented from an instruction such as "during"; its original clause and
+ordered obligations remain source authority. Unknown kinds or ownership mismatch
+fail closed. Older internal fixtures may omit the kind with their previous
+event/global meaning, but provider output must supply it. Model classification
+and live audit quality remain separate acceptance gates. Compact record admission
+now includes the added classification bytes; all source/input/decoded bounds and
+lossless coverage remain enforced.
 Normal and repair detail calls retain the same complete requirements.
 Detail prerequisite placement validation runs inside the existing two logical
 structured attempts. Only a typed same-page panel-order failure can use the

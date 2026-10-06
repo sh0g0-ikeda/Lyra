@@ -58,6 +58,8 @@ export interface EpisodeSourceRequirementExtraction {
 }
 
 export interface EpisodeSourceRequirement {
+  /** Provider extraction always supplies a kind. Omission preserves older internal event fixtures only. */
+  kind?: 'event' | 'spanning_constraint' | 'global_context';
   requirementId: string;
   scope: 'global' | 'page';
   pageId: string | null;
@@ -273,7 +275,7 @@ export function validateEpisodeSourceRequirements(
     seenOrders.add(requirement.order);
     seenOrdersByPage.set(orderOwner, seenOrders);
     if (requirement.sourceUnitIds.length !== 1 ||
-        (requirement.scope === 'page' && requirement.events.length < 1) ||
+        (requirement.scope === 'page' && requirement.kind !== 'spanning_constraint' && requirement.events.length < 1) ||
         requirement.events.length > 5 || requirement.results.length > 5 ||
         requirement.afterRequirementIds.length > 4 || requirement.quotedText.length > 4) {
       throw new ConfigurationError('Source requirement exceeded its bounded fields');
@@ -299,6 +301,9 @@ export function validateEpisodeSourceRequirements(
         'Global source requirement context must preserve the complete trimmed source unit',
       );
     }
+    if (requirement.kind === 'spanning_constraint' && requirement.context !== ownedSourceText.trim()) {
+      throw new ConfigurationError('Spanning source constraints must preserve their complete source unit');
+    }
     assertRequirementTextIsSourceOwned(requirement, ownedSourceText);
     if (requirement.obligations !== undefined) {
       if (requirement.obligations.length === 0 || requirement.obligations.length > 5 ||
@@ -319,6 +324,7 @@ export function validateEpisodeSourceRequirements(
       throw new ConfigurationError('Source requirements did not cover every original source unit');
     }
   }
+  assertSourceRequirementTemporalKinds(value.requirements);
   for (const requirement of value.requirements) {
     if (new Set(requirement.afterRequirementIds).size !== requirement.afterRequirementIds.length) {
       throw new ConfigurationError('Source requirement order must not repeat relations');
@@ -331,6 +337,34 @@ export function validateEpisodeSourceRequirements(
   }
   assertAcyclicRequirementRelations(value.requirements, requirementsById);
   return value;
+}
+
+/** Classification is structural evidence only. A model calling a directive an
+ * event is not semantic proof; source-owned audit remains mandatory. Never strip
+ * an unsupported edge: reject the contract before detail generation instead. */
+export function assertSourceRequirementTemporalKinds(requirements: readonly EpisodeSourceRequirement[]): void {
+  const byId = new Map(requirements.map(requirement => [requirement.requirementId, requirement]));
+  for (const requirement of requirements) {
+    const kind = requirement.kind ?? (requirement.scope === 'global' ? 'global_context' : 'event');
+    if (!['event', 'spanning_constraint', 'global_context'].includes(kind) ||
+        (requirement.scope === 'global') !== (kind === 'global_context')) {
+      throw new ConfigurationError('Source requirement classification does not match its owner');
+    }
+    if (kind === 'spanning_constraint' && (requirement.events.length !== 0 || requirement.results.length !== 0 ||
+        requirement.conditionalUntil !== null || requirement.obligations !== undefined ||
+        requirement.context === null || requirement.context.trim().length === 0 || !requirement.requiredByEnd)) {
+      throw new ConfigurationError('Spanning source constraints must remain complete non-event obligations');
+    }
+    for (const predecessorId of requirement.afterRequirementIds) {
+      const predecessor = byId.get(predecessorId);
+      if (kind === 'spanning_constraint' || predecessor?.kind === 'spanning_constraint') {
+        throw new ConfigurationError('Spanning source constraints cannot have temporal edges');
+      }
+      if (kind === 'global_context' || predecessor?.scope === 'global') {
+        throw new ConfigurationError('Global source context cannot have temporal edges');
+      }
+    }
+  }
 }
 
 export function formatEpisodeSourceRequirementsForDetail(
@@ -352,6 +386,7 @@ export function formatEpisodeSourceRequirementsForDetail(
     ...current.map((requirement) => JSON.stringify(requirement)),
     '[END SOURCE REQUIREMENTS]',
     'Global requirements are context/style/constraints for every current page and do not require panel placement or a visible event.',
+    'A spanning_constraint is a mandatory depiction instruction over its placed panels, not another event after their completion. Its complete source context and any internal order remain authoritative.',
     'Before drafting editable fields, assign every listed PAGE requirement to one or more panel orders in source_requirement_placements. Preserve prerequisite relations, conditions, and required_by_end completion. The placement is internal structure and is not source evidence or proof of semantic fidelity.',
   ].join('\n');
 }
@@ -380,7 +415,7 @@ export function buildAuditCompatibilityPlanFromSourceRequirements(
         storyBeats: requirements.requirements
           .filter((requirement) => requirement.scope === 'page' && requirement.pageId === page.pageId)
           .sort((left, right) => left.order - right.order)
-          .map((requirement) => `${requirement.requirementId}: ${requirement.events.join(' / ')}`),
+          .map((requirement) => `${requirement.requirementId}: ${(requirement.kind === 'spanning_constraint' ? requirement.context : requirement.events.join(' / '))}`),
         entryState: 'original source authority',
         exitState: 'original source authority',
         newInformation: [],
@@ -489,6 +524,8 @@ function maximumDecodedRequirementBytes(extraction: EpisodeSourceRequirementExtr
       const text = unit.text.trim();
       const copies = (count: number): string[] => Array.from({ length: count }, () => text);
       const common = {
+        // Use the longest classification for a conservative serialized upper bound.
+        kind: 'spanning_constraint' as const,
         requirementId: maximumRequirementId,
         scope: unit.scope,
         pageId: unit.scope === 'global' ? null : unit.pageId,

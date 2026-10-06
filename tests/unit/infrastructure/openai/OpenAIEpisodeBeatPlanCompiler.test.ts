@@ -278,7 +278,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         requests.push(payload);
         return {
           body: { output_text: JSON.stringify({ requirements: [{
-            i: 1, u: 1, o: 1,
+            k: 'e', i: 1, u: 1, o: 1,
             e: [fragment('扉を押す'), fragment('小石を除く')],
             r: [fragment('動かない'), null],
             a: [], c: [fragment('扉が開く前は内部へ入らず'), null],
@@ -305,7 +305,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         { event: '小石を除く', result: null, conditionalUntil: null, requiredByEnd: true },
       ],
     });
-    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v5');
+    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v6');
     const requestInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
     expect(requestInput[0]?.content[0]?.text).toContain('extraction only');
     expect(requestInput[1]?.content[0]?.text).toContain(unit.text);
@@ -331,10 +331,10 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
         requests.push(payload);
         return { body: { output_text: JSON.stringify({ requirements: [{
-          i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
+          k: 'g', i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
           x: [`1:${fragmentFor(globalUnit, globalText.trim())}`], q: [],
         }, {
-          i: 2, u: pageOrdinal, o: 1, e: [fragmentFor(pageUnit, '開始する')], r: [null],
+          k: 'e', i: 2, u: pageOrdinal, o: 1, e: [fragmentFor(pageUnit, '開始する')], r: [null],
           a: [], c: [null], z: [true], x: [], q: [],
         }] }) }, requestId: 'req-global-source' };
       },
@@ -375,10 +375,10 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     const client = {
       postJson: async () => ({
         body: { output_text: JSON.stringify({ requirements: [{
-          i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
+          k: 'g', i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
           x: contextText === null ? [] : [`1:${fragmentFor(globalUnit, contextText)}`], q: [],
         }, {
-          i: 2, u: pageOrdinal, o: 1, e: [fragmentFor(pageUnit, '開始する')], r: [null],
+          k: 'e', i: 2, u: pageOrdinal, o: 1, e: [fragmentFor(pageUnit, '開始する')], r: [null],
           a: [], c: [null], z: [true], x: [], q: [],
         }] }) },
         requestId: 'req-incomplete-global-source',
@@ -412,10 +412,10 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     const client = {
       postJson: async () => ({
         body: { output_text: JSON.stringify({ requirements: [{
-          i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
+          k: 'g', i: 1, u: globalOrdinal, o: 1, e: [], r: [], a: [], c: [], z: [],
           x: ['1:f9999'], q: [],
         }, {
-          i: 2, u: pageOrdinal, o: 1,
+          k: 'e', i: 2, u: pageOrdinal, o: 1,
           e: [fragmentFor(pageUnit, '開始する')], r: [null],
           a: [], c: [null], z: [true], x: [], q: [],
         }] }) },
@@ -456,11 +456,11 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
                 const trimmed = unit.text.trim();
                 return unit.scope === 'global'
                   ? {
-                      i: requirementIndex + 1, u: unitIndex + 1, o: 1,
+                      k: 'g', i: requirementIndex + 1, u: unitIndex + 1, o: 1,
                       e: [], r: [], a: [], c: [], z: [], x: [], q: [],
                     }
                   : {
-                      i: requirementIndex + 1, u: unitIndex + 1, o: 1,
+                      k: 'e', i: requirementIndex + 1, u: unitIndex + 1, o: 1,
                       e: [fragmentFor(unit, trimmed)], r: [null],
                       a: [], c: [null], z: [true], x: [], q: [],
                     };
@@ -494,7 +494,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
 
   it('source requirement schemaの最大field payload全体は固定reserveを含むpreflight上限内に収まる', () => {
     const maximumRecord = {
-      i: 512, u: 256, o: 10_000,
+      k: 'e', i: 512, u: 256, o: 10_000,
       e: ['f9999', 'f9999', 'f9999', 'f9999', 'f9999'],
       r: ['f9999', 'f9999', 'f9999', 'f9999', 'f9999'],
       a: [512, 512, 512, 512],
@@ -508,7 +508,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     };
 
     expect(Buffer.byteLength(JSON.stringify(maximumRecord), 'utf8'))
-      .toBe(317);
+      .toBe(325);
     expect(Buffer.byteLength(JSON.stringify(maximumPackPayload), 'utf8'))
       .toBeLessThanOrEqual(EPISODE_SOURCE_REQUIREMENT_LIMITS.maxProviderOutputBytes);
   });

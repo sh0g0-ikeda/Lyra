@@ -21,7 +21,7 @@ async function compileScope(constraintAfterDialogue: boolean): Promise<unknown> 
   const sourceClient = {
     postJson: async () => ({
       body: { output_text: JSON.stringify({requirements: nonblank.map(({unit, ordinal}) => ({
-        i: ordinal, u: ordinal, o: ordinal,
+        k: 'e', i: ordinal, u: ordinal, o: ordinal,
         e: [unit.fragmentCatalog[0]!.id], r: [null],
         c: [ordinal === constraint.ordinal ? unit.fragmentCatalog[0]!.id : null], z: [true],
         a: ordinal === dialogue.ordinal ? [event.ordinal] : ordinal === constraint.ordinal && constraintAfterDialogue ? [dialogue.ordinal] : [],

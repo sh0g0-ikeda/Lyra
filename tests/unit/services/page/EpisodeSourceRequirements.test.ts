@@ -98,7 +98,7 @@ describe('EpisodeSourceRequirements', () => {
     ]);
 
     expect(packs).not.toBeNull();
-    expect(packs?.map((pack) => pack.estimatedWorstCaseOutputBytes)).toEqual([19_166, 18_721]);
+    expect(packs?.map((pack) => pack.estimatedWorstCaseOutputBytes)).toEqual([19_598, 19_145]);
     expect(packs?.map((pack) => pack.units.filter((unit) =>
       unit.scope === 'global' && unit.text.trim().length > 0).length))
       .toEqual([4, 5]);
