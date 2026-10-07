@@ -549,11 +549,8 @@ class ActualSourceV7EpisodeBeatPlanCompiler extends FakeEpisodeBeatPlanCompiler 
             i: row.unitOrdinal,
             u: row.unitOrdinal,
             k: row.scope === 'global' ? 'g' : 'e',
-            e: row.scope === 'global' ? [] : [eventFragment],
-            r: row.scope === 'global' ? [] : [null],
+            ob: row.scope === 'global' ? [] : [{ e: eventFragment, r: null, c: null, z: true }],
             a: [],
-            c: row.scope === 'global' ? [] : [null],
-            z: row.scope === 'global' ? [] : [true],
             x: [],
             q: [],
           }];

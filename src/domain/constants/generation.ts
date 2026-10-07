@@ -108,15 +108,17 @@ export const EPISODE_BEAT_PLAN_COMPILER_VERSION = 'episode_beat_plan_v10';
 export const EPISODE_BEAT_PLAN_OUTLINE_COMPILER_VERSION = 'episode_beat_outline_v6';
 // Source extraction is partitioned before a paid call. A multi-page request must
 // stay within four pages and forty nonblank units. A single page is indivisible
-// and retains the prior byte/output ceilings even when it contains over forty units.
+// and retains the prior input and canonical-output ceilings even when it contains
+// over forty units. The strict provider wire has its own separately bounded ceiling.
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_PAGES_PER_PACK = 4;
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_NONBLANK_UNITS_PER_MULTI_PAGE_PACK = 40;
-// v10 invalidates source-extraction cache identity because the provider catalog now
-// excludes blank units and fixes the ordinal schema to every nonblank trusted unit.
-export const EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION = 'episode_source_requirements_v10';
+// v11 invalidates source-extraction cache identity because each provider obligation
+// is now one strict object before lossless conversion to the canonical arrays.
+export const EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION = 'episode_source_requirements_v11';
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_DEFAULT_REASONING_EFFORT: 'low' = 'low';
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_INPUT_BYTES = 32_768;
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES = 315;
+export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_WIRE_OUTPUT_BYTES = 32_768;
 
 export const EPISODE_PLAN_AUDIT_COMPILER_OPENAI_MODEL = 'gpt-5';
 export const EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS = 20_000;

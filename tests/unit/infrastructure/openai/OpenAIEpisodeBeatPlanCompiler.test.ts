@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY } from '../../../../src/infrastructure/openai/StoryEditorialPrompts.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEpisodeBeatPlanCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
+import { StructuredOpenAIResponseError } from '../../../../src/infrastructure/openai/StructuredOpenAIResponse.js';
 import { EpisodeBeatPlanOutputLimitError } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
 import {
+  EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES,
+  EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_WIRE_OUTPUT_BYTES,
+} from '../../../../src/domain/constants/generation.js';
+import {
   buildEpisodeSourceRequirementExtractionPacks,
-  EPISODE_SOURCE_REQUIREMENT_LIMITS,
   prepareEpisodeSourceRequirementExtraction,
   type EpisodeSourceUnit,
 } from '../../../../src/services/page/EpisodeSourceRequirements.js';
@@ -281,10 +285,13 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         return {
           body: { output_text: JSON.stringify({ requirements: [{
             k: 'e', i: 1, u: 1,
-            e: [fragment('扉を押す'), fragment('小石を除く')],
-            r: [fragment('動かない'), null],
-            a: [], c: [fragment('扉が開く前は内部へ入らず'), null],
-            z: [false, true], x: [], q: [],
+            ob: [{
+              e: fragment('扉を押す'), r: fragment('動かない'),
+              c: fragment('扉が開く前は内部へ入らず'), z: false,
+            }, {
+              e: fragment('小石を除く'), r: null, c: null, z: true,
+            }],
+            a: [], x: [], q: [],
           }] }) },
           requestId: 'req-source-requirements',
         };
@@ -307,7 +314,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         { event: '小石を除く', result: null, conditionalUntil: null, requiredByEnd: true },
       ],
     });
-    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v10');
+    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v11');
     const requestInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
     const requestText = requests[0]?.text as {
       format: { name: string; type: string; strict: boolean; schema: Record<string, unknown> };
@@ -322,6 +329,22 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       name: 'episode_source_requirements',
       type: 'json_schema',
       strict: true,
+    });
+    const requirementItem = (requestText.format.schema as { properties: { requirements: { items: {
+      required: string[];
+      properties: Record<string, unknown>;
+    } } } }).properties.requirements.items;
+    expect(requirementItem.required).toEqual(['k', 'i', 'u', 'ob', 'a', 'x', 'q']);
+    expect(requirementItem.properties).not.toHaveProperty('e');
+    expect(requirementItem.properties).not.toHaveProperty('r');
+    expect(requirementItem.properties).not.toHaveProperty('c');
+    expect(requirementItem.properties).not.toHaveProperty('z');
+    expect(requirementItem.properties.ob).toMatchObject({
+      type: 'array', maxItems: 5,
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['e', 'r', 'c', 'z'],
+      },
     });
 
     await new OpenAIEpisodeBeatPlanCompiler(client, 'gpt-5', 'medium')
@@ -362,11 +385,8 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
                 k: 'e',
                 i: ordinal,
                 u: ordinal,
-                e: [unit.fragmentCatalog[0]!.id],
-                r: [null],
+                ob: [{ e: unit.fragmentCatalog[0]!.id, r: null, c: null, z: true }],
                 a: [],
-                c: [null],
-                z: [true],
                 x: [],
                 q: [],
               })),
@@ -394,6 +414,135 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     expect(schema.properties).not.toHaveProperty('o');
   });
 
+  it.each([
+    ['ob missing', { k: 'e', i: 1, u: 1, a: [], x: [], q: [] }],
+    ['event missing', { k: 'e', i: 1, u: 1, ob: [{ r: null, c: null, z: false }], a: [], x: [], q: [] }],
+    ['result missing', { k: 'e', i: 1, u: 1, ob: [{ e: 'f1', c: null, z: false }], a: [], x: [], q: [] }],
+    ['condition missing', { k: 'e', i: 1, u: 1, ob: [{ e: 'f1', r: null, z: false }], a: [], x: [], q: [] }],
+    ['required flag missing', { k: 'e', i: 1, u: 1, ob: [{ e: 'f1', r: null, c: null }], a: [], x: [], q: [] }],
+    ['required flag null', { k: 'e', i: 1, u: 1, ob: [{ e: 'f1', r: null, c: null, z: null }], a: [], x: [], q: [] }],
+    ['condition false', { k: 'e', i: 1, u: 1, ob: [{ e: 'f1', r: null, c: false, z: false }], a: [], x: [], q: [] }],
+    ['event null', { k: 'e', i: 1, u: 1, ob: [{ e: null, r: null, c: null, z: false }], a: [], x: [], q: [] }],
+    ['nested unknown key', { k: 'e', i: 1, u: 1, ob: [{ e: 'f1', r: null, c: null, z: false, fallback: true }], a: [], x: [], q: [] }],
+    ['too many obligations', {
+      k: 'e', i: 1, u: 1,
+      ob: Array.from({ length: 6 }, () => ({ e: 'f1', r: null, c: null, z: false })),
+      a: [], x: [], q: [],
+    }],
+    ['legacy sibling arrays', {
+      k: 'e', i: 1, u: 1, e: ['f1'], r: [], c: [], z: [], a: [], x: [], q: [],
+    }],
+    ['obsolete provider order', {
+      k: 'e', i: 1, u: 1, o: 1, ob: [{ e: 'f1', r: null, c: null, z: false }], a: [], x: [], q: [],
+    }],
+  ])('provider obligation wireの不正形状 %s は補完せず一回で拒否する', async (_label, record) => {
+    const pageId = '11111111-1111-4111-8111-111111111111';
+    const extraction = prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: '1ページ目：扉を押す。',
+      pages: [{ pageId, pageNumber: 1 }],
+    })!;
+    let calls = 0;
+    const client = {
+      postJson: async () => {
+        calls += 1;
+        return {
+          body: { output_text: JSON.stringify({ requirements: [record] }) },
+          requestId: 'req-invalid-obligation-wire',
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({
+      extraction,
+      language: 'ja',
+    })).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
+
+  it('wireからcanonicalへの変換後に24k上限を超えた場合もrequestId付きinvalid_payloadへ分類する', async () => {
+    const pageId = '11111111-1111-4111-8111-111111111111';
+    const requirements = Array.from({ length: 77 }, (_unused, index) => ({
+      k: 'e', i: index + 1, u: index + 1,
+      ob: Array.from({ length: 5 }, () => ({ e: 'f9999', r: 'f9999', c: 'f9999', z: false })),
+      a: [512, 512, 512, 512],
+      x: ['1:f9999', '2:f9999', '3:f9999', '4:f9999', '5:f9999'],
+      q: ['f9999', 'f9999', 'f9999', 'f9999'],
+    }));
+    const wireBytes = Buffer.byteLength(JSON.stringify({ requirements }), 'utf8');
+    const extraction = {
+      pages: [{ pageId, pageNumber: 1 }],
+      units: requirements.map((_requirement, index) => ({
+        unitId: `p1-u${index + 1}`,
+        scope: 'page' as const,
+        pageId,
+        pageNumber: 1,
+        text: `unit-${index + 1}`,
+        fragmentCatalog: [{ id: 'f1', start: 0, end: `unit-${index + 1}`.length }],
+      })),
+      compilerBrief: 'bounded artificial compiler brief',
+      estimatedWorstCaseOutputBytes: 0,
+    };
+    const client = {
+      postJson: async () => ({
+        body: { output_text: JSON.stringify({ requirements }) },
+        requestId: 'req-canonical-budget',
+      }),
+    } as unknown as OpenAIClient;
+
+    expect(wireBytes).toBeLessThanOrEqual(EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_WIRE_OUTPUT_BYTES);
+    const rejection = new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({
+      extraction,
+      language: 'ja',
+    });
+    await expect(rejection).rejects.toBeInstanceOf(StructuredOpenAIResponseError);
+    await expect(rejection).rejects.toMatchObject({
+      reason: 'invalid_payload',
+      retryable: true,
+      requestId: 'req-canonical-budget',
+    });
+  });
+
+  it('単一ページ72unitは一pack一provider callで保持し73unitはpaid call前に既存24k上限で拒否する', async () => {
+    const pageId = '11111111-1111-4111-8111-111111111111';
+    const page = { pageId, pageNumber: 1 };
+    const prepare = (count: number) => prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: `1ページ目：${Array.from({ length: count }, (_unused, index) => `行${index + 1}。`).join('')}`,
+      pages: [page],
+    })!;
+    const extraction72 = prepare(72);
+    const packs72 = buildEpisodeSourceRequirementExtractionPacks(extraction72, [[page]]);
+    const extraction73 = prepare(73);
+    const packs73 = buildEpisodeSourceRequirementExtractionPacks(extraction73, [[page]]);
+    let calls = 0;
+    const client = {
+      postJson: async () => {
+        calls += 1;
+        const units = packs72![0]!.units.filter((unit) => unit.text.trim().length > 0);
+        return {
+          body: { output_text: JSON.stringify({ requirements: units.map((unit, index) => ({
+            k: 'e', i: index + 1, u: index + 1,
+            ob: [{ e: unit.fragmentCatalog[0]!.id, r: null, c: null, z: true }],
+            a: [], x: [], q: [],
+          })) }) },
+          requestId: 'req-single-page-72',
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    expect(extraction72.units.filter((unit) => unit.text.trim().length > 0)).toHaveLength(72);
+    expect(packs72).toHaveLength(1);
+    expect(packs72![0]!.units.filter((unit) => unit.text.trim().length > 0)).toHaveLength(72);
+    const compiled = await new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({
+      extraction: packs72![0]!,
+      language: 'ja',
+    });
+    expect(compiled.requirements.requirements).toHaveLength(72);
+    expect(calls).toBe(1);
+    expect(extraction73.units.filter((unit) => unit.text.trim().length > 0)).toHaveLength(73);
+    expect(packs73).toBeNull();
+    expect(calls).toBe(1);
+  });
+
   it('provider向けcatalogはblank unitを除外しnonblank unitだけを連続ordinalとexact schemaで固定する', async () => {
     const pageId = '11111111-1111-4111-8111-111111111111';
     const extraction = prepareEpisodeSourceRequirementExtraction({
@@ -409,10 +558,11 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         requests.push(payload);
         return {
           body: { output_text: JSON.stringify({ requirements: [{
-            k: 'g', i: 1, u: 1, e: [], r: [], a: [], c: [], z: [], x: [], q: [],
+            k: 'g', i: 1, u: 1, ob: [], a: [], x: [], q: [],
           }, {
-            k: 'e', i: 2, u: 2, e: [fragmentFor(nonblankUnits[1]!, '扉を押す')],
-            r: [null], a: [], c: [null], z: [true], x: [], q: [],
+            k: 'e', i: 2, u: 2,
+            ob: [{ e: fragmentFor(nonblankUnits[1]!, '扉を押す'), r: null, c: null, z: true }],
+            a: [], x: [], q: [],
           }] }) },
           requestId: 'req-source-nonblank-catalog',
         };
@@ -463,11 +613,8 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
               k: 'e',
               i: index + 1,
               u: unitOrdinal,
-              e: [firstUnit.fragmentCatalog[0]!.id],
-              r: [null],
+              ob: [{ e: firstUnit.fragmentCatalog[0]!.id, r: null, c: null, z: true }],
               a: [],
-              c: [null],
-              z: [true],
               x: [],
               q: [],
             })),
@@ -502,11 +649,12 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
         requests.push(payload);
         return { body: { output_text: JSON.stringify({ requirements: [{
-          k: 'g', i: 1, u: globalOrdinal, e: [], r: [], a: [], c: [], z: [],
+          k: 'g', i: 1, u: globalOrdinal, ob: [], a: [],
           x: [`1:${fragmentFor(globalUnit, globalText.trim())}`], q: [],
         }, {
-          k: 'e', i: 2, u: pageOrdinal, e: [fragmentFor(pageUnit, '開始する')], r: [null],
-          a: [], c: [null], z: [true], x: [], q: [],
+          k: 'e', i: 2, u: pageOrdinal,
+          ob: [{ e: fragmentFor(pageUnit, '開始する'), r: null, c: null, z: true }],
+          a: [], x: [], q: [],
         }] }) }, requestId: 'req-global-source' };
       },
     } as unknown as OpenAIClient;
@@ -547,11 +695,12 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     const client = {
       postJson: async () => ({
         body: { output_text: JSON.stringify({ requirements: [{
-          k: 'g', i: 1, u: globalOrdinal, e: [], r: [], a: [], c: [], z: [],
+          k: 'g', i: 1, u: globalOrdinal, ob: [], a: [],
           x: contextText === null ? [] : [`1:${fragmentFor(globalUnit, contextText)}`], q: [],
         }, {
-          k: 'e', i: 2, u: pageOrdinal, e: [fragmentFor(pageUnit, '開始する')], r: [null],
-          a: [], c: [null], z: [true], x: [], q: [],
+          k: 'e', i: 2, u: pageOrdinal,
+          ob: [{ e: fragmentFor(pageUnit, '開始する'), r: null, c: null, z: true }],
+          a: [], x: [], q: [],
         }] }) },
         requestId: 'req-incomplete-global-source',
       }),
@@ -585,12 +734,12 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     const client = {
       postJson: async () => ({
         body: { output_text: JSON.stringify({ requirements: [{
-          k: 'g', i: 1, u: globalOrdinal, e: [], r: [], a: [], c: [], z: [],
+          k: 'g', i: 1, u: globalOrdinal, ob: [], a: [],
           x: ['1:f9999'], q: [],
         }, {
           k: 'e', i: 2, u: pageOrdinal,
-          e: [fragmentFor(pageUnit, '開始する')], r: [null],
-          a: [], c: [null], z: [true], x: [], q: [],
+          ob: [{ e: fragmentFor(pageUnit, '開始する'), r: null, c: null, z: true }],
+          a: [], x: [], q: [],
         }] }) },
         requestId: 'req-invalid-global-locator',
       }),
@@ -630,12 +779,12 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
                 return unit.scope === 'global'
                   ? {
                       k: 'g', i: requirementIndex + 1, u: unitIndex + 1,
-                      e: [], r: [], a: [], c: [], z: [], x: [], q: [],
+                      ob: [], a: [], x: [], q: [],
                     }
                   : {
                       k: 'e', i: requirementIndex + 1, u: unitIndex + 1,
-                      e: [fragmentFor(unit, trimmed)], r: [null],
-                      a: [], c: [null], z: [true], x: [], q: [],
+                      ob: [{ e: fragmentFor(unit, trimmed), r: null, c: null, z: true }],
+                      a: [], x: [], q: [],
                     };
               }),
           }) },
@@ -672,7 +821,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
   });
 
   it('source requirement schemaの最大field payload全体は固定reserveを含むpreflight上限内に収まる', () => {
-    const maximumRecord = {
+    const maximumCanonicalRecord = {
       k: 'e', i: 512, u: 256,
       e: ['f9999', 'f9999', 'f9999', 'f9999', 'f9999'],
       r: ['f9999', 'f9999', 'f9999', 'f9999', 'f9999'],
@@ -682,13 +831,19 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       x: ['1:f9999', '2:f9999', '3:f9999', '4:f9999', '5:f9999'],
       q: ['f9999', 'f9999', 'f9999', 'f9999'],
     };
-    const maximumPackPayload = {
-      requirements: Array.from({ length: 56 }, () => maximumRecord),
+    const maximumWireRecord = {
+      k: 'e', i: 512, u: 256,
+      ob: Array.from({ length: 5 }, () => ({ e: 'f9999', r: 'f9999', c: 'f9999', z: false })),
+      a: [512, 512, 512, 512],
+      x: ['1:f9999', '2:f9999', '3:f9999', '4:f9999', '5:f9999'],
+      q: ['f9999', 'f9999', 'f9999', 'f9999'],
     };
+    const maximumWirePayload = { requirements: Array.from({ length: 72 }, () => maximumWireRecord) };
 
-    expect(Buffer.byteLength(JSON.stringify(maximumRecord), 'utf8'))
-      .toBe(315);
-    expect(Buffer.byteLength(JSON.stringify(maximumPackPayload), 'utf8'))
-      .toBeLessThanOrEqual(EPISODE_SOURCE_REQUIREMENT_LIMITS.maxProviderOutputBytes);
+    expect(Buffer.byteLength(JSON.stringify(maximumCanonicalRecord), 'utf8'))
+      .toBe(EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(maximumWireRecord), 'utf8')).toBe(388);
+    expect(Buffer.byteLength(JSON.stringify(maximumWirePayload), 'utf8'))
+      .toBeLessThanOrEqual(EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_WIRE_OUTPUT_BYTES);
   });
 });

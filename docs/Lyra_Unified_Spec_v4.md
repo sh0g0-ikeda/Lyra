@@ -213,7 +213,7 @@ when it fits the safe output budget.
 
 For a complete original-page mapping without character-state opt-in, bounded
 original-source requirement extraction replaces the existing beat-plan pack calls.
-Source extraction v10 uses consecutive packs of at most four complete pages;
+Source extraction v11 uses consecutive packs of at most four complete pages;
 multi-page packs contain at most forty nonblank source units. A single page is
 never divided and retains the existing input and output byte ceilings even above
 forty units. Every trusted unit remains present exactly once across the packs.
@@ -222,6 +222,15 @@ only nonblank units in trusted order, numbered consecutively from one. Each sour
 request constrains unit ordinals to that exact catalog and requires exactly one
 requirement per nonblank unit. Decoding uses the same catalog; duplicate, missing,
 foreign and invalid fragment references are rejected before detail or persistence.
+The provider wire represents each ordered obligation as one strict ob object
+with required event, result-or-null, condition-or-null and page-end boolean fields.
+Missing fields, old parallel-array wire records and provider ordering fields
+are rejected; no defaults or inferred values repair an invalid response. The
+compact parsed wire JSON has an independent 32,768-byte limit. A lossless
+projection of its explicit values is then checked by the existing canonical
+parallel-array schema and 24,000-byte limit. Canonical admission still uses
+315 bytes per record, preserving the existing single-page capacity. The larger
+wire bound covers object encoding overhead and does not expand semantic capacity.
 Source extraction uses low reasoning effort only when the selected profile leaves
 effort unspecified; an explicit profile effort remains authoritative. Beat, outline,
 detail and audit effort are unchanged. The source compiler cache version changes
@@ -246,7 +255,7 @@ compact response record and envelope bounds are checked independently. The
 resolved internal requirements use an extraction-derived byte ceiling for the
 permitted exact-source copies and bounded metadata, with an absolute 2 MiB
 ceiling. Pack and merged requirements use the same derived validation; compact
-provider limits remain unchanged. Detail
+canonical limits remain unchanged. Detail
 output allocates page-owned requirements to panels before writing panel fields.
 Placement validation checks structural coverage and prerequisite order, not semantic
 fidelity. Source record order does not itself create a temporal dependency.
@@ -275,7 +284,7 @@ now includes the added classification bytes; all source/input/decoded bounds and
 lossless coverage remain enforced.
 Source order is server-owned and restored from the trusted extraction unit
 identity within its owning page or global source. Provider record order and
-provider-authored numeric ordering cannot reorder the source. The v7 provider
+provider-authored numeric ordering cannot reorder the source. The source provider
 schema does not include an ordering field; shuffled records are mapped to their
 exact source units before coverage, fragment ownership and temporal validation.
 Unknown, missing or repeated units remain errors. Explicit event prerequisites

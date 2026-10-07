@@ -1,0 +1,97 @@
+{
+  "schema": "lyra.source-obligation-v11.integration-r162/v1",
+  "status": "INTEGRATED_LOCAL_TESTS_PASS_REAL_PROVIDER_PENDING",
+  "baseline": "b52543c0c4d83b14d91fea260a950883fc3ad916",
+  "adopted": [
+    {
+      "path": "src/domain/constants/generation.ts",
+      "sha256": "3634a15f5605494fa9d5db60c42cad2f9edebf6e1d0162d968100a88e80ee066"
+    },
+    {
+      "path": "src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.ts",
+      "sha256": "939979ccab3540cf30df2217cfcb5a48a3ce8b7b17ac1b1868f9fe04aaaad690"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.test.ts",
+      "sha256": "d5087145d933dcf2fa6b9b6399ad5fbb0f68d904c099d0cd5ee874b464903c30"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/EpisodeSourceTemporalScope.test.ts",
+      "sha256": "5371fdc133a591bda31e5503183bf2d449563ee291bfd80f38cf9b3b4b5f0485"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/EpisodeSourceSpanSemantics.test.ts",
+      "sha256": "7e3b0d1b605efc2def06639fda7099f984e5a8b6d2b063a16d2a2718d9484a3a"
+    },
+    {
+      "path": "tests/unit/infrastructure/openai/EpisodeSourceLocatorV3.test.ts",
+      "sha256": "c29a48da3d10e94a2ff337cfe77a1b43f8de41405f460a54ae8103ad986e6cdb"
+    },
+    {
+      "path": "tests/unit/services/page/PageService.test.ts",
+      "sha256": "f94271954ee99719a86badf6646f46e9d2da4917b00a637a8e3f79d38eac522c"
+    }
+  ],
+  "spec": {
+    "path": "docs/Lyra_Unified_Spec_v4.md",
+    "sha256": "1bff3e062c56b514b8ce140b6db1304d817567a0573a5d8971a4b414aeff3521"
+  },
+  "design": {
+    "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/google-activation-r3/source-obligation-design-r157/design-decision.json",
+    "sha256": "9943adcc4e6fa9ec3ed8b12982f79534ba9ba64561a18f795def633f6bf61594"
+  },
+  "sol": {
+    "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/google-activation-r3/source-obligation-v11-r158/final-receipt.json",
+    "sha256": "65fe8861fb973a87a248c6bed4ee05cb86b82548d768dbf123c694a8343b51e6"
+  },
+  "logs": [
+    {
+      "path": "C:\\Users\\shogo\\Lyra\\.tmp\\codex-completion-20261002\\google-activation-r3\\source-obligation-v11-r158\\red.log",
+      "sha256": "d602e796a2fe7ea6fda70cca1dcac6c5016da934085e7d7dc3a14ec896414c81"
+    },
+    {
+      "path": "C:\\Users\\shogo\\Lyra\\.tmp\\codex-completion-20261002\\google-activation-r3\\source-obligation-v11-r158\\green-compiler-r2.log",
+      "sha256": "f444daa513ec443bd9209fa2e7431f0c94f55cd7a2f58611c99a6733afa8e1de"
+    },
+    {
+      "path": "C:\\Users\\shogo\\Lyra\\.tmp\\codex-completion-20261002\\google-activation-r3\\source-obligation-v11-r158\\green-semantics.log",
+      "sha256": "e7c18a4dfb56a539cc882d85832c2ab643aa4ef433bcdf090687a62413d08224"
+    },
+    {
+      "path": "C:\\Users\\shogo\\Lyra\\.tmp\\codex-completion-20261002\\google-activation-r3\\source-obligation-v11-r158\\green-related.log",
+      "sha256": "bdbc069aa03b0db62ab4146eff77d0bc624674c49d0a4d10633ec40cb40eb58c"
+    },
+    {
+      "path": "C:\\Users\\shogo\\Lyra\\.tmp\\codex-completion-20261002\\google-activation-r3\\source-obligation-v11-r158\\green-bun-related.log",
+      "sha256": "7cd7f397f57ba2d133b1eb23e747635314097344a47dc91cc9e990fad7fdc979"
+    },
+    {
+      "path": "C:\\Users\\shogo\\Lyra\\.tmp\\codex-completion-20261002\\google-activation-r3\\source-obligation-v11-r158\\typecheck.log",
+      "sha256": "e05222033cd2c7b46b6fad5ec87b44b62f844dbb6f004476498f71d0e3c9875b"
+    },
+    {
+      "path": "C:\\Users\\shogo\\Lyra\\.tmp\\codex-completion-20261002\\google-activation-r3\\source-obligation-v11-r158\\diff-check.log",
+      "sha256": "e05222033cd2c7b46b6fad5ec87b44b62f844dbb6f004476498f71d0e3c9875b"
+    }
+  ],
+  "parentReview": {
+    "strictWireAndLosslessPipe": true,
+    "errorClassificationPreserved": true,
+    "semanticCapacityPreserved": true,
+    "actualBunVersion": "1.3.11",
+    "correctedReceiptWording": "canonical limit is 24000 bytes, not 24KiB"
+  },
+  "originalProtection": {
+    "path": "C:/Users/shogo/Lyra/.tmp/codex-completion-20261002/google-activation-r3/original-protection-r159.json",
+    "sha256": "eb80a5d65bbf640d5502ce1c78a45485843f92eda8689772c054a4ac1ead06e8",
+    "dirtyPaths": 28,
+    "changed": 0
+  },
+  "limitations": [
+    "real v11 provider acceptance not yet executed",
+    "final whole Native/Bun1.3.14 gates pending",
+    "M2 r142 invoke0 cleanup pending",
+    "latest stage and physical QA pending"
+  ],
+  "productionChanges": 0
+}
