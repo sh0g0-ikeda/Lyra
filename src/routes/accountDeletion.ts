@@ -17,6 +17,9 @@ import type { AppEnv } from '../types/app.js';
 import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
+const RECENT_AUTH_MAX_AGE_SECONDS = 300;
+const AUTH_CLOCK_SKEW_SECONDS = 60;
+
 export interface AccountDeletionRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
@@ -69,6 +72,16 @@ export function createAccountDeletionRoutes(
     if (!parsed.success) {
       throw new ValidationError(formatZodValidationError(parsed.error));
     }
+    // Refreshing a JWT must not renew permission for this destructive action.
+    // authTime comes only from the signature-verified Cognito ID token.
+    const identity = c.get('cognitoIdentity');
+    const now = Math.floor(Date.now() / 1000);
+    if (identity === undefined || identity.subject !== user.supabaseId
+      || !Number.isSafeInteger(identity.authTime) || identity.authTime <= 0
+      || now - identity.authTime > RECENT_AUTH_MAX_AGE_SECONDS
+      || identity.authTime - now > AUTH_CLOCK_SKEW_SECONDS) {
+      throw new AppError('RECENT_AUTH_REQUIRED', 'Please sign in again before deleting your account.', 401);
+    }
     const result = await dependencies.accountDeletionService.requestDeletion({
       userId: user.id,
       identityId: user.supabaseId,
@@ -78,6 +91,18 @@ export function createAccountDeletionRoutes(
       acknowledgeStoreBilling: parsed.data.acknowledge_store_billing,
       acknowledgePersonalAssets: parsed.data.acknowledge_personal_assets,
     });
+    if (
+      result.status === 'blocked'
+      && result.blockers.some(
+        (blocker) => blocker.code === 'CREDIT_RECOVERY_REQUIRED',
+      )
+    ) {
+      throw new AppError(
+        'ACCOUNT_CREDIT_RECOVERY_PENDING',
+        'Resolve the pending payment adjustment before deleting your account.',
+        409,
+      );
+    }
     const statusCode =
       result.status === 'blocked'
         ? 409

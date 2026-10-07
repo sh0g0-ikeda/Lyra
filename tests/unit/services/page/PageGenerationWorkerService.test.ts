@@ -163,7 +163,7 @@ class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
 class FakeRenderer implements PageImageRendererPort {
   public calls: RenderPageImageInput[] = [];
   public shouldFail = false;
-  public imageData = Buffer.from('image-bytes');
+  public imageData = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   public mimeType = 'image/png';
   public onRender: () => void = () => undefined;
 
@@ -544,7 +544,7 @@ describe('PageGenerationWorkerService', () => {
       inputImages: [{ role: 'entity_reference', label: 'Aoi', dataUrl: 'data:image/png;base64,cmVm' }],
     });
     expect(storage.calls[0]?.pageId).toBe('page-1');
-    expect(storage.calls[0]?.imageData).toEqual(Buffer.from('image-bytes'));
+    expect(storage.calls[0]?.imageData).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     expect(executionRepository.completionInput).toMatchObject({
       jobId: 'job-1',
       userId: 'user-1',

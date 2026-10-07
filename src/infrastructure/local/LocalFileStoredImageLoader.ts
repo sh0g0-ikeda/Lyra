@@ -3,6 +3,7 @@ import type {
   StoredImageLoaderPort,
 } from '../aws/S3StoredImageLoader.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { assertRasterImageInput } from '../../domain/generation/RasterImageInput.js';
 import {
   inferImageMimeTypeFromKey,
   readLocalAsset,
@@ -18,9 +19,11 @@ export class LocalFileStoredImageLoader implements StoredImageLoaderPort {
       throw new ConfigurationError('Stored image body is empty');
     }
 
+    const mimeType = inferImageMimeTypeFromKey(s3Key);
+    assertRasterImageInput(imageData, mimeType);
     return {
       imageData,
-      mimeType: inferImageMimeTypeFromKey(s3Key),
+      mimeType,
     };
   }
 }

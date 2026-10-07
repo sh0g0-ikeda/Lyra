@@ -23,6 +23,7 @@ export interface AccountDeletionFlight {
   personalAssetKeys: string[];
   activePersonalGenerationJobCount: number;
   activePersonalExportJobCount: number;
+  personalCreditRecoveryRequired: boolean;
 }
 
 export type AccountDeletionRequestStatus =
@@ -115,6 +116,10 @@ interface RequestRow extends QueryResultRow {
 interface OrganizationRow extends QueryResultRow {
   id: string;
   name: string;
+}
+
+interface CreditRecoveryRequiredRow extends QueryResultRow {
+  personal_credit_recovery_required: boolean;
 }
 
 interface SubscriptionRow extends QueryResultRow {
@@ -635,6 +640,40 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
         `,
         [userId],
       );
+    const creditRecovery = await client.query<CreditRecoveryRequiredRow>(
+      `
+      SELECT (
+        EXISTS (
+          SELECT 1
+          FROM stripe_payment_recoveries AS recovery
+          INNER JOIN payment_records AS payment
+            ON payment.id = recovery.payment_record_id
+          WHERE payment.user_id = $1
+            AND payment.organization_id IS NULL
+            AND (
+              recovery.unrecovered_credits > 0
+              OR EXISTS (
+                SELECT 1
+                FROM stripe_payment_adjustment_objects AS adjustment
+                WHERE adjustment.recovery_id = recovery.id
+                  AND adjustment.status IN ('pending', 'open')
+              )
+            )
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM stripe_unresolved_payment_adjustments AS unresolved
+          INNER JOIN payment_records AS payment
+            ON payment.id = unresolved.payment_record_id
+          WHERE payment.user_id = $1
+            AND payment.organization_id IS NULL
+            AND unresolved.resolved_at IS NULL
+            AND unresolved.status NOT IN ('failed', 'won')
+        )
+      ) AS personal_credit_recovery_required
+      `,
+      [userId],
+    );
     const generationJobs = await client.query<CountRow>(
         `
         SELECT COUNT(*)::text AS count
@@ -676,6 +715,8 @@ implements AccountDeletionRepository, AccountDeletionIdentityLookupRepository {
       personalAssetKeys: assetKeys.rows.map((row) => row.s3_key),
       activePersonalGenerationJobCount: parseCount(generationJobs.rows[0]),
       activePersonalExportJobCount: parseCount(exportJobs.rows[0]),
+      personalCreditRecoveryRequired:
+        creditRecovery.rows[0]?.personal_credit_recovery_required ?? false,
     };
   }
 
@@ -1039,6 +1080,7 @@ function hasUnacknowledgeableBlocker(flight: AccountDeletionFlight): boolean {
     flight.uniqueOwnerOrganizations.length > 0
     || flight.activePersonalGenerationJobCount > 0
     || flight.activePersonalExportJobCount > 0
+    || flight.personalCreditRecoveryRequired
   );
 }
 

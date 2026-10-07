@@ -98,6 +98,28 @@ describe('createAccountDeletionRoutes', () => {
     expect(response.status).toBe(409);expect(await response.json()).toMatchObject({error:{code:'ACCOUNT_HAS_ACTIVE_JOBS'}});
   });
 
+  it('credit recovery blockerは新旧clientへ詳細を流さず安定409を返す', async () => {
+    for (const legacyBody of [
+      { confirmation: 'DELETE', acknowledge_personal_subscriptions: true, acknowledge_store_billing: true, acknowledge_personal_assets: true },
+      { confirmation: 'DELETE', acknowledge_active_subscription: true, acknowledge_confirmed_assets: true },
+    ]) {
+      const service = new FakeService();
+      service.result = { status: 'blocked', blockers: [{ code: 'CREDIT_RECOVERY_REQUIRED' }] };
+      const response = await createRoutes(service).request('/account/deletion', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(legacyBody),
+      });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: {
+          code: 'ACCOUNT_CREDIT_RECOVERY_PENDING',
+          message: 'Resolve the pending payment adjustment before deleting your account.',
+        },
+      });
+    }
+  });
+
   it('exact confirmationとacknowledgementだけを本人identity付きで渡す', async () => {
     const service = new FakeService();
     const app = createRoutes(service);
@@ -184,6 +206,7 @@ function createRoutes(service: AccountDeletionServicePort) {
 function buildAuthMiddleware(): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     c.set('user', user);
+    c.set('cognitoIdentity', { subject: user.supabaseId, username: 'user', email: user.email, authTime: Math.floor(Date.now() / 1000), tokenFingerprint: 'verified-token' });
     await next();
   };
 }

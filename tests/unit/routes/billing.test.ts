@@ -53,8 +53,11 @@ class FakeUserProvisioningService implements UserProvisioningPort {
 }
 
 class FakeCreditService implements CreditServicePort {
+  public recoveryBlocked = false;
   public async getBalance(_userId: string): Promise<CreditBalanceSnapshot> {
     return {
+      paidGenerationBlocked: this.recoveryBlocked,
+      recoveryCreditsDue: this.recoveryBlocked ? 7 : 0,
       monthlyCredits: 25,
       purchasedCredits: 15,
       totalCredits: 40,
@@ -187,6 +190,16 @@ class BlockingRateLimitStore implements RateLimitStore {
 }
 
 describe('billing routes', () => {
+  it('新clientが保留情報を要求した場合に不足を返し旧clientの応答形状を維持する', async () => {
+    const creditService = new FakeCreditService();
+    creditService.recoveryBlocked = true;
+    const app = createTestApp(new FakeBillingService(), new FakeStripeWebhookService(), undefined, testUser, undefined, creditService);
+    const token = await createToken();
+    const legacy = await app.request('/api/billing/balance', { headers: { Authorization: `Bearer ${token}` } });
+    expect(await legacy.json()).not.toHaveProperty('paid_generation_blocked');
+    const current = await app.request('/api/billing/balance', { headers: { Authorization: `Bearer ${token}`, 'X-Lyra-Credit-Recovery': '1' } });
+    expect(await current.json()).toMatchObject({ paid_generation_blocked: true, recovery_credits_due: 7 });
+  });
   it('returns 401 when the Authorization header is missing', async () => {
     const app = createTestApp(new FakeBillingService(), new FakeStripeWebhookService());
 
@@ -604,10 +617,11 @@ function createTestApp(
   rateLimitStore?: RateLimitStore,
   authenticatedUser: AuthenticatedUser = testUser,
   mobileStorePurchaseService?: MobileStorePurchaseServicePort,
+  creditService: CreditServicePort = new FakeCreditService(),
 ): ReturnType<typeof createApp> {
   return createApp({
     billingService,
-    creditService: new FakeCreditService(),
+    creditService,
     rateLimitStore,
     stripeWebhookService,
     userProvisioningService: new FakeUserProvisioningService(authenticatedUser),

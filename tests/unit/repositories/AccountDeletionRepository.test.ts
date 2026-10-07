@@ -9,6 +9,7 @@ class RecordingDatabase implements DatabaseClient, TransactionRunner {
     values: readonly unknown[];
   }> = [];
   public finalizeMode = false;
+  public creditRecoveryRequired = false;
 
   public async transaction<T>(
     work: (client: DatabaseClient) => Promise<T>,
@@ -22,10 +23,16 @@ class RecordingDatabase implements DatabaseClient, TransactionRunner {
   ): Promise<QueryResult<T>> {
     this.calls.push({ sql: text, values });
     let rows: QueryResultRow[] = [];
-    if (this.finalizeMode && text.includes('SELECT account_deletion_started_at')) {
+    if ((this.finalizeMode || this.creditRecoveryRequired) && text.includes('SELECT account_deletion_started_at')) {
       rows = [{
-        account_deletion_started_at: new Date('2026-07-31T00:00:00.000Z'),
+        account_deletion_started_at: this.finalizeMode
+          ? new Date('2026-07-31T00:00:00.000Z')
+          : null,
         account_deleted_at: null,
+      }];
+    } else if (text.includes('AS personal_credit_recovery_required')) {
+      rows = [{
+        personal_credit_recovery_required: this.creditRecoveryRequired,
       }];
     } else if (
       this.finalizeMode
@@ -98,6 +105,7 @@ describe('PostgresAccountDeletionRepository', () => {
       activePersonalGenerationJobCount: 2,
       activePersonalExportJobCount: 1,
       personalAssetKeys: ['users/u1/pages/p1.webp'],
+      personalCreditRecoveryRequired: false,
     });
     const sql = database.calls.map((call) => call.sql).join('\n');
     expect(sql).toContain('subscriptions');
@@ -117,6 +125,45 @@ describe('PostgresAccountDeletionRepository', () => {
     expect(sql).toContain('personal_exports');
     expect(sql).toContain("status NOT IN ('canceled', 'incomplete_expired')");
     expect(sql).toContain("state IN ('pending', 'active')");
+    expect(sql).toContain('stripe_payment_recoveries');
+    expect(sql).toContain('stripe_payment_adjustment_objects');
+    expect(sql).toContain('stripe_unresolved_payment_adjustments');
+    expect(sql).toContain('payment.organization_id IS NULL');
+    expect(sql).toContain("adjustment.status IN ('pending', 'open')");
+    expect(sql).toContain("unresolved.status NOT IN ('failed', 'won')");
+  });
+
+  it('personal返金保留はclaimとfinalizeの両方で削除を止める', async () => {
+    const database = new RecordingDatabase();
+    database.creditRecoveryRequired = true;
+    const repository = new PostgresAccountDeletionRepository(database, database);
+
+    const claim = await repository.claimRequest({
+      userId: 'user-1',
+      identityId: 'cognito-sub-1',
+      identityKey: 'a'.repeat(43),
+      processingToken: '00000000-0000-4000-8000-000000000001',
+      acknowledgePersonalSubscriptions: true,
+      acknowledgeStoreBilling: true,
+      acknowledgePersonalAssets: true,
+    });
+    expect(claim).toMatchObject({
+      kind: 'blocked',
+      flight: { personalCreditRecoveryRequired: true },
+    });
+
+    database.finalizeMode = true;
+    const finalized = await repository.finalizePersonalData(
+      'user-1',
+      '00000000-0000-4000-8000-000000000001',
+    );
+    expect(finalized).toMatchObject({
+      kind: 'blocked',
+      flight: { personalCreditRecoveryRequired: true },
+    });
+    expect(database.calls.map((call) => call.sql).join('\n')).not.toContain(
+      'DELETE FROM credit_balances',
+    );
   });
 
   it('checkpoint更新はuser・processing token・exact valueでfenceする', async () => {

@@ -14,7 +14,7 @@ class FakeS3Client {
   public contentType: string | undefined = 'image/png';
   public body: FakeS3Body = {
     async transformToByteArray(): Promise<Uint8Array> {
-      return Uint8Array.from(Buffer.from('image-bytes'));
+      return Uint8Array.from(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     },
   };
 
@@ -43,7 +43,7 @@ describe('S3StoredImageLoader', () => {
     const result = await loader.loadByS3Key('saved/user-1/entities/entity-1/ref_1.png');
 
     expect(result).toEqual({
-      imageData: Buffer.from('image-bytes'),
+      imageData: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
       mimeType: 'image/png',
     });
     expect(client.calls[0]).toBeInstanceOf(GetObjectCommand);

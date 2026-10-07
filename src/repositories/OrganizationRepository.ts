@@ -15,6 +15,7 @@ import type {
   OrganizationWorkspaceSummary,
 } from '../domain/types/organization.js';
 import type { EnterprisePlanCode } from '../domain/constants/billing.js';
+import type { PaidGenerationRecoveryStatus } from '../domain/types/billing.js';
 import { ConfigurationError } from '../domain/errors/index.js';
 import type { OrganizationListCursor } from '../domain/pagination.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
@@ -166,7 +167,12 @@ export interface CreateOrganizationInvitationRecord {
   expiresAt: Date;
 }
 
-export type OrganizationCreditLedgerType = 'consume' | 'refund' | 'monthly_grant' | 'purchased_grant';
+export type OrganizationCreditLedgerType =
+  | 'consume'
+  | 'refund'
+  | 'monthly_grant'
+  | 'purchased_grant'
+  | 'purchase_reversal';
 
 export interface OrganizationCreditLedgerEntryInput {
   userId: string | null;
@@ -179,6 +185,7 @@ export interface OrganizationCreditLedgerEntryInput {
   purchasedAfter: number;
   description: string;
   stripeEventId: string | null;
+  stripePaymentRecoveryId?: string | null;
   jobId: string | null;
 }
 
@@ -311,6 +318,11 @@ export interface OrganizationRepository {
     client: DatabaseClient,
   ): Promise<OrganizationJobCreditLedgerSummary>;
   insertCreditLedger(entry: OrganizationCreditLedgerEntryInput, client: DatabaseClient): Promise<void>;
+  settleOutstandingStripeRecoveries?(organizationId: string, client: DatabaseClient): Promise<number>;
+  getPaidGenerationRecoveryStatus?(
+    organizationId: string,
+    client?: DatabaseClient,
+  ): Promise<PaidGenerationRecoveryStatus>;
   insertAuditLog(
     input: {
       organizationId: string;
@@ -1221,13 +1233,29 @@ export class PostgresOrganizationRepository
     entry: OrganizationCreditLedgerEntryInput,
     client: DatabaseClient,
   ): Promise<void> {
+    if (entry.stripePaymentRecoveryId === undefined) {
+      await client.query(
+        `
+        INSERT INTO credit_ledger (
+          user_id, organization_id, type, amount, monthly_delta, purchased_delta,
+          monthly_after, purchased_after, description, stripe_event_id, job_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `,
+        [entry.userId, entry.organizationId, entry.type, entry.amount, entry.monthlyDelta,
+          entry.purchasedDelta, entry.monthlyAfter, entry.purchasedAfter, entry.description,
+          entry.stripeEventId, entry.jobId],
+      );
+      return;
+    }
     await client.query(
       `
       INSERT INTO credit_ledger (
         user_id, organization_id, type, amount, monthly_delta, purchased_delta,
-        monthly_after, purchased_after, description, stripe_event_id, job_id
+        monthly_after, purchased_after, description, stripe_event_id, job_id,
+        stripe_payment_recovery_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       `,
       [
         entry.userId,
@@ -1241,8 +1269,134 @@ export class PostgresOrganizationRepository
         entry.description,
         entry.stripeEventId,
         entry.jobId,
+        entry.stripePaymentRecoveryId,
       ],
     );
+  }
+
+  public async settleOutstandingStripeRecoveries(
+    organizationId: string,
+    client: DatabaseClient,
+  ): Promise<number> {
+    const lockedBalance = await this.getCreditBalanceForUpdate(organizationId, client);
+    if (lockedBalance === null || (lockedBalance.monthlyCredits <= 0 && lockedBalance.purchasedCredits <= 0)) {
+      return 0;
+    }
+    const recoveries = await client.query<{
+      id: string;
+      unrecovered_credits: number;
+      credit_bucket: 'monthly' | 'purchased';
+      grant_expires_at: Date | null;
+    }>(
+      `
+      SELECT recovery.id, recovery.unrecovered_credits, recovery.credit_bucket, recovery.grant_expires_at
+      FROM stripe_payment_recoveries recovery
+      INNER JOIN payment_records payment ON payment.id = recovery.payment_record_id
+      WHERE payment.organization_id = $1
+        AND recovery.unrecovered_credits > 0
+      ORDER BY recovery.created_at, recovery.id
+      FOR UPDATE OF recovery
+      `,
+      [organizationId],
+    );
+    let balance = lockedBalance;
+    let totalReversed = 0;
+    for (const recovery of recoveries.rows) {
+      const monthlyPeriodMatches = recovery.credit_bucket === 'monthly'
+        && recovery.grant_expires_at !== null
+        && recovery.grant_expires_at.getTime() > Date.now()
+        && balance.monthlyExpiresAt?.getTime() === recovery.grant_expires_at.getTime();
+      const recoveryDue = Number(recovery.unrecovered_credits);
+      const monthlyAmount = monthlyPeriodMatches ? Math.min(balance.monthlyCredits, recoveryDue) : 0;
+      // Purchased credits remain the cross-period settlement source; never use
+      // a newer monthly allowance to pay an older subscription recovery.
+      const purchasedAmount = Math.min(balance.purchasedCredits, recoveryDue - monthlyAmount);
+      const amount = monthlyAmount + purchasedAmount;
+      if (amount <= 0) continue;
+      balance = await this.updateCreditBalance(
+        {
+          ...balance,
+          monthlyCredits: balance.monthlyCredits - monthlyAmount,
+          purchasedCredits: balance.purchasedCredits - purchasedAmount,
+        },
+        client,
+      );
+      await client.query(
+        `
+        UPDATE stripe_payment_recoveries
+        SET reversed_credits = reversed_credits + $2,
+            unrecovered_credits = unrecovered_credits - $2,
+            updated_at = NOW()
+        WHERE id = $1
+        `,
+        [recovery.id, amount],
+      );
+      await this.insertCreditLedger(
+        {
+          userId: null,
+          organizationId,
+          type: 'purchase_reversal',
+          amount: -amount,
+          monthlyDelta: -monthlyAmount,
+          purchasedDelta: -purchasedAmount,
+          monthlyAfter: balance.monthlyCredits,
+          purchasedAfter: balance.purchasedCredits,
+          description: 'Stripe payment credit recovery',
+          stripeEventId: null,
+          stripePaymentRecoveryId: recovery.id,
+          jobId: null,
+        },
+        client,
+      );
+      totalReversed += amount;
+    }
+    return totalReversed;
+  }
+
+  public async getPaidGenerationRecoveryStatus(
+    organizationId: string,
+    client: DatabaseClient = this.client,
+  ): Promise<PaidGenerationRecoveryStatus> {
+    const result = await client.query<{ recovery_credits_due: string; paid_generation_blocked: boolean }>(
+      `
+      SELECT
+        COALESCE((
+          SELECT SUM(recovery.unrecovered_credits)
+          FROM stripe_payment_recoveries recovery
+          INNER JOIN payment_records payment ON payment.id = recovery.payment_record_id
+          WHERE payment.organization_id = $1
+        ), 0)::text AS recovery_credits_due,
+        (
+          EXISTS (
+            SELECT 1
+            FROM stripe_payment_recoveries recovery
+            INNER JOIN payment_records payment ON payment.id = recovery.payment_record_id
+            WHERE payment.organization_id = $1
+              AND (
+                recovery.unrecovered_credits > 0
+                OR EXISTS (
+                  SELECT 1 FROM stripe_payment_adjustment_objects adjustment
+                  WHERE adjustment.recovery_id = recovery.id
+                    AND adjustment.status IN ('pending', 'open')
+                )
+              )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM stripe_unresolved_payment_adjustments unresolved
+            INNER JOIN payment_records payment ON payment.id = unresolved.payment_record_id
+            WHERE payment.organization_id = $1
+              AND unresolved.resolved_at IS NULL
+              AND unresolved.status NOT IN ('failed', 'won')
+          )
+        ) AS paid_generation_blocked
+      `,
+      [organizationId],
+    );
+    return {
+      paidGenerationBlocked: result.rows[0]?.paid_generation_blocked ?? false,
+      recoveryCreditsDue: Number(result.rows[0]?.recovery_credits_due ?? '0'),
+    };
   }
 
   public async insertAuditLog(

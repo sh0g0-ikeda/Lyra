@@ -2,9 +2,15 @@ import { timingSafeEqual } from 'node:crypto';
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../types/app.js';
 
-interface OriginGuardConfig {
+export interface OriginGuardConfig {
   headerName?: string;
   headerValue?: string;
+}
+
+export function isVerifiedOrigin(config: OriginGuardConfig, receivedValue: string | undefined): boolean {
+  const expected = config.headerValue?.trim();
+  return expected !== undefined && expected.length > 0 && receivedValue !== undefined
+    && constantTimeEquals(receivedValue, expected);
 }
 
 const ORIGIN_GUARD_EXEMPT_PATHS = new Set(['/healthz', '/readyz', '/api/webhooks/stripe']);

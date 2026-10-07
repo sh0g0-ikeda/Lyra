@@ -30,7 +30,7 @@ describePostgres('generation terminal push outbox settlement', () => {
         migrationLockMaxAttempts: 10,
       },
     ));
-    expect(applied.at(-1)).toBe('046_bridge_production_schema_lineage.sql');
+    expect(applied.at(-1)).toBe('049_add_stripe_credit_recovery.sql');
   }, 120_000);
 
   afterAll(async () => {

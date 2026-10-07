@@ -772,6 +772,7 @@ export class LyraApiClient {
   private buildRequest(init: JsonRequestInit): RequestInit {
     const token = this.tokenProvider();
     const headers = new Headers(init.headers);
+    headers.set('X-Lyra-Credit-Recovery', '1');
 
     if (token !== null) {
       headers.set('Authorization', `Bearer ${token}`);

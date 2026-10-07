@@ -77,6 +77,16 @@ export class InsufficientCreditsError extends AppError {
   }
 }
 
+export class CreditRecoveryRequiredError extends AppError {
+  public constructor() {
+    super(
+      'CREDIT_RECOVERY_REQUIRED',
+      'Paid generation is unavailable while a payment refund or dispute is being resolved',
+      402,
+    );
+  }
+}
+
 export class ConfigurationError extends AppError {
   public constructor(message: string) {
     super('CONFIGURATION_ERROR', message, 500);

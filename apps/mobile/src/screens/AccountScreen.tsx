@@ -25,7 +25,8 @@ import {
   storeBillingDeletionAcknowledgement
 } from '@/domain/accountDeletionCopy';
 import { config } from '@/lib/config';
-import type { LyraMobileApiClient } from '@/lib/api';
+import { LyraMobileApiClient } from '@/lib/api';
+import { reauthenticateWithCognito } from '@/lib/auth';
 import { confirmAction } from '@/lib/confirm';
 import { downloadAuthenticatedFile } from '@/lib/download';
 import { t } from '@/lib/i18n';
@@ -168,13 +169,22 @@ export function AccountScreen(): React.JSX.Element {
     queryFn: () => api.getAccountDeletionPreview()
   });
   const deletionMutation = useMutation({
-    mutationFn: () =>
-      api.requestAccountDeletion({
+    mutationFn: async () => {
+      // The proof-only flow intentionally does not persist or replace the active
+      // session, so returning here leaves editor drafts and the Account review intact.
+      const freshTokens = await reauthenticateWithCognito();
+      const freshApi = new LyraMobileApiClient(() => freshTokens.idToken);
+      const freshSession = await freshApi.getCurrentSession();
+      if (session === null || freshSession.user.id !== session.user.id) {
+        throw new Error('REAUTHENTICATED_ACCOUNT_MISMATCH');
+      }
+      return freshApi.requestAccountDeletion({
         confirmation: 'DELETE',
         acknowledge_personal_subscriptions: acknowledgePersonalSubscriptions,
         acknowledge_store_billing: acknowledgeStoreBilling,
         acknowledge_personal_assets: acknowledgeAssets
-      }),
+      });
+    },
     onSuccess: async (result) => {
       setDeletionResult(result);
       if (result.status === 'completed') {

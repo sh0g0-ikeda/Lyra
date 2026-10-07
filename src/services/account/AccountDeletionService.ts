@@ -59,7 +59,8 @@ export type AccountDeletionBlocker =
   | { code: 'ACTIVE_PERSONAL_JOB'; job_count: number }
   | { code: 'ACTIVE_PERSONAL_SUBSCRIPTION'; subscription_count: number }
   | { code: 'ACTIVE_STORE_SUBSCRIPTION'; subscription_count: number }
-  | { code: 'PERSONAL_ASSETS'; asset_count: number };
+  | { code: 'PERSONAL_ASSETS'; asset_count: number }
+  | { code: 'CREDIT_RECOVERY_REQUIRED' };
 
 export type AccountDeletionNextAction =
   | 'cancel_personal_subscriptions'
@@ -246,7 +247,8 @@ export class AccountDeletionService implements AccountDeletionServicePort {
     // before any irreversible external action, not only before anonymization.
     // Historical deleted-key checkpoints do not prove a late write cannot occur.
     if (flight.activePersonalGenerationJobCount > 0 || flight.activePersonalExportJobCount > 0
-      || flight.uniqueOwnerOrganizations.length > 0) {
+      || flight.uniqueOwnerOrganizations.length > 0
+      || flight.personalCreditRecoveryRequired) {
       await this.repository.recordFailure(request.userId, request.processingToken, 'EXTERNAL_REVALIDATION_BLOCKED');
       return { status: 'pending_external_action', blockers: [], next_action: 'anonymize_personal_data' };
     }
@@ -581,6 +583,9 @@ function toBlockers(
     + flight.activePersonalExportJobCount;
   if (activeJobCount > 0) {
     blockers.push({ code: 'ACTIVE_PERSONAL_JOB', job_count: activeJobCount });
+  }
+  if (flight.personalCreditRecoveryRequired) {
+    blockers.push({ code: 'CREDIT_RECOVERY_REQUIRED' });
   }
   if (
     flight.activePersonalStripeSubscriptionIds.length > 0

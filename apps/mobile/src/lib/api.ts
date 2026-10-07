@@ -1803,6 +1803,7 @@ export class LyraMobileApiClient {
 
   private buildRequest(init: JsonRequestInit, tokenOverride?: string | null): RequestInit {
     const headers = new Headers(init.headers);
+    headers.set('X-Lyra-Credit-Recovery', '1');
     const token = tokenOverride === undefined ? this.tokenProvider() : tokenOverride;
     if (token !== null) {
       headers.set('Authorization', `Bearer ${token}`);

@@ -76,6 +76,52 @@ describe('PostgresBillingRepository', () => {
     expect(result).toMatchObject({ accountDeleted: true });
   });
 
+  it('recovery sourceはscope previewではlockせず確定readだけをlockする', async () => {
+    const client = new QueryCapturingClient();
+    client.rows = [{
+      id: 'payment-1',
+      user_id: 'user-1',
+      organization_id: null,
+      stripe_checkout_session_id: 'checkout-1',
+      stripe_invoice_id: null,
+      invoice_url: null,
+      kind: 'credit_purchase',
+      amount_jpy: 2000,
+      status: 'paid',
+      granted_credits: 200,
+      credit_bucket: 'purchased',
+      grant_expires_at: null,
+      created_at: new Date('2026-10-08T00:00:00.000Z'),
+    }];
+    const repository = new PostgresBillingRepository(client, client);
+
+    await repository.findStripePaymentRecoverySource(
+      { type: 'checkout', id: 'checkout-1' },
+      client,
+      false,
+    );
+    await repository.findStripePaymentRecoverySource(
+      { type: 'checkout', id: 'checkout-1' },
+      client,
+      true,
+    );
+
+    expect(client.queries[0]).not.toContain('FOR UPDATE');
+    expect(client.queries[1]).toContain('FOR UPDATE');
+  });
+
+  it('personal recovery mutationはusers rowをFOR UPDATEする', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresBillingRepository(client, client);
+
+    await expect(repository.lockPersonalStripeRecoveryUser('user-1', client))
+      .resolves.toBe(true);
+
+    expect(client.queries[0]).toContain('FROM users');
+    expect(client.queries[0]).toContain('FOR UPDATE');
+    expect(client.values[0]).toEqual(['user-1']);
+  });
+
   it('processed event は ON CONFLICT DO NOTHING で冪等化する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresBillingRepository(client, client);
@@ -140,7 +186,9 @@ describe('PostgresBillingRepository', () => {
     expect(inserted).toBe(true);
     expect(client.queries[0]).toContain('INSERT INTO payment_records');
     expect(client.queries[0]).toContain('ON CONFLICT DO NOTHING');
-    expect(client.values[0]).toEqual(['user-1', null, 'cs_123', null, null, 'credit_purchase', 2000, 'paid']);
+    expect(client.values[0]).toEqual([
+      'user-1', null, 'cs_123', null, null, 'credit_purchase', 2000, 'paid', null, null, null,
+    ]);
   });
 
   it('指定subscription以外の最上位有効subscription planを取得する', async () => {
@@ -184,7 +232,9 @@ describe('PostgresBillingRepository', () => {
     expect(inserted).toBe(true);
     expect(client.queries[0]).toContain('INSERT INTO payment_records');
     expect(client.queries[0]).toContain('ON CONFLICT DO NOTHING');
-    expect(client.values[0]).toEqual(['user-1', null, null, 'in_123', null, 'subscription', 1980, 'paid']);
+    expect(client.values[0]).toEqual([
+      'user-1', null, null, 'in_123', null, 'subscription', 1980, 'paid', null, null, null,
+    ]);
   });
 
   it('法人subscription summaryはStripe subscription idを返さない', async () => {

@@ -3,6 +3,7 @@ import { ConfigurationError } from '../../domain/errors/index.js';
 import type { ImageProvenance } from '../../domain/generation/ImageAccessPolicy.js';
 import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import sharp from 'sharp';
+import { assertRasterImageInput } from '../../domain/generation/RasterImageInput.js';
 import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS, PAGE_GENERATION_MONOCHROME_MAX_INPUT_PIXELS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
@@ -557,6 +558,7 @@ function assertRenderedPageImage(renderResult: RenderPageImageResult): void {
   if (renderResult.imageData.length === 0) {
     throw new ConfigurationError('Page image renderer returned empty image data');
   }
+  assertRasterImageInput(renderResult.imageData, renderResult.mimeType);
 }
 
 interface FailureCompensation {

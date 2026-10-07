@@ -16,6 +16,7 @@ import {
 } from '../domain/constants/rateLimit.js';
 import { RateLimitError } from '../domain/errors/index.js';
 import type { AppEnv } from '../types/app.js';
+import { isVerifiedOrigin, type OriginGuardConfig } from './originGuard.js';
 
 const MAX_RATE_LIMIT_CLIENT_IP_LENGTH = 64;
 const RATE_LIMIT_CLIENT_IP_PATTERN = /^[0-9A-Fa-f:.%-]+$/u;
@@ -101,14 +102,18 @@ export function createRateLimitMiddleware(store: RateLimitStore): MiddlewareHand
 export function createPublicIpRateLimitMiddleware(
   store: RateLimitStore,
   bucket: RateLimitBucket,
+  trustedOrigin: OriginGuardConfig = {},
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const rule = RATE_LIMIT_RULES[bucket];
-    const clientIp = resolveCloudFrontViewerAddress(c.req.header('cloudfront-viewer-address'))
-      ?? resolveClientIp(c.req.header('cf-connecting-ip'))
-      ?? resolveClientIp(c.req.header('x-real-ip'))
-      ?? resolveForwardedForClientIp(c.req.header('x-forwarded-for'))
-      ?? 'unknown';
+    // Viewer headers are authoritative only through the configured CloudFront
+    // origin secret. Direct webhooks retain signature verification and share a
+    // bucket; arbitrary forwarded headers cannot create fresh quotas.
+    const verifiedOrigin = trustedOrigin.headerName !== undefined
+      && isVerifiedOrigin(trustedOrigin, c.req.header(trustedOrigin.headerName));
+    const clientIp = verifiedOrigin
+      ? resolveCloudFrontViewerAddress(c.req.header('cloudfront-viewer-address')) ?? 'unknown'
+      : 'unknown';
     const result = await store.consume(
       `${bucket}:public:${clientIp}`,
       rule.maxRequests,
@@ -202,22 +207,6 @@ function resolveCloudFrontViewerAddress(value: string | undefined): string | nul
   }
 
   return resolveClientIp(trimmed);
-}
-
-function resolveForwardedForClientIp(value: string | undefined): string | null {
-  if (value === undefined) {
-    return null;
-  }
-
-  const candidates = value.split(',').reverse();
-  for (const candidate of candidates) {
-    const clientIp = resolveClientIp(candidate);
-    if (clientIp !== null) {
-      return clientIp;
-    }
-  }
-
-  return null;
 }
 
 function resolveClientIp(value: string | undefined): string | null {

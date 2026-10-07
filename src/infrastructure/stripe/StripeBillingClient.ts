@@ -40,6 +40,9 @@ export interface StripeBillingClientPort {
   ): Promise<{ id: string; url: string }>;
   constructWebhookEvent(payload: Buffer, signature: string): Promise<Stripe.Event>;
   retrieveSubscription(subscriptionId: string): Promise<Stripe.Subscription>;
+  retrieveCharge?(chargeId: string): Promise<Stripe.Charge>;
+  findCheckoutSessionByPaymentIntent?(paymentIntentId: string): Promise<Stripe.Checkout.Session | null>;
+  findInvoiceByPaymentIntent?(paymentIntentId: string): Promise<Stripe.Invoice | null>;
 }
 
 export class StripeBillingClient implements StripeBillingClientPort {
@@ -130,6 +133,35 @@ export class StripeBillingClient implements StripeBillingClientPort {
     });
 
     return { url: session.url };
+  }
+
+  public async retrieveCharge(chargeId: string): Promise<Stripe.Charge> {
+    return this.stripe.charges.retrieve(chargeId);
+  }
+
+  public async findCheckoutSessionByPaymentIntent(paymentIntentId: string): Promise<Stripe.Checkout.Session | null> {
+    const sessions = await this.stripe.checkout.sessions.list({ payment_intent: paymentIntentId, limit: 2 });
+    if (sessions.data.length > 1) {
+      throw new ValidationError('Stripe payment intent matches multiple checkout sessions');
+    }
+    return sessions.data[0] ?? null;
+  }
+
+  public async findInvoiceByPaymentIntent(paymentIntentId: string): Promise<Stripe.Invoice | null> {
+    const payments = await this.stripe.invoicePayments.list({
+      payment: { type: 'payment_intent', payment_intent: paymentIntentId },
+      status: 'paid',
+      limit: 2,
+    });
+    if (payments.data.length > 1) {
+      throw new ValidationError('Stripe payment intent matches multiple invoices');
+    }
+    const invoice = payments.data[0]?.invoice;
+    if (invoice === undefined) return null;
+    if (typeof invoice === 'string') {
+      return this.stripe.invoices.retrieve(invoice);
+    }
+    return 'deleted' in invoice && invoice.deleted === true ? null : invoice;
   }
 
   public async createSubscriptionUpdatePortalSession(
