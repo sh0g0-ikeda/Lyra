@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { assertRasterImageInput } from '../../domain/generation/RasterImageInput.js';
 import type { LoadedStoredImage } from '../aws/S3StoredImageLoader.js';
 import type {
   PageThumbnailRendererPort,
@@ -13,6 +14,7 @@ const THUMBNAIL_MAX_INPUT_PIXELS = 40_000_000;
 export class SharpPageThumbnailRenderer implements PageThumbnailRendererPort {
   public async render(image: LoadedStoredImage): Promise<RenderedPageThumbnail> {
     try {
+      assertRasterImageInput(image.imageData, image.mimeType);
       const imageData = await sharp(image.imageData, {
         failOn: 'error',
         limitInputPixels: THUMBNAIL_MAX_INPUT_PIXELS,

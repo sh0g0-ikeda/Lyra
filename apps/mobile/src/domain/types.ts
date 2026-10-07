@@ -429,6 +429,8 @@ export interface CompositionRecord {
 }
 
 export interface BillingBalanceRecord {
+  paid_generation_blocked?: boolean;
+  recovery_credits_due?: number;
   subscription_store?: 'apple' | 'google' | null;
   scheduled_plan_code?: 'standard' | 'premium' | null;
   scheduled_plan_effective_at?: string | null;
@@ -496,6 +498,8 @@ export interface CurrentUserRecord {
 }
 
 export interface CurrentUserCreditRecord {
+  paid_generation_blocked?: boolean;
+  recovery_credits_due?: number;
   monthly_credits: number;
   purchased_credits: number;
   total_credits: number;
@@ -503,6 +507,8 @@ export interface CurrentUserCreditRecord {
 }
 
 export interface CurrentUserOrganizationRecord {
+  paid_generation_blocked?: boolean;
+  recovery_credits_due?: number;
   id: string;
   name: string;
   status: string;
@@ -581,6 +587,8 @@ export interface OrganizationInvitationRecord {
 }
 
 export interface OrganizationCreditBalanceRecord {
+  paid_generation_blocked?: boolean;
+  recovery_credits_due?: number;
   organization_id: string;
   monthly_credits: number;
   purchased_credits: number;

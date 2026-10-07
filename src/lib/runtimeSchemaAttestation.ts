@@ -2,6 +2,7 @@ import { ConfigurationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from './db.js';
 import { PRODUCTION44_EXPANSION_MIGRATIONS } from './production44ExpandedRuntimeSchemaDescriptor.js';
 import { describeProduction44ExpansionCheckpoint } from './production44ExpandedRuntimeSchemaAttestation.js';
+import { STRIPE_RECOVERY_SCHEMA } from './stripeRecoverySchemaDescriptor.js';
 
 export const CANONICAL_RUNTIME_MIGRATIONS = [
   '001_initial_schema.sql',
@@ -53,6 +54,8 @@ export const CANONICAL_RUNTIME_MIGRATIONS = [
   '047_add_state_reference_copy_attempts.sql',
   '048_advance_entity_state_revision_for_legacy_writers.sql',
 ] as const;
+
+export const SECURITY_RUNTIME_MIGRATIONS = [...CANONICAL_RUNTIME_MIGRATIONS, '049_add_stripe_credit_recovery.sql'] as const;
 
 export interface RuntimeSchemaCatalog {
   migrationFilenames: string[];
@@ -213,7 +216,8 @@ export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSch
     return { kind: 'empty_fresh', failures: [] };
   }
 
-  const hasRevisionGuard = sameStrings(catalog.migrationFilenames, CANONICAL_RUNTIME_MIGRATIONS);
+  const hasRecoveryGuard = sameStrings(catalog.migrationFilenames, SECURITY_RUNTIME_MIGRATIONS);
+  const hasRevisionGuard = hasRecoveryGuard || sameStrings(catalog.migrationFilenames, CANONICAL_RUNTIME_MIGRATIONS);
   const historyKind = hasRevisionGuard || sameStrings(catalog.migrationFilenames, CANONICAL_047_MIGRATIONS)
     ? 'canonical_fresh_v1'
     : sameStrings(catalog.migrationFilenames, CANONICAL_046_MIGRATIONS)
@@ -224,6 +228,21 @@ export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSch
   }
 
   const failures = validateCanonicalCatalog(catalog, historyKind === 'canonical_fresh_v1');
+  if (hasRecoveryGuard) {
+    for (const relation of ['stripe_payment_recoveries', 'stripe_payment_adjustment_objects', 'stripe_unresolved_payment_adjustments']) {
+      if (!catalog.relations.some(item => item.name === relation && item.kind === 'r')) failures.push(`RELATION:${relation}`);
+    }
+    for (const part of ['columns', 'constraints', 'indexes'] as const) {
+      for (const expected of STRIPE_RECOVERY_SCHEMA[part]) {
+        const actual = catalog[part].find(item => item.relation === expected.relation && item.name === expected.name);
+        if (actual === undefined || !Object.entries(expected).every(([key, value]) => (actual as unknown as Record<string, unknown>)[key] === value)) {
+          failures.push(`RECOVERY_${part.toUpperCase()}:${expected.relation}.${expected.name}`);
+        }
+      }
+    }
+  } else if (catalog.relations.some(item => item.name.startsWith('stripe_payment_') || item.name === 'stripe_unresolved_payment_adjustments')) {
+    failures.push('UNRECORDED_RECOVERY_SCHEMA');
+  }
   const revisionTriggers = catalog.triggers.filter(trigger => trigger.name === 'entity_states_monotonic_revision');
   const revisionFunctions = catalog.functions?.filter(fn => fn.name === 'lyra_advance_entity_state_revision') ?? [];
   if (hasRevisionGuard) {
@@ -429,11 +448,11 @@ export interface AttestedCanonicalRuntime {
 export type AttestedRuntime = Readonly<{
   descriptor: 'canonical_fresh_v1';
   repositoryProfile: 'canonical';
-  capabilities: Readonly<{ entityStateMonotonicRevision: boolean }>;
+  capabilities: Readonly<{ entityStateMonotonicRevision: boolean; stripeCreditRecovery?: boolean }>;
 } | {
   descriptor: 'production44_expanded_pg18_v1';
   repositoryProfile: 'production44_expanded_pg18_v1';
-  capabilities: Readonly<{ entityStateMonotonicRevision: true }>;
+  capabilities: Readonly<{ entityStateMonotonicRevision: true; stripeCreditRecovery?: boolean }>;
 }>;
 
 const verifiedRuntimeProofs = new WeakSet<object>();
@@ -443,8 +462,8 @@ function runtimeProof(catalog: RuntimeSchemaCatalog): AttestedRuntime | null {
   const canonical = describeRuntimeSchema(catalog).kind === 'canonical_fresh_v1';
   if (!canonical && describeProduction44ExpansionCheckpoint(catalog) !== PRODUCTION44_EXPANSION_MIGRATIONS.length) return null;
   const proof: AttestedRuntime = canonical
-    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql') }) })
-    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true }) });
+    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql'), stripeCreditRecovery: catalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql') }) })
+    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true, stripeCreditRecovery: true }) });
   verifiedRuntimeProofs.add(proof);
   return proof;
 }

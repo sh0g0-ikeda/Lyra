@@ -6,6 +6,7 @@ import {
   type EnterprisePlanCode,
   type PaidPlanCode,
   type SubscriptionPlanCode,
+  type SubscriptionStatus,
   getBillingPlanAmountJpy,
   getBillingPlanMonthlyCredits,
   isEnterprisePlanCode,
@@ -18,6 +19,10 @@ import type { DatabaseClient } from '../../lib/db.js';
 import type { BillingRepository } from '../../repositories/BillingRepository.js';
 import type { OrganizationRepository } from '../../repositories/OrganizationRepository.js';
 import type { BillingCreditGrantServicePort } from '../credit/BillingCreditGrantService.js';
+import type {
+  BillingCreditAdjustmentServicePort,
+  StripePaymentAdjustmentObservation,
+} from '../credit/BillingCreditAdjustmentService.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 
 export interface StripeWebhookServicePort {
@@ -36,6 +41,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     private readonly organizationRepository: OrganizationRepository,
     private readonly stripeClient: StripeBillingClientPort,
     private readonly config: StripeWebhookServiceConfig,
+    private readonly billingCreditAdjustmentService: BillingCreditAdjustmentServicePort,
   ) {}
 
   public async handleWebhook(rawBody: Buffer, signature: string): Promise<void> {
@@ -65,6 +71,19 @@ export class StripeWebhookService implements StripeWebhookServicePort {
         return;
       case 'customer.subscription.deleted':
         await this.handleCustomerSubscriptionDeleted(event);
+        return;
+      case 'charge.refunded':
+        await this.handleChargeRefunded(event);
+        return;
+      case 'refund.created':
+      case 'refund.updated':
+      case 'refund.failed':
+        await this.handleRefundEvent(event);
+        return;
+      case 'charge.dispute.created':
+      case 'charge.dispute.updated':
+      case 'charge.dispute.closed':
+        await this.handleDisputeEvent(event);
         return;
       default:
         await this.billingRepository.transaction(async (client) => {
@@ -150,7 +169,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
             organizationId: null,
             stripeSubscriptionId,
             planCode: resolvedPlanCode,
-            status: subscription.status,
+            status: normalizeSubscriptionStatus(subscription.status),
             currentPeriodStart: subscriptionCurrentPeriodStart(subscription),
             currentPeriodEnd: subscriptionCurrentPeriodEnd(subscription),
             cancelAtPeriodEnd: subscription.cancel_at_period_end,
@@ -167,6 +186,9 @@ export class StripeWebhookService implements StripeWebhookServicePort {
             kind: 'subscription',
             amountJpy: session.amount_total ?? 0,
             status: session.payment_status === 'paid' ? 'paid' : 'failed',
+            grantedCredits: getBillingPlanMonthlyCredits(resolvedPlanCode),
+            creditBucket: 'monthly',
+            grantExpiresAt: subscriptionCurrentPeriodEnd(subscription),
           },
           client,
         );
@@ -191,6 +213,11 @@ export class StripeWebhookService implements StripeWebhookServicePort {
       const packageCode = requireCreditPackageCode(requireMetadataValue(session.metadata, 'package_code'));
       const paidAmountJpy = session.amount_total ?? 0;
       const minimumAmountJpy = CREDIT_PACKAGE_DEFINITIONS[packageCode].amountJpy;
+      const stripePaymentIntentId = getStringIdentifier(session.payment_intent);
+      const currency = session.currency?.toLowerCase() ?? null;
+      if (stripePaymentIntentId === null || currency !== 'jpy') {
+        throw new ValidationError('Credit purchase checkout is missing a JPY payment intent');
+      }
       if (paidAmountJpy < minimumAmountJpy) {
         await this.recordUnderpaidCheckoutSession(event, {
           userId,
@@ -217,6 +244,18 @@ export class StripeWebhookService implements StripeWebhookServicePort {
             kind: 'credit_purchase',
             amountJpy: session.amount_total ?? CREDIT_PACKAGE_DEFINITIONS[packageCode].amountJpy,
             status: session.payment_status === 'paid' ? 'paid' : 'failed',
+            grantedCredits: CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits,
+            creditBucket: 'purchased',
+            grantExpiresAt: null,
+          },
+          client,
+        );
+        await this.billingCreditAdjustmentService.registerCreditPurchase(
+          {
+            stripeCheckoutSessionId: session.id,
+            stripePaymentIntentId,
+            currency,
+            grantedCredits: CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits,
           },
           client,
         );
@@ -231,6 +270,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
             client,
           );
         }
+        await this.billingCreditAdjustmentService.settleScopeForPaymentIntent(stripePaymentIntentId, client);
       });
 
       return;
@@ -289,7 +329,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
             organizationId,
             stripeSubscriptionId,
             planCode: resolvedPlanCode,
-            status: subscription.status,
+            status: normalizeSubscriptionStatus(subscription.status),
             currentPeriodStart: subscriptionCurrentPeriodStart(subscription),
             currentPeriodEnd: subscriptionCurrentPeriodEnd(subscription),
             cancelAtPeriodEnd: subscription.cancel_at_period_end,
@@ -308,7 +348,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           actorUserId,
           subscriptionId: stripeSubscriptionId,
           planCode: resolvedPlanCode,
-          status: subscription.status,
+          status: normalizeSubscriptionStatus(subscription.status),
           stripeEventId: event.id,
           source: event.type,
         });
@@ -321,6 +361,9 @@ export class StripeWebhookService implements StripeWebhookServicePort {
             kind: 'subscription',
             amountJpy: session.amount_total ?? 0,
             status: session.payment_status === 'paid' ? 'paid' : 'failed',
+            grantedCredits: getBillingPlanMonthlyCredits(resolvedPlanCode),
+            creditBucket: 'monthly',
+            grantExpiresAt: subscriptionCurrentPeriodEnd(subscription),
           },
           client,
         );
@@ -332,6 +375,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
               amount: getBillingPlanMonthlyCredits(resolvedPlanCode),
               description: `Initial enterprise subscription grant for ${resolvedPlanCode}`,
               stripeEventId: event.id,
+              expiresAt: subscriptionCurrentPeriodEnd(subscription),
             },
             client,
           );
@@ -345,6 +389,11 @@ export class StripeWebhookService implements StripeWebhookServicePort {
       const packageCode = requireCreditPackageCode(requireMetadataValue(session.metadata, 'package_code'));
       const paidAmountJpy = session.amount_total ?? 0;
       const minimumAmountJpy = CREDIT_PACKAGE_DEFINITIONS[packageCode].amountJpy;
+      const stripePaymentIntentId = getStringIdentifier(session.payment_intent);
+      const currency = session.currency?.toLowerCase() ?? null;
+      if (stripePaymentIntentId === null || currency !== 'jpy') {
+        throw new ValidationError('Organization credit purchase checkout is missing a JPY payment intent');
+      }
       if (paidAmountJpy < minimumAmountJpy) {
         await this.recordUnderpaidCheckoutSession(event, {
           userId: actorUserId,
@@ -372,6 +421,18 @@ export class StripeWebhookService implements StripeWebhookServicePort {
             kind: 'credit_purchase',
             amountJpy: session.amount_total ?? CREDIT_PACKAGE_DEFINITIONS[packageCode].amountJpy,
             status: session.payment_status === 'paid' ? 'paid' : 'failed',
+            grantedCredits: CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits,
+            creditBucket: 'purchased',
+            grantExpiresAt: null,
+          },
+          client,
+        );
+        await this.billingCreditAdjustmentService.registerCreditPurchase(
+          {
+            stripeCheckoutSessionId: session.id,
+            stripePaymentIntentId,
+            currency,
+            grantedCredits: CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits,
           },
           client,
         );
@@ -388,6 +449,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
             client,
           );
         }
+        await this.billingCreditAdjustmentService.settleScopeForPaymentIntent(stripePaymentIntentId, client);
       });
 
       return;
@@ -520,6 +582,164 @@ export class StripeWebhookService implements StripeWebhookServicePort {
     });
   }
 
+  private async handleChargeRefunded(event: Stripe.Event): Promise<void> {
+    const charge = event.data.object as Stripe.Charge;
+    await this.applyPaymentAdjustment(event, charge, {
+      providerType: 'refund',
+      providerObjectId: `charge:${charge.id}:refund-total`,
+      status: 'succeeded',
+      amountJpy: charge.amount_refunded,
+      observedRefundedAmountJpy: charge.amount_refunded,
+    });
+  }
+
+  private async handleRefundEvent(event: Stripe.Event): Promise<void> {
+    const refund = event.data.object as Stripe.Refund;
+    const charge = await this.retrieveCharge(refund.charge);
+    await this.applyPaymentAdjustment(event, charge, {
+      providerType: 'refund',
+      providerObjectId: refund.id,
+      status: stripeRefundAdjustmentStatus(refund.status),
+      amountJpy: refund.amount,
+      observedRefundedAmountJpy: charge.amount_refunded,
+    });
+  }
+
+  private async handleDisputeEvent(event: Stripe.Event): Promise<void> {
+    const dispute = event.data.object as Stripe.Dispute;
+    const charge = await this.retrieveCharge(dispute.charge);
+    await this.applyPaymentAdjustment(event, charge, {
+      providerType: 'dispute',
+      providerObjectId: dispute.id,
+      status: stripeDisputeAdjustmentStatus(dispute.status),
+      amountJpy: dispute.amount,
+      observedRefundedAmountJpy: charge.amount_refunded,
+    });
+  }
+
+  private async applyPaymentAdjustment(
+    event: Stripe.Event,
+    charge: Stripe.Charge,
+    adjustment: Omit<
+      StripePaymentAdjustmentObservation,
+      'stripeEventId' | 'stripePaymentIntentId' | 'stripeChargeId' | 'currency'
+    >,
+  ): Promise<void> {
+    const paymentIntentId = getStringIdentifier(charge.payment_intent);
+    if (paymentIntentId === null) {
+      throw new ValidationError('Stripe charge is missing payment_intent');
+    }
+    const service = this.billingCreditAdjustmentService;
+    const observation: StripePaymentAdjustmentObservation = {
+      ...adjustment,
+      stripeEventId: event.id,
+      stripePaymentIntentId: paymentIntentId,
+      stripeChargeId: charge.id,
+      currency: charge.currency,
+    };
+    const resolution = await this.resolvePaymentAdjustmentTarget(charge, service);
+    if (resolution.kind === 'no_credit_grant') {
+      await this.markEventProcessedOnly(event);
+      return;
+    }
+    if (resolution.kind === 'review_required') {
+      await this.billingRepository.transaction(async (client) => {
+        await service.recordUnresolvedObservation(
+          { ...observation, externalId: resolution.externalId },
+          client,
+        );
+      });
+      throw new ConfigurationError('Stripe payment adjustment requires local billing reconciliation');
+    }
+    await this.billingRepository.transaction(async (client) => {
+      if (!(await this.billingRepository.markStripeEventProcessed(event.id, event.type, client))) return;
+      await service.applyObservation(observation, client);
+    });
+  }
+
+  private async resolvePaymentAdjustmentTarget(
+    charge: Stripe.Charge,
+    service: BillingCreditAdjustmentServicePort,
+  ): Promise<{ kind: 'linked' | 'no_credit_grant' } | {
+    kind: 'review_required';
+    externalId: { type: 'checkout'; id: string } | { type: 'invoice'; id: string };
+  }> {
+    const paymentIntentId = getStringIdentifier(charge.payment_intent);
+    if (paymentIntentId === null) throw new ValidationError('Stripe charge is missing payment_intent');
+    const linked = await this.billingRepository.transaction(
+      async (client) => service.isPaymentLinked(paymentIntentId, client),
+    );
+    if (linked) return { kind: 'linked' };
+
+    const checkoutFinder = this.stripeClient.findCheckoutSessionByPaymentIntent;
+    const invoiceFinder = this.stripeClient.findInvoiceByPaymentIntent;
+    if (checkoutFinder === undefined || invoiceFinder === undefined) {
+      throw new ConfigurationError('Stripe payment recovery lookup is not configured');
+    }
+    const checkout = await checkoutFinder.call(this.stripeClient, paymentIntentId);
+    if (checkout !== null) {
+      assertProviderPaymentMatchesCharge(checkout, charge);
+      const kind = requireMetadataValue(checkout.metadata, 'kind');
+      if (kind !== 'credit_purchase' && kind !== 'subscription') {
+        throw new ValidationError('Stripe checkout payment kind is invalid');
+      }
+      const packageCode = kind === 'credit_purchase'
+        ? requireCreditPackageCode(requireMetadataValue(checkout.metadata, 'package_code'))
+        : null;
+      if (packageCode !== null && charge.amount < CREDIT_PACKAGE_DEFINITIONS[packageCode].amountJpy) {
+        throw new ValidationError('Stripe checkout payment is below the configured credit package price');
+      }
+      const externalId = { type: 'checkout' as const, id: checkout.id };
+      const outcome = await this.billingRepository.transaction((client) => service.linkExistingPayment(
+        {
+          externalId,
+          stripePaymentIntentId: paymentIntentId,
+          currency: charge.currency,
+          expectedAmountJpy: charge.amount,
+          expectedKind: kind,
+          ...(packageCode === null ? {} : {
+            fallbackGrant: {
+              creditBucket: 'purchased' as const,
+              grantedCredits: CREDIT_PACKAGE_DEFINITIONS[packageCode].purchasedCredits,
+              grantExpiresAt: null,
+            },
+          }),
+        },
+        client,
+      ));
+      if (outcome === 'linked' || outcome === 'no_credit_grant') return { kind: outcome };
+      if (outcome === 'review_required') return { kind: outcome, externalId };
+    }
+
+    const invoice = await invoiceFinder.call(this.stripeClient, paymentIntentId);
+    if (invoice !== null) {
+      assertProviderPaymentMatchesCharge(invoice, charge);
+      const externalId = { type: 'invoice' as const, id: invoice.id };
+      const outcome = await this.billingRepository.transaction((client) => service.linkExistingPayment(
+        {
+          externalId,
+          stripePaymentIntentId: paymentIntentId,
+          currency: charge.currency,
+          expectedAmountJpy: charge.amount,
+          expectedKind: 'subscription',
+        },
+        client,
+      ));
+      if (outcome === 'linked' || outcome === 'no_credit_grant') return { kind: outcome };
+      if (outcome === 'review_required') return { kind: outcome, externalId };
+    }
+    throw new NotFoundError('Stripe payment adjustment does not match a local payment record');
+  }
+
+  private async retrieveCharge(charge: string | Stripe.Charge | null): Promise<Stripe.Charge> {
+    if (charge !== null && typeof charge !== 'string' && !('deleted' in charge)) return charge;
+    const chargeId = typeof charge === 'string' ? charge : null;
+    if (chargeId === null) throw new ValidationError('Stripe adjustment is missing charge');
+    const retrieveCharge = this.stripeClient.retrieveCharge;
+    if (retrieveCharge === undefined) throw new ConfigurationError('Stripe charge retrieval is not configured');
+    return retrieveCharge.call(this.stripeClient, chargeId);
+  }
+
   private async markPersonalEventProcessedIfDeleted(
     event: Stripe.Event,
     userId: string,
@@ -611,7 +831,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           organizationId: null,
           stripeSubscriptionId,
           planCode,
-          status: subscription.status,
+          status: normalizeSubscriptionStatus(subscription.status),
           currentPeriodStart: subscriptionCurrentPeriodStart(subscription),
           currentPeriodEnd: subscriptionCurrentPeriodEnd(subscription),
           cancelAtPeriodEnd: subscription.cancel_at_period_end,
@@ -630,6 +850,15 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           kind: 'subscription',
           amountJpy: invoice.amount_paid,
           status: 'paid',
+          grantedCredits: shouldGrantMonthlyCreditsForPaidInvoice(invoice.billing_reason, paidAmountJpy)
+            ? getBillingPlanMonthlyCredits(planCode)
+            : 0,
+          creditBucket: shouldGrantMonthlyCreditsForPaidInvoice(invoice.billing_reason, paidAmountJpy)
+            ? 'monthly'
+            : null,
+          grantExpiresAt: shouldGrantMonthlyCreditsForPaidInvoice(invoice.billing_reason, paidAmountJpy)
+            ? subscriptionCurrentPeriodEnd(subscription)
+            : null,
         },
         client,
       );
@@ -686,7 +915,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           organizationId,
           stripeSubscriptionId,
           planCode: enterprisePlanCode,
-          status: subscription.status,
+          status: normalizeSubscriptionStatus(subscription.status),
           currentPeriodStart: subscriptionCurrentPeriodStart(subscription),
           currentPeriodEnd: subscriptionCurrentPeriodEnd(subscription),
           cancelAtPeriodEnd: subscription.cancel_at_period_end,
@@ -720,6 +949,15 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           kind: 'subscription',
           amountJpy: invoice.amount_paid,
           status: 'paid',
+          grantedCredits: shouldGrantMonthlyCreditsForPaidInvoice(invoice.billing_reason, paidAmountJpy)
+            ? getBillingPlanMonthlyCredits(enterprisePlanCode)
+            : 0,
+          creditBucket: shouldGrantMonthlyCreditsForPaidInvoice(invoice.billing_reason, paidAmountJpy)
+            ? 'monthly'
+            : null,
+          grantExpiresAt: shouldGrantMonthlyCreditsForPaidInvoice(invoice.billing_reason, paidAmountJpy)
+            ? subscriptionCurrentPeriodEnd(subscription)
+            : null,
         },
         client,
       );
@@ -735,6 +973,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
                 ? `Enterprise subscription plan change grant for ${enterprisePlanCode}`
                 : `Enterprise monthly subscription renewal grant for ${enterprisePlanCode}`,
             stripeEventId: event.id,
+            expiresAt: subscriptionCurrentPeriodEnd(subscription),
           },
           client,
         );
@@ -763,7 +1002,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
             organizationId: organizationSubscription.organizationId,
             stripeSubscriptionId: organizationSubscription.subscription.id,
             planCode: organizationSubscription.planCode,
-            status: organizationSubscription.subscription.status,
+            status: normalizeSubscriptionStatus(organizationSubscription.subscription.status),
             currentPeriodStart: subscriptionCurrentPeriodStart(organizationSubscription.subscription),
             currentPeriodEnd: subscriptionCurrentPeriodEnd(organizationSubscription.subscription),
             cancelAtPeriodEnd: organizationSubscription.subscription.cancel_at_period_end,
@@ -891,7 +1130,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           organizationId: null,
           stripeSubscriptionId: subscription.id,
           planCode,
-          status: subscription.status,
+          status: normalizeSubscriptionStatus(subscription.status),
           currentPeriodStart: subscriptionCurrentPeriodStart(subscription),
           currentPeriodEnd: subscriptionCurrentPeriodEnd(subscription),
           cancelAtPeriodEnd: subscription.cancel_at_period_end,
@@ -972,7 +1211,7 @@ export class StripeWebhookService implements StripeWebhookServicePort {
           organizationId,
           stripeSubscriptionId: subscription.id,
           planCode,
-          status: subscription.status,
+          status: normalizeSubscriptionStatus(subscription.status),
           currentPeriodStart: subscriptionCurrentPeriodStart(subscription),
           currentPeriodEnd: subscriptionCurrentPeriodEnd(subscription),
           cancelAtPeriodEnd: subscription.cancel_at_period_end,
@@ -1219,16 +1458,48 @@ function requireOrganizationMetadataValue(metadata: Record<string, string> | nul
   return requireMetadataValue(metadata, 'lyra_organization_id') ?? requireMetadataValue(metadata, 'organization_id');
 }
 
-function getStringIdentifier(value: string | Stripe.DeletedCustomer | Stripe.Customer | Stripe.Subscription | null): string | null {
+function getStringIdentifier(value: string | { id: string } | null | undefined): string | null {
   if (typeof value === 'string') {
     return value;
   }
 
-  if (value !== null && 'id' in value && typeof value.id === 'string') {
+  if (value !== null && value !== undefined && 'id' in value && typeof value.id === 'string') {
     return value.id;
   }
 
   return null;
+}
+
+function assertProviderPaymentMatchesCharge(
+  payment: Stripe.Checkout.Session | Stripe.Invoice,
+  charge: Stripe.Charge,
+): void {
+  const paymentIntentId = getStringIdentifier(charge.payment_intent);
+  const chargeCustomerId = getStringIdentifier(charge.customer);
+  const paymentCustomerId = getStringIdentifier(payment.customer);
+  const amountJpy = payment.object === 'checkout.session' ? payment.amount_total : payment.amount_paid;
+  if (
+    paymentIntentId === null
+    || chargeCustomerId === null
+    || paymentCustomerId !== chargeCustomerId
+    || payment.currency?.toLowerCase() !== charge.currency.toLowerCase()
+    || amountJpy !== charge.amount
+    || (payment.object === 'checkout.session' && getStringIdentifier(payment.payment_intent) !== paymentIntentId)
+  ) {
+    throw new ValidationError('Stripe payment lookup does not match the verified charge');
+  }
+}
+
+function stripeRefundAdjustmentStatus(status: string | null): 'pending' | 'succeeded' | 'failed' {
+  if (status === 'succeeded') return 'succeeded';
+  if (status === 'failed' || status === 'canceled') return 'failed';
+  return 'pending';
+}
+
+function stripeDisputeAdjustmentStatus(status: Stripe.Dispute.Status): 'open' | 'won' | 'lost' {
+  if (status === 'won') return 'won';
+  if (status === 'lost') return 'lost';
+  return 'open';
 }
 
 function getStripeInvoiceHostedUrl(invoice: Stripe.Invoice): string | null {
@@ -1319,7 +1590,7 @@ function checkoutPaymentRecordKind(value: string | null): 'subscription' | 'cred
 
 function organizationStatusForSubscriptionStatus(status: Stripe.Subscription.Status): OrganizationStatus {
   if (status === 'active' || status === 'trialing') {
-    return status;
+    return status === 'active' ? 'active' : 'trialing';
   }
 
   if (status === 'past_due' || status === 'unpaid' || status === 'incomplete') {
@@ -1327,4 +1598,20 @@ function organizationStatusForSubscriptionStatus(status: Stripe.Subscription.Sta
   }
 
   return 'canceled';
+}
+
+function normalizeSubscriptionStatus(status: Stripe.Subscription.Status): SubscriptionStatus {
+  switch (status) {
+    case 'active':
+    case 'canceled':
+    case 'incomplete':
+    case 'incomplete_expired':
+    case 'past_due':
+    case 'paused':
+    case 'trialing':
+    case 'unpaid':
+      return status as SubscriptionStatus;
+    default:
+      return 'incomplete';
+  }
 }

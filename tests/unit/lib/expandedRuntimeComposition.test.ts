@@ -7,7 +7,7 @@ import { CANONICAL_RUNTIME_MIGRATIONS, attestRuntimeSchema, prepareAttestedRunti
 import { assertAttestedRuntimeCapabilities } from '../../../src/lib/runtimeGuards.js';
 
 function fixture(expanded=true, revision=true):RuntimeSchemaCatalog {
-  const catalog=JSON.parse(readFileSync(join(process.cwd(),'tests/fixtures/production44-expanded-pg18/catalog.json'),'utf8')) as RuntimeSchemaCatalog;
+  const catalog=JSON.parse(readFileSync(join(process.cwd(),expanded?'tests/fixtures/security-recovery-pg18/expanded-catalog.json':'tests/fixtures/production44-expanded-pg18/catalog.json'),'utf8')) as RuntimeSchemaCatalog;
   if(!expanded){
     catalog.migrationFilenames=CANONICAL_RUNTIME_MIGRATIONS.filter(file=>revision||!file.startsWith('048'));
     catalog.columns=catalog.columns.filter(col=>col.relation!=='pages'||!['story_source_scene_ids','story_page_purpose','story_continuity_note'].includes(col.name));
@@ -33,16 +33,16 @@ function database(catalog:RuntimeSchemaCatalog):TransactionRunner&{queries:strin
   }};
   return{queries,transaction:work=>work(client)};
 }
-describe('canonical047/048 と expanded52 の immutable startup proof',()=>{
-  it.each([false,true])('canonical revision=%s をcapabilityで区別し047起動自体は維持する',async revision=>{
+describe('canonical047/048 と expanded53 の immutable startup proof',()=>{
+  it.each([false,true])('canonical revision=%s を区別し049未適用の起動を拒否する',async revision=>{
     const proof=await attestRuntimeSchema(database(fixture(false,revision)));
     expect(proof.repositoryProfile).toBe('canonical');
     expect(proof.capabilities.entityStateMonotonicRevision).toBe(revision);
-    expect(()=>assertAttestedRuntimeCapabilities(proof,{})).not.toThrow();
+    expect(()=>assertAttestedRuntimeCapabilities(proof,{})).toThrow('049');
     const assertState=()=>assertAttestedRuntimeCapabilities(proof,{ENTITY_STATE_REFERENCE_GENERATION_ENABLED:true});
-    if(revision)expect(assertState).not.toThrow();else expect(assertState).toThrow('048');
+    expect(assertState).toThrow('049');
   });
-  it('expanded exact52だけを同一の凍結proofとしてstartへ渡しAUTOがtrueでもbridgeを呼ばない',async()=>{
+  it('expanded exact53だけを同一の凍結proofとしてstartへ渡しAUTOがtrueでもbridgeを呼ばない',async()=>{
     const runMigrations=vi.fn();
     const {runtime}=await prepareAttestedRuntimeSchema({database:database(fixture()),autoRunMigrations:true,runMigrations});
     expect(runtime.repositoryProfile).toBe('production44_expanded_pg18_v1');

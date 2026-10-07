@@ -670,7 +670,11 @@ export function PagesScreen(): React.JSX.Element {
   const { hasDirtyEditors, resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEdit = hasCapability('edit_work');
-  const canGenerate = hasCapability('generate');
+  const paidGenerationBlocked = selection.organizationId === null
+    ? session?.personal_credits?.paid_generation_blocked === true
+    : session?.organizations.find((organization) => organization.id === selection.organizationId)?.paid_generation_blocked === true;
+  const canGenerate = hasCapability('generate') && !paidGenerationBlocked;
+  const paidGenerationBlockedReason = paidGenerationBlocked ? t(language, 'shared.error.creditRecoveryRequired') : undefined;
   const canExport = hasCapability('export');
   const stateAutofillScope = JSON.stringify([sessionKey, organizationId, selection.workId, selection.episodeId]);
   const stateAutofillAvailable = session?.capabilities?.episode_state_autofill_v1 === true;
@@ -3105,7 +3109,7 @@ export function PagesScreen(): React.JSX.Element {
           }
           generateDisabledReason={
             !generationQuotesAvailable ? pageWorkflowMessage(language, 'quoteUnavailable') :
-            !canGenerate
+            paidGenerationBlockedReason ?? (!canGenerate
               ? t(language, "generated.screens.PagesScreen.generation.permission.is.required.1bc5b7af")
               : selectedPage === null
                 ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
@@ -3123,7 +3127,7 @@ export function PagesScreen(): React.JSX.Element {
                             ? t(language, "generated.screens.PagesScreen.check.frame.values.adb62959")
                             : panelPayloadInvalid
                               ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a")
-                              : undefined
+                              : undefined)
           }
           generateLoading={generatePageMutation.isPending}
           generateMonochromeLoading={generateMonochromePageMutation.isPending}

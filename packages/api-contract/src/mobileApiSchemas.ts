@@ -108,6 +108,8 @@ export const episodeExportLegacyStatusResponseSchema = z.object({
 });
 
 const creditBalanceSchema = z.object({
+  paid_generation_blocked: z.boolean().optional(),
+  recovery_credits_due: z.number().int().nonnegative().optional(),
   monthly_credits: z.number().int().nonnegative(),
   purchased_credits: z.number().int().nonnegative(),
   total_credits: z.number().int().nonnegative(),
@@ -127,6 +129,8 @@ const subscriptionPlanSchema = z.object({
 });
 
 export const billingBalanceSchema = z.object({
+  paid_generation_blocked: z.boolean().optional(),
+  recovery_credits_due: z.number().int().nonnegative().optional(),
   monthly_credits: z.number().int().nonnegative(),
   purchased_credits: z.number().int().nonnegative(),
   total_credits: z.number().int().nonnegative(),
@@ -250,6 +254,8 @@ export const currentSessionSchema = z.object({
       plan_key: organizationPlanSchema,
       role: organizationRoleSchema,
       membership_status: organizationMembershipStatusSchema,
+      paid_generation_blocked: z.boolean().optional(),
+      recovery_credits_due: z.number().int().nonnegative().optional(),
       monthly_credits: z.number().int().nonnegative(),
       purchased_credits: z.number().int().nonnegative(),
       total_credits: z.number().int().nonnegative(),
@@ -412,6 +418,8 @@ export const organizationMemberSchema = z
 
 export const organizationCreditBalanceSchema = z
   .object({
+    paid_generation_blocked: z.boolean().optional(),
+    recovery_credits_due: z.number().int().nonnegative().optional(),
     organization_id: idSchema,
     monthly_credits: z.number().int().nonnegative(),
     purchased_credits: z.number().int().nonnegative(),

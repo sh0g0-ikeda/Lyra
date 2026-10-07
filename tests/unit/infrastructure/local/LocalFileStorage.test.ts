@@ -28,7 +28,7 @@ describe('Local file storage adapters', () => {
       jobId: 'job-1',
       userId: 'user-1',
       pageId: 'page-1',
-      imageData: Buffer.from('page-image'),
+      imageData: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
       mimeType: 'image/png',
     });
     const loaded = await loader.loadByS3Key(stored.s3Key);
@@ -36,7 +36,7 @@ describe('Local file storage adapters', () => {
     expect(stored.s3Key).toBe('session/user-1/pages/page-1/job-1.png');
     expect(stored.cdnUrl).toBe('http://127.0.0.1:3000/local-assets/session/user-1/pages/page-1/job-1.png');
     expect(loaded).toEqual({
-      imageData: Buffer.from('page-image'),
+      imageData: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
       mimeType: 'image/png',
     });
   });
@@ -48,7 +48,7 @@ describe('Local file storage adapters', () => {
 
     const imported = await storage.storeImportedImage({
       userId: 'user-1',
-      imageData: Buffer.from('entity-image'),
+      imageData: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
       mimeType: 'image/png',
     });
     const finalized = await storage.finalizeReferenceImage({
@@ -61,20 +61,20 @@ describe('Local file storage adapters', () => {
 
     expect(imported.s3Key).toContain('tmp/user-1/entities/imports/');
     expect(finalized.s3Key).toBe('saved/user-1/entities/entity-1/ref-1.png');
-    expect(loaded.imageData).toEqual(Buffer.from('entity-image'));
+    expect(loaded.imageData).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   });
 
   it('状態専用copyを完了してからsaved descriptorを返す', async () => {
     const config = await createConfig();
     const storage = new LocalFileEntityImageStorage(config);
     const source = 'session/user-1/entities/entity-1/job-1.png';
-    await writeLocalAsset(config.rootDir, source, Buffer.from('state-image'));
+    await writeLocalAsset(config.rootDir, source, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     const result = await storage.finalizeStateReferenceImage({
       userId: 'user-1', entityId: 'entity-1', stateId: 'state-1', refId: 'job-1', sourceS3Key: source,
     });
     expect(result.s3Key).toBe('saved/user-1/entities/entity-1/states/state-1/job-1.png');
     expect((await new LocalFileStoredImageLoader(config).loadByS3Key(result.s3Key)).imageData)
-      .toEqual(Buffer.from('state-image'));
+      .toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   });
 
   it('final page image を saved 配下へ保存する', async () => {
@@ -162,7 +162,7 @@ describe('Local file storage adapters', () => {
     const config = await createConfig();
     const storage = new LocalFileFinalPageImageStorage(config);
     const loader = new LocalFileStoredImageLoader(config);
-    await writeLocalAsset(config.rootDir, 'saved/user-1/pages/page-1_final.png', Buffer.from('final'));
+    await writeLocalAsset(config.rootDir, 'saved/user-1/pages/page-1_final.png', Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
 
     const result = await storage.finalizePageImage({
       userId: 'user-1',
@@ -178,7 +178,7 @@ describe('Local file storage adapters', () => {
 
     const loaded = await loader.loadByS3Key(result.s3Key ?? '');
     expect(result.s3Key).toBe('saved/user-1/pages/page-1_final.png');
-    expect(loaded.imageData).toEqual(Buffer.from('final'));
+    expect(loaded.imageData).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   });
 
   it('final page finalize は別ユーザーの source key を拒否する', async () => {

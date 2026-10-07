@@ -16,6 +16,7 @@ import {
 
 class FakeRepository implements AccountDeletionRepository {
   public flight = emptyFlight();
+  public flightSequence: AccountDeletionFlight[] = [];
   public request: AccountDeletionRequestRecord | null = null;
   public claimResult: AccountDeletionClaimResult | null = null;
   public finalizeResult: AccountDeletionFinalizeResult = { kind: 'completed' };
@@ -30,7 +31,7 @@ class FakeRepository implements AccountDeletionRepository {
   public claimInput: ClaimAccountDeletionInput | null = null;
 
   public async getFlight(): Promise<AccountDeletionFlight> {
-    return this.flight;
+    return this.flightSequence.shift() ?? this.flight;
   }
 
   public async getRequest(): Promise<AccountDeletionRequestRecord | null> {
@@ -124,6 +125,71 @@ class FakeAssets implements AccountAssetDeletionPort {
 }
 
 describe('AccountDeletionService', () => {
+  it('personal返金保留または債務はacknowledgeできず削除claim前にblockする', async () => {
+    const repository = new FakeRepository();
+    repository.flight = { ...emptyFlight(), personalCreditRecoveryRequired: true };
+    const service = buildService(repository);
+
+    expect(await service.requestDeletion(buildInput())).toEqual({
+      status: 'blocked',
+      blockers: [{ code: 'CREDIT_RECOVERY_REQUIRED' }],
+    });
+    expect(repository.blockedCodes).toEqual(['CREDIT_RECOVERY_REQUIRED']);
+    expect(repository.claimInput).toBeNull();
+  });
+
+  it('claim後に返金保留が発生した場合は外部削除を始めずrecovery待ちにする', async () => {
+    const repository = new FakeRepository();
+    repository.flightSequence = [
+      emptyFlight(),
+      { ...emptyFlight(), personalCreditRecoveryRequired: true },
+    ];
+    const subscriptions = new FakeSubscriptions();
+    const identity = new FakeIdentity();
+    const assets = new FakeAssets();
+    const service = new AccountDeletionService(
+      repository,
+      subscriptions,
+      identity,
+      assets,
+      'account-deletion-secret-with-32-bytes',
+    );
+
+    expect(await service.requestDeletion(buildInput())).toEqual({
+      status: 'pending_external_action',
+      blockers: [],
+      next_action: 'anonymize_personal_data',
+    });
+    expect(repository.failures).toEqual(['EXTERNAL_REVALIDATION_BLOCKED']);
+    expect(subscriptions.calls).toEqual([]);
+    expect(assets.calls).toEqual([]);
+    expect(identity.calls).toEqual([]);
+  });
+
+  it('finalize直前に返金保留が発生した場合はidentityを削除しない', async () => {
+    const repository = new FakeRepository();
+    repository.finalizeResult = {
+      kind: 'blocked',
+      flight: { ...emptyFlight(), personalCreditRecoveryRequired: true },
+    };
+    const identity = new FakeIdentity();
+    const service = new AccountDeletionService(
+      repository,
+      new FakeSubscriptions(),
+      identity,
+      new FakeAssets(),
+      'account-deletion-secret-with-32-bytes',
+    );
+
+    expect(await service.requestDeletion(buildInput())).toEqual({
+      status: 'pending_external_action',
+      blockers: [],
+      next_action: 'anonymize_personal_data',
+    });
+    expect(repository.failures).toEqual(['FINAL_REVALIDATION_BLOCKED']);
+    expect(identity.calls).toEqual([]);
+    expect(repository.completed).toBe(false);
+  });
   it('復旧claimに未確定copyがあれば既存削除checkpointがあっても外部操作を再開しない', async () => {
     const repository = new FakeRepository();
     repository.flight = { ...emptyFlight(), activePersonalGenerationJobCount: 1,
@@ -519,6 +585,7 @@ function emptyFlight(): AccountDeletionFlight {
     personalAssetKeys: [],
     activePersonalGenerationJobCount: 0,
     activePersonalExportJobCount: 0,
+    personalCreditRecoveryRequired: false,
   };
 }
 

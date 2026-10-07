@@ -6,6 +6,11 @@ import {
 } from '../../../apps/web/src/lib/userFacingErrors.js';
 
 describe('userFacingErrors', () => {
+  it('返金回収保留の場合に追加購入ではなく保留理由と編集継続を案内する', () => {
+    const error = { code: 'CREDIT_RECOVERY_REQUIRED', status: 402 };
+    expect(formatUserFacingErrorMessage(error, 'ja')).toContain('返金・決済取消');
+    expect(formatUserFacingErrorMessage(error, 'en')).toContain('Viewing and editing remain available');
+  });
   it('自由生成参照による拒否では通常プレビューの再確定を案内する', () => {
     const failure = { code: 'PAGE_REFERENCE_MODEL_INCOMPATIBLE', status: 409, message: 'provider details hidden' };
     expect(formatUserFacingErrorMessage(failure, 'ja')).toContain('通常生成したプレビューを確定');

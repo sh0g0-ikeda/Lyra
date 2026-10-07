@@ -1,6 +1,7 @@
 import type { QueryResultRow } from 'pg';
 import type { CreditLedgerType } from '../domain/constants/credits.js';
 import type { CreditBalance, CreditLedgerEntry } from '../domain/types/credit.js';
+import type { PaidGenerationRecoveryStatus } from '../domain/types/billing.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 
 interface CreditBalanceRow extends QueryResultRow {
@@ -43,6 +44,11 @@ export interface CreditRepository {
     client: DatabaseClient,
   ): Promise<CreditLedgerBucketDeltaSummary>;
   insertLedger(entry: CreditLedgerEntry, client: DatabaseClient): Promise<void>;
+  settleOutstandingStripeRecoveries?(userId: string, client: DatabaseClient): Promise<number>;
+  getPaidGenerationRecoveryStatus?(
+    userId: string,
+    client?: DatabaseClient,
+  ): Promise<PaidGenerationRecoveryStatus>;
 }
 
 export class PostgresCreditRepository implements CreditRepository {
@@ -221,6 +227,22 @@ export class PostgresCreditRepository implements CreditRepository {
   }
 
   public async insertLedger(entry: CreditLedgerEntry, client: DatabaseClient): Promise<void> {
+    if (entry.stripePaymentRecoveryId === undefined) {
+      await client.query(
+        `
+        INSERT INTO credit_ledger (
+          user_id, type, amount, monthly_delta, purchased_delta, monthly_after,
+          purchased_after, description, stripe_event_id, mobile_store_event_key, job_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `,
+        [entry.userId, entry.type, entry.amount, entry.monthlyDelta ?? null,
+          entry.purchasedDelta ?? null, entry.monthlyAfter, entry.purchasedAfter,
+          entry.description, entry.stripeEventId ?? null, entry.mobileStoreEventKey ?? null,
+          entry.jobId ?? null],
+      );
+      return;
+    }
     await client.query(
       `
       INSERT INTO credit_ledger (
@@ -234,9 +256,10 @@ export class PostgresCreditRepository implements CreditRepository {
         description,
         stripe_event_id,
         mobile_store_event_key,
-        job_id
+        job_id,
+        stripe_payment_recovery_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       `,
       [
         entry.userId,
@@ -250,8 +273,131 @@ export class PostgresCreditRepository implements CreditRepository {
         entry.stripeEventId ?? null,
         entry.mobileStoreEventKey ?? null,
         entry.jobId ?? null,
+        entry.stripePaymentRecoveryId,
       ],
     );
+  }
+
+  public async settleOutstandingStripeRecoveries(userId: string, client: DatabaseClient): Promise<number> {
+    const lockedBalance = await this.getBalanceForUpdate(userId, client);
+    if (lockedBalance === null || (lockedBalance.monthlyCredits <= 0 && lockedBalance.purchasedCredits <= 0)) {
+      return 0;
+    }
+    const recoveries = await client.query<{
+      id: string;
+      unrecovered_credits: number;
+      credit_bucket: 'monthly' | 'purchased';
+      grant_expires_at: Date | null;
+    }>(
+      `
+      SELECT recovery.id, recovery.unrecovered_credits, recovery.credit_bucket, recovery.grant_expires_at
+      FROM stripe_payment_recoveries recovery
+      INNER JOIN payment_records payment ON payment.id = recovery.payment_record_id
+      WHERE payment.user_id = $1
+        AND payment.organization_id IS NULL
+        AND recovery.unrecovered_credits > 0
+      ORDER BY recovery.created_at, recovery.id
+      FOR UPDATE OF recovery
+      `,
+      [userId],
+    );
+    let balance = lockedBalance;
+    let totalReversed = 0;
+    for (const recovery of recoveries.rows) {
+      const monthlyPeriodMatches = recovery.credit_bucket === 'monthly'
+        && recovery.grant_expires_at !== null
+        && recovery.grant_expires_at.getTime() > Date.now()
+        && balance.monthlyExpiresAt?.getTime() === recovery.grant_expires_at.getTime();
+      const recoveryDue = Number(recovery.unrecovered_credits);
+      const monthlyAmount = monthlyPeriodMatches ? Math.min(balance.monthlyCredits, recoveryDue) : 0;
+      // A later purchased-credit grant pays any remaining debt, including a
+      // stale subscription period, without taking credits from a newer month.
+      const purchasedAmount = Math.min(balance.purchasedCredits, recoveryDue - monthlyAmount);
+      const amount = monthlyAmount + purchasedAmount;
+      if (amount <= 0) continue;
+      balance = await this.updateBalance(
+        {
+          ...balance,
+          monthlyCredits: balance.monthlyCredits - monthlyAmount,
+          purchasedCredits: balance.purchasedCredits - purchasedAmount,
+        },
+        client,
+      );
+      await client.query(
+        `
+        UPDATE stripe_payment_recoveries
+        SET reversed_credits = reversed_credits + $2,
+            unrecovered_credits = unrecovered_credits - $2,
+            updated_at = NOW()
+        WHERE id = $1
+        `,
+        [recovery.id, amount],
+      );
+      await this.insertLedger(
+        {
+          userId,
+          type: 'purchase_reversal',
+          amount: -amount,
+          monthlyDelta: -monthlyAmount,
+          purchasedDelta: -purchasedAmount,
+          monthlyAfter: balance.monthlyCredits,
+          purchasedAfter: balance.purchasedCredits,
+          description: 'Stripe payment credit recovery',
+          stripePaymentRecoveryId: recovery.id,
+        },
+        client,
+      );
+      totalReversed += amount;
+    }
+    return totalReversed;
+  }
+
+  public async getPaidGenerationRecoveryStatus(
+    userId: string,
+    client: DatabaseClient = this.client,
+  ): Promise<PaidGenerationRecoveryStatus> {
+    const result = await client.query<{ recovery_credits_due: string; paid_generation_blocked: boolean }>(
+      `
+      SELECT
+        COALESCE((
+          SELECT SUM(recovery.unrecovered_credits)
+          FROM stripe_payment_recoveries recovery
+          INNER JOIN payment_records payment ON payment.id = recovery.payment_record_id
+          WHERE payment.user_id = $1 AND payment.organization_id IS NULL
+        ), 0)::text AS recovery_credits_due,
+        (
+          EXISTS (
+            SELECT 1
+            FROM stripe_payment_recoveries recovery
+            INNER JOIN payment_records payment ON payment.id = recovery.payment_record_id
+            WHERE payment.user_id = $1
+              AND payment.organization_id IS NULL
+              AND (
+                recovery.unrecovered_credits > 0
+                OR EXISTS (
+                  SELECT 1 FROM stripe_payment_adjustment_objects adjustment
+                  WHERE adjustment.recovery_id = recovery.id
+                    AND adjustment.status IN ('pending', 'open')
+                )
+              )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM stripe_unresolved_payment_adjustments unresolved
+            INNER JOIN payment_records payment ON payment.id = unresolved.payment_record_id
+            WHERE payment.user_id = $1
+              AND payment.organization_id IS NULL
+              AND unresolved.resolved_at IS NULL
+              AND unresolved.status NOT IN ('failed', 'won')
+          )
+        ) AS paid_generation_blocked
+      `,
+      [userId],
+    );
+    return {
+      paidGenerationBlocked: result.rows[0]?.paid_generation_blocked ?? false,
+      recoveryCreditsDue: Number(result.rows[0]?.recovery_credits_due ?? '0'),
+    };
   }
 }
 

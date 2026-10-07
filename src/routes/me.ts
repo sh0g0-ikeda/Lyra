@@ -8,6 +8,7 @@ import type { OrganizationServicePort } from '../services/organization/Organizat
 import type { AppEnv } from '../types/app.js';
 import { currentSessionSchema } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { assertMobileResponseContract } from './mobileResponseContract.js';
+import { creditRecoveryResponse } from './creditRecoveryResponse.js';
 
 export interface MeRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -57,12 +58,13 @@ export function createMeRoutes(dependencies: MeRouteDependencies): Hono<AppEnv> 
         personalCredits === null
           ? null
           : {
+              ...creditRecoveryResponse(c.req.header('X-Lyra-Credit-Recovery'), personalCredits),
               monthly_credits: personalCredits.monthlyCredits,
               purchased_credits: personalCredits.purchasedCredits,
               total_credits: personalCredits.totalCredits,
               monthly_expires_at: personalCredits.monthlyExpiresAt?.toISOString() ?? null,
             },
-      organizations: organizations.map(toWorkspaceResponse),
+      organizations: organizations.map(workspace => toWorkspaceResponse(workspace, c.req.header('X-Lyra-Credit-Recovery'))),
     };
 
     return c.json(assertMobileResponseContract(currentSessionSchema, payload));
@@ -80,7 +82,7 @@ function toUserResponse(user: AuthenticatedUser): Record<string, unknown> {
   };
 }
 
-function toWorkspaceResponse(workspace: OrganizationWorkspaceSummary): Record<string, unknown> {
+function toWorkspaceResponse(workspace: OrganizationWorkspaceSummary, recoveryVersion?: string): Record<string, unknown> {
   const balance = workspace.balance;
   return {
     id: workspace.organization.id,
@@ -89,6 +91,7 @@ function toWorkspaceResponse(workspace: OrganizationWorkspaceSummary): Record<st
     plan_key: workspace.organization.planKey,
     role: workspace.membership.role,
     membership_status: workspace.membership.status,
+    ...creditRecoveryResponse(recoveryVersion, balance),
     monthly_credits: balance?.monthlyCredits ?? 0,
     purchased_credits: balance?.purchasedCredits ?? 0,
     total_credits: (balance?.monthlyCredits ?? 0) + (balance?.purchasedCredits ?? 0),

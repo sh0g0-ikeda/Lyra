@@ -7,10 +7,12 @@ import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import {
   attestCanonicalRuntimeSchema,
+  attestRuntimeSchema,
   describeRuntimeSchema,
   prepareCanonicalRuntimeSchema,
   readRuntimeSchemaCatalog,
 } from '../../src/lib/runtimeSchemaAttestation.js';
+import { assertAttestedRuntimeCapabilities } from '../../src/lib/runtimeGuards.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -47,6 +49,7 @@ describePostgres('runtime schema attestation PostgreSQL boundary', () => {
     const catalog = await readRuntimeSchemaCatalog(database, { includeFunctionBodies: true, includeLegacyAttributes: true });
     expect(describeRuntimeSchema(catalog)).toEqual({ kind: 'canonical_fresh_v1', failures: [] });
     const attested = await attestCanonicalRuntimeSchema(database);
+    const attestedSecurityRuntime = await attestRuntimeSchema(database);
     expect(attested).toBe('canonical_fresh_v1');
     const physical = await pool.query(`
       SELECT column_name FROM information_schema.columns
@@ -54,7 +57,16 @@ describePostgres('runtime schema attestation PostgreSQL boundary', () => {
         AND column_name IN ('story_source_scene_ids','story_page_purpose','story_continuity_note')
     `);
     expect(physical.rows).toEqual([]);
-    // A staged canonical047 binary remains bootable; a half-recorded048 is not.
+    expect(() => assertAttestedRuntimeCapabilities(attestedSecurityRuntime, {})).not.toThrow();
+    // Historical descriptors remain inspectable, but the security binary cannot boot before049.
+    await pool.query(`ALTER TABLE credit_ledger DROP COLUMN stripe_payment_recovery_id;
+      DROP TABLE stripe_payment_adjustment_objects, stripe_unresolved_payment_adjustments, stripe_payment_recoveries;
+      ALTER TABLE payment_records DROP CONSTRAINT payment_records_credit_grant_check,
+        DROP COLUMN granted_credits, DROP COLUMN credit_bucket, DROP COLUMN grant_expires_at;
+      DELETE FROM schema_migrations WHERE filename='049_add_stripe_credit_recovery.sql'`);
+    const historicalRuntime = await attestRuntimeSchema(database);
+    expect(() => assertAttestedRuntimeCapabilities(historicalRuntime, {})).toThrow('049');
+    // A staged canonical047 descriptor remains recognizable; a half-recorded048 is not.
     await pool.query("DELETE FROM schema_migrations WHERE filename='048_advance_entity_state_revision_for_legacy_writers.sql'");
     await expect(attestCanonicalRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
     await pool.query('DROP TRIGGER entity_states_monotonic_revision ON entity_states; DROP FUNCTION lyra_advance_entity_state_revision()');

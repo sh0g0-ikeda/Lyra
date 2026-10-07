@@ -270,6 +270,8 @@ export interface CompositionRecord {
 }
 
 export interface BillingBalanceRecord {
+  paid_generation_blocked?: boolean;
+  recovery_credits_due?: number;
   monthly_credits: number;
   purchased_credits: number;
   total_credits: number;
@@ -357,6 +359,8 @@ export interface OrganizationInvitationCreateRecord {
 }
 
 export interface OrganizationCreditBalanceRecord {
+  paid_generation_blocked?: boolean;
+  recovery_credits_due?: number;
   organization_id: string;
   monthly_credits: number;
   purchased_credits: number;
@@ -447,6 +451,8 @@ export interface CurrentUserRecord {
 }
 
 export interface CurrentUserOrganizationRecord {
+  paid_generation_blocked?: boolean;
+  recovery_credits_due?: number;
   id: string;
   name: string;
   status: OrganizationStatus;
@@ -460,6 +466,8 @@ export interface CurrentUserOrganizationRecord {
 }
 
 export interface CurrentUserCreditRecord {
+  paid_generation_blocked?: boolean;
+  recovery_credits_due?: number;
   monthly_credits: number;
   purchased_credits: number;
   total_credits: number;

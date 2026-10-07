@@ -226,7 +226,7 @@ const currentSession: CurrentSessionRecord = {
 
 async function mockApi(
   route: Route,
-  options: { legacyBilling?: boolean; legacyJobCancellationFields?: boolean; skeletonJobStatus?: 'queued' | 'processing' } = {},
+  options: { legacyBilling?: boolean; legacyJobCancellationFields?: boolean; skeletonJobStatus?: 'queued' | 'processing'; creditRecovery?: boolean } = {},
 ): Promise<void> {
   const url = new URL(route.request().url());
   const { pathname } = url;
@@ -356,6 +356,7 @@ async function mockApi(
 
   if (pathname === '/api/billing/balance') {
     return json({
+      ...(options.creditRecovery ? { paid_generation_blocked: true, recovery_credits_due: 7 } : {}),
       monthly_credits: 100,
       purchased_credits: 40,
       total_credits: 140,
@@ -635,6 +636,21 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await page.getByRole('button', { name: 'Pages', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
+});
+
+test('回収保留の場合に有料画像生成を止めて無料の話編集を維持する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', route => mockApi(route, { creditRecovery: true }));
+  await page.goto('/');
+  await expect(page.getByRole('status').filter({ hasText: 'Paid generation is paused' })).toBeVisible();
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Editing remains available during recovery');
+  await expect(draft).toHaveValue('Editing remains available during recovery');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Generate full-body preview' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Generate in color', exact: true })).toBeDisabled();
 });
 
 test('未保存の話から別の話を選ぶ場合にCancelすると入力と選択を保持しPUTしない', async ({ page }) => {

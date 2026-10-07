@@ -33,7 +33,7 @@ describePostgres('page panel structure safety', () => {
     ));
     expect(applied).toContain('046_bridge_production_schema_lineage.sql');
     expect(applied).toContain('047_add_state_reference_copy_attempts.sql');
-    expect(applied.at(-1)).toBe('048_advance_entity_state_revision_for_legacy_writers.sql');
+    expect(applied.at(-1)).toBe('049_add_stripe_credit_recovery.sql');
   }, 120_000);
 
   afterAll(async () => {

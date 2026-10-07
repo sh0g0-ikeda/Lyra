@@ -13,7 +13,7 @@ function normalize(value: unknown): unknown {
   return value;
 }
 
-/** Prefix 0 is exact actual44; 8 is fully expanded. Unknown/partial DDL is never resumable. */
+/** Prefix 0 is exact actual44; the last checkpoint is fully expanded. Unknown/partial DDL is never resumable. */
 export function describeProduction44ExpansionCheckpoint(catalog: RuntimeSchemaCatalog): number | null {
   const parts = Object.keys(PRODUCTION44_EXPANSION_CHECKPOINTS[0]) as Array<keyof typeof PRODUCTION44_EXPANSION_CHECKPOINTS[0]>;
   const signatures = Object.fromEntries(parts.map(part => {

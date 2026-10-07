@@ -78,8 +78,22 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
         }),
         transactionClient,
       );
-
-      return toSnapshot(savedBalance);
+      const settle = this.creditRepository.settleOutstandingStripeRecoveries;
+      if (settle === undefined) {
+        return toSnapshot(savedBalance);
+      }
+      await settle.call(this.creditRepository, params.userId, transactionClient);
+      const settledBalance = this.normalizeBalance(
+        (await this.creditRepository.getBalanceForUpdate(params.userId, transactionClient)) ?? emptyBalance(params.userId),
+      );
+      const getStatus = this.creditRepository.getPaidGenerationRecoveryStatus;
+      if (getStatus === undefined) {
+        return toSnapshot(settledBalance);
+      }
+      return {
+        ...toSnapshot(settledBalance),
+        ...(await getStatus.call(this.creditRepository, params.userId, transactionClient)),
+      };
     });
   }
 
@@ -115,8 +129,22 @@ export class BillingCreditGrantService implements BillingCreditGrantServicePort 
         }),
         transactionClient,
       );
-
-      return toSnapshot(savedBalance);
+      const settle = this.creditRepository.settleOutstandingStripeRecoveries;
+      if (settle === undefined) {
+        return toSnapshot(savedBalance);
+      }
+      await settle.call(this.creditRepository, params.userId, transactionClient);
+      const settledBalance = this.normalizeBalance(
+        (await this.creditRepository.getBalanceForUpdate(params.userId, transactionClient)) ?? emptyBalance(params.userId),
+      );
+      const getStatus = this.creditRepository.getPaidGenerationRecoveryStatus;
+      if (getStatus === undefined) {
+        return toSnapshot(settledBalance);
+      }
+      return {
+        ...toSnapshot(settledBalance),
+        ...(await getStatus.call(this.creditRepository, params.userId, transactionClient)),
+      };
     });
   }
 

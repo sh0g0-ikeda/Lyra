@@ -25,6 +25,11 @@ import type {
   GrantPurchasedCreditsParams,
 } from '../../../../src/services/credit/BillingCreditGrantService.js';
 import { StripeWebhookService } from '../../../../src/services/billing/StripeWebhookService.js';
+import type {
+  BillingCreditAdjustmentServicePort,
+  RegisterStripeCreditPurchaseInput,
+  StripePaymentAdjustmentObservation,
+} from '../../../../src/services/credit/BillingCreditAdjustmentService.js';
 import type { OrganizationServicePort } from '../../../../src/services/organization/OrganizationService.js';
 
 type SubscriptionPriceId =
@@ -275,6 +280,9 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
   public subscription: Stripe.Subscription = buildSubscription();
   public constructError: Error | null = null;
   public retrieveSubscriptionCalls = 0;
+  public charge: Stripe.Charge = buildCharge();
+  public checkoutSession: Stripe.Checkout.Session | null = null;
+  public invoice: Stripe.Invoice | null = null;
 
   public async createCustomer(): Promise<never> {
     throw new Error('unused');
@@ -304,6 +312,52 @@ class FakeStripeBillingClient implements StripeBillingClientPort {
     this.retrieveSubscriptionCalls += 1;
     return this.subscription;
   }
+
+  public async retrieveCharge(): Promise<Stripe.Charge> {
+    return this.charge;
+  }
+
+  public async findCheckoutSessionByPaymentIntent(): Promise<Stripe.Checkout.Session | null> {
+    return this.checkoutSession;
+  }
+
+  public async findInvoiceByPaymentIntent(): Promise<Stripe.Invoice | null> {
+    return this.invoice;
+  }
+}
+
+class FakeBillingCreditAdjustmentService implements BillingCreditAdjustmentServicePort {
+  public linked = true;
+  public linkOutcome: Awaited<ReturnType<BillingCreditAdjustmentServicePort['linkExistingPayment']>> = 'linked';
+  public observations: StripePaymentAdjustmentObservation[] = [];
+  public unresolved: Array<StripePaymentAdjustmentObservation & {
+    externalId: { type: 'checkout'; id: string } | { type: 'invoice'; id: string };
+  }> = [];
+  public linkInputs: Parameters<BillingCreditAdjustmentServicePort['linkExistingPayment']>[0][] = [];
+
+  public async registerCreditPurchase(_input: RegisterStripeCreditPurchaseInput): Promise<void> {}
+  public async settleScopeForPaymentIntent(): Promise<number> { return 0; }
+  public async isPaymentLinked(): Promise<boolean> { return this.linked; }
+  public async linkExistingPayment(
+    input: Parameters<BillingCreditAdjustmentServicePort['linkExistingPayment']>[0],
+  ): Promise<typeof this.linkOutcome> {
+    this.linkInputs.push(input);
+    return this.linkOutcome;
+  }
+  public async applyObservation(input: StripePaymentAdjustmentObservation): Promise<{
+    paidGenerationBlocked: boolean;
+    recoveryCreditsDue: number;
+  }> {
+    this.observations.push(input);
+    return { paidGenerationBlocked: false, recoveryCreditsDue: 0 };
+  }
+  public async recordUnresolvedObservation(
+    input: StripePaymentAdjustmentObservation & {
+      externalId: { type: 'checkout'; id: string } | { type: 'invoice'; id: string };
+    },
+  ): Promise<void> {
+    this.unresolved.push(input);
+  }
 }
 
 describe('StripeWebhookService', () => {
@@ -321,6 +375,84 @@ describe('StripeWebhookService', () => {
     expect(creditGrantService.monthlyGrants).toHaveLength(0);
     expect(creditGrantService.purchasedGrants).toHaveLength(0);
     expect(stripeClient.retrieveSubscriptionCalls).toBe(0);
+  });
+
+  it('charge.refundedを検証済みPaymentIntentの累積返金観測へ変換する', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    const adjustmentService = new FakeBillingCreditAdjustmentService();
+    stripeClient.event = buildChargeRefundedEvent();
+    const service = buildService(
+      repository, creditGrantService, stripeClient, undefined, undefined, adjustmentService,
+    );
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(adjustmentService.observations).toEqual([
+      expect.objectContaining({
+        stripeEventId: 'evt_charge_refunded',
+        stripePaymentIntentId: 'pi_legacy_1',
+        stripeChargeId: 'ch_legacy_1',
+        providerType: 'refund',
+        status: 'succeeded',
+        amountJpy: 1_000,
+        observedRefundedAmountJpy: 1_000,
+      }),
+    ]);
+    expect(repository.processedEvents.has('evt_charge_refunded')).toBe(true);
+  });
+
+  it('移行前credit purchaseはPaymentIntentから正規Checkoutを再照合して連結する', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    const adjustmentService = new FakeBillingCreditAdjustmentService();
+    adjustmentService.linked = false;
+    stripeClient.event = buildChargeRefundedEvent();
+    stripeClient.checkoutSession = buildLegacyCreditCheckoutSession();
+    const service = buildService(
+      repository, creditGrantService, stripeClient, undefined, undefined, adjustmentService,
+    );
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(adjustmentService.linkInputs).toEqual([
+      expect.objectContaining({
+        externalId: { type: 'checkout', id: 'cs_legacy_1' },
+        stripePaymentIntentId: 'pi_legacy_1',
+        expectedAmountJpy: 2_000,
+        fallbackGrant: { creditBucket: 'purchased', grantedCredits: 50, grantExpiresAt: null },
+      }),
+    ]);
+    expect(adjustmentService.observations).toHaveLength(1);
+  });
+
+  it('周期情報のない移行前subscription返金は現在月を回収せず解決待ちholdにする', async () => {
+    const repository = seedRepository();
+    const creditGrantService = new FakeBillingCreditGrantService();
+    const stripeClient = new FakeStripeBillingClient();
+    const adjustmentService = new FakeBillingCreditAdjustmentService();
+    adjustmentService.linked = false;
+    adjustmentService.linkOutcome = 'review_required';
+    stripeClient.event = buildChargeRefundedEvent();
+    stripeClient.invoice = buildLegacyInvoice();
+    const service = buildService(
+      repository, creditGrantService, stripeClient, undefined, undefined, adjustmentService,
+    );
+
+    await expect(service.handleWebhook(Buffer.from('{}'), 'sig')).rejects.toMatchObject({
+      code: 'CONFIGURATION_ERROR',
+    });
+
+    expect(adjustmentService.observations).toHaveLength(0);
+    expect(adjustmentService.unresolved).toEqual([
+      expect.objectContaining({
+        externalId: { type: 'invoice', id: 'in_legacy_1' },
+        stripePaymentIntentId: 'pi_legacy_1',
+      }),
+    ]);
+    expect(repository.processedEvents.has('evt_charge_refunded')).toBe(false);
   });
 
   it('checkout.session.completed の subscription で plan/subscription/monthly grant を反映する', async () => {
@@ -1039,6 +1171,7 @@ function buildService(
   stripeClient: StripeBillingClientPort,
   organizationService: OrganizationServicePort = buildUnusedOrganizationService(),
   organizationRepository: OrganizationRepository = buildUnusedOrganizationRepository(),
+  billingCreditAdjustmentService: BillingCreditAdjustmentServicePort = new FakeBillingCreditAdjustmentService(),
 ): StripeWebhookService {
   return new StripeWebhookService(
     repository,
@@ -1055,6 +1188,7 @@ function buildService(
         price_enterprise_c: 'enterprise_c',
       },
     },
+    billingCreditAdjustmentService,
   );
 }
 
@@ -1238,6 +1372,8 @@ function buildCheckoutCreditPurchaseEvent(options: {
   type?: string;
   customerId?: string;
   amountTotal?: number;
+  paymentIntentId?: string;
+  currency?: string;
 } = {}): Stripe.Event {
   return {
     id: options.id ?? 'evt_checkout_credit',
@@ -1250,6 +1386,8 @@ function buildCheckoutCreditPurchaseEvent(options: {
         object: 'checkout.session',
         customer: options.customerId ?? 'cus_123',
         subscription: null,
+        payment_intent: options.paymentIntentId ?? 'pi_credit_123',
+        currency: options.currency ?? 'jpy',
         client_reference_id: 'user-1',
         metadata: {
           kind: 'credit_purchase',
@@ -1265,6 +1403,60 @@ function buildCheckoutCreditPurchaseEvent(options: {
     request: { id: null, idempotency_key: null },
     type: options.type ?? 'checkout.session.completed',
   } as unknown as Stripe.Event;
+}
+
+function buildCharge(overrides: Partial<Stripe.Charge> = {}): Stripe.Charge {
+  return {
+    id: 'ch_legacy_1',
+    object: 'charge',
+    amount: 2_000,
+    amount_refunded: 1_000,
+    currency: 'jpy',
+    customer: 'cus_123',
+    payment_intent: 'pi_legacy_1',
+    ...overrides,
+  } as Stripe.Charge;
+}
+
+function buildChargeRefundedEvent(): Stripe.Event {
+  return {
+    id: 'evt_charge_refunded',
+    object: 'event',
+    api_version: '2025-03-31',
+    created: 1,
+    data: { object: buildCharge() },
+    livemode: false,
+    pending_webhooks: 1,
+    request: { id: null, idempotency_key: null },
+    type: 'charge.refunded',
+  } as Stripe.Event;
+}
+
+function buildLegacyCreditCheckoutSession(): Stripe.Checkout.Session {
+  return {
+    id: 'cs_legacy_1',
+    object: 'checkout.session',
+    customer: 'cus_123',
+    payment_intent: 'pi_legacy_1',
+    currency: 'jpy',
+    amount_total: 2_000,
+    payment_status: 'paid',
+    metadata: {
+      kind: 'credit_purchase',
+      package_code: 'credits_1000',
+      user_id: 'user-1',
+    },
+  } as unknown as Stripe.Checkout.Session;
+}
+
+function buildLegacyInvoice(): Stripe.Invoice {
+  return {
+    id: 'in_legacy_1',
+    object: 'invoice',
+    customer: 'cus_123',
+    currency: 'jpy',
+    amount_paid: 2_000,
+  } as Stripe.Invoice;
 }
 
 function buildInvoicePaidEvent(

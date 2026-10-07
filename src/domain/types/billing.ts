@@ -56,7 +56,12 @@ interface PaymentRecordBase {
   amountJpy: number;
   status: PaymentRecordStatus;
   invoiceUrl?: string | null;
+  grantedCredits?: number | null;
+  creditBucket?: CreditGrantBucket | null;
+  grantExpiresAt?: Date | null;
 }
+
+export type CreditGrantBucket = 'monthly' | 'purchased';
 
 export type PaymentRecordInput =
   | (PaymentRecordBase & {
@@ -73,6 +78,45 @@ export interface PaymentRecord extends PaymentRecordBase {
   stripeCheckoutSessionId: string | null;
   stripeInvoiceId: string | null;
   createdAt: Date;
+}
+
+export type StripePaymentAdjustmentProviderType = 'refund' | 'dispute';
+export type StripePaymentAdjustmentStatus = 'pending' | 'succeeded' | 'failed' | 'open' | 'won' | 'lost';
+
+export interface StripePaymentRecovery {
+  id: string;
+  paymentRecordId: string;
+  userId: string | null;
+  organizationId: string | null;
+  paymentKind: PaymentRecordKind;
+  amountJpy: number;
+  stripePaymentIntentId: string;
+  stripeChargeId: string | null;
+  currency: 'jpy';
+  creditBucket: CreditGrantBucket;
+  grantedCredits: number;
+  grantExpiresAt: Date | null;
+  observedRefundedAmountJpy: number;
+  lostDisputeAmountJpy: number;
+  targetReversalCredits: number;
+  reversedCredits: number;
+  unrecoveredCredits: number;
+  hasPendingRefund: boolean;
+  hasOpenDispute: boolean;
+}
+
+export interface StripePaymentAdjustmentObjectInput {
+  recoveryId: string;
+  providerType: StripePaymentAdjustmentProviderType;
+  providerObjectId: string;
+  amountJpy: number;
+  status: StripePaymentAdjustmentStatus;
+  stripeEventId: string;
+}
+
+export interface PaidGenerationRecoveryStatus {
+  paidGenerationBlocked: boolean;
+  recoveryCreditsDue: number;
 }
 
 export interface SubscriptionCheckoutResult {

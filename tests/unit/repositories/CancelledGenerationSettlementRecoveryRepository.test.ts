@@ -8,7 +8,7 @@ import { createCancelledGenerationSettlementRecoveryRepository } from '../../../
 import { PostgresGenerationJobRepository } from '../../../src/repositories/GenerationJobRepository.js';
 
 function database(valid = true, remaining: boolean | null | Error = false, expanded = false): DatabaseClient & TransactionRunner & {queries:string[]} {
-  const catalog=JSON.parse(readFileSync(join(process.cwd(),expanded?'tests/fixtures/production44-expanded-pg18/catalog.json':'tests/fixtures/production44-pg18/catalog.json'),'utf8')) as RuntimeSchemaCatalog;
+  const catalog=JSON.parse(readFileSync(join(process.cwd(),expanded?'tests/fixtures/security-recovery-pg18/expanded-catalog.json':'tests/fixtures/production44-pg18/catalog.json'),'utf8')) as RuntimeSchemaCatalog;
   if(!valid)catalog.triggers=[];
   const queries:string[]=[];
   const client:DatabaseClient={query:async<R extends QueryResultRow>(sql:string):Promise<QueryResult<R>>=>{
@@ -34,7 +34,7 @@ function database(valid = true, remaining: boolean | null | Error = false, expan
 }
 describe('実44のみをexact検証してから返還候補を走査する',()=>{
   afterEach(()=>vi.restoreAllMocks());
-it('expanded profileは52 exact catalogだけを認めbase44との誤組合せを拒否する',async()=>{
+it('expanded profileは53 exact catalogだけを認めbase44との誤組合せを拒否する',async()=>{
   const repo=await createCancelledGenerationSettlementRecoveryRepository(database(true,false,true),'production44_expanded_pg18_v1');
   expect(repo.profile).toBe('production44_expanded_pg18_v1');
   await expect(createCancelledGenerationSettlementRecoveryRepository(database(),'production44_expanded_pg18_v1')).rejects.toThrow('SCHEMA_UNSUPPORTED');

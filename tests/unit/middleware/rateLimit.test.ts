@@ -233,13 +233,13 @@ describe('createRateLimitMiddleware', () => {
     expect(response.status).toBe(200);
     expect(store.calls.map((call) => call.key)).toEqual([
       'default:user-1',
-      'webhook:public:198.51.100.7',
+      'webhook:public:unknown',
     ]);
   });
 });
 
 describe('createPublicIpRateLimitMiddleware', () => {
-  it('public webhooks use the last X-Forwarded-For IP for the webhook bucket', async () => {
+  it('未検証の公開webhookではforwarded IPを信用しない', async () => {
     const store = new RecordingRateLimitStore();
     const app = new Hono<AppEnv>();
     app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook'));
@@ -255,7 +255,7 @@ describe('createPublicIpRateLimitMiddleware', () => {
     expect(response.status).toBe(200);
     expect(store.calls).toEqual([
       {
-        key: 'webhook:public:10.0.0.1',
+        key: 'webhook:public:unknown',
         maxRequests: RATE_LIMIT_RULES.webhook.maxRequests,
         windowSeconds: RATE_LIMIT_RULES.webhook.windowSeconds,
       },
@@ -265,13 +265,14 @@ describe('createPublicIpRateLimitMiddleware', () => {
   it('CloudFront-Viewer-Address takes precedence with the port removed', async () => {
     const store = new RecordingRateLimitStore();
     const app = new Hono<AppEnv>();
-    app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook'));
+    app.use('*', createPublicIpRateLimitMiddleware(store, 'webhook', { headerName: 'x-test-origin', headerValue: 'test-only-origin' }));
     app.all('*', (c) => c.json({ ok: true }));
 
     const response = await app.request('/api/webhooks/stripe', {
       method: 'POST',
       headers: {
         'cloudfront-viewer-address': '198.51.100.7:443',
+        'x-test-origin': 'test-only-origin',
         'x-forwarded-for': '203.0.113.10, 10.0.0.1',
       },
     });

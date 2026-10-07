@@ -97,7 +97,7 @@ describePostgres('forward-only production lineage bridge', () => {
         const applied = await upgrade(db);
         expect(applied).toContain(PRODUCTION_BRIDGE_FILENAME);
         expect(applied).toContain('047_add_state_reference_copy_attempts.sql');
-        expect(applied.at(-1)).toBe('048_advance_entity_state_revision_for_legacy_writers.sql');
+        expect(applied.at(-1)).toBe('049_add_stripe_credit_recovery.sql');
         expect((await pool.query("SELECT to_regclass(format('%I.%I', current_schema(), 'state_reference_copy_attempts')) AS journal")).rows[0]?.journal).toBe('state_reference_copy_attempts');
         for (const row of history) {
             expect((await pool.query('SELECT applied_at FROM schema_migrations WHERE filename=$1', [row.filename])).rows[0]?.applied_at).toEqual(row.applied_at);
@@ -375,7 +375,7 @@ describePostgres('forward-only production lineage bridge', () => {
         const applied = await withPostgresTestMigrationLock(admin, () => runPendingMigrations(db));
         expect(applied).toContain(PRODUCTION_BRIDGE_FILENAME);
         expect(applied).toContain('047_add_state_reference_copy_attempts.sql');
-        expect(applied.at(-1)).toBe('048_advance_entity_state_revision_for_legacy_writers.sql');
+        expect(applied.at(-1)).toBe('049_add_stripe_credit_recovery.sql');
         expect((await checkDeploymentDataInvariants(db)).violations).toEqual([]);
         expect(await (runPendingMigrations(db))).toEqual([]);
     }, 120000);

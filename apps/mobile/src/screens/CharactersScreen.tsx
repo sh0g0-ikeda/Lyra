@@ -1641,7 +1641,11 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   const { resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEdit = hasCapability('edit_work');
-  const canGenerate = hasCapability('generate');
+  const paidGenerationBlocked = selection.organizationId === null
+    ? session?.personal_credits?.paid_generation_blocked === true
+    : session?.organizations.find((organization) => organization.id === selection.organizationId)?.paid_generation_blocked === true;
+  const canGenerate = hasCapability('generate') && !paidGenerationBlocked;
+  const paidGenerationBlockedReason = paidGenerationBlocked ? t(language, 'shared.error.creditRecoveryRequired') : undefined;
   const canExport = hasCapability('export');
   const [entityType, setEntityType] = useState<EntityType>('character');
   const [entityEditorMode, setEntityEditorMode] = useState<'create' | 'edit'>('create');
@@ -2761,7 +2765,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         />
         <PrimaryButton
           disabled={entityStale || generationBlockers.length > 0 || previewBusy}
-          disabledReason={entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : generationBlockers.length === 0 ? undefined : generationBlockerMessage(generationBlockers[0].code, language)}
+          disabledReason={paidGenerationBlockedReason ?? (entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : generationBlockers.length === 0 ? undefined : generationBlockerMessage(generationBlockers[0].code, language))}
           label={quoteCopy.reviewPreview}
           loading={previewBusy}
           onPress={confirmGenerateReference}

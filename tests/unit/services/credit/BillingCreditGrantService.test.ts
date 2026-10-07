@@ -107,6 +107,41 @@ class InMemoryCreditRepository implements CreditRepository {
   }
 }
 
+class RecoveringCreditRepository extends InMemoryCreditRepository {
+  public recoveryCreditsDue = 15;
+
+  public async settleOutstandingStripeRecoveries(userId: string): Promise<number> {
+    const balance = await this.getBalanceForUpdate(userId);
+    if (balance === null) return 0;
+    const amount = Math.min(balance.purchasedCredits, this.recoveryCreditsDue);
+    this.recoveryCreditsDue -= amount;
+    await this.updateBalance({ ...balance, purchasedCredits: balance.purchasedCredits - amount });
+    if (amount > 0) {
+      await this.insertLedger({
+        userId,
+        type: 'purchase_reversal',
+        amount: -amount,
+        monthlyDelta: 0,
+        purchasedDelta: -amount,
+        monthlyAfter: balance.monthlyCredits,
+        purchasedAfter: balance.purchasedCredits - amount,
+        description: 'Stripe payment credit recovery',
+      });
+    }
+    return amount;
+  }
+
+  public async getPaidGenerationRecoveryStatus(): Promise<{
+    paidGenerationBlocked: boolean;
+    recoveryCreditsDue: number;
+  }> {
+    return {
+      paidGenerationBlocked: this.recoveryCreditsDue > 0,
+      recoveryCreditsDue: this.recoveryCreditsDue,
+    };
+  }
+}
+
 describe('BillingCreditGrantService', () => {
   it('期限切れ月次残高がある場合は新しい月次付与の差分に混ぜない', async () => {
     const repository = new InMemoryCreditRepository();
@@ -202,6 +237,37 @@ describe('BillingCreditGrantService', () => {
       amount: 10,
       stripeEventId: 'evt_2',
     });
+  });
+
+  it('不足回収中の将来購入は同じtransactionで残額へ充当し不足だけを保持する', async () => {
+    const repository = new RecoveringCreditRepository();
+    repository.setBalance({
+      userId: 'user-1',
+      monthlyCredits: 25,
+      purchasedCredits: 3,
+      monthlyExpiresAt: new Date('2099-07-01T00:00:00.000Z'),
+    });
+    const service = new BillingCreditGrantService(repository);
+
+    const result = await service.grantPurchasedCredits({
+      userId: 'user-1',
+      amount: 10,
+      description: 'Future credit pack purchase',
+      stripeEventId: 'evt_future_purchase',
+    });
+
+    expect(result).toEqual({
+      monthlyCredits: 25,
+      purchasedCredits: 0,
+      totalCredits: 25,
+      monthlyExpiresAt: new Date('2099-07-01T00:00:00.000Z'),
+      paidGenerationBlocked: true,
+      recoveryCreditsDue: 2,
+    });
+    expect(repository.ledger.map((entry) => [entry.type, entry.amount])).toEqual([
+      ['purchase', 10],
+      ['purchase_reversal', -13],
+    ]);
   });
 
   it('fractional monthly grant amount is rejected before ledger write', async () => {

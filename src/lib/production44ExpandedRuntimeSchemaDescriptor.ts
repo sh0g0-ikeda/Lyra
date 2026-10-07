@@ -32,6 +32,11 @@ export const PRODUCTION44_EXPANSION_MIGRATIONS = [
     "filename": "048_advance_entity_state_revision_for_legacy_writers.sql",
     "sha256": "d7553c0f6b7cc5416d1735fd3396942cd49d9b1251e410cf406ec984ffc362c0"
   }
+,
+{
+  "filename": "049_add_stripe_credit_recovery.sql",
+  "sha256": "74af9b0ab85ff01eb7920fc293a17c71a1532a74db829b01e6a064c73beae855"
+}
 ] as const;
 export const PRODUCTION44_EXPANSION_CHECKPOINTS = [
   {
@@ -124,4 +129,15 @@ export const PRODUCTION44_EXPANSION_CHECKPOINTS = [
     "triggers": "0cb560a9a2008aa602fa4a9032d92b9e601c6df954c87935b070a72ce907d344",
     "functions": "7a23857e36eb5babb8b37f88bbced5f3d29e2771564e8e927a607ab171c16b1c"
   }
+,
+{
+  "migrationFilenames": "483aed9bd3ee6fb970486e3f34d789a9d3a70ac34453cd59bd6882733e58a16b",
+  "relations": "085b53cff10331708b44f58798f5d481e20067abbddf07f3aa2eb2150b8ebb93",
+  "namespaceArtifacts": "ff065c4c1f98c7f1a7c6f63c010026d79233ab35cdcaaf993cf1ecf9f6fb758d",
+  "columns": "1775e17bc4512494864452d35d60b8c7ac736f77b4a511d70f7551f70d0b23ea",
+  "constraints": "202ee17152d87031af48380ff63e066c660e2588168f61ab51d0b7d04347af16",
+  "indexes": "90c71972db007893dfc763f83e1bcf9ca8046602081e4fe78730e53dad95527f",
+  "triggers": "0cb560a9a2008aa602fa4a9032d92b9e601c6df954c87935b070a72ce907d344",
+  "functions": "7a23857e36eb5babb8b37f88bbced5f3d29e2771564e8e927a607ab171c16b1c"
+}
 ] as const;

@@ -14,12 +14,14 @@ import { closeDatabasePool, db } from '../src/lib/db.js';
 import { env } from '../src/lib/env.js';
 import { sanitizePersistedErrorMessage } from '../src/lib/errorSanitizer.js';
 import { assertProductionRuntimeConfig } from '../src/lib/runtimeGuards.js';
+import { assertCreditRecoverySchema } from '../src/lib/creditRecoverySchemaGuard.js';
 import { PostgresAccountDeletionRepository } from '../src/repositories/AccountDeletionRepository.js';
 import { AccountDeletionService } from '../src/services/account/AccountDeletionService.js';
 import { createFencedStateReferenceRuntime } from '../src/infrastructure/state/FencedStateReferenceRuntime.js';
 
 async function main(): Promise<void> {
   assertProductionRuntimeConfig(env);
+  await assertCreditRecoverySchema(db);
   const fencedStateReferenceRuntime = createFencedStateReferenceRuntime(env, db);
   const config = resolveAccountDeletionConfig(env);
   if (config === null) {

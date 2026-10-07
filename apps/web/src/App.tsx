@@ -3030,6 +3030,11 @@ function StudioShell(props: {
     activeOrganizationId === null
       ? balanceQuery.data?.total_credits ?? null
       : activeOrganizationBalance?.total_credits ?? null;
+  const recoveryBalance = activeOrganizationId === null ? balanceQuery.data : activeOrganizationBalance;
+  const paidGenerationBlocked = recoveryBalance?.paid_generation_blocked === true;
+  const recoveryMessage = pickUiText(uiLanguage,
+    `Paid generation is paused while payment recovery is confirmed (${recoveryBalance?.recovery_credits_due ?? 0} credits due). Viewing and editing remain available.`,
+    `返金・決済取消の確認中のため、有料生成を保留しています（未回収 ${recoveryBalance?.recovery_credits_due ?? 0} クレジット）。閲覧・編集は引き続き利用できます。`);
   const pageProviderReadinessQuery = useQuery({
     queryKey: scopedQueryKey(['page-generation-readiness', selectedPage?.id ?? '', selectedPage?.updated_at ?? '']),
     queryFn: () => api.getPageGenerationReadiness(selectedPage?.id ?? '', activeOrganizationId),
@@ -3066,8 +3071,8 @@ function StudioShell(props: {
     activeStoryJob: selectedEpisodeStoryAutofillJob,
     activeSkeletonJob: selectedEpisodePageSkeletonJob,
   });
-  const pageGenerationBlocked = hasBlockingErrors(pageGenerationBlockers);
-  const entityReferenceGenerationBlocked = hasBlockingErrors(entityReferenceGenerationBlockers);
+  const pageGenerationBlocked = paidGenerationBlocked || hasBlockingErrors(pageGenerationBlockers);
+  const entityReferenceGenerationBlocked = paidGenerationBlocked || hasBlockingErrors(entityReferenceGenerationBlockers);
   const referenceConfirmationBlocked = hasBlockingErrors(referenceConfirmationBlockers);
   const pageSkeletonBlocked = hasBlockingErrors(pageSkeletonBlockers);
   const storyApplyBlocked = hasBlockingErrors(storyApplyBlockers);
@@ -5376,6 +5381,7 @@ function StudioShell(props: {
             </div>
           )}
         </section>
+        {paidGenerationBlocked ? <p className="muted small" role="status">{recoveryMessage}</p> : null}
         {canViewActiveOrganizationWorks ? (
           <section className="sidebar-section">
             <div className="section-header">

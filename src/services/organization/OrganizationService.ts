@@ -8,11 +8,13 @@ import {
 import {
   ConfigurationError,
   ConflictError,
+  CreditRecoveryRequiredError,
   ForbiddenError,
   InsufficientCreditsError,
   NotFoundError,
   ValidationError,
 } from '../../domain/errors/index.js';
+import type { PaidGenerationRecoveryStatus } from '../../domain/types/billing.js';
 import type {
   OrganizationCollectionPage,
   OrganizationCollectionPageRequest,
@@ -87,6 +89,7 @@ export interface GrantOrganizationCreditsRequest {
   amount: number;
   description: string;
   stripeEventId?: string | null;
+  expiresAt?: Date | null;
 }
 
 export interface RecordOrganizationGenerationRequest {
@@ -179,6 +182,10 @@ export interface OrganizationServicePort {
     client?: DatabaseClient,
   ): Promise<OrganizationMember>;
   getCreditBalance(userId: string, organizationId: string): Promise<OrganizationCreditBalance>;
+  getPaidGenerationRecoveryStatus?(
+    userId: string,
+    organizationId: string,
+  ): Promise<PaidGenerationRecoveryStatus>;
   consumeCredits(input: ConsumeOrganizationCreditsRequest): Promise<OrganizationCreditBalance>;
   refundCredits(input: GrantOrganizationCreditsRequest & { jobId?: string | null }): Promise<OrganizationCreditBalance>;
   grantMonthlyCredits(
@@ -834,14 +841,46 @@ export class OrganizationService implements OrganizationServicePort {
     organizationId: string,
   ): Promise<OrganizationCreditBalance> {
     await this.requireMembership(organizationId, userId);
-    return (await this.organizationRepository.getCreditBalance(organizationId)) ?? emptyOrgBalance(organizationId);
+    const balance = (await this.organizationRepository.getCreditBalance(organizationId)) ?? emptyOrgBalance(organizationId);
+    const getStatus = this.organizationRepository.getPaidGenerationRecoveryStatus;
+    const recoveryStatus = getStatus === undefined
+      ? { paidGenerationBlocked: false, recoveryCreditsDue: 0 }
+      : await getStatus.call(this.organizationRepository, organizationId);
+    return { ...balance, ...recoveryStatus };
+  }
+
+  public async getPaidGenerationRecoveryStatus(
+    userId: string,
+    organizationId: string,
+  ): Promise<PaidGenerationRecoveryStatus> {
+    await this.requireMembership(organizationId, userId);
+    const getStatus = this.organizationRepository.getPaidGenerationRecoveryStatus;
+    if (getStatus === undefined) {
+      return { paidGenerationBlocked: false, recoveryCreditsDue: 0 };
+    }
+    return getStatus.call(this.organizationRepository, organizationId);
   }
 
   public async consumeCredits(input: ConsumeOrganizationCreditsRequest): Promise<OrganizationCreditBalance> {
     assertPositiveInteger(input.cost, 'Credit cost');
 
+    const settle = this.organizationRepository.settleOutstandingStripeRecoveries;
+    if (settle !== undefined) {
+      await this.organizationRepository.transaction(async (client) => {
+        await this.requireMembership(input.organizationId, input.userId, 'generate', client);
+        await settle.call(this.organizationRepository, input.organizationId, client);
+      });
+    }
+
     return this.organizationRepository.transaction(async (client) => {
       await this.requireMembership(input.organizationId, input.userId, 'generate', client);
+      const getStatus = this.organizationRepository.getPaidGenerationRecoveryStatus;
+      if (getStatus !== undefined) {
+        const recoveryStatus = await getStatus.call(this.organizationRepository, input.organizationId, client);
+        if (recoveryStatus.paidGenerationBlocked) {
+          throw new CreditRecoveryRequiredError();
+        }
+      }
       const balance =
         (await this.organizationRepository.getCreditBalanceForUpdate(input.organizationId, client)) ??
         (await this.organizationRepository.createCreditBalance(input.organizationId, client));
@@ -1079,7 +1118,7 @@ export class OrganizationService implements OrganizationServicePort {
       const balance =
         (await this.organizationRepository.getCreditBalanceForUpdate(input.organizationId, transactionClient)) ??
         (await this.organizationRepository.createCreditBalance(input.organizationId, transactionClient));
-      const nextExpiresAt = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000);
+      const nextExpiresAt = input.expiresAt ?? new Date(Date.now() + 31 * 24 * 60 * 60 * 1000);
       const next = await this.organizationRepository.updateCreditBalance(
         {
           ...balance,
@@ -1120,7 +1159,18 @@ export class OrganizationService implements OrganizationServicePort {
         },
         transactionClient,
       );
-      return next;
+      const settle = this.organizationRepository.settleOutstandingStripeRecoveries;
+      if (settle === undefined) return next;
+      await settle.call(this.organizationRepository, input.organizationId, transactionClient);
+      const settled = await this.organizationRepository.getCreditBalanceForUpdate(
+        input.organizationId,
+        transactionClient,
+      );
+      if (settled === null) return next;
+      const getStatus = this.organizationRepository.getPaidGenerationRecoveryStatus;
+      return getStatus === undefined
+        ? settled
+        : { ...settled, ...(await getStatus.call(this.organizationRepository, input.organizationId, transactionClient)) };
     };
     return client === undefined ? this.organizationRepository.transaction(work) : work(client);
   }
@@ -1173,7 +1223,18 @@ export class OrganizationService implements OrganizationServicePort {
         },
         transactionClient,
       );
-      return next;
+      const settle = this.organizationRepository.settleOutstandingStripeRecoveries;
+      if (settle === undefined) return next;
+      await settle.call(this.organizationRepository, input.organizationId, transactionClient);
+      const settled = await this.organizationRepository.getCreditBalanceForUpdate(
+        input.organizationId,
+        transactionClient,
+      );
+      if (settled === null) return next;
+      const getStatus = this.organizationRepository.getPaidGenerationRecoveryStatus;
+      return getStatus === undefined
+        ? settled
+        : { ...settled, ...(await getStatus.call(this.organizationRepository, input.organizationId, transactionClient)) };
     };
     return client === undefined ? this.organizationRepository.transaction(work) : work(client);
   }

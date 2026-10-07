@@ -110,7 +110,7 @@ native('actual44 explicit forward expansion', () => {
     } }));
     expect(await checkpoint()).toBe(0);
   });
-  it('043ロックtimeoutはそのfileをrollbackしexact3checkpointから再開して52履歴だけとなる', async () => {
+  it('043ロックtimeoutはそのfileをrollbackしexact3checkpointから再開して53履歴だけとなる', async () => {
     const holder = await pool.connect();
     await holder.query('BEGIN');
     await holder.query('LOCK TABLE generation_jobs IN ACCESS SHARE MODE');
@@ -133,9 +133,9 @@ native('actual44 explicit forward expansion', () => {
     } });
     expect(constraintDdlMs).toBeGreaterThan(0);
     if (process.env.LYRA_EXPANSION_TEST_RECEIPT) await writeFile(process.env.LYRA_EXPANSION_TEST_RECEIPT, JSON.stringify({ artificialRows: 20000, migration043DdlMs: Math.round(constraintDdlMs), lockTimeoutRollbackVerified: true }));
-    expect(applied).toHaveLength(5);
-    expect(await checkpoint()).toBe(8);
-    expect((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n).toBe(52);
+    expect(applied).toHaveLength(6);
+    expect(await checkpoint()).toBe(9);
+    expect((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n).toBe(53);
     expect((await pool.query("SELECT filename FROM schema_migrations WHERE filename LIKE '046%'")).rows).toEqual([]);
     expect(await runProduction44Expansion(pool)).toEqual([]);
     expect((await pool.query('SELECT * FROM schema_migration_locks')).rows).toEqual([]);
@@ -182,7 +182,7 @@ native('actual44 explicit forward expansion', () => {
     expect((await pool.query('SELECT monthly_credits,purchased_credits FROM credit_balances WHERE user_id=$1',[userId])).rows[0]).toEqual({monthly_credits:10,purchased_credits:20});
     expect(await jobs.prepareRetry(jobId,2)).toBe(true);
     expect((await jobs.findByIdAndUserId(jobId,userId))?.retryCount).toBe(1);
-    expect(await checkpoint()).toBe(8);
+    expect(await checkpoint()).toBe(9);
   });
   it('停止中にmigration leaseが交代した場合はDDLせず新ownerのロックを消さない', async () => {
     try {
@@ -190,7 +190,10 @@ native('actual44 explicit forward expansion', () => {
         const session = await pool.connect();
         return { release: session.release.bind(session), query: async <T extends QueryResultRow>(sql: string, values?: readonly unknown[]) => {
           const result = await session.query<T>(sql, values === undefined ? undefined : [...values]);
-          if (sql.startsWith('INSERT INTO schema_migration_locks(name)')) await pool.query("UPDATE schema_migration_locks SET locked_at=clock_timestamp()+INTERVAL '1 second' WHERE name='schema_migrations'");
+          if (sql.startsWith('INSERT INTO schema_migration_locks(name)')) {
+            const changed = await pool.query("UPDATE schema_migration_locks SET locked_at=clock_timestamp()+INTERVAL '1 second' WHERE name='schema_migrations' RETURNING name");
+            expect(changed.rowCount).toBe(1);
+          }
           return result;
         } };
       } }));
