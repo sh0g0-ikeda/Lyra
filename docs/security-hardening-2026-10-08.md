@@ -32,6 +32,8 @@ Solが課金設計・実装と最終独立レビュー、Terraが両clientの保
 
 公開用branchは公開済み候補 `6c0c9681` を基準とし、未公開の機能差分を含めない。API、生成worker、退会workerは起動時に049のreceiptと実DBのcolumn/default/check/FK/indexを確認する。receiptだけ存在する、またはCHECKを弱めたDBでも起動を拒否する。049は新規migrationであり、適用済みmigrationを変更しない。
 
+PostgreSQL16/17のNOT NULLはcolumnのnullable属性で確認し、PG18以降は追加された`pg_constraint`のNOT NULL定義とvalidation状態も確認する。全versionで必須column・CHECK・FK・PK/unique・indexの条件を維持し、PG16/17だけ存在しないNOT NULL catalog行を要求しない。不正なversionやPG16未満では起動を拒否する。
+
 旧subscriptionの照合には `scripts/backfillStripeSubscriptionRecovery.ts` を追加した。既定はread-only dry-runで、確認した過去の付与量と期限を対象のinvoice/payment/PaymentIntent/Chargeにだけ結ぶ。並行適用と再実行で重複recoveryを作らず、別決済との衝突はrollbackする。残高・ledger・保留状態・Stripe処理済みmarkerをこのツールで変更しない。
 
 移植後に発生した既存テストの問題も検証条件を保って修正した。隔離schemaのtable存在確認をschema-qualifiedにし、共有public schemaを誤参照しない。全画像templateの検証はtemplateごとのtestに分け、検証するtemplate・枠・pixelのassertionを省かず、単一testの5秒制限へ多数の画像処理を詰め込まない。

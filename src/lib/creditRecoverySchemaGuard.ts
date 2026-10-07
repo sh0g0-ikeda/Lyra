@@ -7,6 +7,17 @@ export async function assertCreditRecoverySchema(database: TransactionRunner): P
   try {
     await database.transaction(async client => {
       await client.query('SET TRANSACTION READ ONLY');
+      const serverVersionResult = await client.query<{ serverVersionNum: string }>(
+        `SELECT current_setting('server_version_num') AS "serverVersionNum"`,
+      );
+      const serverVersionValue = serverVersionResult.rows[0]?.serverVersionNum;
+      if (serverVersionResult.rows.length !== 1 || !/^\d+$/.test(serverVersionValue ?? '')) {
+        throw new Error('Invalid PostgreSQL version');
+      }
+      const serverVersion = Number(serverVersionValue);
+      if (!Number.isSafeInteger(serverVersion) || serverVersion < 160000) {
+        throw new Error('Unsupported PostgreSQL version');
+      }
       const receipt = await client.query('SELECT filename FROM schema_migrations WHERE filename=$1', ['049_add_stripe_credit_recovery.sql']);
       if (receipt.rows.length !== 1) throw new Error('Missing receipt');
       const columns = await client.query<Record<string, unknown>>(`
@@ -43,7 +54,10 @@ export async function assertCreditRecoverySchema(database: TransactionRunner): P
       `);
       for (const part of ['columns','constraints','indexes'] as const) {
         const rows = { columns, constraints, indexes }[part].rows;
-        for (const expected of STRIPE_RECOVERY_SCHEMA[part]) {
+        const expectedRows = part === 'constraints' && serverVersion < 180000
+          ? STRIPE_RECOVERY_SCHEMA.constraints.filter(expected => expected.type !== 'n')
+          : STRIPE_RECOVERY_SCHEMA[part];
+        for (const expected of expectedRows) {
           const actual = rows.find(row => row.relation===expected.relation && row.name===expected.name);
           if (actual===undefined || !Object.entries(expected).every(([key,value])=>actual[key]===value)) throw new Error('Invalid recovery schema');
         }

@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   useAppState: vi.fn(),
   useInfiniteQuery: vi.fn(),
   useMutation: vi.fn(),
-  mutationOptions: [] as Array<{ mutationFn?: () => Promise<unknown> }>,
+  mutationOptions: [] as { mutationFn?: () => Promise<unknown> }[],
   useQuery: vi.fn(),
   queryClient: {
     invalidateQueries: vi.fn(),
