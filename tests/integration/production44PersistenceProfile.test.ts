@@ -65,7 +65,13 @@ dbDescribe('実44の生成終端・retry・保存互換profile',()=>{
 
   it('同じ履歴でもconsume guardを無効化した場合は候補として拒否する',async()=>{
     await pool.query('ALTER TABLE credit_ledger DISABLE TRIGGER generation_job_credit_consume_guard');
-    try { await expect(attestProduction44RuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED'); }
+    try {
+      let rejectedError: unknown;
+      try { await attestProduction44RuntimeSchema(database); }
+      catch (error: unknown) { rejectedError = error; }
+      // Settle the PostgreSQL rejection before matching it on both test runners.
+      expect(() => { throw rejectedError; }).toThrow('SCHEMA_UNSUPPORTED');
+    }
     finally { await pool.query('ALTER TABLE credit_ledger ENABLE TRIGGER generation_job_credit_consume_guard'); }
   });
 
@@ -77,7 +83,7 @@ dbDescribe('実44の生成終端・retry・保存互換profile',()=>{
     expect((await scenes.updateEntityState(entityId,state.id,fixture.userId,{costumeNote:'candidate costume'}))?.costumeNote).toBe('candidate costume');
     expect((await pool.query('SELECT costume_note FROM entity_states WHERE id=$1',[state.id])).rows[0]?.costume_note).toBe('candidate costume');
     expect(await scenes.updateEntityState(entityId,state.id,randomUUID(),{costumeNote:'foreign'})).toBeNull();
-    await expect(scenes.updateEntityState(entityId,state.id,fixture.userId,{name:'unsupported'})).rejects.toBeInstanceOf(Error);
+    expect(await captureRejection(scenes.updateEntityState(entityId,state.id,fixture.userId,{name:'unsupported'}))).toBeInstanceOf(Error);
   });
 
   it('現行export relationでqueue・lease奪取・heartbeat・完了とscope拒否が成立する',async()=>{
@@ -116,10 +122,10 @@ dbDescribe('実44の生成終端・retry・保存互換profile',()=>{
     await pool.query("UPDATE users SET account_deletion_started_at=NOW() WHERE id=$1",[fixture.userId]);
     const billing=await new PostgresBillingRepository(database,database,'production44_pg18_v1').findBillingUserProfile(fixture.userId);
     expect(billing?.accountDeleted).toBe(true);
-    await expect(pool.query("INSERT INTO generation_jobs(user_id,job_type,status,credit_cost,params) VALUES($1,'entity_generate','queued',0,'{}')",[fixture.userId])).rejects.toBeInstanceOf(Error);
+    expect(await captureRejection(pool.query("INSERT INTO generation_jobs(user_id,job_type,status,credit_cost,params) VALUES($1,'entity_generate','queued',0,'{}')",[fixture.userId]))).toBeInstanceOf(Error);
     const deletion=new PostgresAccountDeletionRepository(database,database,'production44_pg18_v1');
     expect(await deletion.hasBlockedIdentityKey('synthetic-key')).toBe(false);
-    await expect(deletion.hasBlockedIdentity({identityId:fixture.userId,identityKey:null})).rejects.toBeInstanceOf(Error);
+    expect(await captureRejection(deletion.hasBlockedIdentity({identityId:fixture.userId,identityKey:null}))).toBeInstanceOf(Error);
   });
 
   it.each(jobTypes)('%sの完了をapplicationで一回だけ通知し既存job形式で読める',async(jobType)=>{
@@ -200,7 +206,7 @@ dbDescribe('実44の生成終端・retry・保存互換profile',()=>{
     const fixture=await createFixture('entity_generate',12);const credits=await fundedCredits(fixture);
     const jobs=new PostgresGenerationJobRepository(database,'production44_pg18_v1');
     expect((await jobs.requestCancellation(fixture.jobId,fixture.userId))?.status).toBe('cancelled');
-    await expect(credits.consumeCredits({userId:fixture.userId,cost:12,description:'late QA charge',jobId:fixture.jobId})).rejects.toBeInstanceOf(Error);
+    expect(await captureRejection(credits.consumeCredits({userId:fixture.userId,cost:12,description:'late QA charge',jobId:fixture.jobId}))).toBeInstanceOf(Error);
     expect((await pool.query('SELECT monthly_credits,purchased_credits FROM credit_balances WHERE user_id=$1',[fixture.userId])).rows[0]).toEqual({monthly_credits:10,purchased_credits:20});
     expect((await pool.query('SELECT * FROM credit_ledger WHERE job_id=$1',[fixture.jobId])).rowCount).toBe(0);
     expect(await countOutbox(fixture)).toBe(0);
@@ -359,7 +365,7 @@ dbDescribe('実44の生成終端・retry・保存互換profile',()=>{
     // The old invalid-context sweep ignores available_at and emits a lowercase
     // error code rejected by actual44. Isolate that existing old-writer failure
     // before checking the independent stale-generation claim below.
-    await expect(new OldPush(database,database).claimPending(100)).rejects.toMatchObject({constraint:'mobile_push_notification_deliveries_error_code_check'});
+    expect(await captureRejection(new OldPush(database,database).claimPending(100))).toMatchObject({constraint:'mobile_push_notification_deliveries_error_code_check'});
     await pool.query("UPDATE mobile_push_notification_deliveries d SET status='canceled',locked_at=NULL,lease_token=NULL,sent_at=NULL,error_code=NULL,updated_at=NOW() FROM mobile_push_notification_outbox o WHERE d.outbox_id=o.id AND o.user_id<>$1 AND d.status IN('pending','processing')",[fixture.userId]);
     const deliveries=await new OldPush(database,database).claimPending(100);
     expect(deliveries.find(delivery=>delivery.userId===fixture.userId)?.jobStatus).toBe('failed');
@@ -565,4 +571,10 @@ function testDatabase(pool:Pool):DatabaseClient&TransactionRunner{
   return {query:async<Row extends QueryResultRow=QueryResultRow>(text:string,values?:unknown[])=>pool.query<Row>(text,values),transaction:async<T>(work:(client:DatabaseClient)=>Promise<T>)=>{
     const client=await pool.connect();try{await client.query('BEGIN');const value=await work({query:async<Row extends QueryResultRow=QueryResultRow>(text:string,values?:unknown[])=>client.query<Row>(text,values)});await client.query('COMMIT');return value;}catch(error:unknown){await client.query('ROLLBACK');throw error;}finally{client.release();}
   }};
+}
+
+async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
+  try { await promise; }
+  catch (error: unknown) { return error; }
+  throw new Error('Expected the asynchronous operation to reject');
 }
