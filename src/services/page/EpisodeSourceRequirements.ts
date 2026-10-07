@@ -680,16 +680,18 @@ function formatExtractionBrief(
     '[ALLOWED PAGE OWNERS]',
     ...pages.map((page) => `Page ${page.pageNumber} (${page.pageId})`),
     '[ORIGINAL SOURCE UNITS - ONLY AUTHORITY]',
-    ...units.map((unit, index) => JSON.stringify({
-      u: index + 1,
-      unit_id: unit.unitId,
-      scope: unit.scope,
-      page_id: unit.scope === 'global' ? 'global' : unit.pageId,
-      fragments: unit.fragmentCatalog.map((fragment) => ({
-        id: fragment.id,
-        text: unit.text.slice(fragment.start, fragment.end),
+    ...units
+      .filter((unit) => unit.text.trim().length > 0)
+      .map((unit, index) => JSON.stringify({
+        u: index + 1,
+        unit_id: unit.unitId,
+        scope: unit.scope,
+        page_id: unit.scope === 'global' ? 'global' : unit.pageId,
+        fragments: unit.fragmentCatalog.map((fragment) => ({
+          id: fragment.id,
+          text: unit.text.slice(fragment.start, fragment.end),
+        })),
       })),
-    })),
     '[END ORIGINAL SOURCE UNITS]',
   ].join('\n');
 }

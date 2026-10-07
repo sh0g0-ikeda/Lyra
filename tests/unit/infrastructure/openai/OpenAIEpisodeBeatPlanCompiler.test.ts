@@ -307,7 +307,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         { event: '小石を除く', result: null, conditionalUntil: null, requiredByEnd: true },
       ],
     });
-    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v9');
+    expect(result.compilerPromptVersion).toBe('episode_source_requirements_v10');
     const requestInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
     const requestText = requests[0]?.text as {
       format: { name: string; type: string; strict: boolean; schema: Record<string, unknown> };
@@ -394,6 +394,56 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     expect(schema.properties).not.toHaveProperty('o');
   });
 
+  it('provider向けcatalogはblank unitを除外しnonblank unitだけを連続ordinalとexact schemaで固定する', async () => {
+    const pageId = '11111111-1111-4111-8111-111111111111';
+    const extraction = prepareEpisodeSourceRequirementExtraction({
+      storyFullDraft: '全頁同じ衣装。\n\n1ページ目：扉を押す。\n\n',
+      pages: [{ pageId, pageNumber: 1 }],
+    })!;
+    const nonblankUnits = extraction.units.filter((unit) => unit.text.trim().length > 0);
+    expect(extraction.units.length).toBeGreaterThan(nonblankUnits.length);
+    expect(nonblankUnits).toHaveLength(2);
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: { output_text: JSON.stringify({ requirements: [{
+            k: 'g', i: 1, u: 1, e: [], r: [], a: [], c: [], z: [], x: [], q: [],
+          }, {
+            k: 'e', i: 2, u: 2, e: [fragmentFor(nonblankUnits[1]!, '扉を押す')],
+            r: [null], a: [], c: [null], z: [true], x: [], q: [],
+          }] }) },
+          requestId: 'req-source-nonblank-catalog',
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodeBeatPlanCompiler(client).compileSourceRequirements({
+      extraction,
+      language: 'ja',
+    });
+    expect(result.requirements.requirements.map((requirement) => requirement.sourceUnitIds[0]))
+      .toEqual(nonblankUnits.map((unit) => unit.unitId));
+    const requestInput = requests[0]?.input as Array<{ content: Array<{ text: string }> }>;
+    const displayedRows = requestInput[1]!.content[0]!.text
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line) as { u: number; fragments: unknown[] });
+    expect(displayedRows).toEqual([
+      expect.objectContaining({ u: 1 }),
+      expect.objectContaining({ u: 2 }),
+    ]);
+    expect(displayedRows.every((row) => row.fragments.length > 0)).toBe(true);
+    const requirementsSchema = (requests[0]?.text as { format: { schema: {
+      properties: { requirements: { minItems: number; maxItems: number; items: {
+        properties: { u: Record<string, unknown> };
+      } } };
+    } } }).format.schema.properties.requirements;
+    expect(requirementsSchema).toMatchObject({ minItems: 2, maxItems: 2 });
+    expect(requirementsSchema.items.properties.u).toEqual({ type: 'integer', enum: [1, 2] });
+  });
+
   it.each([
     ['unknown', [999, 2]],
     ['missing', [1]],
@@ -439,12 +489,13 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       storyFullDraft: '全頁同じ衣装。\n1ページ目：開始する。',
       pages: [{ pageId, pageNumber: 1 }],
     })!;
-    const globalOrdinal = extraction.units.findIndex((unit) =>
+    const providerUnits = extraction.units.filter((unit) => unit.text.trim().length > 0);
+    const globalOrdinal = providerUnits.findIndex((unit) =>
       unit.scope === 'global' && unit.text.includes('全頁同じ衣装')) + 1;
-    const pageOrdinal = extraction.units.findIndex((unit) =>
+    const pageOrdinal = providerUnits.findIndex((unit) =>
       unit.scope === 'page' && unit.text.includes('開始する')) + 1;
-    const globalUnit = extraction.units[globalOrdinal - 1]!;
-    const pageUnit = extraction.units[pageOrdinal - 1]!;
+    const globalUnit = providerUnits[globalOrdinal - 1]!;
+    const pageUnit = providerUnits[pageOrdinal - 1]!;
     const globalText = globalUnit.text;
     const requests: Array<Record<string, unknown>> = [];
     const client = {
@@ -487,10 +538,11 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       storyFullDraft: '全頁同じ衣装。\n1ページ目：開始する。',
       pages: [{ pageId, pageNumber: 1 }],
     })!;
-    const globalOrdinal = extraction.units.findIndex((unit) => unit.scope === 'global') + 1;
-    const pageOrdinal = extraction.units.findIndex((unit) => unit.scope === 'page') + 1;
-    const globalUnit = extraction.units[globalOrdinal - 1]!;
-    const pageUnit = extraction.units[pageOrdinal - 1]!;
+    const providerUnits = extraction.units.filter((unit) => unit.text.trim().length > 0);
+    const globalOrdinal = providerUnits.findIndex((unit) => unit.scope === 'global') + 1;
+    const pageOrdinal = providerUnits.findIndex((unit) => unit.scope === 'page') + 1;
+    const globalUnit = providerUnits[globalOrdinal - 1]!;
+    const pageUnit = providerUnits[pageOrdinal - 1]!;
     const globalText = globalUnit.text;
     const client = {
       postJson: async () => ({
@@ -526,9 +578,10 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
       storyFullDraft: '全頁同じ衣装。\n1ページ目：開始する。',
       pages: [{ pageId, pageNumber: 1 }],
     })!;
-    const globalOrdinal = extraction.units.findIndex((unit) => unit.scope === 'global') + 1;
-    const pageOrdinal = extraction.units.findIndex((unit) => unit.scope === 'page') + 1;
-    const pageUnit = extraction.units[pageOrdinal - 1]!;
+    const providerUnits = extraction.units.filter((unit) => unit.text.trim().length > 0);
+    const globalOrdinal = providerUnits.findIndex((unit) => unit.scope === 'global') + 1;
+    const pageOrdinal = providerUnits.findIndex((unit) => unit.scope === 'page') + 1;
+    const pageUnit = providerUnits[pageOrdinal - 1]!;
     const client = {
       postJson: async () => ({
         body: { output_text: JSON.stringify({ requirements: [{
@@ -570,8 +623,8 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
         postJson: async () => ({
           body: { output_text: JSON.stringify({
             requirements: pack.units
+              .filter((unit) => unit.text.trim().length > 0)
               .map((unit, unitIndex) => ({ unit, unitIndex }))
-              .filter(({ unit }) => unit.text.trim().length > 0)
               .map(({ unit, unitIndex }, requirementIndex) => {
                 const trimmed = unit.text.trim();
                 return unit.scope === 'global'

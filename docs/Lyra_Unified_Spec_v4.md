@@ -213,10 +213,15 @@ when it fits the safe output budget.
 
 For a complete original-page mapping without character-state opt-in, bounded
 original-source requirement extraction replaces the existing beat-plan pack calls.
-Source extraction v9 uses consecutive packs of at most four complete pages;
+Source extraction v10 uses consecutive packs of at most four complete pages;
 multi-page packs contain at most forty nonblank source units. A single page is
 never divided and retains the existing input and output byte ceilings even above
 forty units. Every trusted unit remains present exactly once across the packs.
+Blank units remain in the trusted extraction trace, but the provider catalog contains
+only nonblank units in trusted order, numbered consecutively from one. Each source
+request constrains unit ordinals to that exact catalog and requires exactly one
+requirement per nonblank unit. Decoding uses the same catalog; duplicate, missing,
+foreign and invalid fragment references are rejected before detail or persistence.
 Source extraction uses low reasoning effort only when the selected profile leaves
 effort unspecified; an explicit profile effort remains authoritative. Beat, outline,
 detail and audit effort are unchanged. The source compiler cache version changes

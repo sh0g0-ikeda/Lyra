@@ -30,17 +30,18 @@ function prepare(story: string): EpisodeSourceRequirementExtraction {
   return result;
 }
 function rowsFor(extraction: EpisodeSourceRequirementExtraction): ProviderRecord[] {
-  return extraction.units.flatMap((unit, index) => {
-    const text = unit.text.trim();
-    if (text.length === 0) return [];
-    return [{
-      k: unit.scope === 'global' ? 'g' : 'e', i: index + 1, u: index + 1,
-      e: unit.scope === 'global' ? [] : [fragmentId(unit, text)],
-      r: unit.scope === 'global' ? [] : [null], a: [],
-      c: unit.scope === 'global' ? [] : [null],
-      z: unit.scope === 'global' ? [] : [true], x: [], q: [],
-    }];
-  });
+  return extraction.units
+    .filter((unit) => unit.text.trim().length > 0)
+    .map((unit, index) => {
+      const text = unit.text.trim();
+      return {
+        k: unit.scope === 'global' ? 'g' : 'e', i: index + 1, u: index + 1,
+        e: unit.scope === 'global' ? [] : [fragmentId(unit, text)],
+        r: unit.scope === 'global' ? [] : [null], a: [],
+        c: unit.scope === 'global' ? [] : [null],
+        z: unit.scope === 'global' ? [] : [true], x: [], q: [],
+      };
+    });
 }
 async function compile(
   extraction: EpisodeSourceRequirementExtraction, rows: ProviderRecord[],
@@ -133,7 +134,8 @@ describe('原文fragment ID v4の受入契約', () => {
     })!;
     const firstUnit = extraction.units.find((unit) =>
       unit.pageNumber === 1 && unit.text.trim().length > 0)!;
-    const secondUnitIndex = extraction.units.findIndex((unit) =>
+    const providerUnits = extraction.units.filter((unit) => unit.text.trim().length > 0);
+    const secondUnitIndex = providerUnits.findIndex((unit) =>
       unit.pageNumber === 2 && unit.text.trim().length > 0);
     const rows = rowsFor(extraction);
     const secondRow = rows.find((row) => row.u === secondUnitIndex + 1)!;

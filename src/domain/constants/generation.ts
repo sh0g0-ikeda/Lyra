@@ -111,9 +111,9 @@ export const EPISODE_BEAT_PLAN_OUTLINE_COMPILER_VERSION = 'episode_beat_outline_
 // and retains the prior byte/output ceilings even when it contains over forty units.
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_PAGES_PER_PACK = 4;
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_NONBLANK_UNITS_PER_MULTI_PAGE_PACK = 40;
-// v9 invalidates source-extraction cache identity because legacy profiles now use
-// a bounded low-effort source extraction request while explicit profile effort wins.
-export const EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION = 'episode_source_requirements_v9';
+// v10 invalidates source-extraction cache identity because the provider catalog now
+// excludes blank units and fixes the ordinal schema to every nonblank trusted unit.
+export const EPISODE_SOURCE_REQUIREMENT_COMPILER_VERSION = 'episode_source_requirements_v10';
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_DEFAULT_REASONING_EFFORT: 'low' = 'low';
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_INPUT_BYTES = 32_768;
 export const EPISODE_SOURCE_REQUIREMENT_COMPILER_MAX_RECORD_BYTES = 315;

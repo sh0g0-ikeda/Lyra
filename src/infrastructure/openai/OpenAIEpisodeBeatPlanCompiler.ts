@@ -123,10 +123,12 @@ export class OpenAIEpisodeBeatPlanCompiler
   public async compileSourceRequirements(
     input: CompileEpisodeSourceRequirementsInput,
   ): Promise<CompiledEpisodeSourceRequirements> {
-    const maximumRequirements = Math.min(
-      EPISODE_SOURCE_REQUIREMENT_LIMITS.maxRequirements,
-      input.extraction.units.filter((unit) => unit.text.trim().length > 0).length,
-    );
+    const providerUnits = input.extraction.units.filter((unit) => unit.text.trim().length > 0);
+    if (providerUnits.length === 0 ||
+      providerUnits.length > EPISODE_SOURCE_REQUIREMENT_LIMITS.maxRequirements) {
+      throw new ConfigurationError('Source requirements exceeded the bounded contract');
+    }
+    const maximumRequirements = providerUnits.length;
     const validated = await requestStructuredOpenAIResponse({
       client: this.client,
       model: this.model,
@@ -147,7 +149,10 @@ export class OpenAIEpisodeBeatPlanCompiler
         },
       ],
     });
-    const unitsByOrdinal = new Map(input.extraction.units.map((unit, index) => [index + 1, unit] as const));
+    if (validated.requirements.length !== maximumRequirements) {
+      throw new ConfigurationError('Source requirements did not cover every original source unit');
+    }
+    const unitsByOrdinal = new Map(providerUnits.map((unit, index) => [index + 1, unit] as const));
     const pagesByNumber = new Map(input.extraction.pages.map((page) => [page.pageNumber, page] as const));
     const requirementsByNumericId = new Map(validated.requirements.map((requirement) => {
       const unit = unitsByOrdinal.get(requirement.u);
@@ -333,14 +338,14 @@ function buildEpisodeSourceRequirementJsonSchema(maximumRequirements: number): R
     type: 'object', additionalProperties: false, required: ['requirements'],
     properties: {
       requirements: {
-        type: 'array', minItems: 1, maxItems: maximumRequirements,
+        type: 'array', minItems: maximumRequirements, maxItems: maximumRequirements,
         items: {
           type: 'object', additionalProperties: false,
           required: ['k', 'i', 'u', 'e', 'r', 'a', 'c', 'z', 'x', 'q'],
           properties: {
             k: { type: 'string', enum: ['e', 's', 'g'] },
             i: { type: 'integer', minimum: 1, maximum: 512 },
-            u: { type: 'integer', minimum: 1, maximum: 256 },
+            u: { type: 'integer', enum: Array.from({ length: maximumRequirements }, (_unused, index) => index + 1) },
             e: { type: 'array', maxItems: 5, items: fragment },
             r: { type: 'array', maxItems: 5, items: nullableFragment },
             a: { type: 'array', maxItems: 4, items: { type: 'integer', minimum: 1, maximum: 512 } },
