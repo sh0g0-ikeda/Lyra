@@ -14,7 +14,7 @@
 
 Solが課金設計・実装と最終独立レビュー、Terraが両clientの保留表示・Mobile再認証、親が認証guard・画像・共有契約・運用設定・依存/統合を担当する。一人が一つのファイルを所有し、共有ファイルは親が編集する。
 
-先に失敗テストを確認し、返金の重複/部分/順不同/不足/個人組織分離、古い/欠落/別本人の再認証拒否とキャンセル時のdraft保持、画像偽装拒否と正規形式、偽装IP拒否とStripe経路を検証する。DB migration/invariants・全Vitest/Bun・backend build・Web lint/build/Playwright・Mobile contract/type/lint/tests/exportを必要なrelease gateとして確認する。実資産の削除・実返金・有料生成を検証に用いない。
+先に失敗テストを確認し、返金の重複/部分/順不同/不足/個人組織分離、古い/欠落/別本人の再認証拒否とキャンセル時のdraft保持、画像偽装拒否と正規形式、偽装IP拒否とStripe経路を検証する。DB migration/invariants・全Vitest/Bun・backend build・Web lint/build/Playwright・Mobile contract/type/lint/tests/exportを必要なrelease gateとして確認する。実資産の削除と本番環境での実返金・有料生成は検証に用いない。
 
 ## 実装・検証結果
 
@@ -40,14 +40,21 @@ PostgreSQL16/17のNOT NULLはcolumnのnullable属性で確認し、PG18以降は
 
 ### 公開PRの最終検証
 
-- Backend Vitest: 349 files / 2,620 tests PASS。PostgreSQL 18.3の隔離schemaで認可・返金・退会競合・旧DB互換性を含めて実行。
-- Bun 1.4.2: 同じDB付き全349 files / 2,620 tests PASS。`bun install --frozen-lockfile --ignore-scripts`もPASS。旧1.3.14のasync matcher/DB停止は診断し、安定版1.4.2で既存テストのまま解消した。ユーザーのglobal runtimeは変更していない。
+- コード検証HEAD `490b1a49b93edc41a33dc67643669bc6e8392dde` の [GitHub CI run 37772582322](https://github.com/sh0g0-ikeda/Lyra/actions/runs/37772582322) は`verify`・`mobile-verify`ともSUCCESS。Backend Vitest: 350 files / 2,629 tests PASS。PostgreSQL 18.3の隔離schemaで認可・返金・退会競合・旧DB互換性を含めて実行し、DB regressionsは24 files / 210 tests PASS。後続は本記録だけを更新し、検証済みコードは変更していない。
+- Bun 1.4.2: 同じDB付き全350 files / 2,629 tests PASS。`bun install --frozen-lockfile --ignore-scripts`もPASS。旧1.3.14のasync matcher/DB停止は診断し、安定版1.4.2で既存テストのまま解消した。ユーザーのglobal runtimeは変更していない。
 - Backend buildとAPI inventory（150 endpoints）PASS。空の専用DBへ全migration（1–046、049）適用、66 data invariantsと起動guard PASS。049の欠落・CHECK改変を拒否する実DB検証もPASS。
 - Web lint/build PASS。Playwright全17 scenarios PASS（保留表示と無料編集・旧応答を含む）。追加の保留scenario単独もPASS。
-- Mobile typecheck/generated contract/lint/Expo dependency check PASS、Expo Doctor 20/20 PASS。全183 files / 933 tests PASSに加え、最終追加の退会保留案内は対象9 tests PASS。最終Android/iOS exportともPASS。
+- Mobile typecheck/generated contract/lint/Expo dependency check PASS、Expo Doctor 20/20 PASS。全183 files / 934 tests PASSに加え、最終追加の退会保留案内は対象9 tests PASS。最終Android/iOS exportともPASS。
 - `cfn-lint`と差分チェックPASS。公開OSV dumpのlocal照合: candidateの3 lockfilesは修正版未提供の2 advisoryのみ、parse errors 0、semver境界5 checks PASS。稼働imageの12 advisoryは反映前の別inventoryとして残る。
 
-実際のCognito再認証（native/Google・managed/classic UI）と実機Mobile smoke、stagingのStripe test-mode通知、AWS通知の受信、production/storeの受入は未実施。今回のPASSは本番反映済みやゼロリスクを意味しない。環境識別子・内部監査inventoryを含む監査原本は公開PRへ含めない。
+### staging/Test の限定受入
+
+- Google認証済みブラウザで既存の4作品を維持したまま、Stripe Test Checkout の失敗、成功、返金を確認した。失敗した決済では残高5のまま、Checkout return URL の偽装成功でも付与はなかった。成功決済では10 creditが付与され残高は5から15になった。
+- 110 JPY の部分返金を2回受信し、残高は15から10、10から5へ遷移した。ledgerには各-5の回収が2件だけ記録され、同一eventの手動再送で重複回収はなかった。8回の通知配信は全てHTTP 200で、処理済みeventは7件の一意な記録だった。
+- Stripe Test の既定Portal設定を保存し、LyraからPortalを開き戻る往復を確認した。組織請求、invoice、dispute、債務回復、subscription更新などのprovider flowは確認対象外である。
+- stagingのALB直アクセスは遮断を確認した。TLS 1.0/1.1は拒否され、TLS 1.2では証明書検証に成功した。これはstagingの限定確認であり、production入口やstore公開の受入ではない。
+
+実際のCognito再認証（native/Google・managed/classic UI）と実機Mobile smoke、AWS監査通知の受信、production/storeの受入は未実施。Stripe Testでは上記の個人credit購入・部分返金・再送だけを確認しており、組織/invoice/dispute/debt/scheduleの実provider flowは未確認である。今回のPASSは本番反映済みやゼロリスクを意味しない。環境識別子・内部監査inventoryを含む監査原本は公開PRへ含めない。
 
 ## 反映時の手順と受入条件
 
@@ -60,7 +67,7 @@ PostgreSQL16/17のNOT NULLはcolumnのnullable属性で確認し、PG18以降は
    ```
 4. [audit-foundation.json](../ops/security/audit-foundation.json)は未適用。管理eventを保存するmulti-region trailは一つだけ作成する。既存trail/GuardDutyの重複と費用を確認し、primary regionでtrailを作成、追加regionは`CreateAuditTrail=false`とする。GuardDuty既存regionでは`CreateGuardDutyDetector=false`。root loginは`us-east-1`, `us-east-2`, `us-west-2`でも記録されるため、Tokyoに加えてこれらのregionのalert ruleとSNS購読を用意する。各regionのtopicを購読・確認後、合成eventのpattern照合と管理者による実通知/Trail log deliveryを確認してから有効と判定する。365日保存/S3 versioning・log integrity validationを利用する。SNSのEventBridge service policyには非対応のConditionを追加しない。
 5. AWS root長期keyはアプリ修正では無効化されない。IAM Identity Center管理者または限定AssumeRoleへCLIを移し、ECS task role/CI OIDCを用いて長期keyを不要にする。`sts get-caller-identity`がroot以外のassumed roleであること、主要なread-only操作とdeploy toolingの動作、root console/MFAの回復手段を確認する。CloudTrailのkey利用を確認した上で、明示承認後に当該keyをまず無効化し、動作確認後に削除する。移行前にkeyを消さない。秘密値をreport/logへ出さない。
-6. staging ALBはCloudFront managed prefix list +secret origin headerに絞る。既存本番境界を保持し、prefix-list ruleのquota/portとinternal health-check経路を事前確認する。staging公開ドメイン経由のhealth/auth/Stripeが動作し、ALB直アクセスが拒否されることを確認する。
+6. staging ALBはCloudFront managed prefix list +secret origin headerに絞り、ALB直アクセスの遮断を確認した。production入口への反映は別の受入とする。
 
 CloudFormationはlocal `cfn-lint`で検証する。AWS送信による`validate-template`は自動承認審査に拒否され、未実施。テンプレート保存はAWS監査設定の稼働を意味しない。
 
