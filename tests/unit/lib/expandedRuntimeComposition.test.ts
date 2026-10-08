@@ -3,7 +3,13 @@ import { join } from 'node:path';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
-import { CANONICAL_RUNTIME_MIGRATIONS, attestRuntimeSchema, prepareAttestedRuntimeSchema, startAttestedRuntime, type RuntimeSchemaCatalog } from '../../../src/lib/runtimeSchemaAttestation.js';
+import {
+  CANONICAL_RUNTIME_MIGRATIONS,
+  attestRuntimeSchema,
+  prepareAttestedRuntimeSchema,
+  startAttestedRuntime,
+  type RuntimeSchemaCatalog,
+} from '../../../src/lib/runtimeSchemaAttestation.js';
 import { assertAttestedRuntimeCapabilities } from '../../../src/lib/runtimeGuards.js';
 
 function fixture(expanded=true, revision=true):RuntimeSchemaCatalog {
@@ -42,13 +48,25 @@ describe('canonical047/048 と expanded53 の immutable startup proof',()=>{
     const assertState=()=>assertAttestedRuntimeCapabilities(proof,{ENTITY_STATE_REFERENCE_GENERATION_ENABLED:true});
     expect(assertState).toThrow('049');
   });
+  it('verified canonical048でも049拒否後はproduction workerをimportしない',async()=>{
+    const proof=await attestRuntimeSchema(database(fixture(false,true)));
+    const workerImport=vi.fn();
+    const start=vi.fn(async runtime=>{
+      assertAttestedRuntimeCapabilities(runtime,{});
+      await workerImport();
+    });
+    await expect(startAttestedRuntime({attest:async()=>proof,start})).rejects.toThrow('049');
+    expect(start).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledWith(proof);
+    expect(workerImport).not.toHaveBeenCalled();
+  });
   it('expanded exact53だけを同一の凍結proofとしてstartへ渡しAUTOがtrueでもbridgeを呼ばない',async()=>{
     const runMigrations=vi.fn();
     const {runtime}=await prepareAttestedRuntimeSchema({database:database(fixture()),autoRunMigrations:true,runMigrations});
     expect(runtime.repositoryProfile).toBe('production44_expanded_pg18_v1');
     expect(Object.isFrozen(runtime)).toBe(true);expect(Object.isFrozen(runtime.capabilities)).toBe(true);
     const start=vi.fn();await startAttestedRuntime({attest:async()=>runtime,start});
-    expect(start).toHaveBeenCalledExactlyOnceWith(runtime);expect(runMigrations).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(1);expect(start).toHaveBeenCalledWith(runtime);expect(runMigrations).not.toHaveBeenCalled();
     await expect(startAttestedRuntime({attest:async()=>Object.freeze({...runtime}),start})).rejects.toThrow('UNVERIFIED');
     expect(start).toHaveBeenCalledTimes(1);
   });

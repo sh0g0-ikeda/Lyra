@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
+const runtimeSchemaAttestation = await import(
+  /* @vite-ignore */ ['../../../src/lib/runtimeSchemaAttestation.js','?runtime-persistence-startup'].join('')
+) as typeof import('../../../src/lib/runtimeSchemaAttestation.js');
+const {
   startAttestedCanonicalRuntime,
-  type AttestedCanonicalRuntime,
-} from '../../../src/lib/runtimeSchemaAttestation.js';
+} = runtimeSchemaAttestation;
+import type { AttestedCanonicalRuntime } from '../../../src/lib/runtimeSchemaAttestation.js';
 
 // Spec §11: schema attestation precedes every writer. This canonical-only
 // bootstrap does not admit the artificial legacy reference or production44.
@@ -26,7 +29,10 @@ describe('attested canonical runtime startup', () => {
     complete('canonical_fresh_v1');
     const runtime = await startup;
     expect(runtime).toEqual({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical' });
-    for (const writer of [http, queue, recovery, maintenance]) expect(writer).toHaveBeenCalledExactlyOnceWith(runtime);
+    for (const writer of [http, queue, recovery, maintenance]) {
+      expect(writer).toHaveBeenCalledTimes(1);
+      expect(writer).toHaveBeenCalledWith(runtime);
+    }
     expect(Object.isFrozen(runtime)).toBe(true);
   });
 

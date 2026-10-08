@@ -1,24 +1,30 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import type { CancelledSettlementRecoveryResult } from '../../../src/services/job/CancelledGenerationSettlementRecoveryService.js';
-import {
-  CancelledGenerationSettlementRecoveryRuntime,
-  createCancelledGenerationSettlementRecoveryRuntime,
-  startCancelledGenerationSettlementRecoveryMaintenance,
-} from '../../../src/lib/cancelledGenerationSettlementRecoveryRuntime.js';
-
-const { verifiedFactory } = vi.hoisted(() => ({ verifiedFactory: vi.fn() }));
+const verifiedFactory = vi.fn();
 vi.mock('../../../src/repositories/CancelledGenerationSettlementRecoveryRepository.js', () => ({
   createCancelledGenerationSettlementRecoveryRepository: verifiedFactory,
 }));
+const {
+  CancelledGenerationSettlementRecoveryRuntime,
+  createCancelledGenerationSettlementRecoveryRuntime,
+  startCancelledGenerationSettlementRecoveryMaintenance,
+} = await import('../../../src/lib/cancelledGenerationSettlementRecoveryRuntime.js');
 const result: CancelledSettlementRecoveryResult = {
   scanned: 1, settled: 1, skipped: 0, deferred: 0, failed: 0,
   wrapped: false, scanFailed: false, busy: false,
 };
 const query = vi.fn(async () => { throw new Error('Unexpected SQL'); });
 const database: DatabaseClient & TransactionRunner = { query, transaction: async work => work({ query }) };
-beforeEach(() => { vi.useFakeTimers(); vi.spyOn(console, 'info').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {}); });
+let infoSpy: ReturnType<typeof vi.spyOn>;
+let errorSpy: ReturnType<typeof vi.spyOn>;
+beforeEach(() => {
+  vi.useFakeTimers();
+  infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+  errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+});
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); verifiedFactory.mockReset(); query.mockClear(); });
+afterAll(restoreBunModuleMocks);
 
 describe('取消済み精算recoveryの検証済みruntime', () => {
   it('canonicalはfactoryもSQLもtimerも起動しない', async () => {
@@ -40,7 +46,8 @@ describe('取消済み精算recoveryの検証済みruntime', () => {
     await Promise.resolve(); expect(repository.scanBatch).not.toHaveBeenCalled();
     finish(repository); const runtime=await pending;
     await runtime!.run(); await runtime!.run();
-    expect(verifiedFactory).toHaveBeenCalledExactlyOnceWith(database,'production44_pg18_v1');
+    expect(verifiedFactory).toHaveBeenCalledTimes(1);
+    expect(verifiedFactory).toHaveBeenCalledWith(database,'production44_pg18_v1');
     expect(repository.scanBatch.mock.calls.map(call=>call[0].afterId)).toEqual([null,id]);
     await runtime!.stop();
   });
@@ -55,10 +62,10 @@ describe('取消済み精算recoveryの検証済みruntime', () => {
     const runtime=new CancelledGenerationSettlementRecoveryRuntime({run});
     const stop=await startCancelledGenerationSettlementRecoveryMaintenance(runtime,5000);
     expect(run).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(15000); expect(run).toHaveBeenCalledTimes(2);
+    await advanceTimers(15000); expect(run).toHaveBeenCalledTimes(2);
     let closed=false; const closing=stop().then(()=>{closed=true;});
     await Promise.resolve(); expect(closed).toBe(false); expect(vi.getTimerCount()).toBe(0);
-    finish(result); await closing; await vi.advanceTimersByTimeAsync(15000);
+    finish(result); await closing; await advanceTimers(15000);
     await runtime.run(); expect(run).toHaveBeenCalledTimes(2);
   });
   it('workerから重複runされても同じPromiseを返しstopがDBcloseより先に完了する', async () => {
@@ -75,9 +82,9 @@ describe('取消済み精算recoveryの検証済みruntime', () => {
     const run=vi.fn().mockRejectedValueOnce(new Error('private ledger SQL')).mockResolvedValue(result);
     const runtime=new CancelledGenerationSettlementRecoveryRuntime({run});
     const stop=await startCancelledGenerationSettlementRecoveryMaintenance(runtime,5000);
-    await vi.advanceTimersByTimeAsync(5000);await stop();
-    expect(run).toHaveBeenCalledTimes(2);expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain('private');
-    expect(vi.mocked(console.info).mock.calls[0]?.[0]).toContain('"settled":1');
+    await advanceTimers(5000);await stop();
+    expect(run).toHaveBeenCalledTimes(2);expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('private');
+    expect(infoSpy.mock.calls[0]?.[0]).toContain('"settled":1');
   });
   it.each([0,4999,300001,NaN])('不正周期%sは実行前に拒否する',async interval=>{
     const run=vi.fn();const runtime=new CancelledGenerationSettlementRecoveryRuntime({run});
@@ -85,3 +92,14 @@ describe('取消済み精算recoveryの検証済みruntime', () => {
     expect(run).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+async function advanceTimers(milliseconds: number): Promise<void> {
+  vi.advanceTimersByTime(milliseconds);
+  await Promise.resolve();
+}
+
+async function restoreBunModuleMocks(): Promise<void> {
+  if (!('Bun' in globalThis)) return;
+  const bunTest = await import(/* @vite-ignore */ ['bun', 'test'].join(':')) as { mock: { restore(): void } };
+  bunTest.mock.restore();
+}

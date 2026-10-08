@@ -1,21 +1,24 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import type {
   TerminalGenerationNotificationRecoveryRepository,
 } from '../../../src/repositories/TerminalGenerationNotificationRecoveryRepository.js';
 
-const mocks = vi.hoisted(() => ({
+const mocks = ({
   createRepository: vi.fn(),
-}));
+});
 
 vi.mock('../../../src/repositories/TerminalGenerationNotificationRecoveryRepository.js', () => ({
   createTerminalGenerationNotificationRecoveryRepository: mocks.createRepository,
 }));
 
-import {
+const terminalGenerationNotificationRecoveryRuntime = await import(
+  /* @vite-ignore */ ['../../../src/lib/terminalGenerationNotificationRecoveryRuntime.js','?terminal-runtime-suite'].join('')
+) as typeof import('../../../src/lib/terminalGenerationNotificationRecoveryRuntime.js');
+const {
   createTerminalGenerationNotificationRecoveryRuntime,
   startTerminalGenerationNotificationRecoveryMaintenance,
-} from '../../../src/lib/terminalGenerationNotificationRecoveryRuntime.js';
+} = terminalGenerationNotificationRecoveryRuntime;
 
 const CUTOVER = '2026-10-07T00:00:00.000Z';
 const JOB = '00000000-0000-0000-0000-000000000001';
@@ -45,6 +48,7 @@ describe('終端生成通知recovery runtime', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
+  afterAll(restoreBunModuleMocks);
 
   it('無効時とcanonicalではfactory SQLもtimerも開始しない', async () => {
     await expect(createTerminalGenerationNotificationRecoveryRuntime(database, 'production44_pg18_v1', {
@@ -109,12 +113,14 @@ describe('終端生成通知recovery runtime', () => {
       { enabled: true, cutover: CUTOVER, intervalMs: 5_000 },
     );
     expect(runtime).not.toBeNull();
-    expect(mocks.createRepository).toHaveBeenCalledExactlyOnceWith(
+    expect(mocks.createRepository).toHaveBeenCalledTimes(1);
+    expect(mocks.createRepository).toHaveBeenCalledWith(
       database,
       'production44_expanded_pg18_v1',
     );
     await runtime!.run();
-    expect(repo.scanBatch).toHaveBeenCalledExactlyOnceWith({ cutover: CUTOVER, afterId: null, limit: 100 });
+    expect(repo.scanBatch).toHaveBeenCalledTimes(1);
+    expect(repo.scanBatch).toHaveBeenCalledWith({ cutover: CUTOVER, afterId: null, limit: 100 });
   });
 
   it('重複tickは進行中batchと重ならずstopは新規admissionを閉じて完了を待つ', async () => {
@@ -130,7 +136,7 @@ describe('終端生成通知recovery runtime', () => {
       intervalMs: 5_000,
     });
     const stop = await startTerminalGenerationNotificationRecoveryMaintenance(runtime);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimers(15_000);
     expect(repo.scanBatch).toHaveBeenCalledTimes(2);
     let stopped = false;
     const stopping = stop().then(() => { stopped = true; });
@@ -141,7 +147,7 @@ describe('終端生成通知recovery runtime', () => {
     expect(repo.scanBatch).toHaveBeenCalledTimes(2);
     finish([]);
     await stopping;
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimers(15_000);
     expect(repo.scanBatch).toHaveBeenCalledTimes(2);
   });
 
@@ -164,3 +170,14 @@ describe('終端生成通知recovery runtime', () => {
     expect(logs).not.toContain('credential');
   });
 });
+
+async function advanceTimers(milliseconds: number): Promise<void> {
+  vi.advanceTimersByTime(milliseconds);
+  await Promise.resolve();
+}
+
+async function restoreBunModuleMocks(): Promise<void> {
+  if (!('Bun' in globalThis)) return;
+  const bunTest = await import(/* @vite-ignore */ ['bun', 'test'].join(':')) as { mock: { restore(): void } };
+  bunTest.mock.restore();
+}

@@ -1,15 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
-import {
-  createTerminalGenerationNotificationRecoveryRepository,
-} from '../../../src/repositories/TerminalGenerationNotificationRecoveryRepository.js';
-
-const state = vi.hoisted(() => ({
+const state = ({
   attest: vi.fn(),
   attestExpanded: vi.fn(),
   construct: vi.fn(),
   enqueue: vi.fn(),
-}));
+});
 
 vi.mock('../../../src/lib/production44RuntimeSchemaAttestation.js', () => ({
   attestProduction44RuntimeSchema: state.attest,
@@ -23,6 +19,18 @@ vi.mock('../../../src/repositories/PushNotificationOutboxRepository.js', () => (
     public enqueueForTerminalJob(jobId: string): Promise<unknown> { return state.enqueue(jobId); }
   },
 }));
+vi.mock('../../../src/repositories/PushNotificationOutboxRepository.js?terminal-repository-suite', () => ({
+  PostgresPushNotificationOutboxRepository: class {
+    public constructor(runner: unknown) { state.construct(runner); }
+    public enqueueForTerminalJob(jobId: string): Promise<unknown> { return state.enqueue(jobId); }
+  },
+}));
+const terminalGenerationNotificationRecoveryRepository = await import(
+  /* @vite-ignore */ ['../../../src/repositories/TerminalGenerationNotificationRecoveryRepository.js','?terminal-repository-suite'].join('')
+) as typeof import('../../../src/repositories/TerminalGenerationNotificationRecoveryRepository.js');
+const {
+  createTerminalGenerationNotificationRecoveryRepository,
+} = terminalGenerationNotificationRecoveryRepository;
 
 const query = vi.fn();
 const database: DatabaseClient & TransactionRunner = {
@@ -37,12 +45,14 @@ beforeEach(() => {
   state.attest.mockResolvedValue('production44_pg18_v1');
   query.mockResolvedValue({ rows: [] });
 });
+afterAll(restoreBunModuleMocks);
 
 describe('終端生成通知recovery repository', () => {
   it('expandedは専用exact attestorをawaitして同profileのrepositoryを返す', async () => {
     state.attestExpanded.mockResolvedValue('production44_expanded_pg18_v1');
     const repository=await createTerminalGenerationNotificationRecoveryRepository(database,'production44_expanded_pg18_v1');
-    expect(state.attestExpanded).toHaveBeenCalledExactlyOnceWith(database);
+    expect(state.attestExpanded).toHaveBeenCalledTimes(1);
+    expect(state.attestExpanded).toHaveBeenCalledWith(database);
     expect(state.attest).not.toHaveBeenCalled();
     expect(repository.profile).toBe('production44_expanded_pg18_v1');
     state.attestExpanded.mockRejectedValue(new Error('SCHEMA_UNSUPPORTED'));
@@ -56,8 +66,10 @@ describe('終端生成通知recovery repository', () => {
     expect(state.construct).not.toHaveBeenCalled();
     finish();
     await pending;
-    expect(state.attest).toHaveBeenCalledExactlyOnceWith(database);
-    expect(state.construct).toHaveBeenCalledExactlyOnceWith(database);
+    expect(state.attest).toHaveBeenCalledTimes(1);
+    expect(state.attest).toHaveBeenCalledWith(database);
+    expect(state.construct).toHaveBeenCalledTimes(1);
+    expect(state.construct).toHaveBeenCalledWith(database);
   });
 
   it.each([undefined, 'canonical', 'legacy_2debe_v1', 'unknown'])('未検証profile %sはattestationとSQLの前に拒否する', async profile => {
@@ -104,3 +116,9 @@ describe('終端生成通知recovery repository', () => {
     expect(state.enqueue).not.toHaveBeenCalled();
   });
 });
+
+async function restoreBunModuleMocks(): Promise<void> {
+  if (!('Bun' in globalThis)) return;
+  const bunTest = await import(/* @vite-ignore */ ['bun', 'test'].join(':')) as { mock: { restore(): void } };
+  bunTest.mock.restore();
+}
