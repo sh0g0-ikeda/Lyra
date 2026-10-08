@@ -17,7 +17,7 @@ const containsGetAtt = (value, expected) => JSON.stringify(value).includes(JSON.
 // This foundation creates isolated network/data primitives only. Services, task
 // definitions, and roles remain absent until the runtime stack owns them.
 assert.equal(template.Parameters.ResourcePrefix.Default, 'lyra-staging-20261003');
-assert.deepEqual(Object.keys(template.Parameters).filter(name => !name.startsWith('Google')).sort(), ['ExpiresAt', 'HostedZoneId', 'OriginHostname', 'ResourcePrefix']);
+assert.deepEqual(Object.keys(template.Parameters).filter(name => !name.startsWith('Google')).sort(), ['CloudFrontManagedPrefixListId', 'ExpiresAt', 'HostedZoneId', 'OriginHostname', 'ResourcePrefix', 'ViewerCertificateArn', 'ViewerHostname']);
 assert.equal(serialized.toLowerCase().includes('lyra-prod'), false, 'production identifiers are forbidden');
 assert.equal(Object.values(resources).some(({ Type }) => Type === 'AWS::EC2::NatGateway'), false, 'NAT is forbidden');
 assert.equal(Object.values(resources).some(({ Type }) => Type === 'AWS::ECS::Service'), false, 'services must start absent');
@@ -88,7 +88,13 @@ assert.equal(listener.Protocol, 'HTTPS');
 assert.equal(listener.SslPolicy, 'ELBSecurityPolicy-TLS13-1-2-2021-06');
 
 const distribution = resource('StagingDistribution', 'AWS::CloudFront::Distribution').DistributionConfig;
-assert.equal(distribution.ViewerCertificate.CloudFrontDefaultCertificate, true);
+assert.deepEqual(distribution.Aliases, [{ Ref: 'ViewerHostname' }]);
+assert.deepEqual(distribution.ViewerCertificate, {
+  AcmCertificateArn: { Ref: 'ViewerCertificateArn' },
+  SslSupportMethod: 'sni-only',
+  MinimumProtocolVersion: 'TLSv1.2_2021',
+});
+assert.equal(distribution.ViewerCertificate.CloudFrontDefaultCertificate, undefined);
 assert.equal(distribution.Origins[0].CustomOriginConfig.OriginProtocolPolicy, 'https-only');
 assert.equal(distribution.Origins[0].OriginCustomHeaders[0].HeaderName, 'x-lyra-origin-verify');
 assert.deepEqual(distribution.DefaultCacheBehavior.AllowedMethods, ['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'POST', 'DELETE']);
