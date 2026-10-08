@@ -38,7 +38,7 @@
       "Properties": {
         "TrailName": { "Fn::Sub": "${ResourcePrefix}-audit" }, "S3BucketName": { "Ref": "AuditBucket" },
         "IsLogging": true, "IsMultiRegionTrail": true, "IncludeGlobalServiceEvents": true, "EnableLogFileValidation": true,
-        "EventSelectors": [{ "ReadWriteType": "All", "IncludeManagementEvents": true, "ExcludeManagementEventSources": ["kms.amazonaws.com"] }]
+        "EventSelectors": [{ "ReadWriteType": "All", "IncludeManagementEvents": true }]
       }
     },
     "SecurityAlerts": { "Type": "AWS::SNS::Topic", "Properties": { "TopicName": { "Fn::Sub": "${ResourcePrefix}-alerts" } } },
@@ -51,11 +51,15 @@
     },
     "RootActivityAlert": {
       "Type": "AWS::Events::Rule",
-      "Properties": { "EventPattern": { "detail-type": ["AWS API Call via CloudTrail", "AWS Console Signin via CloudTrail"], "detail": { "userIdentity": { "type": ["Root"] } } }, "State": "ENABLED", "Targets": [{ "Id": "SecurityAlerts", "Arn": { "Ref": "SecurityAlerts" } }] }
+      "Properties": { "EventPattern": { "detail-type": ["AWS API Call via CloudTrail", "AWS Console Signin via CloudTrail"], "detail": { "userIdentity": { "type": ["Root"] } } }, "State": "ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS", "Targets": [{ "Id": "SecurityAlerts", "Arn": { "Ref": "SecurityAlerts" } }] }
     },
     "AuditConfigurationAlert": {
       "Type": "AWS::Events::Rule",
       "Properties": { "EventPattern": { "source": ["aws.cloudtrail", "aws.guardduty", "aws.iam"], "detail-type": ["AWS API Call via CloudTrail"], "detail": { "eventName": ["StopLogging", "DeleteTrail", "UpdateTrail", "PutEventSelectors", "DeleteDetector", "UpdateDetector", "CreateAccessKey", "AttachRolePolicy", "PutRolePolicy"] } }, "State": "ENABLED", "Targets": [{ "Id": "SecurityAlerts", "Arn": { "Ref": "SecurityAlerts" } }] }
+    },
+    "AuditBucketTamperAlert": {
+      "Type": "AWS::Events::Rule", "Condition": "CreateTrail",
+      "Properties": { "EventPattern": { "source": ["aws.s3"], "detail-type": ["AWS API Call via CloudTrail"], "detail": { "eventSource": ["s3.amazonaws.com"], "eventName": ["PutBucketPolicy", "DeleteBucketPolicy", "PutBucketLifecycleConfiguration", "PutBucketVersioning", "PutBucketEncryption", "DeleteBucketEncryption", "PutPublicAccessBlock", "DeletePublicAccessBlock", "DeleteBucket", "PutBucketOwnershipControls", "DeleteBucketOwnershipControls", "PutBucketAcl"], "requestParameters": { "bucketName": [{ "Ref": "AuditBucket" }] } } }, "State": "ENABLED", "Targets": [{ "Id": "SecurityAlerts", "Arn": { "Ref": "SecurityAlerts" } }] }
     },
     "GuardDutyDetector": { "Type": "AWS::GuardDuty::Detector", "Condition": "CreateDetector", "Properties": { "Enable": true, "FindingPublishingFrequency": "FIFTEEN_MINUTES" } },
     "GuardDutyFindingAlert": {
