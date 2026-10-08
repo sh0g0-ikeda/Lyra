@@ -42,6 +42,8 @@ Solが課金設計・実装と最終独立レビュー、Terraが両clientの保
 
 公開コード検証HEAD `490b1a49b93edc41a33dc67643669bc6e8392dde` の [CI run 37772582322](https://github.com/sh0g0-ikeda/Lyra/actions/runs/37772582322) はverify/mobile-verifyともSUCCESS。以下はこのHEADの結果であり、未公開のstaging統合候補とは分けて扱う。後続の公開commitは監査記録だけの更新で、検証済みコードは変更していない。
 
+資料更新後の公開HEAD `f6904a53f2343eb5bcac525658b1d9f41c02a6b9` でも [CI run 37777983122](https://github.com/sh0g0-ikeda/Lyra/actions/runs/37777983122) はverify/mobile-verifyともSUCCESS。Bun 350 files/2,629 tests、Playwright17、Mobile934 tests/Expo Doctor20/20を最新logで確認し、Vitest/DB regressions/migration/invariants/build/lint/両OS exportの全step成功も確認した。
+
 - Backend Vitest: 350 files / 2,629 tests PASS。PostgreSQL 18.3のDB regressionsは24 files / 210 tests PASS。隔離schemaで認可・返金・退会競合・旧DB互換性を含めて実行。
 - Bun 1.4.2: 同じDB付き全350 files / 2,629 tests PASS（最終CIは`--isolate`使用）。`bun install --frozen-lockfile --ignore-scripts`もPASS。旧1.3.14のasync matcher/DB停止は診断し、安定版1.4.2で既存テストのまま解消した。ユーザーのglobal runtimeは変更していない。
 - Backend buildとAPI inventory（150 endpoints）PASS。空の専用DBへ全migration（1–046、049）適用、66 data invariantsと起動guard PASS。049の欠落・CHECK改変を拒否する実DB検証もPASS。
