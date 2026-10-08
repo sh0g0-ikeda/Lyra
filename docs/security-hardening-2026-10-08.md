@@ -14,7 +14,7 @@
 
 Solが課金設計・実装と最終独立レビュー、Terraが両clientの保留表示・Mobile再認証、親が認証guard・画像・共有契約・運用設定・依存/統合を担当する。一人が一つのファイルを所有し、共有ファイルは親が編集する。
 
-先に失敗テストを確認し、返金の重複/部分/順不同/不足/個人組織分離、古い/欠落/別本人の再認証拒否とキャンセル時のdraft保持、画像偽装拒否と正規形式、偽装IP拒否とStripe経路を検証する。DB migration/invariants・全Vitest/Bun・backend build・Web lint/build/Playwright・Mobile contract/type/lint/tests/exportを必要なrelease gateとして確認する。実資産の削除・実返金・有料生成を検証に用いない。
+先に失敗テストを確認し、返金の重複/部分/順不同/不足/個人組織分離、古い/欠落/別本人の再認証拒否とキャンセル時のdraft保持、画像偽装拒否と正規形式、偽装IP拒否とStripe経路を検証する。DB migration/invariants・全Vitest/Bun・backend build・Web lint/build/Playwright・Mobile contract/type/lint/tests/exportを必要なrelease gateとして確認する。実資産の削除と本番環境での実返金・有料生成は検証に用いない。後続のstaging生成とStripe Test決済は専用受入として別記する。
 
 ## 実装・検証結果
 
@@ -28,7 +28,7 @@ Solが課金設計・実装と最終独立レビュー、Terraが両clientの保
 
 画像処理入口はPNG/JPEG/WebP magic、実bytes20MiBまで、必要なdecoder40M pixelsを確認し、Sharpを0.35.5へ更新した。未検証originのIPヘッダーはpublic rate-limit quotaを変えられない。正規Stripe署名検証は維持する。
 
-公開OSV dumpのlocal照合で、更新後の3 lockfileはMobileの2件を残す。`node-forge@1.4.0`（GHSA-86w9-cpqp-85rv、Expo update/code-signing certificate/CLI依存）と`braces@3.0.3`（GHSA-vfj7-8cjw-p6xm、Metro glob依存）は確認時の最新stableにも修正版がない。LyraのAPI入力から当該メソッドへの経路は確認できないが、Expo証明書・CI/ビルドの入力を信頼できる管理者/設定に限定する。ゼロ脆弱性の保証ではない。稼働中のimageは今回の変更を含まず、本番inventoryの12件を「解消済み」と数えない。
+公開OSV dumpのlocal照合で、更新後の3 lockfileはMobileの2件を残す。`node-forge@1.4.0`（GHSA-86w9-cpqp-85rv、Expo update/code-signing certificate/CLI依存）と`braces@3.0.3`（GHSA-vfj7-8cjw-p6xm、Metro glob依存）は確認時の最新stableにも修正版がない。LyraのAPI入力から当該メソッドへの経路は確認できないが、Expo証明書・CI/ビルドの入力を信頼できる管理者/設定に限定する。ゼロ脆弱性の保証ではない。本番稼働中のimageは今回の変更を含まず、本番inventoryの12件を「解消済み」と数えない。
 
 公開用branchは公開済み候補 `6c0c9681` を基準とし、未公開の機能差分を含めない。API、生成worker、退会workerは起動時に049のreceiptと実DBのcolumn/default/check/FK/indexを確認する。receiptだけ存在する、またはCHECKを弱めたDBでも起動を拒否する。049は新規migrationであり、適用済みmigrationを変更しない。
 
@@ -40,14 +40,16 @@ Solが課金設計・実装と最終独立レビュー、Terraが両clientの保
 
 ### 公開PRの最終検証
 
-- Backend Vitest: 349 files / 2,626 tests PASS（公開PR最終CI）。PostgreSQL 18.3の隔離schemaで認可・返金・退会競合・旧DB互換性を含めて実行。
-- Bun 1.4.2: 同じDB付き全349 files / 2,626 tests PASS（最終CIは`--isolate`使用）。`bun install --frozen-lockfile --ignore-scripts`もPASS。旧1.3.14のasync matcher/DB停止は診断し、安定版1.4.2で既存テストのまま解消した。ユーザーのglobal runtimeは変更していない。
+公開コード検証HEAD `490b1a49b93edc41a33dc67643669bc6e8392dde` の [CI run 37772582322](https://github.com/sh0g0-ikeda/Lyra/actions/runs/37772582322) はverify/mobile-verifyともSUCCESS。以下はこのHEADの結果であり、未公開のstaging統合候補とは分けて扱う。後続の公開commitは監査記録だけの更新で、検証済みコードは変更していない。
+
+- Backend Vitest: 350 files / 2,629 tests PASS。PostgreSQL 18.3のDB regressionsは24 files / 210 tests PASS。隔離schemaで認可・返金・退会競合・旧DB互換性を含めて実行。
+- Bun 1.4.2: 同じDB付き全350 files / 2,629 tests PASS（最終CIは`--isolate`使用）。`bun install --frozen-lockfile --ignore-scripts`もPASS。旧1.3.14のasync matcher/DB停止は診断し、安定版1.4.2で既存テストのまま解消した。ユーザーのglobal runtimeは変更していない。
 - Backend buildとAPI inventory（150 endpoints）PASS。空の専用DBへ全migration（1–046、049）適用、66 data invariantsと起動guard PASS。049の欠落・CHECK改変を拒否する実DB検証もPASS。
 - Web lint/build PASS。Playwright全17 scenarios PASS（保留表示と無料編集・旧応答を含む）。追加の保留scenario単独もPASS。
-- Mobile typecheck/generated contract/lint/Expo dependency check PASS、Expo Doctor 20/20 PASS。全183 files / 933 tests PASSに加え、最終追加の退会保留案内は対象9 tests PASS。最終Android/iOS exportともPASS。
-- `cfn-lint`と差分チェックPASS。公開OSV dumpのlocal照合: candidateの3 lockfilesは修正版未提供の2 advisoryのみ、parse errors 0、semver境界5 checks PASS。稼働imageの12 advisoryは反映前の別inventoryとして残る。
+- Mobile typecheck/generated contract/lint/Expo dependency check PASS、Expo Doctor 20/20 PASS。全183 files / 934 tests PASS。最終Android/iOS exportともPASS。
+- `cfn-lint`と差分チェックPASS。監査templateのroot read管理event/監査bucket改変検出は先に失敗を確認し、公開版Vitest/Bun各3 tests、統合版のTLS/DNSを含む各6 tests PASS。lint error0、既存warning6。公開OSV dumpのlocal照合: candidateの3 lockfilesは修正版未提供の2 advisoryのみ、parse errors 0、semver境界5 checks PASS。本番稼働imageの12 advisoryは反映前の別inventoryとして残る。
 
-実際のCognito再認証（native/Google・managed/classic UI）と実機Mobile smoke、stagingのStripe test-mode通知、AWS通知の受信、production/storeの受入は未実施。今回のPASSは本番反映済みやゼロリスクを意味しない。環境識別子・内部監査inventoryを含む監査原本は公開PRへ含めない。
+実際の退会用Cognito再認証（native/Google・managed/classic UI）と実機Mobile smoke、AWS監査通知の受信、production/storeの受入は未実施。stagingのStripe Test実通知は下記の購入・累積返金・再送で確認した範囲に限定する。今回のPASSは本番反映済みやゼロリスクを意味しない。環境識別子・内部監査inventoryを含む監査原本は公開PRへ含めない。
 
 ## 反映時の手順と受入条件
 
@@ -63,7 +65,7 @@ Solが課金設計・実装と最終独立レビュー、Terraが両clientの保
    ```
 4. [audit-foundation.json](../ops/security/audit-foundation.json)は未適用。管理eventを保存するmulti-region trailは一つだけ作成する。既存trail/GuardDutyの重複と費用を確認し、primary regionでtrailを作成、追加regionは`CreateAuditTrail=false`とする。GuardDuty既存regionでは`CreateGuardDutyDetector=false`。root loginは`us-east-1`, `us-east-2`, `us-west-2`でも記録されるため、Tokyoに加えてこれらのregionのalert ruleとSNS購読を用意する。各regionのtopicを購読・確認後、合成eventのpattern照合と管理者による実通知/Trail log deliveryを確認してから有効と判定する。365日保存/S3 versioning・log integrity validationを利用する。SNSのEventBridge service policyには非対応のConditionを追加しない。
 5. AWS root長期keyはアプリ修正では無効化されない。IAM Identity Center管理者または限定AssumeRoleへCLIを移し、ECS task role/CI OIDCを用いて長期keyを不要にする。`sts get-caller-identity`がroot以外のassumed roleであること、主要なread-only操作とdeploy toolingの動作、root console/MFAの回復手段を確認する。CloudTrailのkey利用を確認した上で、明示承認後に当該keyをまず無効化し、動作確認後に削除する。移行前にkeyを消さない。秘密値をreport/logへ出さない。
-6. staging ALBはCloudFront managed prefix list +secret origin headerに絞る。既存本番境界を保持し、prefix-list ruleのquota/portとinternal health-check経路を事前確認する。staging公開ドメイン経由のhealth/auth/Stripeが動作し、ALB直アクセスが拒否されることを確認する。
+6. staging ALBのCloudFront managed prefix list +secret origin header制限は反映・実測済み（下記）。本番への適用時も既存境界、quota/port、internal health-check経路を確認し、公開ドメイン経由のhealth/auth/StripeとALB直アクセス拒否を再受入する。
 
 CloudFormationはlocal `cfn-lint`で検証する。AWS送信による`validate-template`は自動承認審査に拒否され、未実施。テンプレート保存はAWS監査設定の稼働を意味しない。
 
@@ -73,11 +75,11 @@ CloudFormationはlocal `cfn-lint`で検証する。AWS送信による`validate-t
 
 8f4統合worktreeでもsecurity-only変更を反映し、既存のstate-reference lifecycle/continuation/Google連携の実装を保持した。全Vitest（PostgreSQL18.3）454 files / 3,951 tests PASS、backend build PASS。Mobile全188 files / 1,065 tests PASS後、最終の再認証不一致メッセージは対象12 testsとtype/contracts/lint、Android/iOS exportで追加確認した。Webの統合側Playwrightは79 PASS / 5 SKIP（公開用の全17 scenariosとは別集合）。
 
-統合候補9494dc6では、Bun 1.4.2の`bun test --isolate`を使用し、Vitestと同じファイル単位の隔離を適用した。既存のmodule mock共有とBun未対応matcherを修正し、検証するassertionを維持した。全456 files / 3,961 testsがBunとVitestの双方でPASS（Bun: 0 FAIL、16,350 expects）。backend buildとWeb lint/build、Playwright 79 PASS / 5 SKIP、Mobile contracts/type/lintとAndroid/iOS exportもPASS。CIもBun 1.4.2と`--isolate`を固定した。公開PRのCI run37757092651はverify/mobile-verifyともSUCCESS。未公開のops・worker・harnessを公開PRへ混ぜていない。
+統合候補9494dc6では、Bun 1.4.2の`bun test --isolate`を使用し、Vitestと同じファイル単位の隔離を適用した。既存のmodule mock共有とBun未対応matcherを修正し、検証するassertionを維持した。全456 files / 3,961 testsがBunとVitestの双方でPASS（Bun: 0 FAIL、16,350 expects）。backend buildとWeb lint/build、Playwright 79 PASS / 5 SKIP、Mobile contracts/type/lintとAndroid/iOS exportもPASS。CIもBun 1.4.2と`--isolate`を固定した。公開PRの旧HEADのCI run37757092651もSUCCESSだったが、現在の公開HEADは上記run37772582322で判定する。未公開のops・worker・harnessを公開PRへ混ぜていない。
 
 公開PR: https://github.com/sh0g0-ikeda/Lyra/pull/222 （公開済み候補向けDraft。本番反映なし）。元checkoutの既存32 dirty entriesは変更せず保持した。
 
-## 既設検証環境への反映設計（2026-10-08、実施中）
+## 既設検証環境への反映設計（2026-10-08）
 
 ユーザーは既設AWS検証環境と改修中frontend/backendの編集・反映・実ブラウザ確認を依頼した。現ストア版が利用する既存APIは、将来のbackend差替後も維持する。アプリの環境切替機能の新設は今回の目的ではない。本番サービスの更新やストア公開は含めない。
 
@@ -110,7 +112,7 @@ foundation stackは2026-10-08 19:42 JSTにUPDATE_COMPLETEとなり、正式なCl
 
 暫定rule撤去後もCloudFrontのroot/healthz/readyz=200、未認証api/me=401、API target healthy。origin直HTTPSと無効header＋偽装x-forwarded-forの直接続は、最終SG制限後には7秒で接続timeout（HTTP応答なし、curl exit28）となった。実Chromeの再読込後もGoogle認証済みで4作品・保存済み文章・残高5を確認し、既存漫画画像2か所の1024×1536復号/表示が正常。API 1/1/0、生成/export/退会worker 0/0/0、runtime UPDATE_COMPLETEを保持した。証跡は .tmp/stage-ingress-final-evidence.json、画面は元checkoutのignored .tmp/security-20261008/ingress-completed.png。
 
-CloudFront default certificateではTLSv1 minimumが固定されるため、設定値だけを変えてTLS1.2限定達成とは扱わない。viewerのTLS1.2限定には別途custom alias+ACM証明書が必要。本番設定は変更していない。
+CloudFront default certificateではTLSv1 minimumが固定されるため、設定値だけを変えてTLS1.2限定達成とは扱わなかった。後続の承認済みcustom alias+ACM反映でviewer TLS1.2以上を実測した（下記）。本番設定は変更していない。
 ### 検証環境への反映と実ブラウザ受入結果
 
 - stagingの048/049 migration taskはexit0。移行直前の元047 catalog/14 table hash/active job=0、移行後のfull catalog attestation・同じ14 table hash・金融aggregate・76/88 release checksを再確認してからAPIを1台へ戻した。現在のAPI16・generation16・export16・deletion16・Google expiry6・migration17は同じcandidate digest。API target healthy、CloudFrontのhealthz/readyz=200、未認証api/me=401。
@@ -121,7 +123,48 @@ CloudFront default certificateではTLSv1 minimumが固定されるため、設�
 - 既存ページ1枚を「画像」で保存し、UIの完了通知と実ダウンロードファイルを確認。ブラウザのdownload event observerはタイムアウトしたが、同操作でDownloadsにPNG 2,920,531bytesが保存され、native decoderで1024×1536/RGBとして正常復号できた。受入は画面の通知だけで判断していない。
 - 生成結果の証拠:元checkoutのignored `.tmp/security-20261008/preview-completed.jpg`。元checkoutの32 dirty entriesには変更を加えていない。公開PR222/CI成功と、今回実配備した未公開統合候補9494dc6は区別している。
 
-今回の受入は署名検証・返金重複/順不同・有料保留・再認証失敗/キャンセルの自動回帰に加え、実stagingの保存・画像・生成・downloadを確認した範囲である。stagingにはStripe test-mode secretがなく、EPISODE_EXPORT_ENABLED/ACCOUNT_DELETION_ENABLED/MOBILE_STORE_BILLING_ENABLEDも元からfalseのため値を維持した。Stripe実通知、nativeアプリのGoogle/native再認証と退会、現在配布中binaryの実機smokeは完了扱いにしない。source/公開CIのSKIPをPASSへ数えず、production/storeの差替承認も得ていない。
+上記はStripe Test設定前の保存・画像・生成・download受入である。後続で承認済みStripe Test設定と実通知を追加した（下記）。EPISODE_EXPORT_ENABLED/ACCOUNT_DELETION_ENABLED/MOBILE_STORE_BILLING_ENABLEDは元からfalseのため維持した。nativeアプリのGoogle/native再認証と退会、現在配布中binaryの実機smokeは完了扱いにしない。source/公開CIのSKIPをPASSへ数えず、production/storeの差替承認も得ていない。
+
+### Viewer TLS制限の反映と実測
+
+ユーザーが許可した既存DNS zone `Z06854141YIQEBHNYPPXP` の `staging-20261003.lyra-editor.com` A/AAAA CREATE/UPSERT/DELETEだけをfoundation roleへ追加した。本番名・他zone・CNAME・name/type/action欠落・stageと他名の混在はIAM simulationで拒否し、8ケースを確認した。us-east-1 ACMの同stage名だけの証明書 `f7b44e51-d28e-4fd0-97b7-ef7ebf71f205` はISSUED。
+
+foundationのchange set `security-viewer-tls-20261008-r1` は、実差分3件を確認後に反映してUPDATE_COMPLETE。CloudFront `E2BL30PE3M45EZ` はDeployed、SNI証明書とTLSv1.2_2021を使用する。OpenSSLによる実接続でprimary CloudFront名とstage aliasの両方がTLS1.0/1.1をserver protocol versionで拒否し、TLS1.2の証明書検証に成功した。証跡は元checkoutのignored `.tmp/security-20261008/viewer-tls-matrix.json` と `viewer-dns-simulation-results.json`。
+
+Web/native Cognito clientのcallback/logout設定は前後同一。Google認証の実ブラウザ受入は従来のprimary CloudFront URLで行った。alias単独の対話ログインは今回の受入範囲に含めない。
+
+### Stripe Test設定・実通知・累積返金の受入
+
+ユーザーが許可したLyra Japan Test account `acct_1TGUv3RoF6paLir7` だけに、primary CloudFront `/api/webhooks/stripe` のTest endpoint `we_1UOFuKRoF6paLir7MNvRW3Zo` を作成した。Stripe SDK22.6.2と同じAPI version `2026-08-26.dahlia`、既存8イベントとrefund/dispute7イベントの計15種を購読し、現在enabled/Testを再取得した。API versionを変更できない旧Test draft endpointはdisabledで保持し、live endpointは変更していない。
+
+Standard/Premium月額と3種の追加creditのTest priceをruntimeと一致させた。`lyra-staging-20261003-runtime` へTest API key・署名key・5 price ID・success/cancel/portal return URLの10項目だけをmergeし、既存71項目を全件比較して保持した。AWSPENDINGをread backしてからversion `d8f24ff8-1956-487c-912f-d0f89bdb08f4` をAWSCURRENTへ昇格し、旧versionを復元点として残した。key値はGit・reportへ含めず、転送一時ファイルは権限をcurrent user/SYSTEM/Administratorsだけに限定した。APIだけを同じtask16/imageで再配備し、新deploymentはCOMPLETED。worker台数・既存flagは変更していない。
+
+実Chromeの既存Googleログインで、Stripe公開Test cardを用い次を確認した。実資金の移動や既存購入の返金は行っていない。
+
+- 10credit/220円のTest Checkoutで残高不足cardが拒否され、キャンセル後も残高5。success return URLを直接開いても残高5で、browser URLだけでは付与されない。
+- 新しいTest Checkoutがpaidとなり、正規通知と画面の更新表示を経て5→15。決済対象は表示済みTest session/同一customer・actor/owned priceだけを照合した。
+- 同じ220円決済へ110円の成功部分返金を2回行い、残高15→10→5。累積返金110→220に対応し、各回収は5credit。1回目の処理を同idempotency keyで再実行しても新しい返金は作られなかった。
+- Stripe画面から同じ `refund.updated` を手動再送し、初回と再送がHTTP200/received=true。再送後の残高10は変わらず、最後の部分返金後は5。Webhook配信一覧で7 unique eventと1 resendの8試行すべてHTTP200を確認した。
+- migration17のread-only ECS probeはSTOPPED/exit0、runtime schema/capability guard PASS。paymentはpaid220円・付与10・累積返金220・回収10・不足0。ledgerの回収はexactly2行（-5/-5）、processed markerは7 unique event、最終ledger19行/総額5で再送による追加回収なし。unresolved/pending adjustmentは0。
+- 同probeで作品4・章4・話8・ページ65・コマ/枠257を保持し、backend-only/new-mobile release profileはok=true/violationsなし。最終Chromeも4作品と残高5を確認。既存作品の削除、credit手動補填、ledger手動修正は行っていない。
+- Test default Customer Portal `bpc_1UOGN2RoF6paLir77me2q6tZ` をactiveとして保存し、Standard/Premiumのruntimeと同じ2価格だけをプラン変更に許可。解約と低額プランへの変更は期間終了時、上位変更は日割り・即時invoice。アプリの請求管理ボタン→hosted Test portal→Lyraへ戻る実操作と「請求情報を更新しました」を確認した。no-code portal login linkは有効化していない。
+
+証跡は元checkoutのignored `.tmp/security-20261008/stripe-stage-billing-proof.json`、`stripe-paid-acceptance.json`、`stripe-refund-half.json`/`stripe-refund-rest.json`。画面は `stripe-webhook-final.png`、`stripe-portal-completed.png`、`stripe-lyra-final.png` に保存した。Test portalの短命session URLの一部が操作出力に含まれたため、以後の画面抽出ではリンク先全行を除外した。Test API key/署名keyを表示したものではなく、当該sessionで実資金は扱っていない。
+
+最終のportal API照合ではproductsを明示展開し、同じ2価格・at_period_end解約・always_invoice・低額変更のdecreasing_item_amount条件を確認した。Secrets Managerもexact ARN/Name/AWSCURRENT versionと全項目一致・既存71項目保持を再確認してから、今回作った秘密転送5ファイルと暗号化key/public PEM/browser対象記録の3ファイルだけを非再帰で削除した。親directoryと各対象のreparseを拒否し、全対象の消失と空directoryの撤去を確認した。秘密を含まないaudit receiptは保持し、`.tmp/security-20261008/stripe-final-settings-proof.json` にcleanup済みの結果を保存した。
+
+最終のCloudFront healthz/readyzは200、未認証api/meは401、署名なし/偽造署名のStripe POSTは422で拒否。API 1/1/0、generation/export/deletionは0/0/0、各deployment COMPLETEDを再取得した。
+
+実Testで確認したのは個人の単発購入、決済拒否、累積部分返金、同通知再送、portalへの往復である。購読15種類すべての実通知を確認したわけではない。法人、subscription invoice/proration、scheduleによる期日ダウングレード、pending→failed、dispute won/lost、不足credit→新購入は自動回帰と区別し、実provider受入を残す。
+
+### 未完了の重大リスクと差替前のgate
+
+- AWS CLI callerは依然rootの長期key。Identity Centerは稼働しているが、この時点で利用可能な管理permission set/割当がない。移行先・回復手段を確認してから権限を限定した管理者へ移す必要があり、root keyの無効化/削除や広い管理権限追加は今回行っていない。
+- audit templateのroot read管理event検出と監査bucket改変検出はTDDとlocal lintで検証したが、CloudTrail/GuardDuty/SNSを稼働・受信確認した状態ではない。監査設定のdeploy先、通知受信先、重複/費用を確定して実deliveryを確認するまで未完了。
+- 現ストアbinaryの全Cognito client/token種別の棚卸し、旧版実機smoke、native/Googleの退会用再認証を残す。旧HTTP contract/strict schemaとopt-inは自動回帰・DB受入で維持したが、実機確認の代替にはしない。
+- Mobile依存の修正版未提供2 advisory、退会完了後の新規返金や別identityへの債務継承の限界、上記Stripe実provider未検証系列を残す。本番環境の旧image/監査inventoryを解消済みとは扱わず、本番差替・main merge・store公開も行っていない。
+
+今回のstaging反映・ブラウザ受入は完了した範囲を上記に記録した。root資格情報と監査運用が未解消のため、「重大なリスクがない」「本番差替可能」とは判定しない。
 
 ### 保持している復元・検証資源
 
