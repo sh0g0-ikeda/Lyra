@@ -18,8 +18,18 @@ phases:
         --build-arg VITE_COGNITO_SCOPES='openid email'
         --build-arg VITE_COGNITO_API_TOKEN_USE=id
         --build-arg VITE_ORGANIZATION_FEATURES_ENABLED=true
+        --label "org.opencontainers.image.revision=$IMAGE_TAG"
         -t "$ECR_REPOSITORY_URI:$IMAGE_TAG" .
+      - >-
+        docker run --rm --network none "$ECR_REPOSITORY_URI:$IMAGE_TAG"
+        /usr/local/bin/bun -e 'import sharp from "sharp";
+        if(process.getuid?.()!==65532)throw new Error("Runtime must run as nonroot");
+        const image=await sharp({create:{width:2,height:3,channels:4,background:{r:0,g:0,b:0,alpha:1}}}).png().toBuffer();
+        const result=await sharp(image).metadata();
+        if(result.format!=="png"||result.width!==2||result.height!==3)throw new Error("Native image runtime failed");
+        console.log(JSON.stringify({runtime:Bun.version,architecture:process.arch,uid:process.getuid(),imageDecode:"passed"}));'
   post_build:
     commands:
       - set -euo pipefail
+      - test "$CODEBUILD_BUILD_SUCCEEDING" = 1
       - docker push "$ECR_REPOSITORY_URI:$IMAGE_TAG"

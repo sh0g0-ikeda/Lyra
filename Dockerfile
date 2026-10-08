@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM oven/bun:1.3.14 AS deps
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
@@ -11,7 +11,7 @@ COPY scripts ./scripts
 COPY worker ./worker
 RUN bun run build
 
-FROM oven/bun:1.3.14 AS production-deps
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS production-deps
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
@@ -44,7 +44,7 @@ ENV VITE_COGNITO_API_TOKEN_USE=$VITE_COGNITO_API_TOKEN_USE
 ENV VITE_ORGANIZATION_FEATURES_ENABLED=$VITE_ORGANIZATION_FEATURES_ENABLED
 RUN npm run build
 
-FROM oven/bun:1.3.14-distroless@sha256:c28c51287af70bab8e0b66fc4b6a30cfb92a727ebc88045223adc9f4c9d09307 AS runtime
+FROM oven/bun:1.4.2-distroless@sha256:1a0c31c7c5f9d193aedf60fe1cebdeb76ac8f6e29f24be8dd8cbd6df72df26ec AS runtime
 ENV NODE_ENV=production
 ENV WEB_STATIC_DIR=./public
 ENV LD_LIBRARY_PATH=/usr/lib
