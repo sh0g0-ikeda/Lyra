@@ -124,3 +124,4 @@ CloudFront default certificateではTLSv1 minimumが固定されるため、設�
 ### 保持している復元・検証資源
 
 作業前snapshot `lyra-staging-security-20261008-before`と停止後snapshot `lyra-staging-security-20261008-quiesced`を保持した。今回作った専用restore DB `lyra-staging-security-rehearsal`は049の追加検証/復元手順確認用に保持中で、継続費用が発生する。既存の別rehearsal DBを削除・変更しない。追加検証と入口変更を完了した後、必要な復元点とactive-useを確認して、自分が作った一時資源だけを整理する。元のDB/作品/S3画像やDockerの保存済み修復backupを削除しない。
+配備したARM64 manifest（4f349f2f…8ae7）のECR basic image scanは2026-10-08 18:44:53 JSTにCOMPLETE、findingSeverityCountsは空（検出0）と確認した。lockfileのOSV照合とは対象が異なり、Mobile build依存の未修正2 advisoryを解消扱いにしない。最終の画面証拠はignoredの".tmp/security-20261008/acceptance-completed.jpg"にも保存。local DB検証用に今回起動したloopback15433の専用PostgreSQL helperは終了し、dataを保持した。
