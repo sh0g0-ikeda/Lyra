@@ -168,6 +168,24 @@ Standard/Premium月額と3種の追加creditのTest priceをruntimeと一致さ�
 
 今回のstaging反映・ブラウザ受入は完了した範囲を上記に記録した。root資格情報と監査運用が未解消のため、「重大なリスクがない」「本番差替可能」とは判定しない。
 
+### 実機確認用staging APKの配布設計
+
+ユーザーは最新改修版を検証環境につないだAndroid APKをEAS buildページで受け取り、まずログイン・編集・表示を実機確認する。generation workerは0台を維持する。Unified SpecのVerification gateとLocal release compatibility preflightを根拠に、既に検証・配備した9494dc6とmobile/shared domainの差分がない9add620から、既存のstaging profile・Cognito client・callback・署名鍵を使用する。本番profile、ストア配信、本番backendは変更しない。
+
+staging channelの実読取ではupdateGroupsが空だったため、既存runtimeVersion 0.1.18を維持する。配布直前にも空であることを再確認する。EAS configの実効値、ローカルarchive、build receipt、APKのpackage/scheme/API/auth設定・署名・SHA256を照合してから配布する。rootの内部資料・Git履歴・ops・秘密・ログをアップロードしないよう、一時的なroot .easignoreでmobile build入力だけを許可し、inspect archiveで除外を確認する。この変更はアップロード配線だけでアプリ動作を変えないため、失敗テスト追加は不要とする。既存のmobile回帰/型/lint/exportの証拠を参照し、APK実機の認証・保存は別の受入として残す。親がbuildと統合を担当し、Solが配布/OTA判断、Terraが読み取り専用の契約・証拠照合を担当する。
+
+#### APK build・artifact検査結果
+
+EAS build `8d787391-8b4b-4f94-8d57-b28af5621973` は2026-10-08 22:20:46 JSTにFINISHED。配布ページは https://expo.dev/accounts/sh0g0/projects/lyra-mobile/builds/8d787391-8b4b-4f94-8d57-b28af5621973 。Android/internal/staging profile/channel、version/runtime 0.1.18、versionCode 1、source commit `9add620cdcd03986ce3fdf34a62104501cf003ef`、EAS fingerprint `d1c7e9273feacd1ae725f2b02574946942768eff` を実receiptで確認した。EAS上のExpo Doctorは20/20 PASS。
+
+アップロード前のinspect archiveは213 files / 2,900,884 bytes（src197、assets4）。すべてsource対応pathとSHA256が一致し、必要入力欠落0、Git履歴・root docs/ops・秘密・ログ・reparse pointなし。manifest SHA256は `87025afd654d1f2d2aae7c906553d6e5677ba2be27d469139edba0481139ff01`。Solの独立read-only照合も一致した。Windowsのdirectory ignore判定をローカルinspectで修正した後だけuploadし、アップロード用の一時 `.easignore` はreceipt取得後に撤去した。最初の誤ったroot build commandが作った未使用eas.jsonと空のintent-to-add登録も今回所有分だけ除去し、元checkoutの32 dirty entriesを保持した。
+
+取得したAPKは107,230,188 bytes、SHA256 `be0a1bcd7572939e7be7e81828b39d7f5da3cdfd008859d9275ab7e1e155a04f`。package `com.lyra.mobile.staging`、label `Lyra Mobile Staging`、scheme `lyra-mobile-staging`、stage app-link、runtime 0.1.18とstaging OTA headerを実manifest/resourceで確認した。APK Signature v2が有効で、既存staging certificate SHA256 `001efdc75467ab92e5372080e647d0aec61996a4fb0ecfa50b89e35095105c5f` と一致。ZIP CRC/16KB zip alignment、96 native librariesの全64bit LOAD segmentの16KB alignmentもPASS。初回のresource照合はaaptとaapt2の表示形式差で失敗したためaapt2で再抽出し、期待runtimeを変更せずPASSした。
+
+Hermes bundleにはstage CloudFront API、stage Cognito domain/client、stage callback/logout、`X-Lyra-Credit-Recovery` opt-inが含まれる。bundle SHA256は `b1ae9a7c958e2ef18a0cb502798a2c243e62834305de44d57138668f69bf937f`。Solの独立bytecodeレビューでは、これらのstage API/auth値がbaseConfigへ実際に格納され、preview環境とstage Web editor URLが構成・検証されることを確認した（source config.ts 214–246に対応）。文字列の存在だけで接続先を判定していない。配布直前のchannel再取得でもstaging branchのupdateGroups=0。stage APIは1/1/0、generationは0/0/0、healthz/readyz=200、未認証api/me=401を再取得した。生成worker増台、本番更新、store提出、APKからの決済/生成操作は行っていない。
+
+証跡は元checkoutのignored `.tmp/security-20261008/apk-archive-proof.json`、`apk-build-finished.json`、`apk-verification.json`、`apk-channel-final.json`、`apk-stage-service-final.json`。実機の上書きinstall、Cognito/Googleログインと戻り、既存作品/画像表示、編集保存・再読込はユーザー確認を残す。worker0では生成完了を確認できない。APKのartifact検査を実機受入や本番差替の合格に代えない。
+
 ### 保持している復元・検証資源
 
 作業前snapshot `lyra-staging-security-20261008-before`と停止後snapshot `lyra-staging-security-20261008-quiesced`を保持した。今回作った専用restore DB `lyra-staging-security-rehearsal`は049の追加検証/復元手順確認用に保持中で、継続費用が発生する。既存の別rehearsal DBを削除・変更しない。追加検証と入口変更を完了した後、必要な復元点とactive-useを確認して、自分が作った一時資源だけを整理する。元のDB/作品/S3画像やDockerの保存済み修復backupを削除しない。
