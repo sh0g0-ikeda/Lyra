@@ -102,17 +102,19 @@ runtimeのContainerImageはAPI・生成・export・退会・migration・Google e
 
 API/workerが0/0になった後の最終snapshot `lyra-staging-security-20261008-quiesced`はavailable。stage移行taskは、元047 catalog、14 tableの件数/hash、active job=0を再確認してから048/049を適用する。048成功・049失敗では書き込み停止を保ち、同じ候補で再実行するか、候補の新規書き込み前に確認済みsnapshotを復元する。候補で新しい書き込みが生じた後は049対応imageによるforward fixを使い、旧03bc imageへ戻さない。
 
-### 入口変更の未完了事項
+### 入口制限の反映と確認
 
-CloudFormation foundation roleにlistener rule作成/タグの既存権限が足りず、stack更新が待機している。role `lyra-staging-20261003-foundation-cfn-r2`へ、既存stage listenerだけのCreateRuleと同listener内のAddTags/RemoveTags/ModifyRule/DeleteRuleを追加する具体的policyを用意したが、自動承認審査が恒久IAM権限追加を拒否したためユーザー承認まで未適用。
+ユーザーの明示承認後、role lyra-staging-20261003-foundation-cfn-r2へ、既存stage listenerだけのCreateRuleと同listener配下のAddTags/RemoveTags/ModifyRule/DeleteRuleを追加した。適用した限定policyは ops/staging/ingress-cfn-role-policy.json に保存し、AWS get-role-policyとの一致を確認した。本番への権限追加、trust policyやroot keyの変更は行っていない。
 
-無条件forwardへの一時復旧も自動承認審査に拒否され、実行していない。default403を保ち、既存CloudFrontと同じ秘密headerを確認する専用priority100 ruleでアクセスを復旧した。正式priority1 ruleの完成後に自分が作成したpriority100だけを除去する。現在もfoundation stackはUPDATE_IN_PROGRESS、world:443 ingressは現存する。正式ruleとSG cleanupは未完了なので、入口制限を完了と報告しない。
+foundation stackは2026-10-08 19:42 JSTにUPDATE_COMPLETEとなり、正式なCloudFormation管理のpriority1 ruleが完成した。秘密headerの一致と同じstage targetへのforward、default403を値を出力せず確認した後、今回作成したpriority100の暫定ruleだけをARN/tagで確認して撤去した。live ALB SGのinboundは443/tcp + CloudFront managed prefix pl-58a04531の1本だけで、IPv4/IPv6 CIDRや別SGからの許可はない。
+
+暫定rule撤去後もCloudFrontのroot/healthz/readyz=200、未認証api/me=401、API target healthy。origin直HTTPSと無効header＋偽装x-forwarded-forの直接続は、最終SG制限後には7秒で接続timeout（HTTP応答なし、curl exit28）となった。実Chromeの再読込後もGoogle認証済みで4作品・保存済み文章・残高5を確認し、既存漫画画像2か所の1024×1536復号/表示が正常。API 1/1/0、生成/export/退会worker 0/0/0、runtime UPDATE_COMPLETEを保持した。証跡は .tmp/stage-ingress-final-evidence.json、画面は元checkoutのignored .tmp/security-20261008/ingress-completed.png。
 
 CloudFront default certificateではTLSv1 minimumが固定されるため、設定値だけを変えてTLS1.2限定達成とは扱わない。viewerのTLS1.2限定には別途custom alias+ACM証明書が必要。本番設定は変更していない。
 ### 検証環境への反映と実ブラウザ受入結果
 
 - stagingの048/049 migration taskはexit0。移行直前の元047 catalog/14 table hash/active job=0、移行後のfull catalog attestation・同じ14 table hash・金融aggregate・76/88 release checksを再確認してからAPIを1台へ戻した。現在のAPI16・generation16・export16・deletion16・Google expiry6・migration17は同じcandidate digest。API target healthy、CloudFrontのhealthz/readyz=200、未認証api/me=401。
-- originへの直接HTTPSと、無効なorigin verification header＋偽装x-forwarded-for付きリクエストはどちらも403。正式CloudFormation rule/SG cleanupの完了とは別の確認である。
+- 入口変更の途中ではorigin直接続と偽装headerにdefault403を確認し、正式rule/SG cleanup後はCloudFront prefix以外の直接続をネットワークで遮断した。最終状態は上記の入口制限記録と実測JSONで確認した。
 - 実Chromeで既存Googleログインを継続し、4作品一覧、話の編集/手動保存/再読込復帰を確認。専用の保存確認話に付けた確認文は元の文章へ戻して再保存した。既存の1024×1536漫画画像を2か所で確認した。
 - 既存作品や画像を上書きせず、検証作品内へ「セキュリティ受入 2026-10-08」キャラクターを追加。通常GPT Image 2の全身プレビューを1回だけ実行し、queued→completed、1024×1536の画像表示と永続化を確認。検証creditは6→5、ledgerは15→16 row・総額6→5となり、クレジット消費は想定の1crだけ（Stripe payment_recordsは0のまま）。残高の手動補填や生成の再試行は行っていない。
 - generation workerはこの受入時だけ1台にし、完了後CloudFormationで0台へ復帰。最終のAPIは1/1/0、3 workerは0/0/0、runtime stack UPDATE_COMPLETE。active generation/export/deletion=0、deletion_blocked=0。browser後の76/88 release checksもviolationsなし。新規entity/reference_set各1行を除き、作品4・章4・話8・ページ65・コマ/枠257などの件数は維持。

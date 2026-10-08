@@ -1,0 +1,24 @@
+{
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Resource": "arn:aws:elasticloadbalancing:ap-northeast-1:452284481392:listener/app/lyra-staging-20261003-alb/632b7fe1c0fb1acd/15aa8d553f5a7036",
+      "Sid": "CreateRuleOnExistingStagingListener",
+      "Action": [
+        "elasticloadbalancing:CreateRule"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Resource": "arn:aws:elasticloadbalancing:ap-northeast-1:452284481392:listener-rule/app/lyra-staging-20261003-alb/632b7fe1c0fb1acd/15aa8d553f5a7036/*",
+      "Sid": "ManageOnlyRulesOnExistingStagingListener",
+      "Action": [
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:RemoveTags",
+        "elasticloadbalancing:ModifyRule",
+        "elasticloadbalancing:DeleteRule"
+      ]
+    }
+  ],
+  "Version": "2012-10-17"
+}
