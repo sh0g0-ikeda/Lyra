@@ -184,7 +184,13 @@ EAS build `8d787391-8b4b-4f94-8d57-b28af5621973` は2026-10-08 22:20:46 JSTにFI
 
 Hermes bundleにはstage CloudFront API、stage Cognito domain/client、stage callback/logout、`X-Lyra-Credit-Recovery` opt-inが含まれる。bundle SHA256は `b1ae9a7c958e2ef18a0cb502798a2c243e62834305de44d57138668f69bf937f`。Solの独立bytecodeレビューでは、これらのstage API/auth値がbaseConfigへ実際に格納され、preview環境とstage Web editor URLが構成・検証されることを確認した（source config.ts 214–246に対応）。文字列の存在だけで接続先を判定していない。配布直前のchannel再取得でもstaging branchのupdateGroups=0。stage APIは1/1/0、generationは0/0/0、healthz/readyz=200、未認証api/me=401を再取得した。生成worker増台、本番更新、store提出、APKからの決済/生成操作は行っていない。
 
-証跡は元checkoutのignored `.tmp/security-20261008/apk-archive-proof.json`、`apk-build-finished.json`、`apk-verification.json`、`apk-channel-final.json`、`apk-stage-service-final.json`。実機の上書きinstall、Cognito/Googleログインと戻り、既存作品/画像表示、編集保存・再読込はユーザー確認を残す。worker0では生成完了を確認できない。APKのartifact検査を実機受入や本番差替の合格に代えない。
+証跡は元checkoutのignored `.tmp/security-20261008/apk-archive-proof.json`、`apk-build-finished.json`、`apk-verification.json`、`apk-channel-final.json`、`apk-stage-service-final.json`。実機の上書きinstall、Cognito/Googleログインと戻り、既存作品/画像表示、編集保存・再読込はユーザー確認を残す。APKのartifact検査を実機受入や本番差替の合格に代えない。
+
+#### 生成workerの自動起動設定と説明の訂正
+
+APK配布時にdesired/running=0だけを見て「画像生成を完了できない」と説明したのは誤りだった。後続のAWS実読取で、generation serviceのApplication Auto Scaling targetはmin0/max1、dynamic scale-in/outとも停止なしと確認した。stage専用SQSのvisible messageが1以上になると、60秒/1 datapointの有効CloudWatch alarmからExactCapacity=1のpolicyを呼ぶ。scale-out cooldownは60秒。visible+inflight+delayedがすべて0の状態を60秒/3 datapointsで確認すると、別の有効alarmからExactCapacity=0へ戻す（scale-in cooldown180秒）。現在0台はidle時の状態であり、自動起動の無効化ではない。
+
+直近のscaling historyには2026-10-06の1→0がSuccessfulとして残り、両alarmのActionsEnabled=true、scale-out alarm=OK/scale-in alarm=ALARMも再取得した。これらのscaling resourceはruntime CloudFormation stack内のresource一覧には含まれず、ECS desired count parameterだけでは存在を判定できない。生成要求がqueueへ正常受付されればworkerが起動して処理する設定で、起動待ち時間が生じる。今回この説明訂正のためにgeneration要求を作ったり、worker台数・alarm/policyを変更したりしていない。更新後imageによる0→1の自動起動を使った実機生成は、ブラウザでのmanual1台受入とは区別して未実施とする。alarm条件の証跡は元checkoutのignored `.tmp/security-20261008/generation-autoscaling-alarms.json`。
 
 ### 保持している復元・検証資源
 
