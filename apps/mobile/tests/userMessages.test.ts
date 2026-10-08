@@ -36,6 +36,48 @@ describe('userErrorMessage', () => {
     );
   });
 
+  it('退会のrecent-auth要求は再ログイン案内へ変換し、server本文を表示しない', () => {
+    const message = userErrorMessage(new ApiError('provider detail must stay private', 401, 'RECENT_AUTH_REQUIRED'), 'en');
+    expect(message).toBe('Your sign-in has expired. Sign in again.');
+    expect(message).not.toContain('provider detail');
+  });
+
+  it('返金確認中の有料生成要求を保留案内へ変換する', () => {
+    expect(userErrorMessage(new ApiError('raw', 402, 'CREDIT_RECOVERY_REQUIRED'), 'ja')).toBe(
+      '返金確認中のため、有料生成は一時的に利用できません。'
+    );
+  });
+
+  it('返金または決済確認中の退会拒否を各言語の専用案内へ変換し、server本文を表示しない', () => {
+    const serverDetail = 'stripe_customer=customer-private recovery_credits_due=9';
+    const japanese = userErrorMessage(
+      new ApiError(serverDetail, 409, 'ACCOUNT_CREDIT_RECOVERY_PENDING'),
+      'ja'
+    );
+    const english = userErrorMessage(
+      new ApiError(serverDetail, 409, 'ACCOUNT_CREDIT_RECOVERY_PENDING'),
+      'en'
+    );
+
+    expect(japanese).toContain('返金または決済確認');
+    expect(japanese).toContain('退会');
+    expect(japanese).toContain('閲覧・編集');
+    expect(english).toContain('refund or payment confirmation');
+    expect(english).toContain('Account deletion');
+    expect(english).toContain('Viewing and editing');
+    expect(`${japanese}\n${english}`).not.toContain('customer-private');
+    expect(`${japanese}\n${english}`).not.toContain('recovery_credits_due');
+  });
+
+  it('退会の再認証アカウント不一致を各言語の再ログイン案内へ変換する', () => {
+    expect(userErrorMessage(new Error('REAUTHENTICATED_ACCOUNT_MISMATCH'), 'ja')).toBe(
+      '再認証したアカウントが現在のアカウントと一致しません。もう一度ログインしてください。'
+    );
+    expect(userErrorMessage(new Error('REAUTHENTICATED_ACCOUNT_MISMATCH'), 'en')).toBe(
+      'The account used to sign in again does not match the current account. Sign in again.'
+    );
+  });
+
   it('revision conflict tells the user that the draft is preserved', () => {
     expect(userErrorMessage(new ApiError('raw', 409, 'RESOURCE_STALE'), 'ja')).toContain('入力内容は保持');
     expect(userErrorMessage(new ApiError('raw', 409, 'RESOURCE_STALE'), 'en')).toContain('draft is preserved');

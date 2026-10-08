@@ -70,6 +70,17 @@ credit grant share one transaction. Google linking has a separate, recent native
 authentication proof and dedicated Google OAuth challenge; ambiguous provider
 results are reconciled by reads, never by blindly repeating the link mutation.
 
+Account-deletion POST additionally requires a signature-verified Cognito identity
+for the same authenticated subject with auth_time within 300 seconds (at most
+60 seconds of future clock skew). Token refresh is not recent authentication.
+Mobile reauthentication checks the server-verified user ID before deletion and
+preserves the existing session and drafts on cancellation or account mismatch.
+Known personal refund/dispute holds or unrecovered credits block deletion before
+claim and before anonymization, and are rechecked before external deletion work.
+Adjustment and deletion transactions serialize through the personal user row.
+After the recovery hold is resolved, the existing deletion flow may continue.
+The route returns a stable error rather than extending older blocker unions.
+
 ## 5. Persistence and tenancy
 
 PostgreSQL is the system of record. Works are either personal or associated with an
@@ -273,7 +284,22 @@ digests identify purchases, provider events, and credit-ledger mutations behind
 independent uniqueness barriers. Applying the persistence migration alone does not
 enable a purchase route or grant credits.
 
+Verified Stripe refunds and disputes are linked to the local payment and actual
+credit grant, including the original monthly expiry. Successful refunds and lost
+disputes recover available credits and record the remainder as debt; pending
+refunds and open disputes hold paid generation without taking credits. Settlement
+is cumulative, idempotent, scoped, and transactional with the ledger. Unresolved
+historical grants remain held for reconciliation and retry. Free viewing, editing,
+and exports remain available. Migration049 is required before this binary boots.
+New clients opt in to balance hold/debt fields with X-Lyra-Credit-Recovery: 1;
+omitting that header preserves the older response contract and never bypasses
+the server-side paid-generation guard.
+
 ## 8. Input and output safety
+
+Untrusted stored-image decoder inputs must have PNG, JPEG, or WebP magic matching
+the claimed MIME and contain at most 20 MiB. Decoder paths also bound pixel count
+where applicable; SVG composed internally from escaped text remains supported.
 
 - Request bodies use bounded Zod schemas.
 - SQL uses parameter binding.

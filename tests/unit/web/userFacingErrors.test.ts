@@ -5,6 +5,11 @@ import {
 } from '../../../apps/web/src/lib/userFacingErrors.js';
 
 describe('userFacingErrors', () => {
+  it('返金回収保留の場合に保留理由と編集継続を案内する', () => {
+    const error = { code: 'CREDIT_RECOVERY_REQUIRED', status: 402 };
+    expect(formatUserFacingErrorMessage(error, 'ja')).toContain('返金・決済取消');
+    expect(formatUserFacingErrorMessage(error, 'en')).toContain('Viewing and editing remain available');
+  });
   it('通信失敗では再読み込みを促す', () => {
     expect(formatUserFacingError(new TypeError('Failed to fetch'), 'ja')).toContain('ページを再読み込み');
   });

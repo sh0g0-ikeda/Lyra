@@ -2897,6 +2897,11 @@ function StudioShell(props: {
     activeOrganizationId === null
       ? balanceQuery.data?.total_credits ?? null
       : activeOrganizationBalance?.total_credits ?? null;
+  const recoveryBalance = activeOrganizationId === null ? balanceQuery.data : activeOrganizationBalance;
+  const paidGenerationBlocked = recoveryBalance?.paid_generation_blocked === true;
+  const recoveryMessage = uiLanguage === 'ja'
+    ? `返金・決済取消の確認中のため、有料生成を保留しています${(recoveryBalance?.recovery_credits_due ?? 0) > 0 ? `（不足 ${recoveryBalance?.recovery_credits_due} クレジット）` : ''}。作品の閲覧・編集は引き続き利用できます。`
+    : `Paid generation is on hold while a refund or payment dispute is resolved${(recoveryBalance?.recovery_credits_due ?? 0) > 0 ? ` (${recoveryBalance?.recovery_credits_due} credits outstanding)` : ''}. Viewing and editing remain available.`;
   const pageGenerationBlockers = getPageGenerationBlockers({
     page: selectedPage,
     panels,
@@ -2925,8 +2930,8 @@ function StudioShell(props: {
     activeStoryJob: selectedEpisodeStoryAutofillJob,
     activeSkeletonJob: selectedEpisodePageSkeletonJob,
   });
-  const pageGenerationBlocked = hasBlockingErrors(pageGenerationBlockers);
-  const entityReferenceGenerationBlocked = hasBlockingErrors(entityReferenceGenerationBlockers);
+  const pageGenerationBlocked = paidGenerationBlocked || hasBlockingErrors(pageGenerationBlockers);
+  const entityReferenceGenerationBlocked = paidGenerationBlocked || hasBlockingErrors(entityReferenceGenerationBlockers);
   const referenceConfirmationBlocked = hasBlockingErrors(referenceConfirmationBlockers);
   const pageSkeletonBlocked = hasBlockingErrors(pageSkeletonBlockers);
   const storyApplyBlocked = hasBlockingErrors(storyApplyBlockers);
@@ -4745,6 +4750,7 @@ function StudioShell(props: {
           </div>
         </div>
         <section className="sidebar-section sidebar-workspace-switcher">
+          {paidGenerationBlocked ? <p className="muted small" role="status">{recoveryMessage}</p> : null}
           <div className="section-header">
               {pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
             {ORGANIZATION_FEATURES_AVAILABLE && organizationWorkspacesQuery.isFetching ? (

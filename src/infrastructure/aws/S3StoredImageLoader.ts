@@ -1,6 +1,7 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
+import { assertRasterImageInput, STORED_RASTER_IMAGE_MAX_BYTES } from '../../domain/generation/RasterImageInput.js';
 
 export interface LoadedStoredImage {
   imageData: Buffer;
@@ -21,6 +22,7 @@ interface S3GetObjectClient {
   send(command: GetObjectCommand): Promise<{
     Body?: ByteArrayBody;
     ContentType?: string;
+    ContentLength?: number;
   }>;
 }
 
@@ -53,10 +55,14 @@ export class S3StoredImageLoader implements StoredImageLoaderPort {
         throw new ConfigurationError(`Unsupported stored image content type: ${response.ContentType}`);
       }
 
+      if (response.ContentLength !== undefined && response.ContentLength > STORED_RASTER_IMAGE_MAX_BYTES) {
+        throw new ConfigurationError('Stored image size is invalid');
+      }
       const bytes = await response.Body.transformToByteArray();
       if (bytes.length === 0) {
         throw new ConfigurationError('Stored image body is empty');
       }
+      assertRasterImageInput(Buffer.from(bytes), response.ContentType);
 
       return {
         imageData: Buffer.from(bytes),

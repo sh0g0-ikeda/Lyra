@@ -1,5 +1,5 @@
 import { SIGNUP_BONUS_CREDITS } from '../../domain/constants/credits.js';
-import { InsufficientCreditsError } from '../../domain/errors/index.js';
+import { CreditRecoveryRequiredError, InsufficientCreditsError } from '../../domain/errors/index.js';
 import type { CreditBalance, CreditBalanceSnapshot } from '../../domain/types/credit.js';
 import type {
   CreditLedgerBucketDeltaSummary,
@@ -49,7 +49,11 @@ export class CreditService implements CreditServicePort {
 
   public async getBalance(userId: string): Promise<CreditBalanceSnapshot> {
     const balance = await this.creditRepository.getBalance(userId);
-    return toSnapshot(this.normalizeBalance(balance ?? emptyBalance(userId)));
+    const snapshot = toSnapshot(this.normalizeBalance(balance ?? emptyBalance(userId)));
+    if (this.creditRepository.getPaidGenerationRecoveryStatus === undefined) {
+      return snapshot;
+    }
+    return { ...snapshot, ...(await this.getRecoveryStatus(userId)) };
   }
 
   public async grantSignupBonus(userId: string): Promise<CreditBalanceSnapshot> {
@@ -95,7 +99,18 @@ export class CreditService implements CreditServicePort {
   public async consumeCredits(params: ConsumeCreditsParams): Promise<CreditBalanceSnapshot> {
     assertPositiveSafeCreditAmount(params.cost, 'Credit cost');
 
+    const settle = this.creditRepository.settleOutstandingStripeRecoveries;
+    if (settle !== undefined) {
+      await this.creditRepository.transaction(async (client) => {
+        await settle.call(this.creditRepository, params.userId, client);
+      });
+    }
+
     return this.creditRepository.transaction(async (client) => {
+      const recoveryStatus = await this.getRecoveryStatus(params.userId, client);
+      if (recoveryStatus.paidGenerationBlocked) {
+        throw new CreditRecoveryRequiredError();
+      }
       const currentBalance = this.normalizeBalance(
         (await this.creditRepository.getBalanceForUpdate(params.userId, client)) ?? emptyBalance(params.userId),
       );
@@ -264,6 +279,17 @@ export class CreditService implements CreditServicePort {
 
   private normalizeBalance(balance: CreditBalance): CreditBalance {
     return normalizeExpiredMonthlyCredits(balance, this.clock());
+  }
+
+  private async getRecoveryStatus(
+    userId: string,
+    client?: DatabaseClient,
+  ): Promise<{ paidGenerationBlocked: boolean; recoveryCreditsDue: number }> {
+    const getStatus = this.creditRepository.getPaidGenerationRecoveryStatus;
+    if (getStatus === undefined) {
+      return { paidGenerationBlocked: false, recoveryCreditsDue: 0 };
+    }
+    return getStatus.call(this.creditRepository, userId, client);
   }
 }
 

@@ -6,6 +6,7 @@ import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import { creditBalanceState } from '@/domain/creditBalanceState';
 import { config } from '@/lib/config';
 import { mangaGuidanceMessages } from '@/lib/mangaGuidanceMessages';
+import { t } from '@/lib/i18n';
 import { balanceQueryKey } from '@/lib/queryKeys';
 import { useAppState } from '@/state/appState';
 import { useNetworkStatus } from '@/state/networkStatus';
@@ -53,11 +54,18 @@ export function CreditBalanceBadge(): React.JSX.Element | null {
     : copy.balance[state.status];
   const scope = organizationId === null ? copy.personal : organization?.name ?? copy.organization;
   const retryAvailable = scopeAvailable && online && (state.status === 'error' || state.status === 'unavailable');
+  const recoveryCreditsDue = query.data?.recovery_credits_due ?? 0;
+  const paidGenerationBlocked = query.data?.paid_generation_blocked === true;
   return (
     <View style={styles.root} testID="credit-balance-badge">
       <View accessible accessibilityLabel={`${scope} · ${copy.credits}: ${value}`} accessibilityLiveRegion="polite" style={styles.content}>
         <Text style={styles.scope}>{scope}</Text>
         <Text style={styles.value}>{copy.credits}: {value}</Text>
+        {paidGenerationBlocked ? (
+          <Text style={styles.hold} testID="credit-recovery-hold">
+            {t(language, 'shared.creditRecovery.hold', { credits: recoveryCreditsDue.toLocaleString(language) })}
+          </Text>
+        ) : null}
       </View>
       {retryAvailable ? (
         <Pressable accessibilityLabel={copy.retry} accessibilityRole="button" onPress={() => void refetch()} style={styles.retry} testID="credit-balance-retry">
@@ -74,5 +82,6 @@ const styles = StyleSheet.create({
   scope: { ...textStyles.caption, color: colors.muted },
   value: { ...textStyles.body, color: colors.primary, fontWeight: '700' },
   retry: { minHeight: 44, minWidth: 44, justifyContent: 'center' },
-  retryLabel: { ...textStyles.caption, color: colors.primary, textDecorationLine: 'underline' }
+  retryLabel: { ...textStyles.caption, color: colors.primary, textDecorationLine: 'underline' },
+  hold: { ...textStyles.caption, color: colors.warning }
 });

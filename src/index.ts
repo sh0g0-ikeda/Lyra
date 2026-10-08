@@ -20,6 +20,7 @@ import { db } from './lib/db.js';
 import { env } from './lib/env.js';
 import { runPendingMigrations } from './lib/migrations.js';
 import { assertProductionRuntimeConfig } from './lib/runtimeGuards.js';
+import { assertCreditRecoverySchema } from './lib/creditRecoverySchemaGuard.js';
 import { sanitizePersistedErrorMessage } from './lib/errorSanitizer.js';
 
 async function main(): Promise<void> {
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
     console.warn('[migrations] startup migration auto-run is disabled');
   }
 
+  await assertCreditRecoverySchema(db);
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
   const generationJobCancellationControl = new PostgresGenerationJobRepository(db);
 

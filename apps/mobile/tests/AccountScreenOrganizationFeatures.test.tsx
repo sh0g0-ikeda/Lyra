@@ -7,6 +7,7 @@ import { AccountScreen } from '@/screens/AccountScreen';
 
 const mocks = vi.hoisted(() => ({
   config: {
+    apiBaseUrl: 'https://api.example.test',
     accountDeletionEnabled: true,
     mobileStoreBillingEnabled: true,
     organizationFeaturesEnabled: true
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   useAppState: vi.fn(),
   useInfiniteQuery: vi.fn(),
   useMutation: vi.fn(),
+  mutationOptions: [] as { mutationFn?: () => Promise<unknown> }[],
   useQuery: vi.fn(),
   queryClient: {
     invalidateQueries: vi.fn(),
@@ -27,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@tanstack/react-query', () => ({
+  onlineManager: { isOnline: () => true },
   useInfiniteQuery: mocks.useInfiniteQuery,
   useMutation: mocks.useMutation,
   useQuery: mocks.useQuery,
@@ -131,18 +134,22 @@ describe('AccountScreen organization feature guard', () => {
     mocks.config.accountDeletionEnabled = true;
     mocks.config.mobileStoreBillingEnabled = true;
     mocks.config.organizationFeaturesEnabled = true;
+    mocks.mutationOptions.length = 0;
     mocks.useMutation.mockImplementation((options: {
       mutationFn: () => Promise<unknown>;
       onSuccess?: (result: unknown) => void | Promise<void>;
-    }) => ({
-      isError: false,
-      isPending: false,
-      mutateAsync: vi.fn(async () => {
-        const result = await options.mutationFn();
-        await options.onSuccess?.(result);
-        return result;
-      })
-    }));
+    }) => {
+      mocks.mutationOptions.push(options);
+      return {
+        isError: false,
+        isPending: false,
+        mutateAsync: vi.fn(async () => {
+          const result = await options.mutationFn();
+          await options.onSuccess?.(result);
+          return result;
+        })
+      };
+    });
     mocks.useInfiniteQuery.mockReturnValue({
       data: { pages: [{ jobs: [], next_cursor: null }] },
       fetchNextPage: vi.fn(),
@@ -300,6 +307,64 @@ describe('AccountScreen organization feature guard', () => {
     expect(JSON.stringify(renderer!.toJSON())).not.toContain(
       'generated.screens.AccountScreen.delete.account.88a30568'
     );
+  });
+
+  it('退会は保存済みsessionを置換せずfresh tokenだけで同じaccountへ送信する', async () => {
+    const { reauthenticateWithCognito } = await import('@/lib/auth');
+    vi.mocked(reauthenticateWithCognito).mockResolvedValue({
+      idToken: 'fresh-id-token', accessToken: null, refreshToken: null, expiresAt: null, tokenType: null
+    });
+    const userId = '11111111-1111-4111-8111-111111111111';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ user: { ...refreshedSession.user, id: userId }, personal_credits: null, organizations: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'completed', blockers: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    mocks.useAppState.mockReturnValue({
+      api: { getBalance: vi.fn(), listJobs: vi.fn() }, language: 'en', logout: vi.fn(), selection: { organizationId: null },
+      session: { ...refreshedSession, user: { ...refreshedSession.user, id: userId } }, sessionKey: 'user-1', setLanguage: vi.fn(), setSession: vi.fn(), tokens: { idToken: 'old-token' }, updateSelection: mocks.updateSelection
+    });
+    await act(async () => { create(<AccountScreen />); });
+    const deletion = mocks.mutationOptions.find((option) => String(option.mutationFn).includes('requestAccountDeletion'));
+    await expect(deletion?.mutationFn?.()).resolves.toMatchObject({ status: 'completed' });
+    expect(reauthenticateWithCognito).toHaveBeenCalledOnce();
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).toBeInstanceOf(Headers);
+    expect(((fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Headers).get('Authorization')).toBe('Bearer fresh-id-token');
+  });
+
+  it('退会の再認証をcancelまたは失敗した場合は削除POSTを送らない', async () => {
+    const { reauthenticateWithCognito } = await import('@/lib/auth');
+    vi.mocked(reauthenticateWithCognito).mockRejectedValue(new Error('cancelled'));
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    mocks.useAppState.mockReturnValue({
+      api: { getBalance: vi.fn(), listJobs: vi.fn() }, language: 'en', logout: vi.fn(), selection: { organizationId: null },
+      session: refreshedSession, sessionKey: 'user-1', setLanguage: vi.fn(), setSession: vi.fn(), tokens: { idToken: 'old-token' }, updateSelection: mocks.updateSelection
+    });
+    await act(async () => { create(<AccountScreen />); });
+    const deletion = mocks.mutationOptions.find((option) => String(option.mutationFn).includes('requestAccountDeletion'));
+    await expect(deletion?.mutationFn?.()).rejects.toThrow('cancelled');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('再認証で別accountを選んだ場合は退会POSTを送らない', async () => {
+    const { reauthenticateWithCognito } = await import('@/lib/auth');
+    vi.mocked(reauthenticateWithCognito).mockResolvedValue({
+      idToken: 'different-account-token', accessToken: null, refreshToken: null, expiresAt: null, tokenType: null
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      user: { id: '22222222-2222-4222-8222-222222222222', email: 'other@example.test', display_name: null, plan_code: 'free' },
+      personal_credits: null, organizations: []
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    mocks.useAppState.mockReturnValue({
+      api: { getBalance: vi.fn(), listJobs: vi.fn() }, language: 'en', logout: vi.fn(), selection: { organizationId: null },
+      session: { ...refreshedSession, user: { ...refreshedSession.user, id: '11111111-1111-4111-8111-111111111111' } }, sessionKey: 'user-1', setLanguage: vi.fn(), setSession: vi.fn(), tokens: { idToken: 'old-token' }, updateSelection: mocks.updateSelection
+    });
+    await act(async () => { create(<AccountScreen />); });
+    const deletion = mocks.mutationOptions.find((option) => String(option.mutationFn).includes('requestAccountDeletion'));
+    await expect(deletion?.mutationFn?.()).rejects.toThrow('REAUTHENTICATED_ACCOUNT_MISMATCH');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/me$/);
   });
 
   it('一時的なbalance取得エラーを赤いアクション通知として表示しない', async () => {

@@ -219,7 +219,7 @@ const currentSession: CurrentSessionRecord = {
 
 async function mockApi(
   route: Route,
-  options: { legacyBilling?: boolean; legacyJobCancellationFields?: boolean } = {},
+  options: { legacyBilling?: boolean; legacyJobCancellationFields?: boolean; creditRecovery?: boolean } = {},
 ): Promise<void> {
   const url = new URL(route.request().url());
   const { pathname } = url;
@@ -335,6 +335,7 @@ async function mockApi(
 
   if (pathname === '/api/billing/balance') {
     return json({
+      ...(options.creditRecovery ? { paid_generation_blocked: true, recovery_credits_due: 20 } : {}),
       monthly_credits: 100,
       purchased_credits: 40,
       total_credits: 140,
@@ -456,6 +457,21 @@ test('shows auth screen without token', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Lyra Japan' })).toBeVisible();
   await expect(page.getByText('Lyra AI manga editor')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Use token' })).toBeVisible();
+});
+
+test('回収保留の場合に有料画像生成を止めて無料の話編集を維持する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', route => mockApi(route, { creditRecovery: true }));
+  await page.goto('/');
+  await expect(page.getByRole('status').filter({ hasText: 'Paid generation is on hold' })).toBeVisible();
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Editing remains available during recovery');
+  await expect(draft).toHaveValue('Editing remains available during recovery');
+  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Generate full-body preview' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Generate page', exact: true })).toBeDisabled();
 });
 
 test('renders the console with mocked api responses', async ({ page }) => {

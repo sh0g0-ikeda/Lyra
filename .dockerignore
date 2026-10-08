@@ -17,3 +17,12 @@ risks.md
 gen.md
 docs/patent_disclosure.md
 docs/security_risk.md
+
+# Local audit artifacts and credentials must never enter the build context.
+.tmp
+**/.tmp
+**/.aws
+**/.env
+**/.env.*
+**/node_modules
+apps/mobile

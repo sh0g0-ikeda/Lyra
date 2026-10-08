@@ -17,6 +17,10 @@ interface ErrorWithApiFields extends Error {
 }
 
 const messages = {
+  creditRecovery: {
+    en: 'Paid generation is on hold while a refund or payment dispute is resolved. Viewing and editing remain available.',
+    ja: '返金・決済取消の確認中のため、有料生成を保留しています。作品の閲覧・編集は引き続き利用できます。',
+  },
   generic: {
     en: 'The operation failed. Save your changes, wait a moment, then try again.',
     ja: '処理に失敗しました。入力内容を保存し、少し待ってからもう一度お試しください。',
@@ -236,6 +240,9 @@ export function formatUserFacingErrorMessage(
 }
 
 function findMessageBySpecificCause(normalizedMessage: string, normalizedCode: string): LocalizedMessage | null {
+  if (normalizedCode === 'CREDIT_RECOVERY_REQUIRED') {
+    return messages.creditRecovery;
+  }
   if (normalizedCode === 'BILLING_TIMEOUT') {
     return messages.billingTimeout;
   }

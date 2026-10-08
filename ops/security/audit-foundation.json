@@ -1,0 +1,75 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Lyra retained multi-region management audit, root/configuration alerts, and GuardDuty. Review cost and subscribe the SNS topic before activation.",
+  "Parameters": {
+    "ResourcePrefix": { "Type": "String", "Default": "lyra-security", "AllowedPattern": "^[a-z][a-z0-9-]{2,35}$" },
+    "LogRetentionDays": { "Type": "Number", "Default": 365, "MinValue": 90, "MaxValue": 3650 },
+    "CreateGuardDutyDetector": { "Type": "String", "Default": "true", "AllowedValues": ["true", "false"] },
+    "CreateAuditTrail": { "Type": "String", "Default": "true", "AllowedValues": ["true", "false"] }
+  },
+  "Conditions": {
+    "CreateDetector": { "Fn::Equals": [{ "Ref": "CreateGuardDutyDetector" }, "true"] },
+    "CreateTrail": { "Fn::Equals": [{ "Ref": "CreateAuditTrail" }, "true"] }
+  },
+  "Resources": {
+    "AuditBucket": {
+      "Type": "AWS::S3::Bucket", "Condition": "CreateTrail", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "BucketEncryption": { "ServerSideEncryptionConfiguration": [{ "ServerSideEncryptionByDefault": { "SSEAlgorithm": "AES256" } }] },
+        "OwnershipControls": { "Rules": [{ "ObjectOwnership": "BucketOwnerEnforced" }] },
+        "PublicAccessBlockConfiguration": { "BlockPublicAcls": true, "IgnorePublicAcls": true, "BlockPublicPolicy": true, "RestrictPublicBuckets": true },
+        "VersioningConfiguration": { "Status": "Enabled" },
+        "LifecycleConfiguration": { "Rules": [{ "Id": "AuditRetention", "Status": "Enabled", "ExpirationInDays": { "Ref": "LogRetentionDays" }, "NoncurrentVersionExpiration": { "NoncurrentDays": { "Ref": "LogRetentionDays" } }, "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 } }] }
+      }
+    },
+    "AuditBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy", "Condition": "CreateTrail",
+      "Properties": {
+        "Bucket": { "Ref": "AuditBucket" },
+        "PolicyDocument": { "Version": "2012-10-17", "Statement": [
+          { "Sid": "CloudTrailAclCheck", "Effect": "Allow", "Principal": { "Service": "cloudtrail.amazonaws.com" }, "Action": "s3:GetBucketAcl", "Resource": { "Fn::GetAtt": ["AuditBucket", "Arn"] }, "Condition": { "StringEquals": { "aws:SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${ResourcePrefix}-audit" } } } },
+          { "Sid": "CloudTrailWrite", "Effect": "Allow", "Principal": { "Service": "cloudtrail.amazonaws.com" }, "Action": "s3:PutObject", "Resource": { "Fn::Sub": "${AuditBucket.Arn}/AWSLogs/${AWS::AccountId}/*" }, "Condition": { "StringEquals": { "s3:x-amz-acl": "bucket-owner-full-control", "aws:SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:cloudtrail:${AWS::Region}:${AWS::AccountId}:trail/${ResourcePrefix}-audit" } } } },
+          { "Sid": "DenyInsecureTransport", "Effect": "Deny", "Principal": "*", "Action": "s3:*", "Resource": [{ "Fn::GetAtt": ["AuditBucket", "Arn"] }, { "Fn::Sub": "${AuditBucket.Arn}/*" }], "Condition": { "Bool": { "aws:SecureTransport": "false" } } }
+        ] }
+      }
+    },
+    "AuditTrail": {
+      "Type": "AWS::CloudTrail::Trail", "Condition": "CreateTrail", "DependsOn": "AuditBucketPolicy",
+      "Properties": {
+        "TrailName": { "Fn::Sub": "${ResourcePrefix}-audit" }, "S3BucketName": { "Ref": "AuditBucket" },
+        "IsLogging": true, "IsMultiRegionTrail": true, "IncludeGlobalServiceEvents": true, "EnableLogFileValidation": true,
+        "EventSelectors": [{ "ReadWriteType": "All", "IncludeManagementEvents": true }]
+      }
+    },
+    "SecurityAlerts": { "Type": "AWS::SNS::Topic", "Properties": { "TopicName": { "Fn::Sub": "${ResourcePrefix}-alerts" } } },
+    "AlertTopicPolicy": {
+      "Type": "AWS::SNS::TopicPolicy",
+      "Properties": {
+        "Topics": [{ "Ref": "SecurityAlerts" }],
+        "PolicyDocument": { "Version": "2012-10-17", "Statement": [{ "Effect": "Allow", "Principal": { "Service": "events.amazonaws.com" }, "Action": "sns:Publish", "Resource": { "Ref": "SecurityAlerts" } }] }
+      }
+    },
+    "RootActivityAlert": {
+      "Type": "AWS::Events::Rule",
+      "Properties": { "EventPattern": { "detail-type": ["AWS API Call via CloudTrail", "AWS Console Signin via CloudTrail"], "detail": { "userIdentity": { "type": ["Root"] } } }, "State": "ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS", "Targets": [{ "Id": "SecurityAlerts", "Arn": { "Ref": "SecurityAlerts" } }] }
+    },
+    "AuditConfigurationAlert": {
+      "Type": "AWS::Events::Rule",
+      "Properties": { "EventPattern": { "source": ["aws.cloudtrail", "aws.guardduty", "aws.iam"], "detail-type": ["AWS API Call via CloudTrail"], "detail": { "eventName": ["StopLogging", "DeleteTrail", "UpdateTrail", "PutEventSelectors", "DeleteDetector", "UpdateDetector", "CreateAccessKey", "AttachRolePolicy", "PutRolePolicy"] } }, "State": "ENABLED", "Targets": [{ "Id": "SecurityAlerts", "Arn": { "Ref": "SecurityAlerts" } }] }
+    },
+    "AuditBucketTamperAlert": {
+      "Type": "AWS::Events::Rule", "Condition": "CreateTrail",
+      "Properties": { "EventPattern": { "source": ["aws.s3"], "detail-type": ["AWS API Call via CloudTrail"], "detail": { "eventSource": ["s3.amazonaws.com"], "eventName": ["PutBucketPolicy", "DeleteBucketPolicy", "PutBucketLifecycleConfiguration", "PutBucketVersioning", "PutBucketEncryption", "DeleteBucketEncryption", "PutPublicAccessBlock", "DeletePublicAccessBlock", "DeleteBucket", "PutBucketOwnershipControls", "DeleteBucketOwnershipControls", "PutBucketAcl"], "requestParameters": { "bucketName": [{ "Ref": "AuditBucket" }] } } }, "State": "ENABLED", "Targets": [{ "Id": "SecurityAlerts", "Arn": { "Ref": "SecurityAlerts" } }] }
+    },
+    "GuardDutyDetector": { "Type": "AWS::GuardDuty::Detector", "Condition": "CreateDetector", "Properties": { "Enable": true, "FindingPublishingFrequency": "FIFTEEN_MINUTES" } },
+    "GuardDutyFindingAlert": {
+      "Type": "AWS::Events::Rule",
+      "Properties": { "EventPattern": { "source": ["aws.guardduty"], "detail-type": ["GuardDuty Finding"], "detail": { "severity": [{ "numeric": [">=", 4] }] } }, "State": "ENABLED", "Targets": [{ "Id": "SecurityAlerts", "Arn": { "Ref": "SecurityAlerts" } }] }
+    }
+  },
+  "Outputs": {
+    "AuditBucketName": { "Condition": "CreateTrail", "Value": { "Ref": "AuditBucket" } },
+    "AuditTrailArn": { "Condition": "CreateTrail", "Value": { "Fn::GetAtt": ["AuditTrail", "Arn"] } },
+    "AlertTopicArn": { "Value": { "Ref": "SecurityAlerts" } }
+  }
+}

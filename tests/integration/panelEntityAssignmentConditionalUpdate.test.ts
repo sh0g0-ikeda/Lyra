@@ -28,7 +28,7 @@ describePostgres('panel entity assignment conditional update', () => {
       new PoolTransactionDatabase(pool),
       { migrationLockPollMs: 1, migrationLockMaxAttempts: 10 },
     ));
-    expect(applied.at(-1)).toBe('046_bridge_production_schema_lineage.sql');
+    expect(applied.at(-1)).toBe('049_add_stripe_credit_recovery.sql');
   }, 120_000);
 
   afterAll(async () => {

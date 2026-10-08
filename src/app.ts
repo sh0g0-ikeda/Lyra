@@ -1,4 +1,5 @@
 import { TransactionalUserProvisioningService } from './services/auth/TransactionalUserProvisioningService.js';
+import { BillingCreditAdjustmentService } from './services/credit/BillingCreditAdjustmentService.js';
 import { resolveEpisodeOpenAIModelProfile } from './infrastructure/openai/EpisodeOpenAIModelProfile.js';
 import { resolveEpisodeExportQueueConfig } from './lib/episodeExportRuntime.js';
 import { PageThumbnailService, type PageThumbnailServicePort } from './services/page/PageThumbnailService.js';
@@ -420,12 +421,12 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     ? (async (_c, next) => {
         await next();
       })
-    : createPublicIpRateLimitMiddleware(resolvedDependencies.rateLimitStore, 'webhook');
+    : createPublicIpRateLimitMiddleware(resolvedDependencies.rateLimitStore, 'webhook', { headerName: env.ORIGIN_GUARD_HEADER_NAME, headerValue: env.ORIGIN_GUARD_HEADER_VALUE });
   const publicReadRateLimitMiddleware: MiddlewareHandler<AppEnv> = enableDevAuthBypass
     ? (async (_c, next) => {
         await next();
       })
-    : createPublicIpRateLimitMiddleware(resolvedDependencies.rateLimitStore, 'read');
+    : createPublicIpRateLimitMiddleware(resolvedDependencies.rateLimitStore, 'read', { headerName: env.ORIGIN_GUARD_HEADER_NAME, headerValue: env.ORIGIN_GUARD_HEADER_VALUE });
 
   app.onError(errorHandler);
   app.use('*', createSecurityHeadersMiddleware());
@@ -1067,6 +1068,7 @@ function resolveDependencies(
       organizationService,
       organizationRepository,
       stripeBillingClient,
+      new BillingCreditAdjustmentService(billingRepository, creditRepository, organizationRepository),
     );
   const storyAiClient = dependencies.storyAiClient ?? resolveStoryAiClient();
   const entityService =
@@ -1714,6 +1716,7 @@ function resolveStripeWebhookService(
   organizationService: OrganizationServicePort,
   organizationRepository: PostgresOrganizationRepository,
   stripeBillingClient: StripeBillingClientPort,
+  billingCreditAdjustmentService: BillingCreditAdjustmentService,
 ): StripeWebhookServicePort {
   if (!hasStripeBillingConfig()) {
     return new StripeWebhookServiceStub();
@@ -1728,6 +1731,7 @@ function resolveStripeWebhookService(
     {
       subscriptionPlanByPriceId: buildSubscriptionPlanByPriceId(),
     },
+    billingCreditAdjustmentService,
   );
 }
 

@@ -29,6 +29,12 @@ export const userErrorMessage = (error: unknown, language: UiLanguage): string =
     if (error.code === 'INSUFFICIENT_CREDITS') {
       return t(language, 'shared.error.insufficientCredits');
     }
+    if (error.code === 'CREDIT_RECOVERY_REQUIRED') {
+      return t(language, 'shared.error.creditRecoveryRequired');
+    }
+    if (error.code === 'ACCOUNT_CREDIT_RECOVERY_PENDING') {
+      return t(language, 'shared.error.accountCreditRecoveryPending');
+    }
     if (error.code === 'RESOURCE_STALE') {
       return t(language, "generated.lib.userMessages.another.edit.changed.this.resource.your.41a03cd9");
     }
@@ -94,6 +100,9 @@ export const userErrorMessage = (error: unknown, language: UiLanguage): string =
   }
 
   if (error instanceof Error) {
+    if (error.message === 'REAUTHENTICATED_ACCOUNT_MISMATCH') {
+      return t(language, 'shared.error.reauthenticatedAccountMismatch');
+    }
     if (error.name === 'AbortError') {
       return t(language, 'shared.error.timeout');
     }

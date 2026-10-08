@@ -12,6 +12,8 @@ export interface CreditBalanceSnapshot {
   purchasedCredits: number;
   totalCredits: number;
   monthlyExpiresAt: Date | null;
+  paidGenerationBlocked?: boolean;
+  recoveryCreditsDue?: number;
 }
 
 export interface CreditLedgerEntry {
@@ -25,5 +27,6 @@ export interface CreditLedgerEntry {
   description: string;
   stripeEventId?: string;
   mobileStoreEventKey?: string;
+  stripePaymentRecoveryId?: string;
   jobId?: string;
 }

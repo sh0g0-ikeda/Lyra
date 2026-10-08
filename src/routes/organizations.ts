@@ -1,4 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { creditRecoveryResponse } from './creditRecoveryResponse.js';
 import {
   organizationAuditLogsResponseSchema,
   organizationBillingPlansResponseSchema,
@@ -274,7 +275,7 @@ export function createOrganizationRoutes(dependencies: OrganizationRouteDependen
     const organizationId = parseOrganizationId(c);
     const balance = await dependencies.organizationService.getCreditBalance(user.id, organizationId);
     return c.json(
-      assertMobileResponseContract(organizationCreditBalanceResponseSchema, toCreditBalanceResponse(balance)),
+      assertMobileResponseContract(organizationCreditBalanceResponseSchema, toCreditBalanceResponse(balance, c.req.header('X-Lyra-Credit-Recovery'))),
     );
   });
 
@@ -536,8 +537,9 @@ function toInvitationResponse(invitation: OrganizationInvitation): Record<string
   };
 }
 
-function toCreditBalanceResponse(balance: OrganizationCreditBalance): Record<string, unknown> {
+function toCreditBalanceResponse(balance: OrganizationCreditBalance, recoveryVersion?: string): Record<string, unknown> {
   return {
+    ...creditRecoveryResponse(recoveryVersion, balance),
     organization_id: balance.organizationId,
     monthly_credits: balance.monthlyCredits,
     purchased_credits: balance.purchasedCredits,

@@ -18,6 +18,7 @@ import type { CreditServicePort } from '../services/credit/CreditService.js';
 import type { AppEnv } from '../types/app.js';
 import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
+import { creditRecoveryResponse } from './creditRecoveryResponse.js';
 
 export interface BillingRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
@@ -46,6 +47,7 @@ export function createBillingRoutes(dependencies: BillingRouteDependencies): Hon
     ]);
 
     const payload = {
+      ...creditRecoveryResponse(c.req.header('X-Lyra-Credit-Recovery'), balance),
       monthly_credits: balance.monthlyCredits,
       purchased_credits: balance.purchasedCredits,
       total_credits: balance.totalCredits,

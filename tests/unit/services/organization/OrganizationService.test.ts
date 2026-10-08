@@ -568,6 +568,26 @@ describe('OrganizationService', () => {
     ]);
   });
 
+  it('非メンバーの生成要求ではStripe回収も残高ledgerも更新しない', async () => {
+    const repository = new InMemoryOrganizationRepository();
+    repository.balance = buildBalance({ monthlyCredits: 10 });
+    const service = buildService(repository);
+
+    await expect(service.consumeCredits({
+      organizationId: 'org-1',
+      userId: 'non-member',
+      workId: 'work-1',
+      jobId: 'job-1',
+      cost: 3,
+      description: 'Page generation',
+      eventType: 'generation.started',
+    })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    expect(repository.stripeRecoverySettlementCalls).toEqual([]);
+    expect(repository.creditLedger).toEqual([]);
+    expect(repository.balance).toMatchObject({ monthlyCredits: 10, purchasedCredits: 0 });
+  });
+
   it('法人生成返金は利用履歴にも残すが消費集計は増やさない', async () => {
     const repository = new InMemoryOrganizationRepository();
     repository.balance = buildBalance({ purchasedCredits: 2 });
@@ -904,6 +924,7 @@ class InMemoryOrganizationRepository {
   public activeOwnerCount = 1;
   public balance: OrganizationCreditBalance = buildBalance();
   public creditLedger: OrganizationCreditLedgerTestEntry[] = [];
+  public stripeRecoverySettlementCalls: string[] = [];
   public workspacePage: OrganizationWorkspacePage = {
     organizations: [],
     nextCursor: null,
@@ -1169,6 +1190,11 @@ class InMemoryOrganizationRepository {
   public async updateCreditBalance(balance: OrganizationCreditBalance): Promise<OrganizationCreditBalance> {
     this.balance = { ...balance };
     return this.balance;
+  }
+
+  public async settleOutstandingStripeRecoveries(organizationId: string): Promise<number> {
+    this.stripeRecoverySettlementCalls.push(organizationId);
+    return 0;
   }
 
   public async summarizeJobCreditLedger(

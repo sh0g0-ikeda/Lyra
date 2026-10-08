@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 import type { Balloon } from '../../domain/types/balloon.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { assertRasterImageInput, STORED_RASTER_IMAGE_MAX_PIXELS } from '../../domain/generation/RasterImageInput.js';
 
 export interface ComposePageBalloonsInput {
   pageImage: Buffer;
@@ -22,6 +23,7 @@ export interface PageBalloonComposerPort {
  */
 export class SharpPageBalloonComposer implements PageBalloonComposerPort {
   public async compose(input: ComposePageBalloonsInput): Promise<ComposedPageImage> {
+    assertRasterImageInput(input.pageImage);
     if (input.balloons.length === 0) {
       return {
         imageData: input.pageImage,
@@ -29,7 +31,7 @@ export class SharpPageBalloonComposer implements PageBalloonComposerPort {
       };
     }
 
-    const pageImage = sharp(input.pageImage);
+    const pageImage = sharp(input.pageImage, { failOn: 'error', limitInputPixels: STORED_RASTER_IMAGE_MAX_PIXELS });
     const metadata = await pageImage.metadata();
     const width = metadata.width;
     const height = metadata.height;

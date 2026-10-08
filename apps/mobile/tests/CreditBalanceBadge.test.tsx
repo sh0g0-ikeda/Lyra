@@ -68,6 +68,15 @@ describe('CreditBalanceBadge', () => {
     act(() => renderer.unmount()); client.clear();
   });
 
+  it('回収保留中は不足クレジット数と有料生成保留を表示し、残高表示は維持する', async () => {
+    mocks.getBalance.mockResolvedValue({ total_credits: 127, paid_generation_blocked: true, recovery_credits_due: 9 });
+    const client = await render();
+    expect(text()).toContain('127');
+    expect(text()).toContain('9');
+    expect(text()).toContain('Paid generation is paused');
+    act(() => renderer.unmount()); client.clear();
+  });
+
   it('無効な組織で個人残高にfallbackせず、feature offの時だけ個人scopeを使う', async () => {
     mocks.state.selection.organizationId = 'unknown';
     const client = await render();

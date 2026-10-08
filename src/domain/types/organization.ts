@@ -79,6 +79,8 @@ export interface OrganizationCreditBalance {
   monthlyCredits: number;
   purchasedCredits: number;
   monthlyExpiresAt: Date | null;
+  paidGenerationBlocked?: boolean;
+  recoveryCreditsDue?: number;
   updatedAt: Date;
 }
 

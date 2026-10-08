@@ -5,6 +5,9 @@ import type {
   OrganizationSubscriptionSummary,
   PaymentRecord,
   PaymentRecordInput,
+  CreditGrantBucket,
+  StripePaymentAdjustmentObjectInput,
+  StripePaymentRecovery,
   SubscriptionRecord,
 } from '../domain/types/billing.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
@@ -43,7 +46,109 @@ interface PaymentRecordRow extends QueryResultRow {
   amount_jpy: number;
   status: PaymentRecord['status'];
   invoice_url: string | null;
+  granted_credits: number | null;
+  credit_bucket: CreditGrantBucket | null;
+  grant_expires_at: Date | null;
   created_at: Date;
+}
+
+interface StripePaymentRecoveryRow extends QueryResultRow {
+  id: string;
+  payment_record_id: string;
+  user_id: string | null;
+  organization_id: string | null;
+  kind: PaymentRecord['kind'];
+  amount_jpy: number;
+  stripe_payment_intent_id: string;
+  stripe_charge_id: string | null;
+  currency: 'jpy';
+  credit_bucket: CreditGrantBucket;
+  granted_credits: number;
+  grant_expires_at: Date | null;
+  observed_refunded_amount_jpy: number;
+  lost_dispute_amount_jpy: string;
+  target_reversal_credits: number;
+  reversed_credits: number;
+  unrecovered_credits: number;
+  has_pending_refund: boolean;
+  has_open_dispute: boolean;
+}
+
+export interface StripePaymentRecoverySource {
+  paymentRecordId: string;
+  userId: string | null;
+  organizationId: string | null;
+  kind: PaymentRecord['kind'];
+  amountJpy: number;
+  grantedCredits: number | null;
+  creditBucket: CreditGrantBucket | null;
+  grantExpiresAt: Date | null;
+}
+
+export interface BillingRecoveryRepository {
+  createStripePaymentRecoveryForCheckout(
+    input: {
+      stripeCheckoutSessionId: string;
+      stripePaymentIntentId: string;
+      currency: 'jpy';
+      grantedCredits: number;
+      grantExpiresAt: Date | null;
+    },
+    client: DatabaseClient,
+  ): Promise<void>;
+  findStripePaymentRecoverySource(
+    externalId: { type: 'checkout'; id: string } | { type: 'invoice'; id: string },
+    client: DatabaseClient,
+    forUpdate?: boolean,
+  ): Promise<StripePaymentRecoverySource | null>;
+  lockPersonalStripeRecoveryUser(
+    userId: string,
+    client: DatabaseClient,
+  ): Promise<boolean>;
+  createStripePaymentRecoveryForPaymentRecord(
+    input: {
+      paymentRecordId: string;
+      stripePaymentIntentId: string;
+      currency: 'jpy';
+      creditBucket: CreditGrantBucket;
+      grantedCredits: number;
+      grantExpiresAt: Date | null;
+    },
+    client: DatabaseClient,
+  ): Promise<boolean>;
+  upsertUnresolvedStripePaymentAdjustment(
+    input: Omit<StripePaymentAdjustmentObjectInput, 'recoveryId'> & {
+      paymentRecordId: string;
+      stripePaymentIntentId: string;
+      stripeChargeId: string;
+      observedRefundedAmountJpy: number;
+    },
+    client: DatabaseClient,
+  ): Promise<boolean>;
+  resolveUnresolvedStripePaymentAdjustments(paymentRecordId: string, client: DatabaseClient): Promise<void>;
+  findStripePaymentRecoveryForUpdate(
+    stripePaymentIntentId: string,
+    client: DatabaseClient,
+  ): Promise<StripePaymentRecovery | null>;
+  findStripePaymentRecovery(
+    stripePaymentIntentId: string,
+    client: DatabaseClient,
+  ): Promise<StripePaymentRecovery | null>;
+  bindStripeChargeToRecovery(recoveryId: string, stripeChargeId: string, client: DatabaseClient): Promise<boolean>;
+  upsertStripePaymentAdjustmentObject(
+    input: StripePaymentAdjustmentObjectInput,
+    client: DatabaseClient,
+  ): Promise<boolean>;
+  updateStripePaymentRecoveryTotals(
+    recoveryId: string,
+    input: {
+      observedRefundedAmountJpy: number;
+      targetReversalCredits: number;
+      reversedCredits: number;
+      unrecoveredCredits: number;
+    },
+    client: DatabaseClient,
+  ): Promise<void>;
 }
 
 export interface BillingRepository {
@@ -392,9 +497,12 @@ export class PostgresBillingRepository implements BillingRepository {
         invoice_url,
         kind,
         amount_jpy,
-        status
+        status,
+        granted_credits,
+        credit_bucket,
+        grant_expires_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT DO NOTHING
       `,
       [
@@ -406,10 +514,340 @@ export class PostgresBillingRepository implements BillingRepository {
         record.kind,
         record.amountJpy,
         record.status,
+        record.grantedCredits ?? null,
+        record.creditBucket ?? null,
+        record.grantExpiresAt ?? null,
       ],
     );
 
     return result.rowCount === 1;
+  }
+
+  public async createStripePaymentRecoveryForCheckout(
+    input: {
+      stripeCheckoutSessionId: string;
+      stripePaymentIntentId: string;
+      currency: 'jpy';
+      grantedCredits: number;
+      grantExpiresAt: Date | null;
+    },
+    client: DatabaseClient,
+  ): Promise<void> {
+    const source = await this.findStripePaymentRecoverySource(
+      { type: 'checkout', id: input.stripeCheckoutSessionId },
+      client,
+    );
+    if (source === null) return;
+    await this.createStripePaymentRecoveryForPaymentRecord(
+      {
+        paymentRecordId: source.paymentRecordId,
+        stripePaymentIntentId: input.stripePaymentIntentId,
+        currency: input.currency,
+        creditBucket: 'purchased',
+        grantedCredits: input.grantedCredits,
+        grantExpiresAt: input.grantExpiresAt,
+      },
+      client,
+    );
+  }
+
+  public async findStripePaymentRecoverySource(
+    externalId: { type: 'checkout'; id: string } | { type: 'invoice'; id: string },
+    client: DatabaseClient,
+    forUpdate = true,
+  ): Promise<StripePaymentRecoverySource | null> {
+    const externalColumn = externalId.type === 'checkout' ? 'stripe_checkout_session_id' : 'stripe_invoice_id';
+    const result = await client.query<PaymentRecordRow>(
+      `
+      SELECT id, user_id, organization_id, stripe_checkout_session_id, stripe_invoice_id,
+             invoice_url, kind, amount_jpy, status, granted_credits, credit_bucket,
+             grant_expires_at, created_at
+      FROM payment_records
+      WHERE ${externalColumn} = $1
+        AND status = 'paid'
+      ${forUpdate ? 'FOR UPDATE' : ''}
+      `,
+      [externalId.id],
+    );
+    if (result.rows.length !== 1) return null;
+    const row = result.rows[0];
+    if (row === undefined) return null;
+    return {
+      paymentRecordId: row.id,
+      userId: row.user_id,
+      organizationId: row.organization_id,
+      kind: row.kind,
+      amountJpy: Number(row.amount_jpy),
+      grantedCredits: row.granted_credits === null ? null : Number(row.granted_credits),
+      creditBucket: row.credit_bucket,
+      grantExpiresAt: row.grant_expires_at,
+    };
+  }
+
+  public async lockPersonalStripeRecoveryUser(
+    userId: string,
+    client: DatabaseClient,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `
+      SELECT id
+      FROM users
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [userId],
+    );
+    return result.rowCount === 1;
+  }
+
+  public async createStripePaymentRecoveryForPaymentRecord(
+    input: {
+      paymentRecordId: string;
+      stripePaymentIntentId: string;
+      currency: 'jpy';
+      creditBucket: CreditGrantBucket;
+      grantedCredits: number;
+      grantExpiresAt: Date | null;
+    },
+    client: DatabaseClient,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `
+      INSERT INTO stripe_payment_recoveries (
+        payment_record_id,
+        stripe_payment_intent_id,
+        currency,
+        credit_bucket,
+        granted_credits,
+        grant_expires_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (payment_record_id) DO NOTHING
+      RETURNING id
+      `,
+      [
+        input.paymentRecordId,
+        input.stripePaymentIntentId,
+        input.currency,
+        input.creditBucket,
+        input.grantedCredits,
+        input.grantExpiresAt,
+      ],
+    );
+    if (result.rowCount === 1) return true;
+    const existing = await this.findStripePaymentRecoveryForUpdate(input.stripePaymentIntentId, client);
+    return existing?.paymentRecordId === input.paymentRecordId;
+  }
+
+  public async upsertUnresolvedStripePaymentAdjustment(
+    input: Omit<StripePaymentAdjustmentObjectInput, 'recoveryId'> & {
+      paymentRecordId: string;
+      stripePaymentIntentId: string;
+      stripeChargeId: string;
+      observedRefundedAmountJpy: number;
+    },
+    client: DatabaseClient,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `
+      INSERT INTO stripe_unresolved_payment_adjustments (
+        payment_record_id, stripe_payment_intent_id, stripe_charge_id,
+        provider_type, provider_object_id, status, amount_jpy,
+        observed_refunded_amount_jpy, last_stripe_event_id
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (provider_type, provider_object_id)
+      DO UPDATE SET
+        status = CASE
+          WHEN stripe_unresolved_payment_adjustments.status IN ('succeeded', 'failed', 'won', 'lost')
+            THEN stripe_unresolved_payment_adjustments.status
+          ELSE EXCLUDED.status
+        END,
+        amount_jpy = EXCLUDED.amount_jpy,
+        observed_refunded_amount_jpy = GREATEST(
+          stripe_unresolved_payment_adjustments.observed_refunded_amount_jpy,
+          EXCLUDED.observed_refunded_amount_jpy
+        ),
+        last_stripe_event_id = EXCLUDED.last_stripe_event_id,
+        updated_at = NOW()
+      WHERE stripe_unresolved_payment_adjustments.payment_record_id = EXCLUDED.payment_record_id
+        AND stripe_unresolved_payment_adjustments.stripe_payment_intent_id = EXCLUDED.stripe_payment_intent_id
+        AND stripe_unresolved_payment_adjustments.stripe_charge_id = EXCLUDED.stripe_charge_id
+        AND stripe_unresolved_payment_adjustments.resolved_at IS NULL
+      RETURNING id
+      `,
+      [input.paymentRecordId, input.stripePaymentIntentId, input.stripeChargeId,
+        input.providerType, input.providerObjectId, input.status, input.amountJpy,
+        input.observedRefundedAmountJpy, input.stripeEventId],
+    );
+    return result.rowCount === 1;
+  }
+
+  public async resolveUnresolvedStripePaymentAdjustments(
+    paymentRecordId: string,
+    client: DatabaseClient,
+  ): Promise<void> {
+    await client.query(
+      `UPDATE stripe_unresolved_payment_adjustments
+       SET resolved_at = NOW(), updated_at = NOW()
+       WHERE payment_record_id = $1 AND resolved_at IS NULL`,
+      [paymentRecordId],
+    );
+  }
+
+  public async findStripePaymentRecoveryForUpdate(
+    stripePaymentIntentId: string,
+    client: DatabaseClient,
+  ): Promise<StripePaymentRecovery | null> {
+    return this.findStripePaymentRecoveryInternal(stripePaymentIntentId, client, true);
+  }
+
+  public async findStripePaymentRecovery(
+    stripePaymentIntentId: string,
+    client: DatabaseClient,
+  ): Promise<StripePaymentRecovery | null> {
+    return this.findStripePaymentRecoveryInternal(stripePaymentIntentId, client, false);
+  }
+
+  private async findStripePaymentRecoveryInternal(
+    stripePaymentIntentId: string,
+    client: DatabaseClient,
+    forUpdate: boolean,
+  ): Promise<StripePaymentRecovery | null> {
+    const result = await client.query<StripePaymentRecoveryRow>(
+      `
+      SELECT
+        recovery.id,
+        recovery.payment_record_id,
+        payment.user_id,
+        payment.organization_id,
+        payment.kind,
+        payment.amount_jpy,
+        recovery.stripe_payment_intent_id,
+        recovery.stripe_charge_id,
+        recovery.currency,
+        recovery.credit_bucket,
+        recovery.granted_credits,
+        recovery.grant_expires_at,
+        recovery.observed_refunded_amount_jpy,
+        recovery.target_reversal_credits,
+        recovery.reversed_credits,
+        recovery.unrecovered_credits,
+        COALESCE((
+          SELECT SUM(adjustment.amount_jpy)
+          FROM stripe_payment_adjustment_objects adjustment
+          WHERE adjustment.recovery_id = recovery.id
+            AND adjustment.provider_type = 'dispute'
+            AND adjustment.status = 'lost'
+        ), 0)::text AS lost_dispute_amount_jpy,
+        EXISTS (
+          SELECT 1 FROM stripe_payment_adjustment_objects adjustment
+          WHERE adjustment.recovery_id = recovery.id
+            AND adjustment.provider_type = 'refund'
+            AND adjustment.status = 'pending'
+        ) AS has_pending_refund,
+        EXISTS (
+          SELECT 1 FROM stripe_payment_adjustment_objects adjustment
+          WHERE adjustment.recovery_id = recovery.id
+            AND adjustment.provider_type = 'dispute'
+            AND adjustment.status = 'open'
+        ) AS has_open_dispute
+      FROM stripe_payment_recoveries recovery
+      INNER JOIN payment_records payment ON payment.id = recovery.payment_record_id
+      WHERE recovery.stripe_payment_intent_id = $1
+      ${forUpdate ? 'FOR UPDATE OF recovery' : ''}
+      `,
+      [stripePaymentIntentId],
+    );
+    return result.rows[0] === undefined ? null : mapStripePaymentRecoveryRow(result.rows[0]);
+  }
+
+  public async bindStripeChargeToRecovery(
+    recoveryId: string,
+    stripeChargeId: string,
+    client: DatabaseClient,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `
+      UPDATE stripe_payment_recoveries
+      SET stripe_charge_id = COALESCE(stripe_charge_id, $2),
+          updated_at = NOW()
+      WHERE id = $1
+        AND (stripe_charge_id IS NULL OR stripe_charge_id = $2)
+      `,
+      [recoveryId, stripeChargeId],
+    );
+    return result.rowCount === 1;
+  }
+
+  public async upsertStripePaymentAdjustmentObject(
+    input: StripePaymentAdjustmentObjectInput,
+    client: DatabaseClient,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `
+      INSERT INTO stripe_payment_adjustment_objects (
+        recovery_id,
+        provider_type,
+        provider_object_id,
+        amount_jpy,
+        status,
+        last_stripe_event_id
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (provider_type, provider_object_id)
+      DO UPDATE SET
+        amount_jpy = EXCLUDED.amount_jpy,
+        status = CASE
+          WHEN stripe_payment_adjustment_objects.status IN ('succeeded', 'failed', 'won', 'lost')
+            THEN stripe_payment_adjustment_objects.status
+          ELSE EXCLUDED.status
+        END,
+        last_stripe_event_id = EXCLUDED.last_stripe_event_id,
+        updated_at = NOW()
+      WHERE stripe_payment_adjustment_objects.recovery_id = EXCLUDED.recovery_id
+      RETURNING id
+      `,
+      [
+        input.recoveryId,
+        input.providerType,
+        input.providerObjectId,
+        input.amountJpy,
+        input.status,
+        input.stripeEventId,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  public async updateStripePaymentRecoveryTotals(
+    recoveryId: string,
+    input: {
+      observedRefundedAmountJpy: number;
+      targetReversalCredits: number;
+      reversedCredits: number;
+      unrecoveredCredits: number;
+    },
+    client: DatabaseClient,
+  ): Promise<void> {
+    await client.query(
+      `
+      UPDATE stripe_payment_recoveries
+      SET observed_refunded_amount_jpy = GREATEST(observed_refunded_amount_jpy, $2),
+          target_reversal_credits = GREATEST(target_reversal_credits, $3),
+          reversed_credits = $4,
+          unrecovered_credits = $5,
+          updated_at = NOW()
+      WHERE id = $1
+      `,
+      [
+        recoveryId,
+        input.observedRefundedAmountJpy,
+        input.targetReversalCredits,
+        input.reversedCredits,
+        input.unrecoveredCredits,
+      ],
+    );
   }
 
   public async listPaymentRecordsByOrganizationId(
@@ -426,6 +864,9 @@ export class PostgresBillingRepository implements BillingRepository {
         stripe_checkout_session_id,
         stripe_invoice_id,
         invoice_url,
+        granted_credits,
+        credit_bucket,
+        grant_expires_at,
         kind,
         amount_jpy,
         status,
@@ -478,9 +919,36 @@ function mapPaymentRecordRow(row: PaymentRecordRow): PaymentRecord {
     stripeCheckoutSessionId: row.stripe_checkout_session_id,
     stripeInvoiceId: row.stripe_invoice_id,
     invoiceUrl: row.invoice_url,
+    grantedCredits: row.granted_credits,
+    creditBucket: row.credit_bucket,
+    grantExpiresAt: row.grant_expires_at,
     kind: row.kind,
     amountJpy: Number(row.amount_jpy),
     status: row.status,
     createdAt: row.created_at,
+  };
+}
+
+function mapStripePaymentRecoveryRow(row: StripePaymentRecoveryRow): StripePaymentRecovery {
+  return {
+    id: row.id,
+    paymentRecordId: row.payment_record_id,
+    userId: row.user_id,
+    organizationId: row.organization_id,
+    paymentKind: row.kind,
+    amountJpy: Number(row.amount_jpy),
+    stripePaymentIntentId: row.stripe_payment_intent_id,
+    stripeChargeId: row.stripe_charge_id,
+    currency: row.currency,
+    creditBucket: row.credit_bucket,
+    grantedCredits: Number(row.granted_credits),
+    grantExpiresAt: row.grant_expires_at,
+    observedRefundedAmountJpy: Number(row.observed_refunded_amount_jpy),
+    lostDisputeAmountJpy: Number(row.lost_dispute_amount_jpy),
+    targetReversalCredits: Number(row.target_reversal_credits),
+    reversedCredits: Number(row.reversed_credits),
+    unrecoveredCredits: Number(row.unrecovered_credits),
+    hasPendingRefund: row.has_pending_refund,
+    hasOpenDispute: row.has_open_dispute,
   };
 }
