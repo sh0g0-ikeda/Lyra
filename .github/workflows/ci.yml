@@ -55,6 +55,8 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
 
       - name: Install backend dependencies
         run: bun install --frozen-lockfile
@@ -71,7 +73,7 @@ jobs:
         run: bun run test tests/integration
 
       - name: Run Bun test entrypoint
-        run: bun test
+        run: bun test --isolate
 
       - name: Verify Backend API inventory
         run: npm run api:inventory:check
