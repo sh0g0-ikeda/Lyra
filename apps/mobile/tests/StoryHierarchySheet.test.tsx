@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StoryHierarchySheet } from '@/components/StoryHierarchySheet';
+import { ApiError } from '@/lib/api';
 import { contrastRatio, renderedColors, renderedContrast, renderedStyle } from './helpers/renderedContrast';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -188,11 +189,14 @@ const flushQueries = async (): Promise<void> => {
 describe('StoryHierarchySheet', () => {
   const onSelectEpisode = vi.fn();
   const onWorkRenamed = vi.fn();
+  const onBeforeWorkDelete = vi.fn<() => Promise<boolean>>();
+  const onWorkDeletionAccepted = vi.fn<() => Promise<void>>();
   let renderedQueryClient: QueryClient | null = null;
   const api = {
     createChapter: vi.fn(),
     createEpisode: vi.fn(),
     createWork: vi.fn(),
+    deleteWork: vi.fn(),
     deleteChapter: vi.fn().mockResolvedValue(undefined),
     deleteEpisode: vi.fn().mockResolvedValue(undefined),
     getChapters: vi.fn(async (workId: string) => ({
@@ -216,6 +220,15 @@ describe('StoryHierarchySheet', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    confirmDestructiveActionMock.mockImplementation(({ onConfirm }: { onConfirm: () => void }) => onConfirm());
+    onBeforeWorkDelete.mockResolvedValue(true);
+    onWorkDeletionAccepted.mockResolvedValue(undefined);
+    api.deleteWork.mockResolvedValue({
+      deletion_id: '11111111-1111-4111-8111-111111111111',
+      work_id: '22222222-2222-4222-8222-222222222222',
+      status: 'pending',
+      blocker_code: null
+    });
     loadStoryHierarchyExpansionMock.mockResolvedValue({
       chapterIds: ['chapter-1'],
       workIds: ['work-1']
@@ -232,9 +245,11 @@ describe('StoryHierarchySheet', () => {
       onChapterDeleted={vi.fn()}
       onClose={vi.fn()}
       onEpisodeDeleted={vi.fn()}
+      onBeforeWorkDelete={onBeforeWorkDelete}
       onSelectChapter={vi.fn()}
       onSelectEpisode={onSelectEpisode}
       onSelectWork={vi.fn()}
+      onWorkDeletionAccepted={onWorkDeletionAccepted}
       onWorkRenamed={onWorkRenamed}
       onChapterRenamed={vi.fn()}
       onEpisodeRenamed={vi.fn()}
@@ -714,6 +729,7 @@ describe('StoryHierarchySheet', () => {
     });
     expect(renderer.root.findByProps({ accessibilityLabel: '作品名を変更' })).toBeDefined();
     expect(renderer.root.findByProps({ accessibilityLabel: '章を追加' })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' })).toBeDefined();
 
     await act(async () => {
       renderer.root.findByProps({ accessibilityLabel: '1. 第一章の操作' }).props.onPress();
@@ -780,5 +796,103 @@ describe('StoryHierarchySheet', () => {
 
     expect(confirmDestructiveActionMock).toHaveBeenCalledOnce();
     expect(api.deleteEpisode).toHaveBeenCalledWith('episode-1', null);
+  });
+
+  it('作品削除の確認をキャンセルした場合は削除要求を送らない', async () => {
+    confirmDestructiveActionMock.mockImplementation(() => undefined);
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress());
+
+    expect(confirmDestructiveActionMock).toHaveBeenCalledOnce();
+    expect(api.deleteWork).not.toHaveBeenCalled();
+  });
+
+  it('dirty確認中に組織scopeが変わった場合は古い作品の削除要求を送らない', async () => {
+    let resolveDirty: ((allowed: boolean) => void) | undefined;
+    onBeforeWorkDelete.mockReturnValue(new Promise<boolean>((resolve) => { resolveDirty = resolve; }));
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress());
+    await act(async () => renderer.update(
+      <QueryClientProvider client={renderedQueryClient!}>
+        {sheet({ organizationId: '33333333-3333-4333-8333-333333333333' })}
+      </QueryClientProvider>
+    ));
+    await act(async () => { resolveDirty?.(true); await flushQueries(); });
+
+    expect(api.deleteWork).not.toHaveBeenCalled();
+    expect(onWorkDeletionAccepted).not.toHaveBeenCalled();
+  });
+
+  it('削除要求の202受付後は完了扱いせずreceiptを監視側へ渡す', async () => {
+    const receipt = {
+      deletion_id: '11111111-1111-4111-8111-111111111111',
+      work_id: '22222222-2222-4222-8222-222222222222',
+      status: 'pending' as const,
+      blocker_code: null
+    };
+    api.deleteWork.mockResolvedValue(receipt);
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress(); await flushQueries(); });
+
+    expect(onBeforeWorkDelete).toHaveBeenCalledWith('work-1');
+    expect(api.deleteWork).toHaveBeenCalledWith('work-1', null);
+    expect(onWorkDeletionAccepted).toHaveBeenCalledWith(receipt);
+    const confirmation = confirmDestructiveActionMock.mock.calls[0]?.[0] as { message: string };
+    expect(confirmation.message).toContain('画像');
+    expect(confirmation.message).toContain('章');
+    expect(confirmation.message).toContain('話');
+    expect(confirmation.message).toContain('元に戻せません');
+  });
+
+  it('削除要求待機中にscopeが変わった場合は新scopeの選択を解除しない', async () => {
+    let resolveDelete: ((receipt: { deletion_id: string; work_id: string; status: 'pending'; blocker_code: null }) => void) | undefined;
+    api.deleteWork.mockReturnValue(new Promise((resolve) => { resolveDelete = resolve; }));
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress(); await flushQueries(); });
+    await act(async () => renderer.update(
+      <QueryClientProvider client={renderedQueryClient!}>
+        {sheet({ organizationId: '33333333-3333-4333-8333-333333333333' })}
+      </QueryClientProvider>
+    ));
+    await act(async () => {
+      resolveDelete?.({
+        deletion_id: '11111111-1111-4111-8111-111111111111',
+        work_id: '22222222-2222-4222-8222-222222222222',
+        status: 'pending',
+        blocker_code: null
+      });
+      await flushQueries();
+    });
+
+    expect(api.deleteWork).toHaveBeenCalledWith('work-1', null);
+    expect(onWorkDeletionAccepted).not.toHaveBeenCalled();
+  });
+
+  it('削除要求の通信結果が不明な場合は状態更新だけを行いDELETEを再送しない', async () => {
+    api.deleteWork.mockRejectedValue(new Error('network unavailable'));
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress(); await flushQueries(); });
+    const notice = renderer.root.findByType('notice');
+    await act(async () => { notice.props.onAction(); await flushQueries(); });
+
+    expect(api.deleteWork).toHaveBeenCalledOnce();
+    expect(onWorkDeletionAccepted).not.toHaveBeenCalled();
+  });
+
+  it('削除409は進行中処理と保存結果の安全確認の両方を案内する', async () => {
+    api.deleteWork.mockRejectedValue(new ApiError('conflict', 409, 'CONFLICT'));
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress(); await flushQueries(); });
+
+    const notice = String(renderer.root.findByType('notice').props.children);
+    expect(notice).toContain('安全確認が必要');
+    expect(notice).toContain('サポートへお問い合わせください');
+    expect(api.deleteWork).toHaveBeenCalledOnce();
   });
 });

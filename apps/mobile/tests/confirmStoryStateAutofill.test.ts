@@ -44,4 +44,12 @@ describe('状態自動入力の明示上書き確認', () => {
     expect(message).toContain(autofill);
     expect(message.indexOf(skeleton)).toBeLessThan(message.indexOf(autofill));
   });
+  it('既存ページの再設計は破棄範囲を同じ確認に含める', () => {
+    const overwriteSummary = '現在の2ページ・8コマの編集内容を上書きします。';
+    confirmStoryStateAutofill({ language: 'ja', available: false, choice: { enabled: false, overwrite: false }, includeSkeletonGeneration: true, overwriteSummary, isCurrent: () => true, onConfirm: vi.fn() });
+    const message = confirm.mock.calls[0][0].message as string;
+    expect(message).toContain(overwriteSummary);
+    expect(message.indexOf(overwriteSummary)).toBeLessThan(message.indexOf(t('ja', 'screen.pages.design.generateConfirmation')));
+    expect(confirm.mock.calls[0][0].destructive).toBe(true);
+  });
 });

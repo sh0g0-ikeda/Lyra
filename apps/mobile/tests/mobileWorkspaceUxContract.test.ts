@@ -119,7 +119,7 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(renderSource('StoryScreen')).not.toContain(
       '<StoryGenerationControls'
     );
-    expect(renderSource('PagesScreen')).toContain('<StoryGenerationControls');
+    expect(renderSource('PagesScreen')).toContain('<PageStoryAutofillAction');
   });
 
   it('ページ・コマ・枠の未保存差分は遷移前に解決し生成前保存も維持する', () => {

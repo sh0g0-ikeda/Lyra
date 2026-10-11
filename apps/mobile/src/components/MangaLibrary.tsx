@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
@@ -6,16 +6,18 @@ import { MangaTutorial } from '@/components/MangaTutorial';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
 import { StoryHierarchySheet } from '@/components/StoryHierarchySheet';
+import { WorkDeletionStatusList } from '@/components/WorkDeletionStatusList';
 import type { WorkspaceContextData } from '@/components/WorkspaceContextPicker';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import type { MangaCreationStep } from '@/domain/mangaWorkflow';
+import type { WorkDeletionRecord } from '@/domain/workDeletion';
 import { t } from '@/lib/i18n';
 import { useAppState } from '@/state/appState';
+import { useDirtyState } from '@/state/dirtyState';
 
 interface MangaLibraryProps {
   context: WorkspaceContextData;
   onResume: () => void;
-  onOpenGuide: () => void;
   resumeStep: MangaCreationStep;
   loadingProgress: boolean;
   progressError: unknown;
@@ -25,10 +27,21 @@ interface MangaLibraryProps {
 // Reuse the established hierarchy CRUD and its authorization/dirty selection path.
 // The library only chooses context; opening a work never generates or saves it.
 export function MangaLibrary({
-  context, onResume, onOpenGuide, resumeStep, loadingProgress, progressError, onRetryProgress
+  context, onResume, resumeStep, loadingProgress, progressError, onRetryProgress
 }: MangaLibraryProps): React.JSX.Element {
   const { api, hasCapability, language, logout, selection, session, sessionKey, updateSelection } = useAppState();
+  const { resolveDirtyEditors } = useDirtyState();
   const [hierarchyEntry, setHierarchyEntry] = useState<'browse' | 'create-work' | null>(null);
+  const canEdit = hasCapability('edit_work');
+  const deletionScope = JSON.stringify([sessionKey, selection.organizationId]);
+  const deletionVisible = hierarchyEntry !== null;
+  const liveDeletionContext = useRef({ canEdit, scope: deletionScope, selectedWorkId: selection.workId, visible: deletionVisible });
+  useLayoutEffect(() => {
+    liveDeletionContext.current = { canEdit, scope: deletionScope, selectedWorkId: selection.workId, visible: deletionVisible };
+  }, [canEdit, deletionScope, deletionVisible, selection.workId]);
+  useEffect(() => () => {
+    liveDeletionContext.current = { ...liveDeletionContext.current, visible: false };
+  }, []);
   const episode = context.episodes.find((item) => item.id === context.selectedEpisodeId);
   const work = context.works.find((item) => item.id === context.selectedWorkId);
   const chapter = context.chapters.find((item) => item.id === context.selectedChapterId);
@@ -49,6 +62,7 @@ export function MangaLibrary({
         testID="manga-create"
       />
       <MangaTutorial firstRun />
+      <WorkDeletionStatusList api={api} language={language} organizationId={selection.organizationId} sessionKey={sessionKey} />
       {context.works.length === 0 && !context.isLoadingWorks && context.error === null ? <Text style={styles.help}>{t(language, 'emptyWorks')}</Text> : null}
       {context.works.map((item) => (
         <Pressable
@@ -83,11 +97,10 @@ export function MangaLibrary({
           />
         </View>
       )}
-      <PrimaryButton label={t(language, 'navigation.guide')} onPress={onOpenGuide} variant="secondary" testID="manga-guide" />
       <StoryHierarchySheet
         api={api}
         canCreateWork={hasCapability('create_work')}
-        canEdit={hasCapability('edit_work')}
+        canEdit={canEdit}
         hasNextWorks={context.hasMoreWorks}
         isFetchingNextWorks={context.isFetchingMoreWorks}
         isLoadingWorks={context.isLoadingWorks}
@@ -99,6 +112,13 @@ export function MangaLibrary({
           if (selection.chapterId === chapterId) void updateSelection({ chapterId: null, episodeId: null, pageId: null }, { skipDirtyCheck: true });
         }}
         onChapterRenamed={() => undefined}
+        onBeforeWorkDelete={async () => {
+          const scope = deletionScope;
+          if (!liveDeletionContext.current.visible || !liveDeletionContext.current.canEdit || liveDeletionContext.current.scope !== scope) return false;
+          const allowed = await resolveDirtyEditors(language);
+          const live = liveDeletionContext.current;
+          return allowed && live.visible && live.canEdit && live.scope === scope;
+        }}
         onClose={() => setHierarchyEntry(null)}
         onEndReachedWorks={context.loadMoreWorks}
         onEpisodeDeleted={(episodeId) => {
@@ -112,6 +132,14 @@ export function MangaLibrary({
           });
         }}
         onSelectWork={(workId) => { void updateSelection({ workId, chapterId: null, episodeId: null, pageId: null, entityId: null }); }}
+        onWorkDeletionAccepted={async (deletion: WorkDeletionRecord) => {
+          const live = liveDeletionContext.current;
+          if (!live.visible || !live.canEdit || live.scope !== deletionScope || live.selectedWorkId !== deletion.work_id) return;
+          await updateSelection(
+            { workId: null, chapterId: null, episodeId: null, pageId: null, entityId: null },
+            { skipDirtyCheck: true }
+          );
+        }}
         onWorkRenamed={() => undefined}
         organizationId={selection.organizationId}
         selectedChapterId={context.selectedChapterId}

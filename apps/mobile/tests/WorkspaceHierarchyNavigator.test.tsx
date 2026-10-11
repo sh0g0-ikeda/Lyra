@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
 import type { WorkspaceContextData } from '@/components/WorkspaceContextPicker';
@@ -15,11 +15,16 @@ vi.mock('lucide-react-native', () => ({ BookOpen: 'book-open', ChevronRight: 'ch
 vi.mock('@/components/ActionableErrorNotice', () => ({ ActionableErrorNotice: () => null }));
 vi.mock('@/components/StoryHierarchySheet', () => ({ StoryHierarchySheet: (props: Record<string, unknown>) => React.createElement('hierarchy', props) }));
 vi.mock('@/navigation/navigationRef', () => ({ navigationRef: { isReady: () => false } }));
-vi.mock('@/state/dirtyState', () => ({ useDirtyState: () => ({ resolveDirtyEditors: vi.fn() }) }));
+const { appState, resolveDirtyEditors, updateSelection } = vi.hoisted(() => ({
+  appState: { canEdit: false },
+  resolveDirtyEditors: vi.fn(),
+  updateSelection: vi.fn()
+}));
+vi.mock('@/state/dirtyState', () => ({ useDirtyState: () => ({ resolveDirtyEditors }) }));
 vi.mock('@/state/appState', () => ({
   useAppState: () => ({
-    api: {}, hasCapability: () => false, language: 'ja', logout: vi.fn(), session: null, sessionKey: 'session',
-    selection: { organizationId: null, workId: 'work-1', chapterId: 'chapter-1', episodeId: 'episode-1' }, updateSelection: vi.fn().mockResolvedValue(true)
+    api: {}, hasCapability: (capability: string) => capability === 'edit_work' && appState.canEdit, language: 'ja', logout: vi.fn(), session: null, sessionKey: 'session',
+    selection: { organizationId: null, workId: 'work-1', chapterId: 'chapter-1', episodeId: 'episode-1' }, updateSelection
   })
 }));
 
@@ -31,6 +36,11 @@ const context = {
 } satisfies WorkspaceContextData;
 
 describe('WorkspaceHierarchyNavigator', () => {
+  beforeEach(() => {
+    appState.canEdit = false;
+    resolveDirtyEditors.mockReset().mockResolvedValue(true);
+    updateSelection.mockReset().mockResolvedValue(true);
+  });
   it('長い作品名と章名があっても話名をprimary行に残す', () => {
     let renderer: ReturnType<typeof create>;
     act(() => { renderer = create(<WorkspaceHierarchyNavigator context={context} />); });
@@ -46,6 +56,27 @@ describe('WorkspaceHierarchyNavigator', () => {
     expect(sheet.props.hierarchyError).toBe(value.error);
     expect(sheet.props.onRetryHierarchy).toBe(value.retry);
     act(() => { renderer!.unmount(); });
+  });
+
+  it('制作画面からの作品削除もdirty確認後に選択を再確認なしで解除する', async () => {
+    appState.canEdit = true;
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<WorkspaceHierarchyNavigator context={context} />); });
+    await act(async () => renderer!.root.findByType('pressable').props.onPress());
+    const sheet = renderer!.root.findByType('hierarchy');
+    await expect(sheet.props.onBeforeWorkDelete('work-1')).resolves.toBe(true);
+    await act(async () => sheet.props.onWorkDeletionAccepted({
+      deletion_id: '11111111-1111-4111-8111-111111111111',
+      work_id: 'work-1',
+      status: 'pending',
+      blocker_code: null
+    }));
+
+    expect(resolveDirtyEditors).toHaveBeenCalledWith('ja');
+    expect(updateSelection).toHaveBeenLastCalledWith(
+      { workId: null, chapterId: null, episodeId: null, pageId: null, entityId: null },
+      { skipDirtyCheck: true }
+    );
   });
 
 });

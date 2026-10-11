@@ -14,12 +14,13 @@ import { useDirtyState } from '@/state/dirtyState';
 
 interface MangaTutorialProps {
   firstRun?: boolean;
+  replayVariant?: 'primary' | 'secondary';
 }
 
 // U03: a skippable guide with no editor, selection or generation side effects.
 // Auto-open is limited to the focused library without dirty editors. Modal owns
 // its safe-area context and scrolling so large text never pushes close offscreen.
-export function MangaTutorial({ firstRun = false }: MangaTutorialProps): React.JSX.Element {
+export function MangaTutorial({ firstRun = false, replayVariant = 'secondary' }: MangaTutorialProps): React.JSX.Element {
   const { language } = useAppState();
   const { hasDirtyEditors } = useDirtyState();
   const focused = useIsFocused();
@@ -89,8 +90,8 @@ export function MangaTutorial({ firstRun = false }: MangaTutorialProps): React.J
   const currentStep = copy.steps[step ?? 0];
   return (
     <View style={styles.root}>
-      <Pressable accessibilityLabel={copy.replay} accessibilityRole="button" onPress={open} ref={triggerRef} style={styles.replay} testID="manga-tutorial-replay">
-        <Text style={styles.replayLabel}>{copy.replay}</Text>
+      <Pressable accessibilityLabel={copy.replay} accessibilityRole="button" onPress={open} ref={triggerRef} style={[styles.replay, replayVariant === 'primary' ? styles.replayPrimary : null]} testID="manga-tutorial-replay">
+        <Text style={[styles.replayLabel, replayVariant === 'primary' ? styles.replayPrimaryLabel : null]}>{copy.replay}</Text>
       </Pressable>
       {storageError ? <Notice message={copy.historyError} tone="warning" /> : null}
       <Modal animationType="slide" backdropColor={colors.canvas} onDismiss={restoreTriggerFocus} onRequestClose={close} onShow={focusTitle} presentationStyle="fullScreen" visible={visible}>
@@ -133,6 +134,8 @@ const styles = StyleSheet.create({
   progress: { ...textStyles.caption, color: colors.muted },
   replay: { minHeight: 46, padding: spacing.sm, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.secondarySurface, borderColor: colors.controlBorder, borderWidth: 1, borderRadius: radius.md },
   replayLabel: { ...textStyles.body, color: colors.inkStrong, fontWeight: '700' },
+  replayPrimary: { backgroundColor: colors.primary, borderColor: colors.primary },
+  replayPrimaryLabel: { color: colors.primaryText },
   root: { gap: spacing.sm },
   safeArea: { flex: 1, backgroundColor: colors.canvas },
   stepTitle: { ...textStyles.sectionTitle, color: colors.primary },

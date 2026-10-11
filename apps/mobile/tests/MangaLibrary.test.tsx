@@ -14,21 +14,23 @@ let canCreate = true;
 let selection = { ...defaultSelection, organizationId: 'org', workId: 'old-work' };
 const updateSelection = vi.fn<() => Promise<boolean>>();
 const onResume = vi.fn();
-const onOpenGuide = vi.fn();
 let root: ReactTestRenderer | undefined;
+const { resolveDirtyEditors } = vi.hoisted(() => ({ resolveDirtyEditors: vi.fn() }));
 vi.mock('react-native', () => ({ Pressable: 'button', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
 vi.mock('@/components/MangaTutorial', () => ({ MangaTutorial: (props: Record<string, unknown>) => React.createElement('tutorial', props) }));
 vi.mock('@/components/Screen', () => ({ Screen: ({ children, ...props }: { children: React.ReactNode }) => React.createElement('screen', props, children) }));
 vi.mock('@/components/PrimaryButton', () => ({ PrimaryButton: (props: Record<string, unknown>) => React.createElement('button', props) }));
 vi.mock('@/components/ActionableErrorNotice', () => ({ ActionableErrorNotice: (props: Record<string, unknown>) => React.createElement('error', props) }));
 vi.mock('@/components/StoryHierarchySheet', () => ({ StoryHierarchySheet: (props: Record<string, unknown>) => React.createElement('hierarchy', props) }));
+vi.mock('@/components/WorkDeletionStatusList', () => ({ WorkDeletionStatusList: (props: Record<string, unknown>) => React.createElement('work-deletions', props) }));
 vi.mock('@/state/appState', () => ({ useAppState: () => ({ api: {}, hasCapability: () => canCreate, language: 'ja', logout: vi.fn(), selection, session: { user: { id: 'user' } }, sessionKey: 'session', updateSelection }) }));
+vi.mock('@/state/dirtyState', () => ({ useDirtyState: () => ({ resolveDirtyEditors }) }));
 const work = { id: 'work', title: '漫画作品' } as WorkRecord;
 function context(works: WorkRecord[] = []): WorkspaceContextData {
   return { works, chapters: [], episodes: [], selectedWorkId: null, selectedChapterId: null, selectedEpisodeId: null, error: null, isLoadingWorks: false, isLoadingChapters: false, isLoadingEpisodes: false, hasMoreWorks: false, isFetchingMoreWorks: false, loadMoreWorks: vi.fn(), retry: vi.fn() };
 }
 async function render(value = context()): Promise<void> {
-  await act(async () => { root = create(<MangaLibrary context={value} onResume={onResume} onOpenGuide={onOpenGuide} resumeStep="story" loadingProgress={false} progressError={null} onRetryProgress={vi.fn()} />); });
+  await act(async () => { root = create(<MangaLibrary context={value} onResume={onResume} resumeStep="story" loadingProgress={false} progressError={null} onRetryProgress={vi.fn()} />); });
 }
 async function press(id: string): Promise<void> {
   await act(async () => { root?.root.findAll((node) => node.type === 'button' && node.props.testID === id)[0].props.onPress(); });
@@ -37,7 +39,7 @@ async function press(id: string): Promise<void> {
 // Spec §10 Mobile: one-tap creation reuses authorized hierarchy CRUD; browsing
 // never creates. Pending hierarchy is not empty and selection stays legible.
 describe('漫画一覧と既存階層の保持', () => {
-  beforeEach(() => { canCreate = true; selection = { ...defaultSelection, organizationId: 'org', workId: 'old-work' }; updateSelection.mockReset().mockResolvedValue(true); onResume.mockReset(); onOpenGuide.mockReset(); });
+  beforeEach(() => { canCreate = true; selection = { ...defaultSelection, organizationId: 'org', workId: 'old-work' }; updateSelection.mockReset().mockResolvedValue(true); resolveDirtyEditors.mockReset().mockResolvedValue(true); onResume.mockReset(); });
   afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; });
 
   it.each([[], [work]])('空一覧と既存一覧の両方で作成CTAが既存階層UIを開く', async (item) => {
@@ -68,15 +70,13 @@ describe('漫画一覧と既存階層の保持', () => {
     expect(updateSelection).not.toHaveBeenCalled();
   });
 
-  it('閲覧者には作成権限を渡さずガイド入口を維持する', async () => {
+  it('閲覧者には作成権限を渡さず通常の階層表示を開く', async () => {
     canCreate = false;
     await render(); await press('manga-create');
     const hierarchy = root?.root.findByType('hierarchy');
     expect(hierarchy?.props.initialAction).toBeUndefined();
     expect(hierarchy?.props.canCreateWork).toBe(false);
     expect(hierarchy?.props.canEdit).toBe(false);
-    await press('manga-guide');
-    expect(onOpenGuide).toHaveBeenCalledOnce();
   });
   it('ホームはログイン中でも言語切替を表示し選択した話の編集入口だけを残す', async () => {
     await render(context([work]));
@@ -120,6 +120,44 @@ describe('漫画一覧と既存階層の保持', () => {
     await act(async () => { root?.unmount(); }); root = undefined;
     await render(context());
     expect(root?.root.findAll((node) => node.type === 'text' && node.props.children === t('ja', 'emptyWorks'))).toHaveLength(1);
+  });
+
+  it('削除受付前にdirty確認し、受付後は選択中作品を再確認なしで解除する', async () => {
+    const selected = { ...work, id: 'old-work' };
+    await render({ ...context([selected]), selectedWorkId: selected.id });
+    await press('manga-create');
+    const hierarchy = root!.root.findByType('hierarchy');
+
+    await expect(hierarchy.props.onBeforeWorkDelete(selected.id)).resolves.toBe(true);
+    expect(resolveDirtyEditors).toHaveBeenCalledWith('ja');
+    await act(async () => hierarchy.props.onWorkDeletionAccepted({
+      deletion_id: '11111111-1111-4111-8111-111111111111',
+      work_id: selected.id,
+      status: 'pending',
+      blocker_code: null
+    }));
+    expect(updateSelection).toHaveBeenLastCalledWith(
+      { workId: null, chapterId: null, episodeId: null, pageId: null, entityId: null },
+      { skipDirtyCheck: true }
+    );
+  });
+
+  it('別作品の削除受付では現在の選択を変更しない', async () => {
+    await render(context([work]));
+    await press('manga-create');
+    await act(async () => root!.root.findByType('hierarchy').props.onWorkDeletionAccepted({
+      deletion_id: '11111111-1111-4111-8111-111111111111',
+      work_id: 'other-work',
+      status: 'pending',
+      blocker_code: null
+    }));
+    expect(updateSelection).not.toHaveBeenCalled();
+  });
+
+  it('階層を閉じていても削除状態一覧をmountする', async () => {
+    await render(context([work]));
+    expect(root?.root.findByType('work-deletions').props.organizationId).toBe('org');
+    expect(root?.root.findByType('hierarchy').props.visible).toBe(false);
   });
 
 });

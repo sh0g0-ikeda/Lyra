@@ -14,7 +14,7 @@ import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { JobStatusCard } from '@/components/JobStatusCard';
 import { LayoutTemplatePreview, type FramePreviewDefinition } from '@/components/LayoutTemplatePreview';
 import { Notice } from '@/components/Notice';
-import { PageJobHistory, PageStoryAutofillAction } from '@/components/PageCreationWorkflow';
+import { PageStoryAutofillAction } from '@/components/PageCreationWorkflow';
 import { nextPageInSequence } from '@/domain/pageCreationWorkflow';
 import { pageWorkflowMessage } from '@/lib/pageWorkflowMessages';
 import { collectOperationFailures, operationFailure } from '@/lib/operationErrorContext';
@@ -43,7 +43,6 @@ import { EpisodeStateAutofillResult } from '@/components/EpisodeStateAutofillRes
 import { StoryStateAutofillOptions } from '@/components/StoryStateAutofillOptions';
 import { confirmStoryStateAutofill } from '@/lib/confirmStoryStateAutofill';
 import type { EpisodeStateAutofillChoice, EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
-import { StoryGenerationControls } from '@/components/StoryGenerationControls';
 import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
 import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
 import {
@@ -92,7 +91,6 @@ import type {
   PanelFrameRecord,
   PanelRecord
 } from '@/domain/types';
-import { shouldOverwritePageSkeleton } from '@/domain/storyWorkflow';
 import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
 import { usePanelInsertion } from '@/hooks/usePanelInsertion';
 import { panelInsertionMessage } from '@/lib/panelInsertionMessages';
@@ -767,6 +765,13 @@ export function PagesScreen(): React.JSX.Element {
     () => flattenUniqueRecords(pagesQuery.data?.pages.map((page) => page.pages) ?? []),
     [pagesQuery.data?.pages],
   );
+  const pageSkeletonCapabilitiesQuery = useQuery({
+    enabled: pages.length > 0,
+    queryKey: ['page-skeleton-capabilities', sessionKey],
+    queryFn: () => api.getPageSkeletonCapabilities(),
+    retry: false,
+    staleTime: 300_000,
+  });
 
   const pageLayoutTemplatesQuery = useQuery({
     enabled: pageLayoutEditingUiEnabled,
@@ -1591,42 +1596,56 @@ export function PagesScreen(): React.JSX.Element {
       setLocalPageDesignJob(null);
       setPageDesignJobEnqueued(false);
     },
-    mutationFn: async () => {
+    mutationFn: async (request: { scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined; overwriteExisting: boolean; preserveGeneratedImages: boolean }) => {
+      if (request.overwriteExisting && !request.preserveGeneratedImages) {
+        throw new Error('Safe page redesign capability is required');
+      }
+      const canSubmit = (): boolean => currentAutofillScope.current.scope === request.scope && currentAutofillScope.current.canGenerate &&
+        (request.options === undefined || currentAutofillScope.current.available);
+      if (!canSubmit()) throw new Error(t(language, 'shared.error.workspacePermission'));
       await saveAllPageDrafts();
+      if (!canSubmit()) throw new Error(t(language, 'shared.error.workspacePermission'));
       return api.generatePageSkeleton(
-        activeEpisodeId ?? '',
+        request.episodeId,
         {
-          overwrite_existing: shouldOverwritePageSkeleton(pages.length),
+          overwrite_existing: request.overwriteExisting,
+          ...(request.preserveGeneratedImages ? { preserve_generated_images: true } : {}),
           apply_story_plan: false,
           language
         },
         organizationId
       );
     },
-    onSuccess: async (result) => {
+    onSuccess: async (result, request) => {
+      const requestStillCurrent = currentAutofillScope.current.scope === request.scope;
       const followUps: Promise<unknown>[] = [invalidatePageDesignResources()];
       if ('job_id' in result) {
-        setLocalPageDesignJob({
-          id: result.job_id,
-          kind: 'skeleton',
-          resourceId: activeEpisodeId ?? ''
-        });
-        setPageDesignJobEnqueued(true);
-        followUps.push(trackJob(result.job_id));
-      } else {
-        followUps.push(clearPageSelectionAfterSkeleton());
-        if (result.story_plan_job_id !== null) {
+        if (requestStillCurrent) {
           setLocalPageDesignJob({
-            id: result.story_plan_job_id,
-            kind: 'autofill',
-            resourceId: activeEpisodeId ?? ''
+            id: result.job_id,
+            kind: 'skeleton',
+            resourceId: request.episodeId
           });
           setPageDesignJobEnqueued(true);
+        }
+        followUps.push(trackJob(result.job_id));
+      } else {
+        if (requestStillCurrent) followUps.push(clearPageSelectionAfterSkeleton());
+        if (result.story_plan_job_id !== null) {
+          pendingStoryAutofillAfterSkeleton.current = null;
+          if (requestStillCurrent) {
+            setLocalPageDesignJob({
+              id: result.story_plan_job_id,
+              kind: 'autofill',
+              resourceId: request.episodeId
+            });
+            setPageDesignJobEnqueued(true);
+          }
           followUps.push(trackJob(result.story_plan_job_id));
         }
       }
       await Promise.allSettled(followUps);
-      if (!('job_id' in result) && result.story_plan_job_id === null) {
+      if (requestStillCurrent && !('job_id' in result) && result.story_plan_job_id === null) {
         continueStoryAutofillAfterSkeleton();
       }
     },
@@ -1993,13 +2012,17 @@ export function PagesScreen(): React.JSX.Element {
   };
 
   const existingEpisodePageCount = pages.length;
-  const existingEpisodePanelCount = pages.reduce(
-    (total, page) => total + page.panel_count,
-    0
-  );
-  const overwritePageSkeleton = shouldOverwritePageSkeleton(
-    existingEpisodePageCount
-  );
+  const existingEpisodePanelCount = pages.reduce((total, page) => total + page.panel_count, 0);
+  const overwritePageSkeleton = existingEpisodePageCount > 0;
+  const generatedPageImageCount = pages.filter((page) => page.generated_image !== null).length;
+  const safeRedesignAvailable = pages.length === 0 || pageSkeletonCapabilitiesQuery.data?.preserve_generated_images === true;
+  const safeRedesignBlockReason = safeRedesignAvailable
+    ? undefined
+    : pageSkeletonCapabilitiesQuery.isLoading
+      ? t(language, 'screen.pages.safeRedesignChecking')
+      : generatedPageImageCount > 0
+        ? t(language, 'screen.pages.safeRedesignUnavailableWithImages', { imageCount: generatedPageImageCount })
+        : t(language, 'screen.pages.safeRedesignUnavailable');
   const pageDesignOperationActive =
     activePageDesignServerJobId !== null ||
     pageDesignJobEnqueued ||
@@ -2034,44 +2057,8 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const confirmPageSkeletonGeneration = (): void => {
-    if (
-      !canGenerate ||
-      activeEpisodeId === null ||
-      pageDesignOperationActive
-    ) {
-      return;
-    }
-    void resolveDirtyEditors(language).then((canContinue) => {
-      if (!canContinue) {
-        return;
-      }
-      confirmAction({
-        language,
-        title: overwritePageSkeleton
-          ? t(language, "generated.screens.StoryScreen.regenerate.and.replace.page.plan.f11f5d2d")
-          : t(language, "generated.screens.StoryScreen.generate.page.plan.2bf7c88e"),
-        message: appendAiProviderDisclosure(
-          overwritePageSkeleton
-            ? t(language, 'screen.story.replacePagePlan', {
-                pageCount: existingEpisodePageCount,
-                panelCount: existingEpisodePanelCount
-              })
-            : t(language, 'screen.pages.design.generateConfirmation'),
-          language,
-          'text'
-        ),
-        confirmLabel: overwritePageSkeleton
-          ? t(language, "generated.screens.StoryScreen.replace.and.regenerate.6303262c")
-          : t(language, 'pageSkeleton'),
-        destructive: overwritePageSkeleton,
-        onConfirm: () => pageSkeletonMutation.mutate()
-      });
-    });
-  };
-
   const confirmPageStoryAutofill = (): void => {
-    if (!canGenerate || activeEpisodeId === null || pageDesignOperationActive) return;
+    if (!canGenerate || activeEpisodeId === null || pageDesignOperationActive || !safeRedesignAvailable) return;
     const episodeId = activeEpisodeId;
     const scope = stateAutofillScope;
     const available = stateAutofillAvailable;
@@ -2084,16 +2071,22 @@ export function PagesScreen(): React.JSX.Element {
         language,
         available,
         choice,
-        includeSkeletonGeneration: pages.length === 0,
+        includeSkeletonGeneration: true,
         isCurrent,
+        overwriteSummary: overwritePageSkeleton
+          ? `${t(language, 'screen.story.replacePagePlan', {
+              pageCount: existingEpisodePageCount,
+              panelCount: existingEpisodePanelCount
+            })}\n${t(language, 'screen.pages.safeRedesignPreservationSummary')}`
+          : undefined,
         onConfirm: (options) => {
           const request = { scope, episodeId, options };
-          if (pages.length === 0) {
-            pendingStoryAutofillAfterSkeleton.current = request;
-            pageSkeletonMutation.mutate();
-            return;
-          }
-          pageStoryAutofillMutation.mutate(request);
+          pendingStoryAutofillAfterSkeleton.current = request;
+          pageSkeletonMutation.mutate({
+            ...request,
+            overwriteExisting: overwritePageSkeleton,
+            preserveGeneratedImages: overwritePageSkeleton
+          });
         }
       });
     });
@@ -2380,6 +2373,7 @@ export function PagesScreen(): React.JSX.Element {
     void invalidateEntities();
     void invalidatePageLayoutTemplates();
     void invalidatePageReadiness();
+    if (pages.length > 0) void pageSkeletonCapabilitiesQuery.refetch();
   };
   const pageFailures = collectOperationFailures([
     ...queryFailures,
@@ -2401,6 +2395,7 @@ export function PagesScreen(): React.JSX.Element {
       onRefresh={refreshPages}
       refreshing={
         pagesQuery.isFetching ||
+        pageSkeletonCapabilitiesQuery.isFetching ||
         pageLayoutTemplatesQuery.isFetching ||
         pageGenerationReadinessQuery.isFetching ||
         panelsQuery.isFetching ||
@@ -2418,7 +2413,16 @@ export function PagesScreen(): React.JSX.Element {
         />
       ) : null}
       {activeEpisodeId === null ? <Notice message={t(language, 'selectEpisodeFirst')} tone="warning" /> : null}
+      <StoryStateAutofillOptions
+        available={stateAutofillAvailable}
+        disabled={!canGenerate || activeEpisodeId === null || pageDesignOperationActive || !safeRedesignAvailable}
+        language={language}
+        value={stateAutofillChoice}
+        onChange={(value) => setStateAutofillDraft({ scope: stateAutofillScope, value })}
+      />
+      {safeRedesignBlockReason === undefined ? null : <Notice message={safeRedesignBlockReason} tone="warning" />}
       <PageStoryAutofillAction
+        blockReason={safeRedesignBlockReason}
         canGenerate={canGenerate}
         hasActiveJob={pageDesignOperationActive}
         jobEnqueued={pageDesignJobEnqueued}
@@ -2453,30 +2457,8 @@ export function PagesScreen(): React.JSX.Element {
           onEndReached={() => { void pagesQuery.fetchNextPage(); }} />
       </Section>
 
-      <PageJobHistory title={t(language, 'screen.pages.pageDesignHistory')}>
-        <StoryStateAutofillOptions
-          available={stateAutofillAvailable}
-          disabled={!canGenerate || activeEpisodeId === null || pageDesignOperationActive}
-          language={language}
-          value={stateAutofillChoice}
-          onChange={(value) => setStateAutofillDraft({ scope: stateAutofillScope, value })}
-        />
-        <StoryGenerationControls visibleAction="skeleton"
-          canGenerate={canGenerate}
-          estimatedPagesInvalid={false}
-          hasActiveJob={pageDesignOperationActive}
-          jobEnqueued={pageDesignJobEnqueued}
-          language={language}
-          onApplyStory={confirmPageStoryAutofill}
-          onGenerateSkeleton={confirmPageSkeletonGeneration}
-          overwrite={overwritePageSkeleton}
-          pagesLoading={pagesQuery.isLoading}
-          selectedEpisode={activeEpisodeId !== null}
-          skeletonLoading={pageSkeletonMutation.isPending}
-          storyApplyLoading={pageStoryAutofillMutation.isPending}
-        />
-        {stateAutofillAvailable ? <EpisodeStateAutofillResult jobId={displayedPageDesignJobId} episodeId={activeEpisodeId} entities={entities} canEdit={canEdit} /> : null}
-        <JobStatusCard
+      {stateAutofillAvailable ? <EpisodeStateAutofillResult jobId={displayedPageDesignJobId} episodeId={activeEpisodeId} entities={entities} canEdit={canEdit} /> : null}
+      <JobStatusCard
           api={api}
           cancelLoading={cancelPageDesignJobMutation.isPending}
           jobId={displayedPageDesignJobId}
@@ -2499,8 +2481,7 @@ export function PagesScreen(): React.JSX.Element {
           }}
           onCancel={async (job) => { await cancelPageDesignJobMutation.mutateAsync(job); }}
           sessionKey={sessionKey}
-        />
-      </PageJobHistory>
+      />
       {pageFailures.map((failure, index) => (
         <PageErrorRecoveryNotice key={`${failure.context.operation}-${index}`} context={failure.context} error={failure.error} language={language}
           onAccount={() => navigateAfterDirtyCheck('Account')} onCharacters={() => navigateAfterDirtyCheck('Characters')}

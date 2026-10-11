@@ -418,7 +418,6 @@ export function AccountScreen(): React.JSX.Element {
     >
       <Section collapsible persistKey="account:profile" title={t(language, 'profile')}>
         <Text style={styles.metric}>{session?.user.email ?? '-'}</Text>
-        <Text style={styles.caption}>{session?.user.display_name ?? session?.user.id ?? '-'}</Text>
       </Section>
 
       <GoogleIdentityLinkPanel key={session?.user.id ?? sessionKey} onSignInAgain={confirmLogout} />
@@ -585,47 +584,26 @@ export function AccountScreen(): React.JSX.Element {
             }
           }}
         />
-        {!config.mobileStoreBillingEnabled ? null : nativeMobileStore === null ? (
-          <Notice
-            message={t(language, "generated.screens.AccountScreen.in.app.purchases.are.unavailable.on.this.78ae2675")}
-            tone="warning"
+        {nativeSubscriptionManagementUrl === null ? null : (
+          <PrimaryButton
+            label={billingPlanMessage(language, 'managePlans')}
+            onPress={() => void openExternalHttpsUrl(nativeSubscriptionManagementUrl)}
+            variant="secondary"
           />
+        )}
+        {!config.mobileStoreBillingEnabled ? (
+          <UnavailableStorePurchases language={language} reason={billingPlanMessage(language, 'disabled')} />
+        ) : nativeMobileStore === null ? (
+          <UnavailableStorePurchases language={language} reason={t(language, "generated.screens.AccountScreen.in.app.purchases.are.unavailable.on.this.78ae2675")} />
         ) : mobileStoreProductCatalogQuery.isLoading ? (
-          <Notice
-            message={t(language, "generated.screens.AccountScreen.loading.store.products.6107cc8e")}
+          <UnavailableStorePurchases language={language} reason={billingPlanMessage(language, 'loadingProducts')} />
+        ) : mobileStoreProductCatalogQuery.isError || mobileStoreBillingAdapter === null ? (
+          <UnavailableStorePurchases
+            language={language}
+            reason={billingPlanMessage(language, 'unavailable')}
+            reloading={mobileStoreProductCatalogQuery.isFetching}
+            onReload={() => void mobileStoreProductCatalogQuery.refetch()}
           />
-        ) : mobileStoreProductCatalogQuery.isError ? (
-          <View style={styles.usage}>
-            <Notice
-              message={t(language, "generated.screens.AccountScreen.purchases.are.disabled.because.store.pro.ebe5c1eb")}
-              tone="danger"
-            />
-            <PrimaryButton
-              disabled
-              disabledReason={t(language, "generated.screens.AccountScreen.reload.the.product.catalog.f0ea8b2a")}
-              label={t(language, "generated.screens.AccountScreen.purchase.8ff82e16")}
-              onPress={() => undefined}
-            />
-            <PrimaryButton
-              label={t(language, "generated.screens.AccountScreen.reload.products.3b04ccb7")}
-              loading={mobileStoreProductCatalogQuery.isFetching}
-              onPress={() => void mobileStoreProductCatalogQuery.refetch()}
-              variant="secondary"
-            />
-          </View>
-        ) : mobileStoreBillingAdapter === null ? (
-          <View style={styles.usage}>
-            <Notice
-              message={t(language, "generated.screens.AccountScreen.no.store.products.are.currently.availabl.815ba2a1")}
-              tone="warning"
-            />
-            <PrimaryButton
-              disabled
-              disabledReason={t(language, "generated.screens.AccountScreen.no.products.are.available.d22f3b8f")}
-              label={t(language, "generated.screens.AccountScreen.purchase.8ff82e16")}
-              onPress={() => undefined}
-            />
-          </View>
         ) : (
           <MobileStoreBillingPanel
             adapter={mobileStoreBillingAdapter}
@@ -1030,6 +1008,22 @@ function AcknowledgementRow({
 
 function accountDeletionErrorMessage(language: 'ja' | 'en'): string {
   return t(language, "generated.screens.AccountScreen.could.not.start.deletion.check.your.conn.2e8d0a38");
+}
+
+function UnavailableStorePurchases({ language, reason, reloading, onReload }: {
+  language: 'ja' | 'en';
+  reason: string;
+  reloading?: boolean;
+  onReload?: () => void;
+}): React.JSX.Element {
+  return (
+    <View style={styles.usage}>
+      <Notice message={reason} tone="warning" />
+      <PrimaryButton disabled disabledReason={reason} label={billingPlanMessage(language, 'planPurchase')} onPress={() => undefined} />
+      <PrimaryButton disabled disabledReason={reason} label={billingPlanMessage(language, 'creditsPurchase')} onPress={() => undefined} />
+      {onReload === undefined ? null : <PrimaryButton label={billingPlanMessage(language, 'retryCatalog')} loading={reloading} onPress={onReload} variant="secondary" />}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({

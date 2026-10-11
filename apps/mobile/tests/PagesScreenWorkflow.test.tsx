@@ -10,6 +10,7 @@ const panels: PanelRecord[] = [{ id: 'panel', page_id: 'page', order: 1, panel_r
 const frames: PanelFrameRecord[] = [{ id: 'frame', page_id: 'page', panel_id: 'panel', vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], border_style: 'solid', border_width: 1, border_color: '#000000', z_index: 1, reading_order: 1 }];
 const queryData = { pages: { pages: [{ pages: [page] }], pageParams: [null] }, entities: { pages: [{ entities: [] as EntityRecord[] }], pageParams: [null] }, panels: { panels }, frames: { frames }, scenes: { scenes: [] }, readiness: { ready: true, blockers: [], warnings: [], estimated_credit_cost: 8, page_revision: 'revision' }, templates: { templates: [] } };
 let moreEntities = false;
+let skeletonCapability: { preserve_generated_images: boolean } | undefined;
 const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl, confirmAction, generatePageSkeleton, autofillStory } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn(), openUrl: vi.fn().mockResolvedValue(undefined), confirmAction: vi.fn(), generatePageSkeleton: vi.fn(), autofillStory: vi.fn() }));
 const api = { updatePage: action, updatePanel: action, generatePage: action, generatePageSkeleton, autofillEpisodePagesFromStory: autofillStory };
 let root: ReactTestRenderer | undefined;
@@ -19,7 +20,7 @@ vi.mock('expo-image', () => ({ Image: { prefetch: vi.fn().mockResolvedValue(true
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn(), setQueryData: vi.fn() }),
   useInfiniteQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'pages' ? queryData.pages : queryData.entities, isSuccess: true, isFetching: false, hasNextPage: queryKey[0] === 'pages' ? false : moreEntities, isFetchingNextPage: false, fetchNextPage: fetchEntities, error: null }),
-  useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'panels' ? queryData.panels : queryKey[0] === 'frames' ? queryData.frames : queryKey[0] === 'scenes' ? queryData.scenes : queryKey[0] === 'page-generation-readiness' ? queryData.readiness : queryKey[0] === 'page-layout-templates' ? queryData.templates : undefined, isSuccess: true, isFetching: false, isLoading: false, error: null, refetch: vi.fn() }),
+  useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'panels' ? queryData.panels : queryKey[0] === 'frames' ? queryData.frames : queryKey[0] === 'scenes' ? queryData.scenes : queryKey[0] === 'page-generation-readiness' ? queryData.readiness : queryKey[0] === 'page-layout-templates' ? queryData.templates : queryKey[0] === 'page-skeleton-capabilities' ? skeletonCapability : undefined, isSuccess: true, isFetching: false, isLoading: false, error: null, refetch: vi.fn() }),
   useMutation: (options: { mutationFn: (...args: unknown[]) => Promise<unknown>; onSuccess?: (value: unknown, variables?: unknown) => Promise<void>; onError?: (error: unknown, variables?: unknown) => void | Promise<void> }) => {
     const [error, setError] = React.useState<unknown>(null);
     const run = async (...args: unknown[]): Promise<unknown> => {
@@ -81,6 +82,7 @@ beforeEach(() => {
   action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); fetchEntities.mockReset(); openUrl.mockReset(); confirmAction.mockReset(); generatePageSkeleton.mockReset(); autofillStory.mockReset();
   openUrl.mockResolvedValue(undefined); generatePageSkeleton.mockResolvedValue({ job_id: 'skeleton-job', queued: true, story_plan_applied: false }); autofillStory.mockResolvedValue({ job_id: 'autofill-job', queued: true });
   moreEntities=false; page.layout_config={}; queryData.pages={pages:[{pages:[page]}],pageParams:[null]}; queryData.panels={panels}; queryData.frames={frames}; queryData.entities.pages=[{entities:[]}]; panels[0].entities=[]; panels[0].dialogue=[];
+  skeletonCapability = { preserve_generated_images: true };
 });
 afterEach(async () => { await act(async () => root?.unmount()); });
 describe('実際のPagesScreenの工程構成', () => {
@@ -162,7 +164,7 @@ describe('実際のPagesScreenの工程構成', () => {
   it('上部CTAを一本化しpage number選択とcolor/monochrome入口を維持する', async () => {
     await act(async () => { root = create(<PagesScreen />); });
     expect(root!.root.findAllByType('button').filter((node) => node.props.testID === 'page-story-autofill-primary')).toHaveLength(1);
-    expect(root!.root.findAllByType('StoryGenerationControls').map((node) => node.props.visibleAction)).toEqual(['skeleton']);
+    expect(root!.root.findAllByType('StoryGenerationControls')).toHaveLength(0);
     const picker = root!.root.findAllByType('picker').find((node) => node.props.items?.some((item: { id: string }) => item.id === 'page'));
     expect(picker?.props.labelForItem(page)).toBe('1ページ');
     const generation = root!.root.findByProps({ testID: 'page-monochrome-generation-action' });
@@ -191,6 +193,38 @@ describe('実際のPagesScreenの工程構成', () => {
     await act(async () => { await job?.props.onCompleted(); });
     expect(autofillStory).toHaveBeenCalledTimes(1);
     expect(autofillStory).toHaveBeenCalledWith('episode', 'ja', null, undefined);
+  });
+
+  it('既存ページでも確認後に骨格を再生成してから同じ話へautofillを一度だけqueueする', async () => {
+    await act(async () => { root = create(<PagesScreen />); });
+    await act(async () => {
+      root!.root.findAllByType('button').find((node) => node.props.testID === 'page-story-autofill-primary')!.props.onPress();
+      await Promise.resolve();
+    });
+    const confirm = confirmAction.mock.lastCall?.[0] as { onConfirm: () => void };
+    await act(async () => { confirm.onConfirm(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(generatePageSkeleton).toHaveBeenCalledOnce();
+    expect(generatePageSkeleton).toHaveBeenCalledWith('episode', {
+      apply_story_plan: false,
+      language: 'ja',
+      overwrite_existing: true,
+      preserve_generated_images: true
+    }, null);
+    expect(autofillStory).not.toHaveBeenCalled();
+    const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'skeleton-job');
+    await act(async () => { await job?.props.onCompleted(); });
+    expect(autofillStory).toHaveBeenCalledExactlyOnceWith('episode', 'ja', null, undefined);
+  });
+
+  it('画像保持capabilityを確認できない旧serverでは既存ページを上書きしない', async () => {
+    skeletonCapability = undefined;
+    await act(async () => { root = create(<PagesScreen />); });
+    const actionButton = root!.root.findAllByType('button').find((node) => node.props.testID === 'page-story-autofill-primary')!;
+    expect(actionButton.props.disabled).toBe(true);
+    await act(async () => { actionButton.props.onPress(); await Promise.resolve(); });
+    expect(confirmAction).not.toHaveBeenCalled();
+    expect(generatePageSkeleton).not.toHaveBeenCalled();
+    expect(autofillStory).not.toHaveBeenCalled();
   });
 
   it('skeleton失敗時はautofillせず同じボタンから安全に再試行できる', async () => {

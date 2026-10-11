@@ -4,6 +4,7 @@ type OperationDefinition = readonly [ja: string, en: string, kind: OperationKind
 // App-owned operation names travel with errors; provider text never supplies context.
 export const operationDefinitions = {
   loadWorks: ['作品の読み込み', 'Load works', 'read'],
+  loadWorkDeletions: ['作品削除状態の読み込み', 'Load work deletion status', 'read'],
   loadChapters: ['章の読み込み', 'Load chapters', 'read'],
   loadEpisodes: ['話の読み込み', 'Load episodes', 'read'],
   loadScenes: ['シーンの読み込み', 'Load scenes', 'read'],
@@ -31,6 +32,7 @@ export const operationDefinitions = {
   moveEpisode: ['話の移動', 'Move episode', 'write'],
   deleteChapter: ['章の削除', 'Delete chapter', 'write'],
   deleteEpisode: ['話の削除', 'Delete episode', 'write'],
+  deleteWork: ['作品の永久削除受付', 'Request permanent work deletion', 'write'],
   reloadTitle: ['保存済みタイトルの読み込み', 'Load saved title', 'read'],
   cancelJob: ['ジョブの取消', 'Cancel job', 'cancel'],
   hideJob: ['ジョブ履歴の非表示', 'Hide job history', 'history'],

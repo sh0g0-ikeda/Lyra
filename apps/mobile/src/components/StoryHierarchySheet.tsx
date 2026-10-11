@@ -43,6 +43,7 @@ import type {
   UiLanguage,
   WorkRecord
 } from '@/domain/types';
+import { workDeletionMessage, type WorkDeletionRecord } from '@/domain/workDeletion';
 import { ApiError, type LyraMobileApiClient } from '@/lib/api';
 import { confirmDestructiveAction } from '@/lib/confirm';
 import { t } from '@/lib/i18n';
@@ -66,6 +67,7 @@ type StoryHierarchyApi = Pick<
   | 'createWork'
   | 'deleteChapter'
   | 'deleteEpisode'
+  | 'deleteWork'
    | 'getChapters'
    | 'getEpisodes'
    | 'getWork'
@@ -102,7 +104,9 @@ interface StoryHierarchySheetProps {
   onSelectEpisode: (workId: string, chapterId: string, episodeId: string) => void;
   onChapterDeleted: (chapterId: string) => void;
   onEpisodeDeleted: (episodeId: string) => void;
+  onBeforeWorkDelete: (workId: string) => Promise<boolean>;
   onWorkRenamed: (workId: string, title: string) => void;
+  onWorkDeletionAccepted: (deletion: WorkDeletionRecord) => Promise<void>;
   onChapterRenamed: (chapterId: string, title: string) => void;
   onEpisodeRenamed: (episodeId: string, title: string) => void;
 }
@@ -505,7 +509,9 @@ export function StoryHierarchySheet({
   onSelectEpisode,
   onChapterDeleted,
   onEpisodeDeleted,
+  onBeforeWorkDelete,
   onWorkRenamed,
+  onWorkDeletionAccepted,
   onChapterRenamed,
   onEpisodeRenamed
 }: StoryHierarchySheetProps): React.JSX.Element {
@@ -528,6 +534,7 @@ export function StoryHierarchySheet({
     scope: string;
     visible: boolean;
   }>({ canCreateWork, canEdit, intent: titleIntent, scope: errorScope, visible });
+  const liveWorkDeletionContextRef = useRef({ canEdit, scope: errorScope, visible });
   const error = failure?.scope === errorScope ? failure.error : null;
   const recordFailure = (cause: unknown, context: OperationErrorContext, intent: TitleIntent | null = null): void => {
     setFailure({ error: cause, context, scope: errorScope, titleIntent: intent });
@@ -673,6 +680,7 @@ export function StoryHierarchySheet({
     const scopeChanged = titleScopeRef.current !== errorScope;
     titleScopeRef.current = errorScope;
     liveTitleContextRef.current = { canCreateWork, canEdit, intent: titleIntent, scope: errorScope, visible };
+    liveWorkDeletionContextRef.current = { canEdit, scope: errorScope, visible };
     const permissionLost = titleIntent?.kind === 'create-work'
       ? !canCreateWork
       : titleIntent !== null && !canEdit;
@@ -690,6 +698,10 @@ export function StoryHierarchySheet({
     liveTitleContextRef.current = {
       ...liveTitleContextRef.current,
       intent: null,
+      visible: false
+    };
+    liveWorkDeletionContextRef.current = {
+      ...liveWorkDeletionContextRef.current,
       visible: false
     };
   }, []);
@@ -993,6 +1005,51 @@ export function StoryHierarchySheet({
     });
   };
 
+  const deleteWork = (target: Extract<MenuTarget, { kind: 'work' }>): void => {
+    setMenuTarget(null);
+    const operationScope = errorScope;
+    const isCurrentDeletion = (): boolean => {
+      const live = liveWorkDeletionContextRef.current;
+      return live.scope === operationScope && live.visible && live.canEdit;
+    };
+    confirmDestructiveAction({
+      language,
+      title: workDeletionMessage(language, 'deleteTitle'),
+      message: workDeletionMessage(language, 'deleteWarning', { title: target.work.title }),
+      onConfirm: () => {
+        void (async () => {
+          if (!isCurrentDeletion() || !await onBeforeWorkDelete(target.work.id) || !isCurrentDeletion()) return;
+          setPending(true);
+          setFailure(null);
+          let confirmed = false;
+          try {
+            const deletion = await api.deleteWork(target.work.id, organizationId);
+            confirmed = true;
+            await Promise.allSettled([
+              invalidateWorks(),
+              queryClient.invalidateQueries({ queryKey: workDetailQueryKey(sessionKey, target.work.id, organizationId) }),
+              queryClient.invalidateQueries({ queryKey: ['chapters', sessionKey] }),
+              queryClient.invalidateQueries({ queryKey: ['episodes', sessionKey] }),
+              queryClient.invalidateQueries({ queryKey: ['work-deletions', sessionKey, organizationId ?? 'personal'] })
+            ]);
+            if (isCurrentDeletion()) await onWorkDeletionAccepted(deletion);
+          } catch (cause) {
+            await Promise.allSettled([
+              queryClient.invalidateQueries({ queryKey: ['work-deletions', sessionKey, organizationId ?? 'personal'] }),
+              invalidateWorks(),
+              queryClient.invalidateQueries({ queryKey: workDetailQueryKey(sessionKey, target.work.id, organizationId) })
+            ]);
+            if (isCurrentDeletion()) {
+              recordFailure(cause, { operation: 'deleteWork', targetLabel: target.work.title, confirmed });
+            }
+          } finally {
+            if (isCurrentDeletion()) setPending(false);
+          }
+        })();
+      }
+    });
+  };
+
   const renderMenuItems = (): React.JSX.Element[] => {
     if (menuTarget === null) {
       return [];
@@ -1023,6 +1080,7 @@ export function StoryHierarchySheet({
     };
 
     if (menuTarget.kind === 'work') {
+      const target = menuTarget;
       item(
         'rename',
         t(language, "generated.components.StoryHierarchySheet.rename.work.25fb474a"),
@@ -1034,6 +1092,14 @@ export function StoryHierarchySheet({
         t(language, "generated.components.StoryHierarchySheet.add.chapter.774ad8c0"),
         <Plus color={colors.primary} size={19} />,
         () => openTitleIntent({ kind: 'create-chapter', work: menuTarget.work })
+      );
+      item(
+        'delete',
+        workDeletionMessage(language, 'deleteMenu'),
+        <Trash2 color={colors.danger} size={19} />,
+        () => deleteWork(target),
+        false,
+        true
       );
       return items;
     }
@@ -1131,12 +1197,26 @@ export function StoryHierarchySheet({
     }).catch((cause: unknown) => recordFailure(cause, failure.context, failure.titleIntent))
       .finally(() => setPending(false));
   };
+  const refreshDeleteStatus = (): void => {
+    if (pending) return;
+    setPending(true);
+    void Promise.all([
+      invalidateWorks(),
+      queryClient.invalidateQueries({ queryKey: ['work-deletions', sessionKey, organizationId ?? 'personal'] })
+    ]).then(() => setFailure(null))
+      .catch((cause: unknown) => recordFailure(cause, { operation: 'loadWorkDeletions' }))
+      .finally(() => setPending(false));
+  };
+  const deleteFailure = failureContext?.operation === 'deleteWork';
+  const deleteRecoveryMessage = deleteFailure && error instanceof ApiError && error.status === 409
+    ? workDeletionMessage(language, 'activeConflict')
+    : undefined;
   const errorNotice = error === null || failureContext === null ? null : (
     <Notice
       announce
-      message={operationErrorMessage(error, failureContext, language)}
-      actionLabel={failureContext.confirmed === true ? errorRefreshLabel(language) : undefined}
-      onAction={failureContext.confirmed === true ? refreshConfirmedOperation : undefined}
+      message={operationErrorMessage(error, failureContext, language, deleteRecoveryMessage)}
+      actionLabel={deleteFailure || failureContext.confirmed === true ? errorRefreshLabel(language) : undefined}
+      onAction={deleteFailure ? refreshDeleteStatus : failureContext.confirmed === true ? refreshConfirmedOperation : undefined}
       tone="warning"
     />
   );

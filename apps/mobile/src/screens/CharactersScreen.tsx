@@ -417,23 +417,6 @@ function ConfirmedReferencePreview({
   );
 }
 
-const formatReferenceStatus = (status: string | undefined, language: 'ja' | 'en'): string => {
-  if (status === undefined) {
-    return '-';
-  }
-
-  const labels: Record<string, ScreenTranslationKey> = {
-    empty: 'screen.characters.referenceStatus.empty',
-    partial: 'screen.characters.referenceStatus.partial',
-    ready: 'screen.characters.referenceStatus.ready'
-  };
-  const label = labels[status];
-  if (label === undefined) {
-    return status;
-  }
-  return t(language, label);
-};
-
 const generationBlockerMessage = (
   code: EntityReferenceGenerationBlockerCode,
   language: 'ja' | 'en'
@@ -2677,24 +2660,6 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
 
 
       <Section collapsible persistKey="characters:reference-set" subtitle={editorMessage(language, 'characterPreviewHelp')} title={editorMessage(language, 'characterPreview')}>
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.status.bd826326")}</Text>
-            <Text style={styles.metric}>{formatReferenceStatus(referenceQuery.data?.status, language)}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.primary.a481ddc0")}</Text>
-            <Text style={styles.metric}>
-              {referenceQuery.data?.primary_ref_id === null || referenceQuery.data?.primary_ref_id === undefined
-                ? t(language, "generated.screens.CharactersScreen.not.set.3ecccf12")
-                : t(language, "generated.screens.CharactersScreen.set.d44ebb68")}
-            </Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.images.716d1857")}</Text>
-            <Text style={styles.metric}>{referenceQuery.data?.reference_images.length ?? 0}</Text>
-          </View>
-        </View>
         {activeReferenceCandidate === null && (referenceQuery.data?.reference_images.length ?? 0) === 0 ? null : (
           <>
             <Text style={styles.groupTitle}>{t(language, "generated.screens.CharactersScreen.preview.and.confirmed.images.78120ddc")}</Text>
@@ -2779,6 +2744,9 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
           organizationId={organizationId}
           onCompleted={async () => {
             await Promise.all([invalidateEntities(), invalidateReference()]);
+          }}
+          onMissing={async () => {
+            setLocalJob((current) => current?.id === displayedJobId ? null : current);
           }}
           sessionKey={sessionKey}
         />
@@ -2995,26 +2963,6 @@ const styles = StyleSheet.create({
     ...textStyles.caption,
     color: colors.ink,
     fontWeight: '700'
-  },
-  metric: {
-    ...textStyles.body,
-    flexShrink: 1,
-    fontWeight: '700'
-  },
-  metricCard: {
-    backgroundColor: 'rgba(16, 16, 16, 0.82)',
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    gap: 4,
-    minWidth: 88,
-    padding: spacing.sm
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm
   },
   referenceCard: {
     backgroundColor: colors.surfaceAlt,

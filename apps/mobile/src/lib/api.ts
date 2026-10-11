@@ -1,3 +1,5 @@
+import { workDeletionSchema, workDeletionsSchema, type WorkDeletionRecord, type WorkDeletionsRecord } from '@/domain/workDeletion';
+import { pageSkeletonCapabilitiesSchema, type PageSkeletonCapabilities } from '@/domain/pageSkeletonCapabilities';
 import type { GenerationQuote, GenerationQuoteReceipt, GenerationQuoteAcceptance, GenerationQuoteRequest } from '@/domain/pageGenerationQuote';
 import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStartBody, type GoogleLinkStatus } from '@/domain/googleAuth';
 import { z, type ZodType } from 'zod';
@@ -853,6 +855,22 @@ export class LyraMobileApiClient {
 
   public deleteEpisode(episodeId: string, organizationId?: string | null): Promise<void> {
     return this.requestVoid(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
+  }
+
+  public getPageSkeletonCapabilities(): Promise<PageSkeletonCapabilities> {
+    return this.request('/api/story/page-skeleton-capabilities', pageSkeletonCapabilitiesSchema);
+  }
+
+  public deleteWork(workId: string, organizationId?: string | null): Promise<WorkDeletionRecord> {
+    return this.request(`/api/works/${workId}${organizationQuery(organizationId)}`, workDeletionSchema, { method: 'DELETE' });
+  }
+
+  public getWorkDeletion(deletionId: string, organizationId?: string | null): Promise<WorkDeletionRecord> {
+    return this.request(`/api/work-deletions/${deletionId}${organizationQuery(organizationId)}`, workDeletionSchema);
+  }
+
+  public getWorkDeletions(organizationId?: string | null): Promise<WorkDeletionsRecord> {
+    return this.request(`/api/work-deletions${organizationQuery(organizationId)}`, workDeletionsSchema);
   }
 
   public generatePageSkeleton(

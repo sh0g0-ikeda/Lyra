@@ -14,8 +14,9 @@ let language: 'ja' | 'en';
 const refetchEntity = vi.fn();
 let pages: { entities: EntityRecord[] }[];
 let registration: {dirty:boolean;save:()=>Promise<void>;discard:()=>void};
-const updateEntity=vi.fn(); const createEntity=vi.fn(); const navigate=vi.fn();
+const updateEntity=vi.fn(); const createEntity=vi.fn(); const navigate=vi.fn(); const trackJob=vi.fn();
 const resolveDirtyEditors = vi.fn();
+const assetQuoteCapture = vi.hoisted(() => ({ options: null as Record<string, unknown> | null }));
 const updateSelection = vi.fn(async (next: Partial<typeof selection>) => { selection = { ...selection, ...next }; return true; });
 const queryClient={invalidateQueries:vi.fn(),fetchQuery:vi.fn()};
 const query=(data:unknown):Record<string,unknown>=>({data,error:null,isFetching:false,refetch:vi.fn()});
@@ -29,10 +30,10 @@ vi.mock('@tanstack/react-query',()=>({useQueryClient:()=>queryClient,
  const run=async():Promise<unknown>=>{try{const value=await options.mutationFn();await options.onSuccess?.(value);return value;}catch(error){options.onError?.(error);throw error;}};
  return {mutateAsync:run,mutate:()=>{void run();},isPending:false,error:null,reset:vi.fn()};}
 }));
-vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob:vi.fn(),updateSelection})}));
+vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob,updateSelection})}));
 vi.mock('@/state/dirtyState',()=>({useDirtyState:()=>({resolveDirtyEditors}),useDirtyEditorRegistration:(input:typeof registration)=>{registration=input;}}));
 vi.mock('@/hooks/useActiveResourceJobId',()=>({useActiveResourceJobId:()=>null}));
-vi.mock('@/hooks/useAssetGenerationQuote',()=>({useAssetGenerationQuote:()=>({state:{phase:'closed',visible:false},controller:{open:vi.fn(),close:vi.fn(),accept:vi.fn(),reconcile:vi.fn(),canAccept:()=>false}})}));
+vi.mock('@/hooks/useAssetGenerationQuote',()=>({useAssetGenerationQuote:(options: Record<string, unknown>)=>{assetQuoteCapture.options=options;return {state:{phase:'closed',visible:false},controller:{open:vi.fn(),close:vi.fn(),accept:vi.fn(),reconcile:vi.fn(),canAccept:()=>false}};}}));
 vi.mock('@/components/WorkspaceContextPicker',()=>({useWorkspaceContextSelection:()=>({selectedWorkId:selection.workId,selectedEpisodeId:'episode'})}));
 vi.mock('@/lib/config',()=>({config:{apiBaseUrl:'https://example.test'}}));
 vi.mock('@/lib/api',()=>({ApiError:class ApiError extends Error{}}));
@@ -85,6 +86,8 @@ beforeEach(() => {
   createEntity.mockReset().mockResolvedValue({ ...entity, id: 'created' });
   updateSelection.mockClear();
   resolveDirtyEditors.mockReset().mockResolvedValue(true);
+  trackJob.mockReset().mockResolvedValue(undefined);
+  assetQuoteCapture.options = null;
 });
 afterEach(async () => { await act(async () => root?.unmount()); root = undefined; });
 const render = async (): Promise<void> => { await act(async () => { root = create(<CharactersScreen />); }); };
@@ -302,5 +305,25 @@ describe('新規人物だけの編集可能な初期値', () => {
     await act(async () => registration.discard());
     expect(choice('性別表現').props.value).toBe('male');
     expect(registration.dirty).toBe(false);
+  });
+
+  it('画像生成ジョブが見つからない場合は古い監視対象を外して再生成を妨げない', async () => {
+    selection.entityId = entity.id;
+    await render();
+    const options = assetQuoteCapture.options as {
+      contextKey: string;
+      onAccepted: (receipt: { job_id: string }, target: { request: { target_id: string } }, originKey: string) => Promise<void>;
+    };
+    await act(async () => {
+      await options.onAccepted(
+        { job_id: 'expired-job' },
+        { request: { target_id: entity.id } },
+        options.contextKey,
+      );
+    });
+    const status = root!.root.findByType('JobStatusCard');
+    expect(status.props.jobId).toBe('expired-job');
+    await act(async () => { await status.props.onMissing(); });
+    expect(root!.root.findByType('JobStatusCard').props.jobId).toBeNull();
   });
 });

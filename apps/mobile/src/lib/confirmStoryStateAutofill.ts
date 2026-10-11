@@ -10,6 +10,7 @@ export function confirmStoryStateAutofill(input: {
   available: boolean;
   choice: EpisodeStateAutofillChoice;
   includeSkeletonGeneration?: boolean;
+  overwriteSummary?: string;
   isCurrent: () => boolean;
   onConfirm: (options: EpisodeStateAutofillRequestOptions | undefined) => void;
 }): void {
@@ -20,10 +21,11 @@ export function confirmStoryStateAutofill(input: {
   const operationConfirmation = input.includeSkeletonGeneration === true
     ? `${t(input.language, 'screen.pages.design.generateConfirmation')}\n\n${t(input.language, 'screen.pages.design.autofillConfirmation')}`
     : t(input.language, 'screen.pages.design.autofillConfirmation');
+  const overwriteSummary = input.overwriteSummary === undefined ? '' : `${input.overwriteSummary}\n\n`;
   confirmAction({
     language: input.language,
     title: t(input.language, 'component.storyGenerationControls.autofillAction'),
-    message: appendAiProviderDisclosure(`${operationConfirmation}${stateCopy}`, input.language, 'text'),
+    message: appendAiProviderDisclosure(`${overwriteSummary}${operationConfirmation}${stateCopy}`, input.language, 'text'),
     confirmLabel: t(input.language, 'component.storyGenerationControls.autofillAction'),
     destructive: true,
     onConfirm: () => { if (input.isCurrent()) input.onConfirm(options); }

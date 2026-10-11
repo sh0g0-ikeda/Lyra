@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { useIsFocused, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { useIsFocused, useRoute, type RouteProp } from '@react-navigation/native';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -38,7 +37,6 @@ export function MangaScreen(): React.JSX.Element {
   const { api, language, selection, sessionKey, updateSelection } = useAppState();
   const { resolveDirtyEditors } = useDirtyState();
   const focused = useIsFocused();
-  const navigation = useNavigation<BottomTabNavigationProp<MobileTabParamList>>();
   const route = useRoute<RouteProp<MobileTabParamList, 'Story'>>();
   const { top } = useSafeAreaInsets();
   const context = useWorkspaceContextSelection();
@@ -133,7 +131,6 @@ export function MangaScreen(): React.JSX.Element {
         <MangaLibrary
           context={context}
           loadingProgress={episode !== undefined && pagesQuery.isPending && pagesQuery.isFetching}
-          onOpenGuide={() => { void resolveDirtyEditors(language).then((allowed) => { if (allowed) navigation.navigate('Guide'); }); }}
           onResume={() => void openStep(resumeStep)}
           onRetryProgress={() => { void pagesQuery.refetch(); }}
           progressError={pagesQuery.error}
