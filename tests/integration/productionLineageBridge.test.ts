@@ -76,11 +76,13 @@ describePostgres('forward-only production lineage bridge', () => {
         return { userId, deletedUserId, identityId, pageId, exportId, jobId };
     }
     async function upgrade(db: DatabaseClient & TransactionRunner): Promise<string[]> {
-        const applied=await withPostgresTestMigrationLock(admin, () => runPendingMigrations(db, { allowProductionLineageBridge: true, accountDeletionIdentityHashSecret: secret }));
-        const invariants=await checkDeploymentDataInvariants(db);
-        expect(invariants.violations).toEqual([]);
-        expect(invariants.ok).toBe(true);
-        return applied;
+        return withPostgresTestMigrationLock(admin, async () => {
+            const applied=await runPendingMigrations(db, { allowProductionLineageBridge: true, accountDeletionIdentityHashSecret: secret });
+            const invariants=await checkDeploymentDataInvariants(db);
+            expect(invariants.violations).toEqual([]);
+            expect(invariants.ok).toBe(true);
+            return applied;
+        });
     }
     it('本番履歴・ID・課金を保持して新規schemaへ進み二度目は何もしない', async () => {
         const { pool, db } = await database();
@@ -372,12 +374,17 @@ describePostgres('forward-only production lineage bridge', () => {
     }, 120000);
     it('fresh candidateはbridge opt-in不要で通常順に適用する', async () => {
         const { db } = await database(false);
-        const applied = await withPostgresTestMigrationLock(admin, () => runPendingMigrations(db));
+        const { applied, invariants, reapplied } = await withPostgresTestMigrationLock(admin, async () => {
+            const applied = await runPendingMigrations(db);
+            const invariants = await checkDeploymentDataInvariants(db);
+            const reapplied = await runPendingMigrations(db);
+            return { applied, invariants, reapplied };
+        });
         expect(applied).toContain(PRODUCTION_BRIDGE_FILENAME);
         expect(applied).toContain('047_add_state_reference_copy_attempts.sql');
         expect(applied.at(-1)).toBe('049_add_stripe_credit_recovery.sql');
-        expect((await checkDeploymentDataInvariants(db)).violations).toEqual([]);
-        expect(await (runPendingMigrations(db))).toEqual([]);
+        expect(invariants.violations).toEqual([]);
+        expect(reapplied).toEqual([]);
     }, 120000);
 });
 function adapter(pool: Pool, fail: string | null = null): DatabaseClient & TransactionRunner {
