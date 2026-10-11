@@ -29,7 +29,7 @@ export class PostgresWorkRepository implements WorkReader {
       `
       SELECT id, user_id, organization_id
       FROM works
-      WHERE id = $1
+      WHERE id = $1 AND deletion_started_at IS NULL
         AND (
           ($3::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
           OR (

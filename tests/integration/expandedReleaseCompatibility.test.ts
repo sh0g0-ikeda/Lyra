@@ -25,7 +25,7 @@ for(const profile of ['canonical','production44_expanded_pg18_v1'] as const){
         const client=await pool.connect();try{await client.query('BEGIN');const result=await work({query:async<Row extends QueryResultRow>(sql:string,args?:readonly unknown[])=>{statements.push(sql);return client.query<Row>(sql,args===undefined?undefined:[...args]);}});await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
       }};
       await withPostgresTestMigrationLock(admin,()=>runPendingMigrations(database,profile==='canonical'?undefined:{migrationsDir:join(process.cwd(),'tests/fixtures/production44-pg18')}));
-      if(profile!=='canonical')expect(await runProduction44Expansion(pool)).toHaveLength(9);
+      if(profile!=='canonical')expect(await runProduction44Expansion(pool)).toHaveLength(10);
       statements.length=0;
     },120_000);
     afterAll(async()=>{if(pool)await pool.end();if(admin){await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();}});
@@ -38,7 +38,7 @@ for(const profile of ['canonical','production44_expanded_pg18_v1'] as const){
       expect(report).toMatchObject({ok:true,journalPresent:false,remoteStoragePolicyVerified:false,violations:[]});
       expect(report.checkedCount).toBeGreaterThan(10);
       expect(Number((await pool.query('SELECT COUNT(*)::int AS n FROM schema_migrations')).rows[0].n)).toBe(before);
-      expect(before).toBe(profile==='canonical'?49:53);
+      expect(before).toBe(profile==='canonical'?50:54);
       expect(statements.every(sql=>/^\s*(SELECT|WITH|SET)\b/u.test(sql))).toBe(true);
       expect(statements).toEqual(expect.arrayContaining([expect.stringContaining('REPEATABLE READ, READ ONLY')]));
     });
@@ -56,7 +56,7 @@ for(const profile of ['canonical','production44_expanded_pg18_v1'] as const){
         expect(statements.some(sql=>sql.includes('FROM state_reference_copy_attempts'))).toBe(false);
       }finally{await pool.query("INSERT INTO schema_migrations(filename) VALUES('048_advance_entity_state_revision_for_legacy_writers.sql')");}
     });
-    if(profile!=='canonical')it('known53履歴でも追加未知catalogを拒否しbusiness SQLを実行しない',async()=>{
+    if(profile!=='canonical')it('known54履歴でも追加未知catalogを拒否しbusiness SQLを実行しない',async()=>{
       await pool.query('ALTER TABLE entity_states ADD COLUMN unknown_release_probe text');statements.length=0;
       try{
         const report=await checkReleaseCompatibility(database,{profile:'backend-only',mobileClientIds:[],runtime},{schemaProfile:profile});

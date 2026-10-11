@@ -200,6 +200,38 @@ to an anonymized user anchor. Store and Stripe events received after deletion
 starts are deduplicated as provider records but cannot restore personal credits or
 plan entitlements.
 
+### Permanent work deletion (2026-10-12)
+
+Permanent work deletion is separate from account deletion. DELETE /api/works/:id
+requires personal ownership or active organization edit-work permission and an
+explicit Mobile confirmation that the work, chapters, episodes and owned images
+will be erased. Admission defaults OFF through WORK_DELETION_ENABLED. Existing
+receipts, mutation guards and recovery remain active when admission is disabled.
+The API returns a durable 202 receipt, or 200 for a completed repeated request;
+scoped GET /api/work-deletions and /api/work-deletions/:id recover its status.
+An uncertain network response never causes an automatic second DELETE.
+
+Migration 050 adds the work deletion journal, exact owned asset manifest and
+synchronous storage-operation journal. All current runtimes require its physically
+attested schema before serving, including while new deletion admission is OFF.
+Deletion locks the work, rejects active generation/export or unresolved external
+writes, snapshots authorized resources and freezes further admissions/edits.
+Pending works are hidden from normal lists and detail/image URL issuance. The
+bounded recovery runner erases exact owned S3 keys, all versions and delete
+markers; state-copy v2 requires verified work-scoped fencing with the current
+request token. Unknown legacy writes block completion rather than becoming safe
+through elapsed time. Only verified cleanup permits the final graph cascade. Ownership is established
+from the frozen work graph and retained attributable resource history, including
+images confirmed by former organization editors. A key whose historical resource
+and ownership evidence have both been lost cannot be attributed to this work;
+the deletion operation does not erase unrelated or unproven bucket objects. Known
+unresolved ownership or writes remain blocked for reconciliation. Completion
+scrubs raw work/image content from retained journals while preserving minimal
+receipt, fencing and billing evidence. Billing ledgers, receipts, balances, user
+accounts and unrelated works remain.
+The versioned staging bucket needs DeleteObjectVersion on its objects and
+ListBucketVersions/GetBucketVersioning on the bucket; production scope is excluded.
+
 ## 6. Generation jobs
 
 Long-running page, entity, page-skeleton, and story-autofill work is represented by
@@ -756,8 +788,10 @@ Automatic runtime migration does not select or execute this expansion.
 Runtime admission issues one frozen, internally verified proof before API
 listeners, providers, recovery timers or queue consumption. The same profile is
 propagated through page, entity, scene, story, quote/import and job factories.
-The unexpanded44 profile is not an admitted runtime. Canonical047 can still boot;
-048-dependent state capabilities require an explicit capability check. Migration
+The unexpanded44 profile is not an admitted runtime. Historical canonical047/048
+catalogs remain classifiable evidence; the current binary requires the physically
+attested 049 recovery and 050 work-deletion capabilities before startup.
+048-dependent state capabilities also require an explicit capability check. Migration
 048 advances legacy entity-state write revisions monotonically without replacing
 the existing named/reference fields, preserving candidate confirmation CAS.
 
@@ -793,13 +827,28 @@ The library and authentication screens expose the persisted Japanese/English
 switch and pass its language to Cognito Managed Login; logged-in Assets,
 Account and Guide omit the header credit badge. Billing
 retains total, monthly and purchased credit balances with explicit labels; plan
-controls keep their current contracts until the separate old-client UI transplant.
+controls use the existing native store catalog, verified receipt workflow,
+restore operation and official Apple/Google subscription-management URLs.
+Plans and credit packs are shown separately. Missing or disabled server catalog
+configuration displays disabled purchase actions and a reason; it never grants
+credits or redirects to a different environment. The staging Android package is
+separate from the production package and needs its own store testing configuration
+before a real native checkout can be accepted.
 Tutorial content follows the same persisted language without resetting progress.
 The Page editor places one story-autofill action immediately before its page list.
 When there are no pages, it first creates the skeleton without applying the story,
 then queues autofill only after completion for the same live episode/scope. A scope
 change or unmount stops the automatic continuation; existing pages allow explicit
-resume through the same action. Existing overwrite confirmation, saved-input
+resume through the same action. Repeating autofill with existing pages reruns both
+the page skeleton and story autofill. The authenticated
+GET /api/story/page-skeleton-capabilities advertises preserve_generated_images;
+the additive skeleton flag defaults false for old clients. The new Mobile sends
+preserve_generated_images=true with overwrite_existing=true only after capability
+verification and explicit overwrite confirmation. The server retains page IDs,
+images and balloons, replaces panel/frame layout, and floors the page count at the
+existing maximum page number. Active page/autofill jobs or an incomplete plan
+reject the transaction. A server without the capability cannot overwrite through
+the new Mobile action. Existing overwrite confirmation, saved-input
 validation, quote acceptance, active-job exclusion and outcome reconciliation stay
 in force. Hidden job-history content remains mounted so completion polling and
 recovery do not depend on expansion. Page confirmation precedes image saving;

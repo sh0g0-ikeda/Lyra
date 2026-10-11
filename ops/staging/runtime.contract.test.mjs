@@ -34,7 +34,16 @@ assert.equal(JSON.stringify(resources.MigrationTaskRole.Properties.Policies).inc
 assert.equal(JSON.stringify(resources.MigrationTaskRole.Properties.Policies).includes('s3:'), false);
 assert.match(JSON.stringify(resources.ApiTaskRole.Properties.Policies), /sqs:SendMessage/);
 assert.match(JSON.stringify(resources.WorkerTaskRole.Properties.Policies), /sqs:ReceiveMessage/);
-assert.equal(serialized.includes('s3:DeleteObjectVersion'), false);
+// Work deletion erases every version only in the isolated staging assets bucket.
+const apiStatements = resources.ApiTaskRole.Properties.Policies.flatMap(policy => policy.PolicyDocument.Statement);
+const apiObjectPolicy = apiStatements.find(statement => Array.isArray(statement.Action) && statement.Action.includes('s3:DeleteObject'));
+assert.ok(apiObjectPolicy.Action.includes('s3:DeleteObjectVersion'));
+assert.deepEqual(apiObjectPolicy.Resource, { 'Fn::Sub': 'arn:${AWS::Partition}:s3:::${AssetsBucketName}/*' });
+const apiBucketPolicy = apiStatements.find(statement => Array.isArray(statement.Action) && statement.Action.includes('s3:ListBucket'));
+assert.ok(apiBucketPolicy.Action.includes('s3:ListBucketVersions'));
+assert.ok(apiBucketPolicy.Action.includes('s3:GetBucketVersioning'));
+assert.deepEqual(apiBucketPolicy.Resource, { 'Fn::Sub': 'arn:${AWS::Partition}:s3:::${AssetsBucketName}' });
+assert.equal(JSON.stringify(resources.WorkerTaskRole.Properties.Policies).includes('s3:DeleteObjectVersion'), false);
 assert.equal(serialized.includes('"Secrets"'), false);
 assert.match(JSON.stringify(resources.ApiTaskDefinition.Properties.ContainerDefinitions[0].Command), /startProductionApi/);
 

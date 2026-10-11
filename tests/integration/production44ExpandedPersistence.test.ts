@@ -26,7 +26,7 @@ import type { EntityReferenceUploadStoragePort } from '../../src/services/entity
 
 const native = process.env.APP_ENV === 'test' && process.env.DATABASE_URL ? describe : describe.skip;
 const profile = 'production44_expanded_pg18_v1';
-native('expanded53 persistence capabilities', () => {
+native('expanded54 persistence capabilities', () => {
   let admin: Pool, pool: Pool, database: DatabaseClient & TransactionRunner;
   const schema = 'expanded_persistence_' + randomUUID().replaceAll('-','');
   beforeAll(async () => {
@@ -39,7 +39,7 @@ native('expanded53 persistence capabilities', () => {
       catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
     }};
     await withPostgresTestMigrationLock(admin,()=>runPendingMigrations(database,{migrationsDir:join(process.cwd(),'tests/fixtures/production44-pg18')}));
-    expect(await runProduction44Expansion(pool)).toHaveLength(9);
+    expect(await runProduction44Expansion(pool)).toHaveLength(10);
   },120_000);
   afterAll(async()=>{if(pool)await pool.end();if(admin){await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();}});
   async function seed():Promise<{userId:string;workId:string;episodeId:string;pageId:string;entityId:string}> {

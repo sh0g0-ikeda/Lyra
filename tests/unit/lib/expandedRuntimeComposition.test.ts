@@ -13,7 +13,7 @@ import {
 import { assertAttestedRuntimeCapabilities } from '../../../src/lib/runtimeGuards.js';
 
 function fixture(expanded=true, revision=true):RuntimeSchemaCatalog {
-  const catalog=JSON.parse(readFileSync(join(process.cwd(),expanded?'tests/fixtures/security-recovery-pg18/expanded-catalog.json':'tests/fixtures/production44-expanded-pg18/catalog.json'),'utf8')) as RuntimeSchemaCatalog;
+  const catalog=JSON.parse(readFileSync(join(process.cwd(),expanded?'tests/fixtures/work-deletion-pg18/expanded-catalog.json':'tests/fixtures/production44-expanded-pg18/catalog.json'),'utf8')) as RuntimeSchemaCatalog;
   if(!expanded){
     catalog.migrationFilenames=CANONICAL_RUNTIME_MIGRATIONS.filter(file=>revision||!file.startsWith('048'));
     catalog.columns=catalog.columns.filter(col=>col.relation!=='pages'||!['story_source_scene_ids','story_page_purpose','story_continuity_note'].includes(col.name));
@@ -40,7 +40,7 @@ function database(catalog:RuntimeSchemaCatalog):TransactionRunner&{queries:strin
   }};
   return{queries,transaction:work=>work(client)};
 }
-describe('canonical047/048 と expanded53 の immutable startup proof',()=>{
+describe('canonical047/048 と expanded54 の immutable startup proof',()=>{
   it.each([false,true])('canonical revision=%s を区別し049未適用の起動を拒否する',async revision=>{
     const proof=await attestRuntimeSchema(database(fixture(false,revision)));
     expect(proof.repositoryProfile).toBe('canonical');
@@ -61,7 +61,7 @@ describe('canonical047/048 と expanded53 の immutable startup proof',()=>{
     expect(start).toHaveBeenCalledWith(proof);
     expect(workerImport).not.toHaveBeenCalled();
   });
-  it('expanded exact53だけを同一の凍結proofとしてstartへ渡しAUTOがtrueでもbridgeを呼ばない',async()=>{
+  it('expanded exact54だけを同一の凍結proofとしてstartへ渡しAUTOがtrueでもbridgeを呼ばない',async()=>{
     const runMigrations=vi.fn();
     const {runtime}=await prepareAttestedRuntimeSchema({database:database(fixture()),autoRunMigrations:true,runMigrations});
     expect(runtime.repositoryProfile).toBe('production44_expanded_pg18_v1');

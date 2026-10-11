@@ -1,3 +1,4 @@
+import {createWorkDeletionRuntime,startWorkDeletionRecovery} from './infrastructure/work/WorkDeletionRuntime.js';
 import { createAccountDeletionRecoveryRuntime, startAccountDeletionRecovery } from './infrastructure/account/AccountDeletionRuntime.js';
 import { createEpisodeExportMaintenanceRuntime } from './lib/episodeExportMaintenanceRuntime.js';
 import { startEpisodeExportMaintenance } from './lib/episodeExportMaintenance.js';
@@ -103,6 +104,7 @@ async function startRuntime(runtime: AttestedRuntime): Promise<void> {
   }
 
   const stopPush = startPushNotificationMaintenance(createPushNotificationDeliveryRuntime(env, db));
+  const stopWorkDeletion = startWorkDeletionRecovery(createWorkDeletionRuntime(env,db,fencedStateReferenceRuntime,runtime.repositoryProfile));
   const stopAccountDeletion = startAccountDeletionRecovery(createAccountDeletionRecoveryRuntime(env, db, fencedStateReferenceRuntime));
   const stopExports = startEpisodeExportMaintenance(createEpisodeExportMaintenanceRuntime(env, db));
   const stopCancelledRecovery = await startCancelledGenerationSettlementRecoveryMaintenance(cancelledRecovery);
@@ -127,7 +129,7 @@ async function startRuntime(runtime: AttestedRuntime): Promise<void> {
       // Stop scheduling before draining HTTP and recovery. No DB close can
       // overtake this reconciliation or an in-flight push dispatch.
       const drained = await Promise.allSettled([
-        stopCancelledRecovery(), stopTerminalRecovery(), stopPush(), stopAccountDeletion(), stopExports(), httpClosed,
+        stopCancelledRecovery(), stopTerminalRecovery(), stopPush(), stopAccountDeletion(), stopWorkDeletion(), stopExports(), httpClosed,
       ]);
       await closeDatabasePool();
       if (drained.some(result => result.status === 'rejected')) {

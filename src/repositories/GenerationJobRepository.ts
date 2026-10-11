@@ -143,6 +143,7 @@ interface GenerationJobRow extends QueryResultRow {
   credit_cost: number;
   params: unknown;
   result: unknown;
+  work_deletion_pending?: boolean;
   sqs_message_id: string | null;
   openai_request_id: string | null;
   error_message: string | null;
@@ -359,7 +360,9 @@ export class PostgresGenerationJobRepository
   ): Promise<GenerationJob | null> {
     const result = await this.client.query<GenerationJobRow>(
       `
-      SELECT generation_jobs.*, credit_settlement.charged_credits, credit_settlement.refunded_credits, credit_settlement.settlement_entries
+      SELECT generation_jobs.*,
+        ${this.schemaProfile === 'legacy_2debe_v1' || this.schemaProfile === 'production44_pg18_v1' ? 'false' : "EXISTS(SELECT 1 FROM work_deletion_resources wd JOIN work_deletion_requests wr ON wr.id=wd.request_id WHERE wd.kind='job' AND wd.resource_id=generation_jobs.id)"} AS work_deletion_pending,
+        credit_settlement.charged_credits, credit_settlement.refunded_credits, credit_settlement.settlement_entries
       FROM generation_jobs
       ${creditSettlementJoin('generation_jobs')}
       WHERE generation_jobs.id = $1
@@ -403,6 +406,7 @@ export class PostgresGenerationJobRepository
       WITH visible_jobs AS (
         SELECT
           generation_jobs.*,
+          ${this.schemaProfile === 'legacy_2debe_v1' || this.schemaProfile === 'production44_pg18_v1' ? 'false' : "EXISTS(SELECT 1 FROM work_deletion_resources wd JOIN work_deletion_requests wr ON wr.id=wd.request_id WHERE wd.kind='job' AND wd.resource_id=generation_jobs.id)"} AS work_deletion_pending,
           CASE
             WHEN generation_jobs.status IN ('queued', 'processing') THEN 0
             ELSE 1
@@ -1816,7 +1820,7 @@ function mapGenerationJobRow(row: GenerationJobRow): GenerationJob {
     creditCost: row.credit_cost,
     ...(creditSettlement === undefined ? {} : { creditSettlement }),
     params: toJsonObject(row.params),
-    result: row.result === null ? null : toJsonObject(row.result),
+    result: row.work_deletion_pending === true || row.result === null ? null : toJsonObject(row.result),
     sqsMessageId: row.sqs_message_id,
     openaiRequestId: row.openai_request_id,
     errorMessage: row.error_message,

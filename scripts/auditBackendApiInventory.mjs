@@ -26,6 +26,7 @@ const routeMethods = new Set([
 
 const routeMountPrefixes = new Map([
   ['accountDeletion.ts', '/api'],
+  ['workDeletion.ts', '/api'],
   ['pushTokens.ts', '/api'],
   ['googleIdentityLinks.ts', '/api/auth'],
   ['adminOrganizations.ts', '/api'],
@@ -56,6 +57,10 @@ const routeMountPrefixes = new Map([
 ]);
 
 const explicitResponseClassifications = new Map([
+  ['GET /api/story/page-skeleton-capabilities', { response: 'Operational JSON', detail: 'Authenticated edit-work capability for generated-image-preserving skeleton overwrite' }],
+  ['DELETE /api/works/:id', { response: 'Operational JSON', detail: 'Scoped permanent deletion receipt; durable pending/completed status (202/200)' }],
+  ['GET /api/work-deletions', { response: 'Operational JSON', detail: 'Scoped nonterminal deletion receipts; bounded to 50' }],
+  ['GET /api/work-deletions/:id', { response: 'Operational JSON', detail: 'Scoped durable deletion receipt; no-store' }],
   ['GET /api/web/exports/:jobId/download', { response: 'Redirect', detail: 'Verified Cognito Web client and scoped export authorization; short-lived artifact download redirect' }],
   ['DELETE /api/push-tokens/:installationId', { response: 'Empty', detail: 'Authenticated installation removal (204)' }],
   ['GET /api/auth/identity-links/google/callback', { response: 'Redirect', detail: 'Single-use state-bound callback; fixed return URI with opaque receipt ID only' }],

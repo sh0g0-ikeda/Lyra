@@ -8,6 +8,7 @@ interface QuoteRow extends QueryResultRow {
   id: string; user_id: string; organization_id: string | null;
   request: GenerationQuoteRequest; plan: GenerationQuotePlan; expires_at: Date;
   accepted_job_id: string | null; request_key: string | null; accepted_at: Date | null;
+  work_deletion_pending?: boolean;
   job_status?: string | null; charged_credits?: number; refunded_credits?: number;
 }
 export interface QuoteDispatchLease { id: string; job_id: string; job_type: GenerationJobType; lease_token: string }
@@ -38,12 +39,14 @@ export class PostgresGenerationQuoteRepository {
   public async find(client: DatabaseClient, userId: string, organizationId: string | null, quoteId: string,
     options: { lock?: boolean; tokenHash?: string } = {}): Promise<GenerationQuote> {
     const result = await client.query<QuoteRow>(
-      `SELECT * FROM generation_quotes WHERE id=$1::uuid AND user_id=$2::uuid
+      `SELECT generation_quotes.*, EXISTS(SELECT 1 FROM work_deletion_requests wr WHERE wr.work_id=lyra_work_resource_uuid(generation_quotes.plan->>'workId')) AS work_deletion_pending
+       FROM generation_quotes WHERE id=$1::uuid AND user_id=$2::uuid
        AND organization_id IS NOT DISTINCT FROM $3::uuid AND ($4::text IS NULL OR token_hash=$4)
        ${options.lock ? 'FOR UPDATE' : ''}`,
       [quoteId,userId,organizationId,options.tokenHash ?? null],
     );
     if (!result.rows[0]) throw new NotFoundError('Generation quote not found');
+    if (result.rows[0].work_deletion_pending === true && result.rows[0].accepted_job_id === null) throw new ConflictError('Work deletion is pending');
     return mapQuote(result.rows[0]);
   }
   public async assertUnusedRequestKey(client: DatabaseClient, quote: GenerationQuote, requestKey: string): Promise<void> {

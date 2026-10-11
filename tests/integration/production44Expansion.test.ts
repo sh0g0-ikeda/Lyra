@@ -110,7 +110,7 @@ native('actual44 explicit forward expansion', () => {
     } }));
     expect(await checkpoint()).toBe(0);
   });
-  it('043ロックtimeoutはそのfileをrollbackしexact3checkpointから再開して53履歴だけとなる', async () => {
+  it('043ロックtimeoutはそのfileをrollbackしexact3checkpointから再開して54履歴だけとなる', async () => {
     const holder = await pool.connect();
     await holder.query('BEGIN');
     await holder.query('LOCK TABLE generation_jobs IN ACCESS SHARE MODE');
@@ -133,9 +133,9 @@ native('actual44 explicit forward expansion', () => {
     } });
     expect(constraintDdlMs).toBeGreaterThan(0);
     if (process.env.LYRA_EXPANSION_TEST_RECEIPT) await writeFile(process.env.LYRA_EXPANSION_TEST_RECEIPT, JSON.stringify({ artificialRows: 20000, migration043DdlMs: Math.round(constraintDdlMs), lockTimeoutRollbackVerified: true }));
-    expect(applied).toHaveLength(6);
-    expect(await checkpoint()).toBe(9);
-    expect((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n).toBe(53);
+    expect(applied).toHaveLength(7);
+    expect(await checkpoint()).toBe(10);
+    expect((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n).toBe(54);
     expect((await pool.query("SELECT filename FROM schema_migrations WHERE filename LIKE '046%'")).rows).toEqual([]);
     expect(await runProduction44Expansion(pool)).toEqual([]);
     expect((await pool.query('SELECT * FROM schema_migration_locks')).rows).toEqual([]);
@@ -182,7 +182,7 @@ native('actual44 explicit forward expansion', () => {
     expect((await pool.query('SELECT monthly_credits,purchased_credits FROM credit_balances WHERE user_id=$1',[userId])).rows[0]).toEqual({monthly_credits:10,purchased_credits:20});
     expect(await jobs.prepareRetry(jobId,2)).toBe(true);
     expect((await jobs.findByIdAndUserId(jobId,userId))?.retryCount).toBe(1);
-    expect(await checkpoint()).toBe(9);
+    expect(await checkpoint()).toBe(10);
   });
   it('停止中にmigration leaseが交代した場合はDDLせず新ownerのロックを消さない', async () => {
     try {
