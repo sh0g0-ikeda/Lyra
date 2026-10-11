@@ -129,6 +129,9 @@ export function WorkspaceHierarchyNavigator({
         canEdit={hasCapability('edit_work')}
         hasNextWorks={context.hasMoreWorks}
         isFetchingNextWorks={context.isFetchingMoreWorks}
+        isLoadingWorks={context.isLoadingWorks}
+        hierarchyError={context.error}
+        onRetryHierarchy={context.retry}
         language={language}
         onChapterDeleted={(chapterId) => {
           if (selection.chapterId === chapterId) {

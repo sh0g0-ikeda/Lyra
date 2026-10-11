@@ -15,7 +15,6 @@ import { useAppState } from '@/state/appState';
 interface MangaLibraryProps {
   context: WorkspaceContextData;
   onResume: () => void;
-  onStartStory?: () => void;
   onOpenGuide: () => void;
   resumeStep: MangaCreationStep;
   loadingProgress: boolean;
@@ -26,32 +25,31 @@ interface MangaLibraryProps {
 // Reuse the established hierarchy CRUD and its authorization/dirty selection path.
 // The library only chooses context; opening a work never generates or saves it.
 export function MangaLibrary({
-  context, onResume, onStartStory, onOpenGuide, resumeStep, loadingProgress, progressError, onRetryProgress
+  context, onResume, onOpenGuide, resumeStep, loadingProgress, progressError, onRetryProgress
 }: MangaLibraryProps): React.JSX.Element {
   const { api, hasCapability, language, logout, selection, session, sessionKey, updateSelection } = useAppState();
-  const [showHierarchy, setShowHierarchy] = useState(false);
+  const [hierarchyEntry, setHierarchyEntry] = useState<'browse' | 'create-work' | null>(null);
   const episode = context.episodes.find((item) => item.id === context.selectedEpisodeId);
   const work = context.works.find((item) => item.id === context.selectedWorkId);
   const chapter = context.chapters.find((item) => item.id === context.selectedChapterId);
   const selectWork = async (workId: string): Promise<void> => {
     if (workId === selection.workId || await updateSelection({ workId, chapterId: null, episodeId: null, pageId: null, entityId: null })) {
-      setShowHierarchy(true);
+      setHierarchyEntry('browse');
     }
   };
 
   return (
-    <Screen title={t(language, 'navigation.library')} subtitle={t(language, 'navigation.libraryHelp')} testID="manga-library">
+    <Screen chrome="language" title={t(language, 'navigation.library')} subtitle={t(language, 'navigation.libraryHelp')} testID="manga-library">
       {context.error === null ? null : (
         <ActionableErrorNotice context={{ operation: 'loadHierarchy' }} retryMode="refresh" error={context.error} language={language} actions={{ retry: context.retry, login: () => void logout() }} />
       )}
       <PrimaryButton
         label={t(language, hasCapability('create_work') ? 'navigation.createManga' : 'navigation.chooseWork')}
-        onPress={() => setShowHierarchy(true)}
+        onPress={() => setHierarchyEntry(hasCapability('create_work') ? 'create-work' : 'browse')}
         testID="manga-create"
       />
-      {onStartStory === undefined ? null : <PrimaryButton label={t(language, 'navigation.openStory')} onPress={onStartStory} variant="primary" testID="manga-start-story" />}
       <MangaTutorial firstRun />
-      {context.works.length === 0 && context.error === null ? <Text style={styles.help}>{t(language, 'emptyWorks')}</Text> : null}
+      {context.works.length === 0 && !context.isLoadingWorks && context.error === null ? <Text style={styles.help}>{t(language, 'emptyWorks')}</Text> : null}
       {context.works.map((item) => (
         <Pressable
           accessibilityLabel={t(language, 'navigation.openWork', { title: item.title })}
@@ -62,8 +60,8 @@ export function MangaLibrary({
           style={[styles.work, item.id === context.selectedWorkId ? styles.selectedWork : null]}
           testID={`manga-work-${item.id}`}
         >
-          <Text style={styles.title}>{item.title}</Text>
-          <Text style={styles.help}>{t(language, 'navigation.chooseWork')}</Text>
+          <Text style={[styles.title, item.id === context.selectedWorkId ? styles.selectedText : null]}>{item.title}</Text>
+          <Text style={[styles.help, item.id === context.selectedWorkId ? styles.selectedText : null]}>{t(language, 'navigation.chooseWork')}</Text>
         </Pressable>
       ))}
       {context.hasMoreWorks ? (
@@ -92,12 +90,16 @@ export function MangaLibrary({
         canEdit={hasCapability('edit_work')}
         hasNextWorks={context.hasMoreWorks}
         isFetchingNextWorks={context.isFetchingMoreWorks}
+        isLoadingWorks={context.isLoadingWorks}
+        hierarchyError={context.error}
+        onRetryHierarchy={context.retry}
+        initialAction={hierarchyEntry === 'create-work' ? 'create-work' : undefined}
         language={language}
         onChapterDeleted={(chapterId) => {
           if (selection.chapterId === chapterId) void updateSelection({ chapterId: null, episodeId: null, pageId: null }, { skipDirtyCheck: true });
         }}
         onChapterRenamed={() => undefined}
-        onClose={() => setShowHierarchy(false)}
+        onClose={() => setHierarchyEntry(null)}
         onEndReachedWorks={context.loadMoreWorks}
         onEpisodeDeleted={(episodeId) => {
           if (selection.episodeId === episodeId) void updateSelection({ episodeId: null, pageId: null }, { skipDirtyCheck: true });
@@ -106,7 +108,7 @@ export function MangaLibrary({
         onSelectChapter={(workId, chapterId) => { void updateSelection({ workId, chapterId, episodeId: null, pageId: null, entityId: null }); }}
         onSelectEpisode={(workId, chapterId, episodeId) => {
           void updateSelection({ workId, chapterId, episodeId, pageId: null, entityId: null }).then((allowed) => {
-            if (allowed) setShowHierarchy(false);
+            if (allowed) setHierarchyEntry(null);
           });
         }}
         onSelectWork={(workId) => { void updateSelection({ workId, chapterId: null, episodeId: null, pageId: null, entityId: null }); }}
@@ -117,7 +119,7 @@ export function MangaLibrary({
         selectedWorkId={context.selectedWorkId}
         sessionKey={sessionKey}
         userId={session?.user.id ?? sessionKey}
-        visible={showHierarchy}
+        visible={hierarchyEntry !== null}
         works={context.works}
       />
     </Screen>
@@ -127,7 +129,8 @@ export function MangaLibrary({
 const styles = StyleSheet.create({
   help: { ...textStyles.body, color: colors.muted },
   resume: { gap: spacing.sm, paddingVertical: spacing.md },
-  selectedWork: { borderColor: colors.primary },
+  selectedWork: { borderColor: colors.primary, backgroundColor: colors.primary },
+  selectedText: { color: colors.primaryText },
   title: { ...textStyles.sectionTitle },
   work: { borderColor: colors.controlBorder, borderWidth: 1, borderRadius: radius.md, padding: spacing.md, gap: spacing.xs, backgroundColor: colors.surface }
 });

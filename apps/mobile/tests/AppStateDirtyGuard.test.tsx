@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   clearAuthenticatedImageCache: vi.fn().mockResolvedValue(undefined),
   clearAuthTokens: vi.fn().mockResolvedValue(undefined),
   hasDirtyEditors: true,
+  loadActiveOrganizationId: vi.fn().mockResolvedValue(null),
+  loadSelection: vi.fn(),
+  loadTrackedJobIds: vi.fn().mockResolvedValue([]),
   queryClear: vi.fn(),
   queryInvalidate: vi.fn().mockResolvedValue(undefined),
   resolveDirtyEditors: vi.fn<() => Promise<boolean>>(),
@@ -78,18 +81,11 @@ vi.mock('@/lib/pushNotifications', () => ({
 
 vi.mock('@/lib/storage', () => ({
   clearAuthTokens: mocks.clearAuthTokens,
-  loadActiveOrganizationId: vi.fn().mockResolvedValue(null),
+  loadActiveOrganizationId: mocks.loadActiveOrganizationId,
   loadAuthTokens: vi.fn().mockResolvedValue(null),
   loadLanguage: vi.fn().mockResolvedValue('ja'),
-  loadSelection: vi.fn().mockResolvedValue({
-    organizationId: null,
-    workId: null,
-    chapterId: null,
-    episodeId: null,
-    pageId: null,
-    entityId: null
-  }),
-  loadTrackedJobIds: vi.fn().mockResolvedValue([]),
+  loadSelection: mocks.loadSelection,
+  loadTrackedJobIds: mocks.loadTrackedJobIds,
   saveActiveOrganizationId: mocks.saveActiveOrganizationId,
   saveAuthTokens: vi.fn().mockResolvedValue(undefined),
   saveLanguage: vi.fn().mockResolvedValue(undefined),
@@ -135,6 +131,16 @@ describe('AppStateProvider dirty-state guard', () => {
     mocks.clearAuthenticatedImageCache.mockClear();
     mocks.clearAuthTokens.mockClear();
     mocks.hasDirtyEditors = true;
+    mocks.loadActiveOrganizationId.mockReset().mockResolvedValue(null);
+    mocks.loadSelection.mockReset().mockResolvedValue({
+      organizationId: null,
+      workId: null,
+      chapterId: null,
+      episodeId: null,
+      pageId: null,
+      entityId: null
+    });
+    mocks.loadTrackedJobIds.mockReset().mockResolvedValue([]);
     mocks.queryClear.mockClear();
     mocks.resolveDirtyEditors.mockReset();
     mocks.saveDirtyEditors.mockReset();
@@ -194,6 +200,196 @@ describe('AppStateProvider dirty-state guard', () => {
     expect(changed).toBe(true);
     expect(mocks.resolveDirtyEditors).not.toHaveBeenCalled();
     expect(latestState?.selection.entityId).toBe('entity-created');
+    await act(async () => renderer.unmount());
+  });
+
+  it('dirty確認待ちの旧更新は後から確定した別selectionを上書きしない', async () => {
+    let resolveOldDirtyCheck: ((value: boolean) => void) | null = null;
+    mocks.resolveDirtyEditors.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveOldDirtyCheck = resolve;
+    }));
+    const renderer = await renderProvider();
+    let oldUpdate: Promise<boolean> | undefined;
+
+    await act(async () => {
+      oldUpdate = latestState?.updateSelection({ workId: 'work-old' });
+      await Promise.resolve();
+    });
+    let newChanged = false;
+    await act(async () => {
+      newChanged = (await latestState?.updateSelection(
+        { workId: 'work-new' },
+        { skipDirtyCheck: true }
+      )) ?? false;
+    });
+    let oldChanged = true;
+    await act(async () => {
+      resolveOldDirtyCheck?.(true);
+      oldChanged = await oldUpdate!;
+    });
+
+    expect(newChanged).toBe(true);
+    expect(oldChanged).toBe(false);
+    expect(latestState?.selection.workId).toBe('work-new');
+    await act(async () => renderer.unmount());
+  });
+
+  // Storage hydration is only a bootstrap value. A later user selection in the
+  // same authenticated scope must win over an older read completing afterward.
+  it('遅れて完了した保存selection読込は新しいユーザー選択を上書きしない', async () => {
+    let resolveStoredSelection: ((value: {
+      organizationId: null;
+      workId: null;
+      chapterId: null;
+      episodeId: null;
+      pageId: null;
+      entityId: null;
+    }) => void) | null = null;
+    mocks.loadSelection.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStoredSelection = resolve;
+    }));
+    mocks.loadTrackedJobIds.mockResolvedValueOnce(['job-stored']);
+    const renderer = await renderProvider();
+
+    await act(async () => {
+      latestState?.setSession({
+        capabilities: {},
+        organizations: [],
+        user: { id: 'user-1' }
+      } as never);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await latestState?.updateSelection({ workId: 'work-new' }, { skipDirtyCheck: true });
+    });
+    expect(latestState?.selection.workId).toBe('work-new');
+
+    await act(async () => {
+      resolveStoredSelection?.({
+        organizationId: null,
+        workId: null,
+        chapterId: null,
+        episodeId: null,
+        pageId: null,
+        entityId: null
+      });
+      await Promise.resolve();
+    });
+
+    expect(latestState?.selection.workId).toBe('work-new');
+    expect(latestState?.trackedJobIds).toEqual(['job-stored']);
+    await act(async () => renderer.unmount());
+  });
+
+  it('organization保存待ちの旧更新は後続selectionを上書きしない', async () => {
+    const renderer = await renderProvider();
+    await act(async () => {
+      latestState?.setSession({
+        capabilities: {},
+        organizations: [],
+        user: { id: 'user-1' }
+      } as never);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    mocks.loadSelection.mockResolvedValueOnce({
+      organizationId: 'org-old',
+      workId: null,
+      chapterId: null,
+      episodeId: null,
+      pageId: null,
+      entityId: null
+    });
+    let resolveActiveOrganizationSave: (() => void) | null = null;
+    mocks.saveActiveOrganizationId.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveActiveOrganizationSave = resolve;
+    }));
+    let oldUpdate: Promise<boolean> | undefined;
+    await act(async () => {
+      oldUpdate = latestState?.updateSelection(
+        { organizationId: 'org-old', workId: 'work-old' },
+        { skipDirtyCheck: true }
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    let newUpdate: Promise<boolean> | undefined;
+    await act(async () => {
+      newUpdate = latestState?.updateSelection({ workId: 'work-new' }, { skipDirtyCheck: true });
+      await Promise.resolve();
+    });
+    let oldChanged = true;
+    let newChanged = false;
+    await act(async () => {
+      resolveActiveOrganizationSave?.();
+      [oldChanged, newChanged] = await Promise.all([oldUpdate!, newUpdate!]);
+    });
+
+    expect(oldChanged).toBe(false);
+    expect(newChanged).toBe(true);
+    expect(latestState?.selection.organizationId).toBeNull();
+    expect(latestState?.selection.workId).toBe('work-new');
+    expect(mocks.saveActiveOrganizationId).toHaveBeenLastCalledWith('user-1', null);
+    await act(async () => renderer.unmount());
+  });
+
+  it('workspace選択の読込中にsessionが変わった場合は旧sessionの選択を反映しない', async () => {
+    const renderer = await renderProvider();
+    await act(async () => {
+      latestState?.setSession({
+        capabilities: {},
+        organizations: [],
+        user: { id: 'user-1' }
+      } as never);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let resolveOrganizationSelection: ((value: {
+      organizationId: string;
+      workId: null;
+      chapterId: null;
+      episodeId: null;
+      pageId: null;
+      entityId: null;
+    }) => void) | null = null;
+    mocks.loadSelection.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveOrganizationSelection = resolve;
+    }));
+    let pendingUpdate: Promise<boolean> | undefined;
+    await act(async () => {
+      pendingUpdate = latestState?.updateSelection(
+        { organizationId: 'org-old', workId: 'work-old' },
+        { skipDirtyCheck: true }
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      latestState?.setSession({
+        capabilities: {},
+        organizations: [],
+        user: { id: 'user-2' }
+      } as never);
+      await Promise.resolve();
+    });
+    let changed = true;
+    await act(async () => {
+      resolveOrganizationSelection?.({
+        organizationId: 'org-old',
+        workId: null,
+        chapterId: null,
+        episodeId: null,
+        pageId: null,
+        entityId: null
+      });
+      changed = await pendingUpdate!;
+      await Promise.resolve();
+    });
+
+    expect(changed).toBe(false);
+    expect(latestState?.session?.user.id).toBe('user-2');
+    expect(latestState?.selection.organizationId).not.toBe('org-old');
+    expect(latestState?.selection.workId).not.toBe('work-old');
     await act(async () => renderer.unmount());
   });
 

@@ -784,6 +784,17 @@ existing manual-save/dirty-navigation contracts. Embedded editors omit the credi
 badge and redundant library header; the main tab navigator owns the bottom safe
 area. Character-image wording is presentation only: reference-set API fields and
 persisted image bindings retain their existing names and authorization.
+The Mobile library opens the existing authorized work-create dialog in one tap;
+ordinary hierarchy browsing never opens it. Pending/error hierarchy data must not
+render as a successful empty list. Query scope and dirty-navigation guards remain
+in force, and persisted-selection hydration cannot overwrite a selection accepted
+in the current session. Selected library works use gold fill with dark text.
+The library and authentication screens expose the persisted Japanese/English
+switch and pass its language to Cognito Managed Login; logged-in Assets,
+Account and Guide omit the header credit badge. Billing
+retains total, monthly and purchased credit balances with explicit labels; plan
+controls keep their current contracts until the separate old-client UI transplant.
+Tutorial content follows the same persisted language without resetting progress.
 The Page editor places one story-autofill action immediately before its page list.
 When there are no pages, it first creates the skeleton without applying the story,
 then queues autofill only after completion for the same live episode/scope. A scope

@@ -15,7 +15,7 @@ vi.mock('react-native', () => ({
   Animated: { Value: class {}, timing: () => ({ start: (done: () => void) => done() }), Image: 'animated-image', View: 'animated-view' },
   Image: 'image', Linking: { openURL: vi.fn() }, Platform: mocks.platform, Pressable: 'pressable', StatusBar: 'status-bar', StyleSheet: { create: (style: unknown) => style }, Text: 'text', View: 'view'
 }));
-vi.mock('@/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => React.createElement('screen', null, children) }));
+vi.mock('@/components/Screen', () => ({ Screen: ({ children, ...props }: { children: React.ReactNode; chrome?: string }) => React.createElement('screen', props, children) }));
 vi.mock('@/components/Notice', () => ({ Notice: ({ message }: { message: string }) => React.createElement('notice', null, message) }));
 vi.mock('@/components/PrimaryButton', () => ({ PrimaryButton: (props: Record<string, unknown>) => React.createElement('button', props) }));
 vi.mock('@/lib/auth', () => ({ signInWithCognito: mocks.signIn }));
@@ -37,17 +37,24 @@ beforeEach(() => {
 });
 afterEach(() => { if (renderer) act(() => renderer.unmount()); vi.useRealTimers(); });
 describe('AuthScreen Google capability gate', () => {
+  // Spec §4/§7: authentication starts with an explicit persisted language choice;
+  // sign-in itself must not replace the session flow or tokens.
+  it('ログイン前はlanguage chromeを明示してEnglish表記をScreenへ委譲する', async () => {
+    await render();
+    expect(renderer.root.findByType('screen').props.chrome).toBe('language');
+  });
+
   it('Google disabledでも既存メールログインを保持する', async () => {
     await render();
     expect(renderer.root.findAllByProps({ testID: 'auth-google-button' })).toHaveLength(0);
     await press('auth-login-button');
-    expect(mocks.signIn).toHaveBeenCalledWith(undefined);
+    expect(mocks.signIn).toHaveBeenCalledWith({ language: 'en' });
     expect(mocks.setTokens).toHaveBeenCalledWith({ idToken: 'cognito-token' });
   });
   it('Androidでserver有効時だけGoogleCTAを表示しiOSでは表示しない', async () => {
     mocks.caps.data.google_sign_in = true;
     await render(); expect(renderer.root.findAllByProps({ testID: 'auth-google-button' })).not.toHaveLength(0);
-    await press('auth-google-button'); expect(mocks.signIn).toHaveBeenCalledWith({ identityProvider: 'Google' });
+    await press('auth-google-button'); expect(mocks.signIn).toHaveBeenCalledWith({ identityProvider: 'Google', language: 'en' });
     mocks.platform.OS = 'ios'; act(() => renderer.update(<AuthScreen />));
     expect(renderer.root.findAllByProps({ testID: 'auth-google-button' })).toHaveLength(0);
   });

@@ -294,6 +294,212 @@ describe('StoryHierarchySheet', () => {
     expect(api.getChapters).toHaveBeenCalledWith('work-2', null);
   });
 
+  // Opening the creation entry point is a one-shot view intent. Tenant scope
+  // changes while the sheet stays open must never replay a create operation.
+  it('新規作成入口では作品追加を一度だけ開きscope変更後に再表示しない', async () => {
+    const renderer = await renderSheet(false, { initialAction: 'create-work' });
+    expect(renderer.root.findAllByType('input')).toHaveLength(1);
+
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === 'キャンセル')?.props.onClick();
+    });
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: 'create-work', organizationId: 'org-2' })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+  });
+
+  it('作品追加を開いたままscopeが変わった場合は旧入力を閉じる', async () => {
+    const renderer = await renderSheet(false, { initialAction: 'create-work' });
+    await act(async () => renderer.root.findByType('input').props.onChange('旧scopeの作品'));
+
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: 'create-work', organizationId: 'org-2' })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+    expect(api.createWork).not.toHaveBeenCalled();
+  });
+
+  it('sheetを閉じた場合は作品追加の入力を次の通常表示へ持ち越さない', async () => {
+    const renderer = await renderSheet(false, { initialAction: 'create-work' });
+    await act(async () => renderer.root.findByType('input').props.onChange('閉じる前の作品'));
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: 'create-work', visible: false })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: undefined, visible: true })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+    expect(api.createWork).not.toHaveBeenCalled();
+  });
+
+  it('作品作成権限を失った場合は古い保存操作から作成しない', async () => {
+    const renderer = await renderSheet(false, { initialAction: 'create-work' });
+    await act(async () => renderer.root.findByType('input').props.onChange('権限外の作品'));
+    const staleAdd = renderer.root.findAllByType('button').find((button) => button.children.join('') === '追加')?.props.onClick as (() => void) | undefined;
+
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ canCreateWork: false, initialAction: 'create-work' })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    await act(async () => {
+      staleAdd?.();
+      await flushQueries();
+    });
+
+    expect(api.createWork).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+  });
+
+  it('旧scopeの作成待機中でも新scopeで再入力でき旧結果は選択やdialogを変更しない', async () => {
+    let resolveCreateWork: ((value: ReturnType<typeof work>) => void) | null = null;
+    api.createWork.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveCreateWork = resolve;
+    }));
+    const onSelectWork = vi.fn();
+    const renderer = await renderSheet(false, { initialAction: 'create-work', onSelectWork });
+    await act(async () => renderer.root.findByType('input').props.onChange('旧scopeの作品'));
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '追加')?.props.onClick();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: 'create-work', onSelectWork, organizationId: 'org-2' })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '作品を追加' }).props.onPress();
+    });
+    await act(async () => renderer.root.findByType('input').props.onChange('新scopeの作品'));
+    await act(async () => {
+      resolveCreateWork?.(work('old-created-work', '旧scopeの作品'));
+      await flushQueries();
+    });
+
+    expect(onSelectWork).not.toHaveBeenCalled();
+    expect(renderer.root.findByType('input').props.value).toBe('新scopeの作品');
+  });
+
+  it('同じscopeでsheetを閉じ再表示した場合も旧作成結果は新dialogを閉じない', async () => {
+    let resolveCreateWork: ((value: ReturnType<typeof work>) => void) | null = null;
+    api.createWork.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveCreateWork = resolve;
+    }));
+    const onSelectWork = vi.fn();
+    const renderer = await renderSheet(false, { initialAction: 'create-work', onSelectWork });
+    await act(async () => renderer.root.findByType('input').props.onChange('古い作品'));
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '追加')?.props.onClick();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: 'create-work', onSelectWork, visible: false })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: undefined, onSelectWork, visible: true })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '作品を追加' }).props.onPress();
+    });
+    await act(async () => renderer.root.findByType('input').props.onChange('新しい作品'));
+    await act(async () => {
+      resolveCreateWork?.(work('old-created-work', '古い作品'));
+      await flushQueries();
+    });
+
+    expect(onSelectWork).not.toHaveBeenCalled();
+    expect(renderer.root.findByType('input').props.value).toBe('新しい作品');
+  });
+
+  it('作品取得中または失敗時は作品なしと表示せず安全に再試行できる', async () => {
+    const retry = vi.fn();
+    const loadingRenderer = await renderSheet(false, {
+      isLoadingWorks: true,
+      selectedChapterId: null,
+      selectedEpisodeId: null,
+      selectedWorkId: null,
+      works: []
+    });
+    expect(JSON.stringify(loadingRenderer.toJSON())).not.toContain('作品はまだありません');
+    expect(loadingRenderer.root.findAllByType('activity-indicator').length).toBeGreaterThan(0);
+
+    const failedRenderer = await renderSheet(false, {
+      hierarchyError: new Error('private detail'),
+      isLoadingWorks: false,
+      onRetryHierarchy: retry,
+      selectedChapterId: null,
+      selectedEpisodeId: null,
+      selectedWorkId: null,
+      works: []
+    });
+    expect(JSON.stringify(failedRenderer.toJSON())).not.toContain('作品はまだありません');
+    const notice = failedRenderer.root.findByType('notice');
+    expect(notice.children.join('')).not.toContain('private detail');
+  });
+
+  it('作成権限がない場合は新規作成入口でも作品追加を開かない', async () => {
+    const renderer = await renderSheet(false, {
+      canCreateWork: false,
+      initialAction: 'create-work'
+    });
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+  });
+
+  it('章または話の取得失敗を空階層と誤表示せず再試行を案内する', async () => {
+    api.getChapters.mockRejectedValueOnce(new Error('private chapter detail'));
+    const chaptersRenderer = await renderSheet(false);
+    expect(JSON.stringify(chaptersRenderer.toJSON())).not.toContain('章はまだありません');
+    expect(chaptersRenderer.root.findByType('notice').children.join('')).not.toContain('private chapter detail');
+
+    api.getEpisodes.mockRejectedValueOnce(new Error('private episode detail'));
+    const episodesRenderer = await renderSheet(false);
+    expect(JSON.stringify(episodesRenderer.toJSON())).not.toContain('話はまだありません');
+    expect(episodesRenderer.root.findByType('notice').children.join('')).not.toContain('private episode detail');
+  });
+
   // A FlatList cell must measure its hierarchy content, otherwise the episode rows can sit
   // below an unscrollable cell after a user expands a chapter from the page editor.
   it('章を展開したとき話まで到達できる高さで表示する', async () => {

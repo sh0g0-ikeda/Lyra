@@ -1,7 +1,7 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 
-import type { AuthTokens } from '@/domain/types';
+import type { AuthTokens, UiLanguage } from '@/domain/types';
 import { config } from '@/lib/config';
 import { createSingleFlight } from '@/lib/singleFlight';
 import { clearAuthTokens, saveAuthTokens } from '@/lib/storage';
@@ -120,17 +120,25 @@ const refreshAuthTokensOnce = async (tokens: AuthTokens): Promise<AuthTokens> =>
 
 export const refreshAuthTokens = createSingleFlight(refreshAuthTokensOnce);
 
-interface CognitoSignInOptions { identityProvider?: 'Google'; }
+interface CognitoSignInOptions {
+  identityProvider?: 'Google';
+  language?: UiLanguage;
+}
 
 const authorizeWithCognito = async (options: CognitoSignInOptions & { reauthenticate?: boolean } = {}): Promise<AuthTokens> => {
+  const extraParams = {
+    ...(options.reauthenticate ? { max_age: '0' } : {}),
+    ...(options.identityProvider === 'Google' ? { identity_provider: 'Google' } : {}),
+    ...(options.language === undefined ? {} : { lang: options.language })
+  };
   const request = new AuthSession.AuthRequest({
     clientId: config.cognitoClientId,
     redirectUri: config.cognitoRedirectUri,
     responseType: AuthSession.ResponseType.Code,
     scopes: config.cognitoScopes,
     usePKCE: true,
-    ...(options.reauthenticate ? { prompt: AuthSession.Prompt.Login, extraParams: { max_age: '0' } }
-      : options.identityProvider === 'Google' ? { extraParams: { identity_provider: 'Google' } } : {})
+    ...(options.reauthenticate ? { prompt: AuthSession.Prompt.Login } : {}),
+    ...(Object.keys(extraParams).length === 0 ? {} : { extraParams })
   });
 
   const discovery: AuthSession.DiscoveryDocument = {

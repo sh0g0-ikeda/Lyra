@@ -76,7 +76,9 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
         const current = await capabilities.refetch();
         if (current.isError || !googleAllowedOnPlatform(current.data, Platform.OS, 'google_sign_in')) throw new Error('GOOGLE_DISABLED');
       }
-      const tokens = await signInWithCognito(google ? { identityProvider: 'Google' } : undefined);
+      const tokens = await signInWithCognito(
+        google ? { identityProvider: 'Google', language } : { language }
+      );
       await setTokens(tokens);
     } catch (error) {
       setErrorMessage(google ? copy.unavailable : userErrorMessage(error, language));
@@ -105,7 +107,7 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
       </Animated.View>
     </View>
   ) : (
-    <Screen showHeader={false} testID="auth-screen" title="Lyra Japan">
+    <Screen chrome="language" showHeader={false} testID="auth-screen" title="Lyra Japan">
       <View style={styles.authCard}>
         <Image resizeMode="cover" source={heroImage} style={styles.heroImage} />
         <View style={styles.copy}>

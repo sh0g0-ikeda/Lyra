@@ -106,6 +106,13 @@ describe('漫画制作ナビゲーション', () => {
   });
   afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; });
 
+  it('冒頭には重複したストーリー入口を渡さず選択中の話から制作を再開できる', async () => {
+    await render();
+    expect(root?.root.findByType('library').props.onStartStory).toBeUndefined();
+    await resume();
+    expect(activeStep()).toBe('manga-step-story');
+  });
+
   it('制作中は3工程を維持して一覧ボタンを省き前の工程から一覧へ戻れる', async () => {
     await render(); await resume();
     expect(root?.root.findAll((node) => node.props?.testID === 'manga-back-library')).toHaveLength(0);

@@ -291,12 +291,12 @@ describe('shared mobile accessibility controls', () => {
     act(() => japanese.props.onPress());
     expect(setLanguageMock).toHaveBeenCalledWith('ja');
   });
-  it('ログイン後は言語をマイページへ集約し残高をscroll外に固定する', () => {
+  it('ログイン後の通常画面は上部残高と言語を省いて本文のスクロールを維持する', () => {
     screenState.session = { user: { id: 'user-one' } };
     let renderer: ReturnType<typeof create>;
     act(() => { renderer = create(<Screen title="Story">Content</Screen>); });
     expect(renderer!.root.findAllByProps({ accessibilityLabel: 'English' })).toHaveLength(0);
-    expect(renderer!.root.findByType('credit-balance-badge')).toBeDefined();
+    expect(renderer!.root.findAllByType('credit-balance-badge')).toHaveLength(0);
     expect(renderer!.root.findByType('scroll-view').findAllByType('credit-balance-badge')).toHaveLength(0);
     act(() => renderer!.unmount());
     screenState.session = null;

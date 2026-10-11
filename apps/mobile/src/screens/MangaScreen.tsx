@@ -135,7 +135,6 @@ export function MangaScreen(): React.JSX.Element {
           loadingProgress={episode !== undefined && pagesQuery.isPending && pagesQuery.isFetching}
           onOpenGuide={() => { void resolveDirtyEditors(language).then((allowed) => { if (allowed) navigation.navigate('Guide'); }); }}
           onResume={() => void openStep(resumeStep)}
-          onStartStory={() => void openStep('story')}
           onRetryProgress={() => { void pagesQuery.refetch(); }}
           progressError={pagesQuery.error}
           resumeStep={resumeStep}
