@@ -207,6 +207,12 @@ const REQUIRED_TRIGGERS: ReadonlyArray<readonly [string, string, string, string]
   ['credit_ledger', 'generation_job_credit_consume_guard', 'guard_generation_job_credit_consume', CANONICAL_RUNTIME_SCHEMA_SIGNATURES.triggers.generation_job_credit_consume_guard],
 ];
 
+const MIN_SUPPORTED_POSTGRES_VERSION_NUM = 160000;
+const POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM = 180000;
+// Keep live server evidence out of the serialized catalog fingerprint while
+// binding it to the exact catalog object read from the same transaction.
+const runtimeSchemaPostgresVersions = new WeakMap<RuntimeSchemaCatalog, number>();
+
 export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSchemaDescription {
   if (
     catalog.migrationFilenames.length === 0
@@ -229,14 +235,26 @@ export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSch
 
   const failures = validateCanonicalCatalog(catalog, historyKind === 'canonical_fresh_v1');
   if (hasRecoveryGuard) {
-    for (const relation of ['stripe_payment_recoveries', 'stripe_payment_adjustment_objects', 'stripe_unresolved_payment_adjustments']) {
-      if (!catalog.relations.some(item => item.name === relation && item.kind === 'r')) failures.push(`RELATION:${relation}`);
-    }
-    for (const part of ['columns', 'constraints', 'indexes'] as const) {
-      for (const expected of STRIPE_RECOVERY_SCHEMA[part]) {
-        const actual = catalog[part].find(item => item.relation === expected.relation && item.name === expected.name);
-        if (actual === undefined || !Object.entries(expected).every(([key, value]) => (actual as unknown as Record<string, unknown>)[key] === value)) {
-          failures.push(`RECOVERY_${part.toUpperCase()}:${expected.relation}.${expected.name}`);
+    const serverVersionNum = runtimeSchemaPostgresVersions.get(catalog);
+    if (
+      typeof serverVersionNum !== 'number'
+      || !Number.isSafeInteger(serverVersionNum)
+      || serverVersionNum < MIN_SUPPORTED_POSTGRES_VERSION_NUM
+    ) {
+      failures.push('POSTGRES_VERSION_UNSUPPORTED');
+    } else {
+      for (const relation of ['stripe_payment_recoveries', 'stripe_payment_adjustment_objects', 'stripe_unresolved_payment_adjustments']) {
+        if (!catalog.relations.some(item => item.name === relation && item.kind === 'r')) failures.push(`RELATION:${relation}`);
+      }
+      for (const part of ['columns', 'constraints', 'indexes'] as const) {
+        const expectedRows = part === 'constraints' && serverVersionNum < POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM
+          ? STRIPE_RECOVERY_SCHEMA.constraints.filter(constraint => constraint.type !== 'n')
+          : STRIPE_RECOVERY_SCHEMA[part];
+        for (const expected of expectedRows) {
+          const actual = catalog[part].find(item => item.relation === expected.relation && item.name === expected.name);
+          if (actual === undefined || !Object.entries(expected).every(([key, value]) => (actual as unknown as Record<string, unknown>)[key] === value)) {
+            failures.push(`RECOVERY_${part.toUpperCase()}:${expected.relation}.${expected.name}`);
+          }
         }
       }
     }
@@ -267,6 +285,21 @@ export async function readRuntimeSchemaCatalog(
     await client.query('SET TRANSACTION READ ONLY');
     return readRuntimeSchemaCatalogInTransaction(client, options);
   });
+}
+
+async function readPostgresServerVersionNum(client: DatabaseClient): Promise<number> {
+  const result = await client.query<{ serverVersionNum: string }>(
+    `SELECT current_setting('server_version_num') AS "serverVersionNum"`,
+  );
+  const rawVersion = result.rows.length === 1 ? result.rows[0]?.serverVersionNum : undefined;
+  if (typeof rawVersion !== 'string' || !/^\d+$/u.test(rawVersion)) {
+    throw new Error('PostgreSQL server version metadata is invalid');
+  }
+  const version = Number(rawVersion);
+  if (!Number.isSafeInteger(version) || version < MIN_SUPPORTED_POSTGRES_VERSION_NUM) {
+    throw new Error('PostgreSQL server version is unsupported');
+  }
+  return version;
 }
 
 /** The caller owns the transaction: expansion verifies its uncommitted DDL
@@ -437,7 +470,12 @@ export async function readRuntimeSchemaCatalogInTransaction(
       indexes: indexes.rows,
       triggers: triggers.rows,
     };
-    return functions === undefined ? catalog : { ...catalog, functions: functions.rows };
+    const completeCatalog = functions === undefined ? catalog : { ...catalog, functions: functions.rows };
+    if (completeCatalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql')) {
+      const postgresVersion = await readPostgresServerVersionNum(client);
+      runtimeSchemaPostgresVersions.set(completeCatalog, postgresVersion);
+    }
+    return completeCatalog;
 }
 
 export interface AttestedCanonicalRuntime {

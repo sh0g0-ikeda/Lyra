@@ -619,6 +619,22 @@ Every release must pass:
 - frontend lint and production build
 - Playwright auth and authenticated-console smoke tests
 
+The CI database gate runs the general Vitest suite on PostgreSQL 16 and all
+integration suites on PostgreSQL 18. The full Bun test entrypoint also uses
+PostgreSQL 18. Exact production44 PostgreSQL 18 catalog fixtures run only against
+PostgreSQL 18; they are not substitutes for generic integration coverage on
+either supported version.
+
+Canonical migration 049 attestation reads a validated server version in the same
+transaction as its catalog; runtime readers use a read-only transaction.
+PostgreSQL 16/17 require the complete
+column nullability, types, defaults, non-native-NOT-NULL constraints and indexes;
+PostgreSQL 18 and later additionally require the native NOT NULL constraint
+names, validation state and definition hashes. Missing or invalid version
+evidence, missing required artifacts and altered constraints fail closed.
+Historical unexpanded schema tests use pinned historical credit modules; they do
+not permit a candidate binary to start without migration 049.
+
 Production deployment additionally requires runtime configuration validation,
 migrations as a one-off task, healthy API readiness, worker rollout health, queue
 inspection, and post-deploy log review.

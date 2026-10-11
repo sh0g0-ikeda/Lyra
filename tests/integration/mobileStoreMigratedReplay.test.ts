@@ -59,7 +59,9 @@ databaseDescribe('migrated production store replay and refund safety', () => {
     }));
     expect((await pool.query('SELECT to_jsonb(p) AS row FROM mobile_store_purchases p ORDER BY id')).rows)
       .toEqual(before.rows);
-    expect((await checkDeploymentDataInvariants(database)).violations).toEqual([]);
+    const invariants = await withPostgresTestMigrationLock(admin, () =>
+      checkDeploymentDataInvariants(database));
+    expect(invariants.violations).toEqual([]);
   }, 120_000);
 
   afterAll(async () => {
