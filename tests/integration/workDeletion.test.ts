@@ -16,6 +16,10 @@ import {runPendingMigrations} from '../../src/lib/migrations.js';
 import {PostgresWorkDeletionRepository} from '../../src/repositories/WorkDeletionRepository.js';
 import {WorkDeletionService} from '../../src/services/work/WorkDeletionService.js';
 const suite=process.env.APP_ENV==='test'&&process.env.DATABASE_URL?describe:describe.skip;
+type PromiseOutcome<T>={status:'fulfilled';value:T}|{status:'rejected';reason:unknown};
+function captureOutcome<T>(promise:Promise<T>):Promise<PromiseOutcome<T>>{
+ return promise.then(value=>({status:'fulfilled' as const,value}),reason=>({status:'rejected' as const,reason}));
+}
 suite('永久作品削除の独立DB契約',()=>{
  let db:SyntheticPostgresDatabase;
  let repository:PostgresWorkDeletionRepository;
@@ -64,11 +68,20 @@ suite('永久作品削除の独立DB契約',()=>{
  });
  it('生成INSERTが先ならactive jobを保護して削除を拒否する',async()=>{
   const f=await fixture();const client=await db.pool.connect();
-  await client.query('BEGIN');
-  await client.query("INSERT INTO generation_jobs(id,user_id,job_type,credit_cost,params) VALUES($1,$2,'page_generate',0,$3)",[randomUUID(),f.user,JSON.stringify({page_id:f.page})]);
-  const deletion=repository.request(f.user,f.work,null);
-  const rejection=expect(deletion).rejects.toMatchObject({code:'CONFLICT'});
-  await client.query('COMMIT');client.release();await rejection;
+   let transactionOpen=false;let deletionResult:Promise<PromiseOutcome<unknown>>|undefined;
+   try{
+    await client.query('BEGIN');transactionOpen=true;
+    await client.query("INSERT INTO generation_jobs(id,user_id,job_type,credit_cost,params) VALUES($1,$2,'page_generate',0,$3)",[randomUUID(),f.user,JSON.stringify({page_id:f.page})]);
+    deletionResult=captureOutcome(repository.request(f.user,f.work,null));
+    await client.query('COMMIT');transactionOpen=false;
+   }finally{
+    try{if(transactionOpen)await client.query('ROLLBACK');}finally{client.release();}
+   }
+   if(deletionResult===undefined)throw new Error('削除要求が開始されていません');
+   const deletionOutcome=await deletionResult;
+   expect(deletionOutcome.status).toBe('rejected');
+   if(deletionOutcome.status==='fulfilled')throw new Error('active jobがある作品の削除要求が成功しました');
+   expect(deletionOutcome.reason).toMatchObject({code:'CONFLICT'});
   expect((await db.pool.query('SELECT 1 FROM work_deletion_requests WHERE work_id=$1',[f.work])).rows).toHaveLength(0);
  });
  it('削除受付が先なら旧clientのentity生成INSERTも拒否する',async()=>{
@@ -80,10 +93,20 @@ suite('永久作品削除の独立DB契約',()=>{
 
  it('他作品への参照登録が先ならCOMMITを待ち共有画像の消去を拒否する',async()=>{
   const f=await fixture();const other=await fixture();const client=await db.pool.connect();
-  await client.query('BEGIN');
-  await client.query('UPDATE pages SET generated_image=$2 WHERE id=$1',[other.page,JSON.stringify({s3_key:f.key})]);
-  const deletion=repository.request(f.user,f.work,null);const rejected=expect(deletion).rejects.toMatchObject({code:'CONFLICT'});
-  await client.query('COMMIT');client.release();await rejected;
+   let transactionOpen=false;let deletionResult:Promise<PromiseOutcome<unknown>>|undefined;
+   try{
+    await client.query('BEGIN');transactionOpen=true;
+    await client.query('UPDATE pages SET generated_image=$2 WHERE id=$1',[other.page,JSON.stringify({s3_key:f.key})]);
+    deletionResult=captureOutcome(repository.request(f.user,f.work,null));
+    await client.query('COMMIT');transactionOpen=false;
+   }finally{
+    try{if(transactionOpen)await client.query('ROLLBACK');}finally{client.release();}
+   }
+   if(deletionResult===undefined)throw new Error('削除要求が開始されていません');
+   const deletionOutcome=await deletionResult;
+   expect(deletionOutcome.status).toBe('rejected');
+   if(deletionOutcome.status==='fulfilled')throw new Error('共有画像を持つ作品の削除要求が成功しました');
+   expect(deletionOutcome.reason).toMatchObject({code:'CONFLICT'});
  });
  it('削除manifest確定後に別作品が同じ画像を採用しようとすると拒否する',async()=>{
   const f=await fixture();const other=await fixture();await repository.request(f.user,f.work,null);
@@ -212,8 +235,12 @@ suite('永久作品削除の独立DB契約',()=>{
   const gate=new Promise<void>(resolve=>{release=resolve;}),frozen=new Promise<void>(resolve=>{ready=resolve;});
   const delayed:DatabaseClient&TransactionRunner={query:db.database.query.bind(db.database),transaction:work=>db.database.transaction(async client=>{const value=await work(client);ready();await gate;return value;})};
   const deletion=new PostgresWorkDeletionRepository(delayed).request(f.user,f.work,null);await frozen;
-  const update=db.pool.query('UPDATE pages SET generated_image=$2 WHERE id=$1',[other.page,JSON.stringify({s3_key:f.key})]);
-  const rejected=expect(update).rejects.toMatchObject({constraint:'work_deletion_write_guard'});release();await deletion;await rejected;
+   const updateResult=captureOutcome(db.pool.query('UPDATE pages SET generated_image=$2 WHERE id=$1',[other.page,JSON.stringify({s3_key:f.key})]));
+   try{release();await deletion;}finally{release();}
+   const updateOutcome=await updateResult;
+   expect(updateOutcome.status).toBe('rejected');
+   if(updateOutcome.status==='fulfilled')throw new Error('削除manifest確定後の画像参照UPDATEが成功しました');
+   expect(updateOutcome.reason).toMatchObject({constraint:'work_deletion_write_guard'});
  });
 
  it('作品と画像消去後も課金ledgerとaccepted quote receiptの同一IDを保持する',async()=>{

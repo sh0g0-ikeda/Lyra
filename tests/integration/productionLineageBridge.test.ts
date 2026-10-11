@@ -289,7 +289,7 @@ describePostgres('forward-only production lineage bridge', () => {
         expect(JSON.stringify(report)).not.toContain(firstId);
         expect(JSON.stringify(report)).not.toContain(secondId);
         expect(await throwingRejectionOf(upgrade(db))).toThrow('DUPLICATE_NORMALIZED_ACTIVE_EMAIL');
-        expect((await pool.query('SELECT id,email FROM users WHERE id=ANY($1::uuid[]) ORDER BY email', [[firstId, secondId]])).rows).toEqual([{ id: firstId, email: firstEmail }, { id: secondId, email: secondEmail }]);
+        expect((await pool.query('SELECT id,email FROM users WHERE id=ANY($1::uuid[]) ORDER BY email COLLATE "C"', [[firstId, secondId]])).rows).toEqual([{ id: firstId, email: firstEmail }, { id: secondId, email: secondEmail }]);
         expect((await pool.query(fixtureExportRelationsSql)).rows[0]).toEqual({ old: 'export_jobs', candidate: null });
         expect((await pool.query('SELECT filename FROM schema_migrations WHERE filename=$1', [PRODUCTION_BRIDGE_FILENAME])).rows).toEqual([]);
     }, 120000);
