@@ -151,7 +151,7 @@ native('actual44 explicit forward expansion', () => {
     const staleSave = await pool.query("UPDATE entity_states SET name='stale' WHERE id=$1 AND updated_at=$2 RETURNING id", [stateId,before.rows[0].updated_at]);
     expect(staleSave.rowCount).toBe(0);
     await pool.query('UPDATE entity_states SET reference_image=NULL WHERE id=$1', [stateId]);
-    const invariants = await checkDeploymentDataInvariants(pool);
+    const invariants = await withPostgresTestMigrationLock(admin, () => checkDeploymentDataInvariants(pool));
     expect(invariants.violations).toEqual([]);
     expect(invariants.ok).toBe(true);
   });
