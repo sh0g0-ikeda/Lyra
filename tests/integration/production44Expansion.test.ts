@@ -80,8 +80,13 @@ native('actual44 explicit forward expansion', () => {
     try { return describeProduction44ExpansionCheckpoint(await readRuntimeSchemaCatalogInTransaction(session, { includeFunctionBodies: true, includeLegacyAttributes: true })); }
     finally { session.release(); }
   };
-  const expand = (target: Parameters<typeof runProduction44Expansion>[0] = pool): Promise<string[]> =>
-    withPostgresTestMigrationLock(admin, () => runProduction44Expansion(target));
+  const expand = (
+    target: Parameters<typeof runProduction44Expansion>[0] = pool,
+    onTestLockAcquired?: () => void,
+  ): Promise<string[]> => withPostgresTestMigrationLock(admin, () => {
+    onTestLockAcquired?.();
+    return runProduction44Expansion(target);
+  });
   it('未知catalogでは履歴もDDLも変えず拒否する', async () => {
     expect(await checkpoint()).toBe(0);
     await pool.query('ALTER TABLE entity_states ADD COLUMN unknown_expansion_column text');
@@ -96,9 +101,12 @@ native('actual44 explicit forward expansion', () => {
     finally { await pool.query('DELETE FROM schema_migration_locks'); }
     const holder = await pool.connect();
     try {
-      await holder.query('SELECT pg_advisory_lock(1744048,52)');
-      await expectExpansionRejected(expand());
-    } finally { await holder.query('SELECT pg_advisory_unlock(1744048,52)'); holder.release(); }
+      await withPostgresTestMigrationLock(admin, async () => {
+        await holder.query('SELECT pg_advisory_lock(1744048,52)');
+        try { await expectExpansionRejected(runProduction44Expansion(pool)); }
+        finally { await holder.query('SELECT pg_advisory_unlock(1744048,52)'); }
+      });
+    } finally { holder.release(); }
     expect(await checkpoint()).toBe(0);
   });
   it('DDL後catalogが一致しなければそのfileとreceiptを一緒にrollbackする', async () => {
@@ -116,8 +124,8 @@ native('actual44 explicit forward expansion', () => {
     const holder = await pool.connect();
     await holder.query('BEGIN');
     await holder.query('LOCK TABLE generation_jobs IN ACCESS SHARE MODE');
-    const started = performance.now();
-    try { await expectExpansionRejected(expand()); }
+    let started = 0;
+    try { await expectExpansionRejected(expand(pool, () => { started = performance.now(); })); }
     finally { await holder.query('ROLLBACK'); holder.release(); }
     expect(performance.now() - started).toBeGreaterThanOrEqual(900);
     expect(performance.now() - started).toBeLessThan(15_000);
