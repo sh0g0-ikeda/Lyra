@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runPendingMigrations, runProduction44Expansion } from '../../src/lib/migrations.js';
 import { readRuntimeSchemaCatalogInTransaction } from '../../src/lib/runtimeSchemaAttestation.js';
 import { describeProduction44ExpansionCheckpoint } from '../../src/lib/production44ExpandedRuntimeSchemaAttestation.js';
-import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { acquirePostgresTestMigrationLock, type PostgresTestMigrationLockLease } from './postgresTestMigrationLock.js';
 import { checkDeploymentDataInvariants } from '../../scripts/checkDeploymentDataInvariants.js';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import type { PostgresPageRepository } from '../../src/repositories/PageRepository.js';
@@ -50,6 +50,7 @@ native('048 legacy writer row revision', () => {
 native('actual44 explicit forward expansion', () => {
   let admin: Pool;
   let pool: Pool;
+  let migrationLease: PostgresTestMigrationLockLease | undefined;
   const schema = 'expansion44_' + randomUUID().replaceAll('-', '');
   const userId = randomUUID();
   const workId = randomUUID();
@@ -59,22 +60,35 @@ native('actual44 explicit forward expansion', () => {
     admin = new Pool({ connectionString: process.env.DATABASE_URL });
     await admin.query('CREATE SCHEMA ' + schema);
     pool = new Pool({ connectionString: process.env.DATABASE_URL, options: '-c search_path=' + schema + ',public', max: 5 });
-    const session = await pool.connect();
     try {
-      await withPostgresTestMigrationLock(admin, () => runPendingMigrations({ query: session.query.bind(session), transaction: async work => {
-        await session.query('BEGIN');
-        try { const result = await work(session); await session.query('COMMIT'); return result; }
-        catch (error) { await session.query('ROLLBACK'); throw error; }
-      } }, { migrationsDir: join(process.cwd(), 'tests/fixtures/production44-pg18') }));
-    } finally { session.release(); }
-    await pool.query("INSERT INTO users(id,supabase_id,email) VALUES($1,$2,$3)", [userId, 'expansion-'+userId, userId+'@example.invalid']);
-    await pool.query("INSERT INTO works(id,user_id,title) VALUES($1,$2,'expansion')", [workId,userId]);
-    await pool.query("INSERT INTO entities(id,user_id,work_id,name) VALUES($1,$2,$3,'legacy character')", [entityId,userId,workId]);
-    await pool.query("INSERT INTO entity_states(id,entity_id,costume_note) VALUES($1,$2,'old')", [stateId,entityId]);
-    await pool.query("UPDATE entity_states SET costume_note='before expansion',condition_note=NULL,hair_note=NULL,expression_default='neutral',extra_note=NULL,scene_id=NULL,costume_ref_id=NULL WHERE id=$1", [stateId]);
-    await pool.query("INSERT INTO generation_jobs(user_id,job_type,status,credit_cost,params,completed_at) SELECT $1,'page_generate','completed',0,'{}',NOW() FROM generate_series(1,20000)", [userId]);
+      migrationLease = await acquirePostgresTestMigrationLock(admin, 90_000);
+      const session = await pool.connect();
+      try {
+        await runPendingMigrations({ query: session.query.bind(session), transaction: async work => {
+          await session.query('BEGIN');
+          try { const result = await work(session); await session.query('COMMIT'); return result; }
+          catch (error) { await session.query('ROLLBACK'); throw error; }
+        } }, { migrationsDir: join(process.cwd(), 'tests/fixtures/production44-pg18') });
+      } finally { session.release(); }
+      await pool.query("INSERT INTO users(id,supabase_id,email) VALUES($1,$2,$3)", [userId, 'expansion-'+userId, userId+'@example.invalid']);
+      await pool.query("INSERT INTO works(id,user_id,title) VALUES($1,$2,'expansion')", [workId,userId]);
+      await pool.query("INSERT INTO entities(id,user_id,work_id,name) VALUES($1,$2,$3,'legacy character')", [entityId,userId,workId]);
+      await pool.query("INSERT INTO entity_states(id,entity_id,costume_note) VALUES($1,$2,'old')", [stateId,entityId]);
+      await pool.query("UPDATE entity_states SET costume_note='before expansion',condition_note=NULL,hair_note=NULL,expression_default='neutral',extra_note=NULL,scene_id=NULL,costume_ref_id=NULL WHERE id=$1", [stateId]);
+      await pool.query("INSERT INTO generation_jobs(user_id,job_type,status,credit_cost,params,completed_at) SELECT $1,'page_generate','completed',0,'{}',NOW() FROM generate_series(1,20000)", [userId]);
+    } catch (error) {
+      await migrationLease?.release();
+      migrationLease = undefined;
+      throw error;
+    }
   }, 120_000);
-  afterAll(async () => { if (pool) await pool.end(); if (admin) { await admin.query('DROP SCHEMA ' + schema + ' CASCADE'); await admin.end(); } });
+  afterAll(async () => {
+    try { if (pool) await pool.end(); if (admin) await admin.query('DROP SCHEMA ' + schema + ' CASCADE'); }
+    finally {
+      try { await migrationLease?.release(); }
+      finally { if (admin) await admin.end(); }
+    }
+  });
   const checkpoint = async (): Promise<number | null> => {
     const session = await pool.connect();
     try { return describeProduction44ExpansionCheckpoint(await readRuntimeSchemaCatalogInTransaction(session, { includeFunctionBodies: true, includeLegacyAttributes: true })); }
@@ -82,11 +96,11 @@ native('actual44 explicit forward expansion', () => {
   };
   const expand = (
     target: Parameters<typeof runProduction44Expansion>[0] = pool,
-    onTestLockAcquired?: () => void,
-  ): Promise<string[]> => withPostgresTestMigrationLock(admin, () => {
-    onTestLockAcquired?.();
+    onRunnerStart?: () => void,
+  ): Promise<string[]> => {
+    onRunnerStart?.();
     return runProduction44Expansion(target);
-  });
+  };
   it('未知catalogでは履歴もDDLも変えず拒否する', async () => {
     expect(await checkpoint()).toBe(0);
     await pool.query('ALTER TABLE entity_states ADD COLUMN unknown_expansion_column text');
@@ -101,11 +115,9 @@ native('actual44 explicit forward expansion', () => {
     finally { await pool.query('DELETE FROM schema_migration_locks'); }
     const holder = await pool.connect();
     try {
-      await withPostgresTestMigrationLock(admin, async () => {
-        await holder.query('SELECT pg_advisory_lock(1744048,52)');
-        try { await expectExpansionRejected(runProduction44Expansion(pool)); }
-        finally { await holder.query('SELECT pg_advisory_unlock(1744048,52)'); }
-      });
+      await holder.query('SELECT pg_advisory_lock(1744048,52)');
+      try { await expectExpansionRejected(runProduction44Expansion(pool)); }
+      finally { await holder.query('SELECT pg_advisory_unlock(1744048,52)'); }
     } finally { holder.release(); }
     expect(await checkpoint()).toBe(0);
   });
@@ -161,7 +173,7 @@ native('actual44 explicit forward expansion', () => {
     const staleSave = await pool.query("UPDATE entity_states SET name='stale' WHERE id=$1 AND updated_at=$2 RETURNING id", [stateId,before.rows[0].updated_at]);
     expect(staleSave.rowCount).toBe(0);
     await pool.query('UPDATE entity_states SET reference_image=NULL WHERE id=$1', [stateId]);
-    const invariants = await withPostgresTestMigrationLock(admin, () => checkDeploymentDataInvariants(pool));
+    const invariants = await checkDeploymentDataInvariants(pool);
     expect(invariants.violations).toEqual([]);
     expect(invariants.ok).toBe(true);
   });
