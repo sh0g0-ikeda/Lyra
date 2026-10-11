@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Pool, type QueryResultRow } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import type { EpisodePagePlanApplyResult } from '../../src/domain/types/page.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
-import { CreditService } from '../../src/services/credit/CreditService.js';
-import { PostgresCreditRepository } from '../../src/repositories/CreditRepository.js';
+import type { CreditService } from '../../src/services/credit/CreditService.js';
+import type { PostgresCreditRepository } from '../../src/repositories/CreditRepository.js';
 import { PostgresGenerationJobRepository } from '../../src/repositories/GenerationJobRepository.js';
 import { PostgresPageGenerationExecutionRepository } from '../../src/repositories/PageGenerationExecutionRepository.js';
 import { PostgresEntityGenerationExecutionRepository } from '../../src/repositories/EntityGenerationExecutionRepository.js';
@@ -23,6 +24,7 @@ const provenance={imageModel:'gpt-image-2',provider:'openai' as const,providerMo
 
 dbDescribe('旧38migrationの生成終端・retry互換profile',()=>{
   let admin:Pool;let pool:Pool;let database:DatabaseClient&TransactionRunner;
+  let OldCredits:typeof PostgresCreditRepository;let OldCreditService:typeof CreditService;
   const schema='legacy_terminal_'+process.pid+'_'+Date.now();
   beforeAll(async()=>{
     expect(schema).toMatch(/^legacy_terminal_[0-9]+_[0-9]+$/u);
@@ -31,6 +33,10 @@ dbDescribe('旧38migrationの生成終端・retry互換profile',()=>{
     database=testDatabase(pool);
     const migrations=await withPostgresTestMigrationLock(admin,()=>runPendingMigrations(database,{migrationsDir:join(process.cwd(),'tests/fixtures/production-lineage-2debe')}));
     expect(migrations).toHaveLength(38);
+    const oldRoot=join(process.cwd(),'tests/fixtures/production44-pg18/old-runtime/runtime');
+    const load=async(file:string):Promise<unknown>=>import(pathToFileURL(join(oldRoot,file)).href);
+    OldCredits=(await load('src/repositories/CreditRepository.js') as {PostgresCreditRepository:typeof PostgresCreditRepository}).PostgresCreditRepository;
+    OldCreditService=(await load('src/services/credit/CreditService.js') as {CreditService:typeof CreditService}).CreditService;
   },120_000);
   afterAll(async()=>{if(pool)await pool.end();if(admin){await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();}});
 
@@ -132,7 +138,7 @@ dbDescribe('旧38migrationの生成終端・retry互換profile',()=>{
 
   async function fundedCredits(fixture:Fixture):Promise<CreditService>{
     await pool.query('INSERT INTO credit_balances(user_id,monthly_credits,purchased_credits,monthly_expires_at) VALUES($1,10,20,NOW()+INTERVAL \'1 day\')',[fixture.userId]);
-    return new CreditService(new PostgresCreditRepository(database,database));
+    return new OldCreditService(new OldCredits(database,database));
   }
   async function assertRestoredCredits(fixture:Fixture):Promise<void>{
     expect((await pool.query('SELECT monthly_credits,purchased_credits FROM credit_balances WHERE user_id=$1',[fixture.userId])).rows[0]).toEqual({monthly_credits:10,purchased_credits:20});

@@ -5,12 +5,15 @@ import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import {
   CANONICAL_RUNTIME_MIGRATIONS,
   CANONICAL_RUNTIME_SCHEMA_SIGNATURES,
+  SECURITY_RUNTIME_MIGRATIONS,
   attestCanonicalRuntimeSchema,
   describeRuntimeSchema,
   prepareCanonicalRuntimeSchema,
   readRuntimeSchemaCatalog,
+  readRuntimeSchemaCatalogInTransaction,
   type RuntimeSchemaCatalog,
 } from '../../../src/lib/runtimeSchemaAttestation.js';
+import { STRIPE_RECOVERY_SCHEMA } from '../../../src/lib/stripeRecoverySchemaDescriptor.js';
 
 /**
  * Design contract: this is a candidate-startup guard, not a complete database
@@ -23,6 +26,90 @@ describe('runtime schema attestation', () => {
     expect(describeRuntimeSchema(canonicalCatalog())).toEqual({
       kind: 'canonical_fresh_v1',
       failures: [],
+    });
+  });
+
+  it('PostgreSQL 16はnative NOT NULL catalog行がなくても列と049非n制約が完全なら認定する', async () => {
+    const catalog = await catalogWithPostgresVersion(securityCatalog(160000), '160010');
+    expect(describeRuntimeSchema(catalog)).toEqual({
+      kind: 'canonical_fresh_v1',
+      failures: [],
+    });
+  });
+
+  it('PostgreSQL 16でも049必須列がnullableなら拒否する', async () => {
+    const catalog = securityCatalog(160000);
+    const required = STRIPE_RECOVERY_SCHEMA.columns.find((column) => column.nullable === false);
+    if (required === undefined) throw new Error('Missing required recovery column fixture');
+    const actual = catalog.columns.find((column) => column.relation === required.relation && column.name === required.name);
+    if (actual === undefined) throw new Error('Missing actual recovery column fixture');
+    actual.nullable = true;
+
+    const readCatalog = await catalogWithPostgresVersion(catalog, '160010');
+    expect(describeRuntimeSchema(readCatalog)).toMatchObject({
+      kind: 'unsupported',
+      failures: expect.arrayContaining([`RECOVERY_COLUMNS:${required.relation}.${required.name}`]),
+    });
+  });
+
+  it.each([
+    ['CHECK/FK/unique', (catalog: RuntimeSchemaCatalog) => {
+      const required = STRIPE_RECOVERY_SCHEMA.constraints.find((constraint) => constraint.type !== 'n');
+      if (required === undefined) throw new Error('Missing non-NOT-NULL recovery constraint fixture');
+      catalog.constraints = catalog.constraints.filter((constraint) =>
+        constraint.relation !== required.relation || constraint.name !== required.name);
+      return `RECOVERY_CONSTRAINTS:${required.relation}.${required.name}`;
+    }],
+    ['index', (catalog: RuntimeSchemaCatalog) => {
+      const required = STRIPE_RECOVERY_SCHEMA.indexes[0];
+      if (required === undefined) throw new Error('Missing recovery index fixture');
+      catalog.indexes = catalog.indexes.filter((index) =>
+        index.relation !== required.relation || index.name !== required.name);
+      return `RECOVERY_INDEXES:${required.relation}.${required.name}`;
+    }],
+  ] as const)('PostgreSQL 16でも049の%s欠落を拒否する', async (_label, mutate) => {
+    const catalog = securityCatalog(160000);
+    const expectedFailure = mutate(catalog);
+    const readCatalog = await catalogWithPostgresVersion(catalog, '160010');
+    expect(describeRuntimeSchema(readCatalog)).toMatchObject({
+      kind: 'unsupported',
+      failures: expect.arrayContaining([expectedFailure]),
+    });
+  });
+
+  it.each([
+    ['欠落', (catalog: RuntimeSchemaCatalog) => {
+      const required = STRIPE_RECOVERY_SCHEMA.constraints.find((constraint) => constraint.type === 'n');
+      if (required === undefined) throw new Error('Missing NOT NULL recovery constraint fixture');
+      catalog.constraints = catalog.constraints.filter((constraint) =>
+        constraint.relation !== required.relation || constraint.name !== required.name);
+      return `RECOVERY_CONSTRAINTS:${required.relation}.${required.name}`;
+    }],
+    ['未検証', (catalog: RuntimeSchemaCatalog) => {
+      const required = STRIPE_RECOVERY_SCHEMA.constraints.find((constraint) => constraint.type === 'n');
+      if (required === undefined) throw new Error('Missing NOT NULL recovery constraint fixture');
+      const actual = catalog.constraints.find((constraint) =>
+        constraint.relation === required.relation && constraint.name === required.name);
+      if (actual === undefined) throw new Error('Missing actual NOT NULL recovery constraint fixture');
+      actual.validated = false;
+      return `RECOVERY_CONSTRAINTS:${required.relation}.${required.name}`;
+    }],
+    ['定義不一致', (catalog: RuntimeSchemaCatalog) => {
+      const required = STRIPE_RECOVERY_SCHEMA.constraints.find((constraint) => constraint.type === 'n');
+      if (required === undefined) throw new Error('Missing NOT NULL recovery constraint fixture');
+      const actual = catalog.constraints.find((constraint) =>
+        constraint.relation === required.relation && constraint.name === required.name);
+      if (actual === undefined) throw new Error('Missing actual NOT NULL recovery constraint fixture');
+      actual.definitionSha256 = '0'.repeat(64);
+      return `RECOVERY_CONSTRAINTS:${required.relation}.${required.name}`;
+    }],
+  ] as const)('PostgreSQL 18でNOT NULL制約の%sを拒否する', async (_label, mutate) => {
+    const catalog = securityCatalog(180003);
+    const expectedFailure = mutate(catalog);
+    const readCatalog = await catalogWithPostgresVersion(catalog, '180003');
+    expect(describeRuntimeSchema(readCatalog)).toMatchObject({
+      kind: 'unsupported',
+      failures: expect.arrayContaining([expectedFailure]),
     });
   });
 
@@ -105,6 +192,56 @@ describe('runtime schema attestation', () => {
     expect(queries.join('\n')).not.toContain('relation.relrowsecurity');
     expect(queries.join('\n')).not.toContain('column_default');
     expect(queries.join('\n')).not.toContain('procedure.provolatile');
+  });
+
+  it('049認定は同じREAD ONLY transactionでPostgreSQL版を検証する', async () => {
+    const catalog = securityCatalog(160000);
+    const queries: string[] = [];
+    const database: TransactionRunner = {
+      transaction: async <T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> => work({
+        query: async <R extends QueryResultRow>(sql: string): Promise<QueryResult<R>> => {
+          queries.push(sql);
+          return queryCatalogFixture<R>(sql, catalog, catalog.functions ?? [], '160010');
+        },
+      }),
+    };
+
+    await expect(attestCanonicalRuntimeSchema(database)).resolves.toBe('canonical_fresh_v1');
+    expect(queries[0]).toBe('SET TRANSACTION READ ONLY');
+    expect(queries.filter((query) => query.includes("current_setting('server_version_num')"))).toHaveLength(1);
+  });
+
+  it('caller所有transactionの049 catalogにも同じ接続のPostgreSQL版証拠を関連付ける', async () => {
+    const catalog = securityCatalog(160000);
+    const queries: string[] = [];
+    const client: DatabaseClient = {
+      query: async <R extends QueryResultRow>(sql: string): Promise<QueryResult<R>> => {
+        queries.push(sql);
+        return queryCatalogFixture<R>(sql, catalog, catalog.functions ?? [], '160010');
+      },
+    };
+
+    const readCatalog = await readRuntimeSchemaCatalogInTransaction(client, {
+      includeFunctionBodies: true,
+      includeLegacyAttributes: true,
+    });
+
+    expect(describeRuntimeSchema(readCatalog)).toEqual({ kind: 'canonical_fresh_v1', failures: [] });
+    expect(queries.filter((query) => query.includes("current_setting('server_version_num')"))).toHaveLength(1);
+  });
+
+  it.each([null, 'invalid', '150000'])('049認定はserver_version_num=%sでfail closedする', async (serverVersionNum) => {
+    const catalog = securityCatalog(180003);
+    const database: TransactionRunner = {
+      transaction: async <T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> => work({
+        query: async <R extends QueryResultRow>(sql: string): Promise<QueryResult<R>> =>
+          queryCatalogFixture<R>(sql, catalog, [], serverVersionNum),
+      }),
+    };
+
+    await expect(attestCanonicalRuntimeSchema(database)).rejects.toEqual(
+      new ConfigurationError('Runtime schema attestation failed: SCHEMA_QUERY_FAILED'),
+    );
   });
 
   it('関数本文を要求した場合はcurrent schemaの非extension function/procedureを意味的に取得する', async () => {
@@ -306,6 +443,60 @@ function canonicalCatalog(): RuntimeSchemaCatalog {
   };
 }
 
+function securityCatalog(serverVersionNum: number): RuntimeSchemaCatalog {
+  const catalog = canonicalCatalog();
+  catalog.migrationFilenames = [...SECURITY_RUNTIME_MIGRATIONS];
+  catalog.relations.push(
+    { name: 'stripe_payment_recoveries', kind: 'r' },
+    { name: 'stripe_payment_adjustment_objects', kind: 'r' },
+    { name: 'stripe_unresolved_payment_adjustments', kind: 'r' },
+  );
+  catalog.columns.push(
+    column('entity_states', 'updated_at', 'timestamp with time zone'),
+    ...structuredClone(STRIPE_RECOVERY_SCHEMA.columns),
+  );
+  catalog.constraints.push(...structuredClone(STRIPE_RECOVERY_SCHEMA.constraints));
+  catalog.indexes.push(...structuredClone(STRIPE_RECOVERY_SCHEMA.indexes));
+  catalog.triggers.push(trigger(
+    'entity_states',
+    'entity_states_monotonic_revision',
+    'lyra_advance_entity_state_revision',
+    'f4ecec84d3f71eb573ea77f0e3f3c54e8c90604aeb80dc9b54910517f66dd040',
+  ));
+  catalog.functions = [{
+    name: 'lyra_advance_entity_state_revision',
+    identityArguments: '',
+    returnType: 'trigger',
+    language: 'plpgsql',
+    securityDefiner: false,
+    settings: [],
+    bodySha256: '205cfe9d4f1cdc91c376ee628dd7b4e00ea668a9303b4cdb281f40077442c0c1',
+    kind: 'function',
+    volatility: 'volatile',
+    strict: false,
+    parallel: 'unsafe',
+    leakproof: false,
+  }];
+  if (serverVersionNum < 180000) {
+    catalog.constraints = catalog.constraints.filter((constraint) => constraint.type !== 'n');
+  }
+  return catalog;
+}
+
+async function catalogWithPostgresVersion(
+  catalog: RuntimeSchemaCatalog,
+  serverVersionNum: string,
+): Promise<RuntimeSchemaCatalog> {
+  const client: DatabaseClient = {
+    query: async <R extends QueryResultRow>(sql: string): Promise<QueryResult<R>> =>
+      queryCatalogFixture<R>(sql, catalog, catalog.functions ?? [], serverVersionNum),
+  };
+  return readRuntimeSchemaCatalogInTransaction(client, {
+    includeFunctionBodies: true,
+    includeLegacyAttributes: true,
+  });
+}
+
 function oldCatalog(): RuntimeSchemaCatalog {
   const catalog = canonicalCatalog();
   catalog.migrationFilenames = ['029_add_episode_export_jobs.sql'];
@@ -379,8 +570,12 @@ function queryCatalogFixture<T extends QueryResultRow>(
   sql: string,
   catalog: RuntimeSchemaCatalog,
   functions: QueryResultRow[] = [],
+  serverVersionNum: string | null = '180003',
 ): QueryResult<T> {
   if (/SET TRANSACTION READ ONLY/u.test(sql)) return queryResult<T>([]);
+  if (/current_setting\('server_version_num'\)/u.test(sql)) {
+    return queryResult<T>(serverVersionNum === null ? [{}] : [{ serverVersionNum }]);
+  }
   if (/FROM pg_class/u.test(sql)) return queryResult<T>(catalog.relations);
   if (/FROM information_schema\.columns/u.test(sql)) return queryResult<T>(catalog.columns);
   if (/FROM pg_constraint/u.test(sql)) return queryResult<T>(catalog.constraints);

@@ -66,7 +66,12 @@ jobs:
         run: npm --prefix apps/web ci
 
       - name: Run Vitest suite
-        run: bun run test
+        run: >-
+          bun run test --exclude tests/integration/expandedReleaseCompatibility.test.ts
+          --exclude tests/integration/production44ExpandedPersistence.test.ts
+          --exclude tests/integration/production44Expansion.test.ts
+          --exclude tests/integration/production44PersistenceProfile.test.ts
+          --exclude tests/integration/production44TerminalNotificationRecovery.test.ts
 
       - name: Run release DB regressions on production PostgreSQL version
         env:
@@ -74,6 +79,8 @@ jobs:
         run: bun run test tests/integration
 
       - name: Run Bun test entrypoint
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5433/lyra_test
         run: bun test --isolate
 
       - name: Verify Backend API inventory

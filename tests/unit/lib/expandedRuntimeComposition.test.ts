@@ -26,6 +26,7 @@ function database(catalog:RuntimeSchemaCatalog):TransactionRunner&{queries:strin
   const client:DatabaseClient={query:async<T extends QueryResultRow>(sql:string):Promise<QueryResult<T>>=>{
     queries.push(sql); let rows:unknown[];
     if(sql==='SET TRANSACTION READ ONLY')rows=[];
+    else if(sql.includes("current_setting('server_version_num')"))rows=[{serverVersionNum:'180003'}];
     else if(sql.includes('FROM pg_class relation'))rows=catalog.relations;
     else if(sql.includes('FROM information_schema.columns'))rows=catalog.columns;
     else if(sql.includes('FROM pg_constraint schema_constraint'))rows=catalog.constraints;
