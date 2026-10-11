@@ -241,13 +241,18 @@ dbDescribe('実44の生成終端・retry・保存互換profile',()=>{
     expect((await oldPages.findPageByIdAndUserId(fixture.pageId,fixture.userId))?.generatedImage?.s3Key).toBe('test/previous-saved.png');
   });
 
-  it.each([true,false])('旧consume=%sの消費を旧新refundが並行精算しても一度だけ戻す',async(oldConsume)=>{
-    const fixture=await createFixture('entity_generate',12);const candidateCredits=await fundedCredits(fixture);
+  it.each([true,false])('旧版返金の開始順=%sでも旧版の消費を旧版・候補版の並行返金が一度だけ精算する',async(oldRefundFirst)=>{
+    const fixture=await createFixture('entity_generate',12);await fundedCredits(fixture);
     const oldCredits=new OldCreditService(new OldCredits(database,database));
-    await (oldConsume?oldCredits:candidateCredits).consumeCredits({userId:fixture.userId,cost:12,description:'mixed debit',jobId:fixture.jobId});
+    const candidateCredits=new CreditService(new PostgresCreditRepository(database,database));
+    expect(candidateCredits).toBeInstanceOf(CreditService);
+    expect(oldCredits.constructor).not.toBe(CreditService);
+    // Candidate consumption requires migration 049; only its backward-compatible refund runs on this historical schema.
+    await oldCredits.consumeCredits({userId:fixture.userId,cost:12,description:'mixed debit',jobId:fixture.jobId});
     await new PostgresGenerationJobRepository(database,'production44_pg18_v1').markFailed(fixture.jobId,'mixed failure');
     const input={userId:fixture.userId,amount:12,description:'mixed refund',jobId:fixture.jobId};
-    await Promise.all([oldCredits.refundCredits(input),candidateCredits.refundCredits(input)]);
+    const refunds=oldRefundFirst?[oldCredits,candidateCredits]:[candidateCredits,oldCredits];
+    await Promise.all(refunds.map(credits=>credits.refundCredits(input)));
     await assertRestoredCredits(fixture);
   });
 
@@ -374,7 +379,7 @@ dbDescribe('実44の生成終端・retry・保存互換profile',()=>{
 
   async function fundedCredits(fixture:Fixture):Promise<CreditService>{
     await pool.query('INSERT INTO credit_balances(user_id,monthly_credits,purchased_credits,monthly_expires_at) VALUES($1,10,20,NOW()+INTERVAL \'1 day\')',[fixture.userId]);
-    return new CreditService(new PostgresCreditRepository(database,database));
+    return new OldCreditService(new OldCredits(database,database));
   }
   async function assertRestoredCredits(fixture:Fixture):Promise<void>{
     expect((await pool.query('SELECT monthly_credits,purchased_credits FROM credit_balances WHERE user_id=$1',[fixture.userId])).rows[0]).toEqual({monthly_credits:10,purchased_credits:20});
