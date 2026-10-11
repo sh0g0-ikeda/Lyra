@@ -17,6 +17,7 @@ const runtime:ReleaseCompatibilityRuntime={generationQuotesEnabled:true,generati
 for(const profile of ['canonical','production44_expanded_pg18_v1'] as const){
   native('release preflight native '+profile,()=>{
     let admin:Pool,pool:Pool,database:DatabaseClient&TransactionRunner;
+    let initialMigrationCount=0,postCheckMigrationCount=0,initialReport:Awaited<ReturnType<typeof checkReleaseCompatibility>>,initialStatements:string[]=[];
     const schema='release_native_'+randomUUID().replaceAll('-','');const statements:string[]=[];
     beforeAll(async()=>{
       admin=new Pool({connectionString:url,max:1});await admin.query('CREATE SCHEMA '+schema);
@@ -24,23 +25,29 @@ for(const profile of ['canonical','production44_expanded_pg18_v1'] as const){
       database={query:pool.query.bind(pool),transaction:async<T>(work:(client:DatabaseClient)=>Promise<T>):Promise<T>=>{
         const client=await pool.connect();try{await client.query('BEGIN');const result=await work({query:async<Row extends QueryResultRow>(sql:string,args?:readonly unknown[])=>{statements.push(sql);return client.query<Row>(sql,args===undefined?undefined:[...args]);}});await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
       }};
-      await withPostgresTestMigrationLock(admin,()=>runPendingMigrations(database,profile==='canonical'?undefined:{migrationsDir:join(process.cwd(),'tests/fixtures/production44-pg18')}));
-      if(profile!=='canonical')expect(await runProduction44Expansion(pool)).toHaveLength(10);
+      await withPostgresTestMigrationLock(admin,async()=>{
+        await runPendingMigrations(database,profile==='canonical'?undefined:{migrationsDir:join(process.cwd(),'tests/fixtures/production44-pg18')});
+        if(profile!=='canonical')expect(await runProduction44Expansion(pool)).toHaveLength(10);
+        statements.length=0;
+        initialMigrationCount=Number((await pool.query('SELECT COUNT(*)::int AS n FROM schema_migrations')).rows[0].n);
+        initialReport=await checkReleaseCompatibility(database,{profile:'new-mobile',mobileClientIds:[],runtime},{schemaProfile:profile});
+        postCheckMigrationCount=Number((await pool.query('SELECT COUNT(*)::int AS n FROM schema_migrations')).rows[0].n);
+        initialStatements=[...statements];
+      });
       statements.length=0;
     },120_000);
     afterAll(async()=>{if(pool)await pool.end();if(admin){await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();}});
     it('exact current schemaを認定し同じread-only transactionでinvariantと既存mobile policyを確認する',async()=>{
-      const before=Number((await pool.query('SELECT COUNT(*)::int AS n FROM schema_migrations')).rows[0].n);
       // The invalid-index invariant scans the whole test DB, including other
       // suites whose concurrent index builds temporarily expose invalid rows.
-      // Use the shared migration lock without narrowing the production check.
-      const report=await withPostgresTestMigrationLock(admin,()=>checkReleaseCompatibility(database,{profile:'new-mobile',mobileClientIds:[],runtime},{schemaProfile:profile}));
-      expect(report).toMatchObject({ok:true,journalPresent:false,remoteStoragePolicyVerified:false,violations:[]});
-      expect(report.checkedCount).toBeGreaterThan(10);
-      expect(Number((await pool.query('SELECT COUNT(*)::int AS n FROM schema_migrations')).rows[0].n)).toBe(before);
-      expect(before).toBe(profile==='canonical'?50:54);
-      expect(statements.every(sql=>/^\s*(SELECT|WITH|SET)\b/u.test(sql))).toBe(true);
-      expect(statements).toEqual(expect.arrayContaining([expect.stringContaining('REPEATABLE READ, READ ONLY')]));
+      // Capture it inside the setup migration lock instead of waiting again in
+      // this five-second test while another suite mutates a different schema.
+      expect(initialReport).toMatchObject({ok:true,journalPresent:false,remoteStoragePolicyVerified:false,violations:[]});
+      expect(initialReport.checkedCount).toBeGreaterThan(10);
+      expect(postCheckMigrationCount).toBe(initialMigrationCount);
+      expect(initialMigrationCount).toBe(profile==='canonical'?50:54);
+      expect(initialStatements.every(sql=>/^\s*(SELECT|WITH|SET)\b/u.test(sql))).toBe(true);
+      expect(initialStatements).toEqual(expect.arrayContaining([expect.stringContaining('REPEATABLE READ, READ ONLY')]));
     });
     it('schema認定成功でもquote OFFのnew-mobileは拒否してpolicyを緩めない',async()=>{
       const report=await checkReleaseCompatibility(database,{profile:'new-mobile',mobileClientIds:[],runtime:{...runtime,generationQuotesEnabled:false}},{schemaProfile:profile});

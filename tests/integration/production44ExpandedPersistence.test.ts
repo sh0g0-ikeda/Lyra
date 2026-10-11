@@ -38,8 +38,10 @@ native('expanded54 persistence capabilities', () => {
       try {await client.query('BEGIN');const result=await work(client);await client.query('COMMIT');return result;}
       catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
     }};
-    await withPostgresTestMigrationLock(admin,()=>runPendingMigrations(database,{migrationsDir:join(process.cwd(),'tests/fixtures/production44-pg18')}));
-    expect(await runProduction44Expansion(pool)).toHaveLength(10);
+    await withPostgresTestMigrationLock(admin,async()=>{
+      await runPendingMigrations(database,{migrationsDir:join(process.cwd(),'tests/fixtures/production44-pg18')});
+      expect(await runProduction44Expansion(pool)).toHaveLength(10);
+    });
   },120_000);
   afterAll(async()=>{if(pool)await pool.end();if(admin){await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();}});
   async function seed():Promise<{userId:string;workId:string;episodeId:string;pageId:string;entityId:string}> {

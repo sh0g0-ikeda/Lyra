@@ -80,27 +80,29 @@ native('actual44 explicit forward expansion', () => {
     try { return describeProduction44ExpansionCheckpoint(await readRuntimeSchemaCatalogInTransaction(session, { includeFunctionBodies: true, includeLegacyAttributes: true })); }
     finally { session.release(); }
   };
+  const expand = (target: Parameters<typeof runProduction44Expansion>[0] = pool): Promise<string[]> =>
+    withPostgresTestMigrationLock(admin, () => runProduction44Expansion(target));
   it('未知catalogでは履歴もDDLも変えず拒否する', async () => {
     expect(await checkpoint()).toBe(0);
     await pool.query('ALTER TABLE entity_states ADD COLUMN unknown_expansion_column text');
-    await expectExpansionRejected(runProduction44Expansion(pool));
+    await expectExpansionRejected(expand());
     expect((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n).toBe(44);
     await pool.query('ALTER TABLE entity_states DROP COLUMN unknown_expansion_column');
     expect(await checkpoint()).toBe(0);
   });
   it('既存普通runnerロックと別session advisory lockを尊重する', async () => {
     await pool.query("INSERT INTO schema_migration_locks(name) VALUES('schema_migrations')");
-    try { await expectExpansionRejected(runProduction44Expansion(pool)); }
+    try { await expectExpansionRejected(expand()); }
     finally { await pool.query('DELETE FROM schema_migration_locks'); }
     const holder = await pool.connect();
     try {
       await holder.query('SELECT pg_advisory_lock(1744048,52)');
-      await expectExpansionRejected(runProduction44Expansion(pool));
+      await expectExpansionRejected(expand());
     } finally { await holder.query('SELECT pg_advisory_unlock(1744048,52)'); holder.release(); }
     expect(await checkpoint()).toBe(0);
   });
   it('DDL後catalogが一致しなければそのfileとreceiptを一緒にrollbackする', async () => {
-    await expectExpansionRejected(runProduction44Expansion({ connect: async () => {
+    await expectExpansionRejected(expand({ connect: async () => {
       const session = await pool.connect();
       return { release: session.release.bind(session), query: async <T extends QueryResultRow>(sql: string, values?: readonly unknown[]) => {
         const result = await session.query<T>(sql, values === undefined ? undefined : [...values]);
@@ -115,14 +117,14 @@ native('actual44 explicit forward expansion', () => {
     await holder.query('BEGIN');
     await holder.query('LOCK TABLE generation_jobs IN ACCESS SHARE MODE');
     const started = performance.now();
-    try { await expectExpansionRejected(runProduction44Expansion(pool)); }
+    try { await expectExpansionRejected(expand()); }
     finally { await holder.query('ROLLBACK'); holder.release(); }
     expect(performance.now() - started).toBeGreaterThanOrEqual(900);
     expect(performance.now() - started).toBeLessThan(15_000);
     expect(await checkpoint()).toBe(3);
     expect((await pool.query("SELECT convalidated FROM pg_constraint WHERE conrelid='generation_jobs'::regclass AND conname='generation_jobs_job_type_check'")).rows[0].convalidated).toBe(true);
     let constraintDdlMs = 0;
-    const applied = await runProduction44Expansion({ connect: async () => {
+    const applied = await expand({ connect: async () => {
       const session = await pool.connect();
       return { release: session.release.bind(session), query: async <T extends QueryResultRow>(sql: string, values?: readonly unknown[]) => {
         const start = performance.now();
@@ -137,7 +139,7 @@ native('actual44 explicit forward expansion', () => {
     expect(await checkpoint()).toBe(10);
     expect((await pool.query('SELECT count(*)::int AS n FROM schema_migrations')).rows[0].n).toBe(54);
     expect((await pool.query("SELECT filename FROM schema_migrations WHERE filename LIKE '046%'")).rows).toEqual([]);
-    expect(await runProduction44Expansion(pool)).toEqual([]);
+    expect(await expand()).toEqual([]);
     expect((await pool.query('SELECT * FROM schema_migration_locks')).rows).toEqual([]);
     expect((await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='pages' AND column_name='story_page_purpose'")).rows).toHaveLength(1);
   }, 30_000);
@@ -186,7 +188,7 @@ native('actual44 explicit forward expansion', () => {
   });
   it('停止中にmigration leaseが交代した場合はDDLせず新ownerのロックを消さない', async () => {
     try {
-      await expectExpansionRejected(runProduction44Expansion({ connect: async () => {
+      await expectExpansionRejected(expand({ connect: async () => {
         const session = await pool.connect();
         return { release: session.release.bind(session), query: async <T extends QueryResultRow>(sql: string, values?: readonly unknown[]) => {
           const result = await session.query<T>(sql, values === undefined ? undefined : [...values]);
