@@ -8,8 +8,10 @@ import { contrastRatio, renderedColors, renderedContrast, renderedStyle } from '
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { confirmDestructiveActionMock } = vi.hoisted(() => ({
-  confirmDestructiveActionMock: vi.fn(({ onConfirm }: { onConfirm: () => void }) => onConfirm())
+const { confirmDestructiveActionMock, loadStoryHierarchyExpansionMock, saveStoryHierarchyExpansionMock } = vi.hoisted(() => ({
+  confirmDestructiveActionMock: vi.fn(({ onConfirm }: { onConfirm: () => void }) => onConfirm()),
+  loadStoryHierarchyExpansionMock: vi.fn(),
+  saveStoryHierarchyExpansionMock: vi.fn()
 }));
 
 vi.mock('react-native', () => ({
@@ -119,11 +121,8 @@ vi.mock('@/lib/confirm', () => ({
 }));
 
 vi.mock('@/lib/storage', () => ({
-  loadStoryHierarchyExpansion: vi.fn().mockResolvedValue({
-    chapterIds: ['chapter-1'],
-    workIds: ['work-1']
-  }),
-  saveStoryHierarchyExpansion: vi.fn().mockResolvedValue(undefined)
+  loadStoryHierarchyExpansion: loadStoryHierarchyExpansionMock,
+  saveStoryHierarchyExpansion: saveStoryHierarchyExpansionMock
 }));
 
 const work = (id: string, title: string) => ({
@@ -189,6 +188,7 @@ const flushQueries = async (): Promise<void> => {
 describe('StoryHierarchySheet', () => {
   const onSelectEpisode = vi.fn();
   const onWorkRenamed = vi.fn();
+  let renderedQueryClient: QueryClient | null = null;
   const api = {
     createChapter: vi.fn(),
     createEpisode: vi.fn(),
@@ -203,6 +203,8 @@ describe('StoryHierarchySheet', () => {
     getEpisodes: vi.fn(async (chapterId: string) => ({
       episodes: chapterId === 'chapter-1'
         ? [episode('episode-1', 'chapter-1', 1, '第一話')]
+        : chapterId === 'chapter-2'
+          ? [episode('episode-2', 'chapter-2', 1, '第二話')]
         : []
     })),
     moveChapter: vi.fn(),
@@ -214,46 +216,58 @@ describe('StoryHierarchySheet', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    loadStoryHierarchyExpansionMock.mockResolvedValue({
+      chapterIds: ['chapter-1'],
+      workIds: ['work-1']
+    });
+    saveStoryHierarchyExpansionMock.mockResolvedValue(undefined);
   });
 
-  const renderSheet = async () => {
+  const sheet = (overrides: Partial<React.ComponentProps<typeof StoryHierarchySheet>> = {}) => (
+    <StoryHierarchySheet
+      api={api as never}
+      canCreateWork
+      canEdit
+      language="ja"
+      onChapterDeleted={vi.fn()}
+      onClose={vi.fn()}
+      onEpisodeDeleted={vi.fn()}
+      onSelectChapter={vi.fn()}
+      onSelectEpisode={onSelectEpisode}
+      onSelectWork={vi.fn()}
+      onWorkRenamed={onWorkRenamed}
+      onChapterRenamed={vi.fn()}
+      onEpisodeRenamed={vi.fn()}
+      organizationId={null}
+      selectedChapterId="chapter-1"
+      selectedEpisodeId="episode-1"
+      selectedWorkId="work-1"
+      sessionKey="session-1"
+      userId="user-1"
+      visible
+      works={[work('work-1', '作品A'), work('work-2', '作品B')]}
+      {...overrides}
+    />
+  );
+
+  const renderSheet = async (ensureCurrentEpisode = true, overrides: Partial<React.ComponentProps<typeof StoryHierarchySheet>> = {}) => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } }
     });
+    renderedQueryClient = queryClient;
     let renderer: ReturnType<typeof create>;
     await act(async () => {
       renderer = create(
         <QueryClientProvider client={queryClient}>
-          <StoryHierarchySheet
-            api={api as never}
-            canCreateWork
-            canEdit
-            language="ja"
-            onChapterDeleted={vi.fn()}
-            onClose={vi.fn()}
-            onEpisodeDeleted={vi.fn()}
-            onSelectChapter={vi.fn()}
-            onSelectEpisode={onSelectEpisode}
-            onSelectWork={vi.fn()}
-            onWorkRenamed={onWorkRenamed}
-            onChapterRenamed={vi.fn()}
-            onEpisodeRenamed={vi.fn()}
-            organizationId={null}
-            selectedChapterId="chapter-1"
-            selectedEpisodeId="episode-1"
-            selectedWorkId="work-1"
-            sessionKey="session-1"
-            userId="user-1"
-            visible
-            works={[work('work-1', '作品A'), work('work-2', '作品B')]}
-          />
+          {sheet(overrides)}
         </QueryClientProvider>
       );
-      for (let index = 0; index < 5; index += 1) {
-        await flushQueries();
-      }
     });
+    for (let index = 0; index < 5; index += 1) {
+      await act(flushQueries);
+    }
     if (
+      ensureCurrentEpisode &&
       renderer!.root.findAllByProps({ accessibilityLabel: '1. 第一話の操作' }).length === 0
     ) {
       const chapterToggle = renderer!.root.findByProps({ accessibilityLabel: '1. 第一章を折りたたむ' });
@@ -278,6 +292,103 @@ describe('StoryHierarchySheet', () => {
       await flushQueries();
     });
     expect(api.getChapters).toHaveBeenCalledWith('work-2', null);
+  });
+
+  // A FlatList cell must measure its hierarchy content, otherwise the episode rows can sit
+  // below an unscrollable cell after a user expands a chapter from the page editor.
+  it('章を展開したとき話まで到達できる高さで表示する', async () => {
+    const renderer = await renderSheet();
+
+    expect(renderer.root.findByProps({ accessibilityLabel: '1. 第一話の操作' })).toBeDefined();
+    const branches = renderer.root.findAll((node) => {
+      const style = node.props.style as { flex?: number } | undefined;
+      return style?.flex === 1 && Object.keys(style).length === 1;
+    });
+    expect(branches).toHaveLength(0);
+  });
+
+  it('ページ編集中に別の章を展開してもその話を選べる', async () => {
+    const renderer = await renderSheet(false);
+    const expandSecondChapter = renderer.root.findByProps({ accessibilityLabel: '2. 第二章を展開' });
+
+    await act(async () => {
+      expandSecondChapter.props.onPress();
+    });
+    for (let index = 0; index < 5; index += 1) {
+      await act(async () => {
+        await flushQueries();
+      });
+    }
+
+    expect(api.getEpisodes).toHaveBeenCalledWith('chapter-2', null);
+    expect(renderer.root.findByProps({ accessibilityLabel: '1. 第二話の操作' })).toBeDefined();
+  });
+
+  it('展開設定の読込中に別の章を開いても話を隠さない', async () => {
+    let resolveStoredExpansion: ((value: { chapterIds: string[]; workIds: string[] }) => void) | null = null;
+    loadStoryHierarchyExpansionMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStoredExpansion = resolve;
+    }));
+    const renderer = await renderSheet(false);
+    const expandSecondChapter = renderer.root.findByProps({ accessibilityLabel: '2. 第二章を展開' });
+    await act(async () => {
+      expandSecondChapter.props.onPress();
+      resolveStoredExpansion?.({ chapterIds: ['chapter-1'], workIds: ['work-1'] });
+      await flushQueries();
+    });
+    for (let index = 0; index < 5; index += 1) {
+      await act(flushQueries);
+    }
+
+    expect(renderer.root.findByProps({ accessibilityLabel: '1. 第二話の操作' })).toBeDefined();
+  });
+
+  it('読込中に開いて閉じた章を保存済み展開で再び開かない', async () => {
+    let resolveStoredExpansion: ((value: { chapterIds: string[]; workIds: string[] }) => void) | null = null;
+    loadStoryHierarchyExpansionMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStoredExpansion = resolve;
+    }));
+    const renderer = await renderSheet(false);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '2. 第二章を展開' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '2. 第二章を折りたたむ' }).props.onPress();
+      resolveStoredExpansion?.({ chapterIds: ['chapter-2'], workIds: ['work-1'] });
+      await flushQueries();
+    });
+    expect(renderer.root.findByProps({ accessibilityLabel: '2. 第二章を展開' })).toBeDefined();
+  });
+
+  it('scopeを切り替えた後は遅れて届く旧scopeの展開設定を保存しない', async () => {
+    const resolvers: ((value: { chapterIds: string[]; workIds: string[] }) => void)[] = [];
+    loadStoryHierarchyExpansionMock.mockImplementation(() => new Promise((resolve) => {
+      resolvers.push(resolve);
+    }));
+    const renderer = await renderSheet(false);
+    expect(renderedQueryClient).not.toBeNull();
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ organizationId: 'org-2', selectedChapterId: null, selectedEpisodeId: null, selectedWorkId: null, userId: 'user-2' })}
+        </QueryClientProvider>
+      );
+    });
+    await act(async () => {
+      resolvers[1]!({ chapterIds: ['chapter-2'], workIds: ['work-1'] });
+      await flushQueries();
+    });
+    for (let index = 0; index < 3; index += 1) {
+      await act(flushQueries);
+    }
+    expect(renderer.root.findByProps({ accessibilityLabel: '2. 第二章を折りたたむ' })).toBeDefined();
+    await act(async () => {
+      resolvers[0]!({ chapterIds: ['chapter-1'], workIds: ['work-1'] });
+      await flushQueries();
+    });
+    expect(renderer.root.findByProps({ accessibilityLabel: '2. 第二章を折りたたむ' })).toBeDefined();
+    const latestSave = saveStoryHierarchyExpansionMock.mock.calls.at(-1);
+    expect(latestSave).toEqual(['user-2', 'org-2', { chapterIds: ['chapter-2'], workIds: ['work-1'] }]);
   });
 
   it('章末の話を下へ移動すると章境界移動フラグを送る', async () => {

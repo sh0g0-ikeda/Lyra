@@ -1,43 +1,42 @@
-import type { PropsWithChildren } from 'react';
+import { useState, type PropsWithChildren } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
-import { pageCreationSteps, type PageCreationStep } from '@/domain/pageCreationWorkflow';
 import type { UiLanguage } from '@/domain/types';
-import { pageWorkflowMessage as message } from '@/lib/pageWorkflowMessages';
+import { t } from '@/lib/i18n';
 
-export function PageWorkflowSection({ active, children }: PropsWithChildren<{ active: boolean }>): React.JSX.Element {
-  return <View accessibilityElementsHidden={!active} importantForAccessibility={active ? 'auto' : 'no-hide-descendants'} style={active ? styles.content : styles.hidden}>{children}</View>;
+interface PageStoryAutofillActionProps { canGenerate: boolean; hasActiveJob: boolean; jobEnqueued: boolean; language: UiLanguage; loading: boolean; onPress: () => void; pagesLoading: boolean; selectedEpisode: boolean; }
+
+// The primary page flow is intentionally one action followed by the page list.
+// Existing page-design controls remain available in the collapsed history below it.
+export function PageStoryAutofillAction({ canGenerate, hasActiveJob, jobEnqueued, language, loading, onPress, pagesLoading, selectedEpisode }: PageStoryAutofillActionProps): React.JSX.Element {
+  const disabled = !canGenerate || !selectedEpisode || hasActiveJob || jobEnqueued || loading || pagesLoading;
+  const disabledReason = !canGenerate
+    ? t(language, 'generated.components.StoryGenerationControls.generation.permission.is.required.1bc5b7af')
+    : !selectedEpisode
+      ? t(language, 'generated.components.StoryGenerationControls.select.an.episode.first.437356a6')
+      : pagesLoading
+        ? t(language, 'generated.components.StoryGenerationControls.checking.existing.pages.4fbfc50b')
+        : hasActiveJob || loading || jobEnqueued
+          ? t(language, 'component.storyGenerationControls.activeJob')
+          : undefined;
+  return <PrimaryButton disabled={disabled} disabledReason={disabledReason} label={t(language, 'component.storyGenerationControls.autofillAction')} loading={loading} onPress={onPress} testID="page-story-autofill-primary" variant="primary" />;
 }
 
-export function PageCreationStepNavigation({ language, step, hasPage, onChange }: {
-  language: UiLanguage; step: PageCreationStep; hasPage: boolean; onChange: (step: PageCreationStep) => void;
-}): React.JSX.Element {
-  return <View style={styles.content}>
-    <View accessibilityLabel={message(language, 'workflow')} style={styles.steps}>
-      {pageCreationSteps.map((target, index) => <Pressable
-        accessibilityRole="tab" accessibilityState={{ selected: step === target, disabled: target !== 'design' && !hasPage }}
-        disabled={target !== 'design' && !hasPage} key={target} onPress={() => onChange(target)}
-        style={[styles.step, step === target ? styles.selected : null]} testID={`page-step-${target}`}
-      ><Text style={[styles.label, step === target ? styles.selectedLabel : null]}>{index + 1}. {message(language, target)}</Text></Pressable>)}
-    </View>
-    <Text style={styles.help}>{message(language, 'stepHelp')}</Text>
-  </View>;
-}
-
-export function PageCreationStepActions({ language, step, hasPage, onChange }: {
-  language: UiLanguage; step: PageCreationStep; hasPage: boolean; onChange: (step: PageCreationStep) => void;
-}): React.JSX.Element {
-  return <View style={styles.actions}>
-    {step === 'design' ? null : <PrimaryButton label={message(language, 'previous')} onPress={() => onChange(step === 'create' ? 'settings' : 'design')} variant="ghost" testID="page-step-previous" />}
-    {step === 'create' ? null : <PrimaryButton disabled={!hasPage} disabledReason={!hasPage ? message(language, 'noDesign') : undefined} label={message(language, step === 'design' ? 'nextSettings' : 'nextCreate')} onPress={() => onChange(step === 'design' ? 'settings' : 'create')} testID="page-step-next" />}
+export function PageJobHistory({ children, title }: PropsWithChildren<{ title: string }>): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  return <View style={styles.history}>
+    <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => setExpanded((current) => !current)} style={styles.historyToggle} testID="page-job-history-toggle">
+      <Text style={styles.historyTitle}>{title}</Text><Text style={styles.historyIcon}>{expanded ? '−' : '+'}</Text>
+    </Pressable>
+    <View accessibilityElementsHidden={!expanded} importantForAccessibility={expanded ? 'auto' : 'no-hide-descendants'} style={expanded ? styles.historyContent : styles.hidden} testID="page-job-history-content">{children}</View>
   </View>;
 }
 const styles = StyleSheet.create({
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, paddingVertical: spacing.md },
-  content: { gap: spacing.sm }, hidden: { display: 'none' }, help: { ...textStyles.caption },
-  label: { ...textStyles.caption, color: colors.inkStrong, fontWeight: '700', textAlign: 'center' },
-  selectedLabel: { color: colors.primaryText }, selected: { backgroundColor: colors.primary },
-  step: { minHeight: 44, minWidth: 92, flex: 1, justifyContent: 'center', borderRadius: radius.sm, borderColor: colors.controlBorder, borderWidth: 1, padding: spacing.sm },
-  steps: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }
+  hidden: { display: 'none' },
+  history: { borderColor: colors.controlBorder, borderRadius: radius.md, borderWidth: 1, overflow: 'hidden' },
+  historyContent: { gap: spacing.md, padding: spacing.md },
+  historyIcon: { ...textStyles.body, color: colors.primary, fontWeight: '800' },
+  historyTitle: { ...textStyles.body, color: colors.inkStrong, fontWeight: '700' },
+  historyToggle: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', minHeight: 48, paddingHorizontal: spacing.md, paddingVertical: spacing.sm }
 });

@@ -6,6 +6,7 @@ import { colors, radius, spacing } from '@/constants/theme';
 interface PrimaryButtonProps {
   buttonRef?: RefObject<View | null>;
   label: string;
+  compact?: boolean;
   onPress: () => void;
   disabled?: boolean;
   disabledReason?: string;
@@ -17,6 +18,7 @@ interface PrimaryButtonProps {
 export function PrimaryButton({
   buttonRef,
   label,
+  compact = false,
   onPress,
   disabled = false,
   disabledReason,
@@ -37,6 +39,7 @@ export function PrimaryButton({
       testID={testID}
       style={({ pressed }) => [
         styles.button,
+        compact ? styles.compact : null,
         variant === 'primary' ? styles.primary : null,
         variant === 'secondary' ? styles.secondary : null,
         variant === 'ghost' ? styles.ghost : null,
@@ -75,6 +78,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
   },
+  compact: { minHeight: 48, paddingVertical: 2 },
   content: {
     alignItems: 'center',
     flexDirection: 'row',

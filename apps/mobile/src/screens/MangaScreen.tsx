@@ -141,10 +141,7 @@ export function MangaScreen(): React.JSX.Element {
           resumeStep={resumeStep}
         />
       ) : (
-        <View style={[styles.header, { paddingTop: top + spacing.xs }]}>
-          <Pressable accessibilityRole="button" onPress={() => void openStep(null)} style={styles.libraryLink} testID="manga-back-library">
-            <Text style={styles.linkText}>{t(language, 'navigation.library')}</Text>
-          </Pressable>
+        <View style={[styles.header, { paddingTop: top + 2 }]}>
           <View accessibilityLabel={t(language, 'navigation.workflow')} style={styles.steps}>
             {mangaCreationSteps.map((target, index) => {
               const disabled = target === 'characters' ? selection.workId === null : target === 'pages' && selection.episodeId === null;
@@ -158,7 +155,7 @@ export function MangaScreen(): React.JSX.Element {
                   style={[styles.step, target === step ? styles.selectedStep : null, disabled ? styles.disabledStep : null]}
                   testID={`manga-step-${target}`}
                 >
-                  <Text style={[styles.stepLabel, target === step ? styles.selectedLabel : null]}>{index + 1}. {t(language, target)}</Text>
+                  <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85} style={[styles.stepLabel, target === 'characters' ? styles.characterStepLabel : null, target === step ? styles.selectedLabel : null]}>{index + 1}. {t(language, target)}</Text>
                 </Pressable>
               );
             })}
@@ -180,8 +177,9 @@ export function MangaScreen(): React.JSX.Element {
       </EmbeddedScreenProvider>
       {step === null ? null : (
         <View style={styles.actions}>
-          <View style={styles.action}><PrimaryButton label={t(language, 'navigation.previous')} onPress={goBack} variant="ghost" testID="manga-previous" /></View>
+          <View style={styles.action}><PrimaryButton compact label={t(language, 'navigation.previous')} onPress={goBack} variant="ghost" testID="manga-previous" /></View>
           {step === 'pages' ? null : <View style={styles.action}><PrimaryButton
+            compact
             label={t(language, step === 'story' ? 'navigation.nextCharacters' : 'navigation.nextPages')}
             onPress={() => void openStep(step === 'story' ? 'characters' : 'pages')}
             disabled={step === 'story' ? selection.workId === null : selection.episodeId === null}
@@ -196,17 +194,16 @@ export function MangaScreen(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   action: { flex: 1, minWidth: 140 },
-  actions: { backgroundColor: colors.canvas, flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, padding: spacing.sm },
+  actions: { backgroundColor: colors.canvas, flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: 2 },
   disabledStep: { opacity: 0.45 },
   editor: { flex: 1 },
-  header: { backgroundColor: colors.canvas, paddingHorizontal: spacing.sm, paddingBottom: spacing.sm },
+  header: { backgroundColor: colors.canvas, paddingHorizontal: spacing.sm, paddingBottom: 2 },
   hidden: { display: 'none' },
-  libraryLink: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
-  linkText: { ...textStyles.body, color: colors.primary },
   root: { flex: 1, backgroundColor: colors.canvas },
   selectedLabel: { color: colors.primaryText },
   selectedStep: { backgroundColor: colors.primary, borderColor: colors.primary },
-  step: { flex: 1, minWidth: 94, minHeight: 44, borderColor: colors.controlBorder, borderWidth: 1, borderRadius: radius.sm, justifyContent: 'center', padding: spacing.sm },
+  step: { flex: 1, minWidth: 0, minHeight: 48, borderColor: colors.controlBorder, borderWidth: 1, borderRadius: radius.sm, justifyContent: 'center', paddingHorizontal: spacing.xs, paddingVertical: 2 },
   stepLabel: { ...textStyles.caption, color: colors.inkStrong, textAlign: 'center', fontWeight: '700' },
-  steps: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }
+  characterStepLabel: { fontSize: 11, lineHeight: 16 },
+  steps: { flexDirection: 'row', gap: spacing.xs }
 });

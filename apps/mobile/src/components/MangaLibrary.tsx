@@ -49,7 +49,7 @@ export function MangaLibrary({
         onPress={() => setShowHierarchy(true)}
         testID="manga-create"
       />
-      {onStartStory === undefined ? null : <PrimaryButton label={t(language, 'navigation.openStory')} onPress={onStartStory} variant="secondary" testID="manga-start-story" />}
+      {onStartStory === undefined ? null : <PrimaryButton label={t(language, 'navigation.openStory')} onPress={onStartStory} variant="primary" testID="manga-start-story" />}
       <MangaTutorial firstRun />
       {context.works.length === 0 && context.error === null ? <Text style={styles.help}>{t(language, 'emptyWorks')}</Text> : null}
       {context.works.map((item) => (

@@ -542,8 +542,8 @@ export function AccountScreen(): React.JSX.Element {
       {activeOrganization === null ? (
         <Section
         collapsible
-        defaultCollapsed={totalCredits > 0}
-        persistKey="account:billing"
+        defaultCollapsed={false}
+        persistKey="account:billing:open-default-v2"
         subtitle={t(language, "generated.screens.AccountScreen.personal.purchases.and.restores.use.your.9bf34678")}
         title={t(language, 'billing')}
         tone="highlight"
@@ -641,7 +641,8 @@ export function AccountScreen(): React.JSX.Element {
 
       <Section
         collapsible
-        persistKey="account:jobs"
+        defaultCollapsed
+        persistKey="account:jobs:closed-default-v2"
         subtitle={t(language, "generated.screens.AccountScreen.review.generation.jobs.in.this.workspace.69eab3a5")}
         title={t(language, "generated.screens.AccountScreen.jobs.3e4ac854")}
       >

@@ -9,6 +9,7 @@ export function confirmStoryStateAutofill(input: {
   language: UiLanguage;
   available: boolean;
   choice: EpisodeStateAutofillChoice;
+  includeSkeletonGeneration?: boolean;
   isCurrent: () => boolean;
   onConfirm: (options: EpisodeStateAutofillRequestOptions | undefined) => void;
 }): void {
@@ -16,10 +17,13 @@ export function confirmStoryStateAutofill(input: {
   // a pending confirmation from preserve to overwrite.
   const options = stateAutofillRequestOptions(input.available, input.choice);
   const stateCopy = options === undefined ? '' : `\n\n${episodeStateMessage(input.language, 'stateConfirmation')}\n${episodeStateMessage(input.language, options.state_assignment_policy === 'overwrite_existing' ? 'overwriteWarning' : 'preserveHelp')}`;
+  const operationConfirmation = input.includeSkeletonGeneration === true
+    ? `${t(input.language, 'screen.pages.design.generateConfirmation')}\n\n${t(input.language, 'screen.pages.design.autofillConfirmation')}`
+    : t(input.language, 'screen.pages.design.autofillConfirmation');
   confirmAction({
     language: input.language,
     title: t(input.language, 'component.storyGenerationControls.autofillAction'),
-    message: appendAiProviderDisclosure(`${t(input.language, 'screen.pages.design.autofillConfirmation')}${stateCopy}`, input.language, 'text'),
+    message: appendAiProviderDisclosure(`${operationConfirmation}${stateCopy}`, input.language, 'text'),
     confirmLabel: t(input.language, 'component.storyGenerationControls.autofillAction'),
     destructive: true,
     onConfirm: () => { if (input.isCurrent()) input.onConfirm(options); }

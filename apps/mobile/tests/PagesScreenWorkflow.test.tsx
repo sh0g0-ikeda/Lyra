@@ -10,7 +10,8 @@ const panels: PanelRecord[] = [{ id: 'panel', page_id: 'page', order: 1, panel_r
 const frames: PanelFrameRecord[] = [{ id: 'frame', page_id: 'page', panel_id: 'panel', vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], border_style: 'solid', border_width: 1, border_color: '#000000', z_index: 1, reading_order: 1 }];
 const queryData = { pages: { pages: [{ pages: [page] }], pageParams: [null] }, entities: { pages: [{ entities: [] as EntityRecord[] }], pageParams: [null] }, panels: { panels }, frames: { frames }, scenes: { scenes: [] }, readiness: { ready: true, blockers: [], warnings: [], estimated_credit_cost: 8, page_revision: 'revision' }, templates: { templates: [] } };
 let moreEntities = false;
-const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn(), openUrl: vi.fn().mockResolvedValue(undefined) })); const api = { updatePage: action, updatePanel: action, generatePage: action, autofillEpisodePagesFromStory: action };
+const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl, confirmAction, generatePageSkeleton, autofillStory } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn(), openUrl: vi.fn().mockResolvedValue(undefined), confirmAction: vi.fn(), generatePageSkeleton: vi.fn(), autofillStory: vi.fn() }));
+const api = { updatePage: action, updatePanel: action, generatePage: action, generatePageSkeleton, autofillEpisodePagesFromStory: autofillStory };
 let root: ReactTestRenderer | undefined;
 vi.mock('@react-navigation/native', () => ({ useNavigation: () => ({ navigate: action }), useIsFocused: () => true }));
 vi.mock('react-native', () => ({ Keyboard: { dismiss: vi.fn() }, Linking: { openURL: openUrl }, Modal: 'modal', Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
@@ -19,11 +20,11 @@ vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn(), setQueryData: vi.fn() }),
   useInfiniteQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'pages' ? queryData.pages : queryData.entities, isSuccess: true, isFetching: false, hasNextPage: queryKey[0] === 'pages' ? false : moreEntities, isFetchingNextPage: false, fetchNextPage: fetchEntities, error: null }),
   useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'panels' ? queryData.panels : queryKey[0] === 'frames' ? queryData.frames : queryKey[0] === 'scenes' ? queryData.scenes : queryKey[0] === 'page-generation-readiness' ? queryData.readiness : queryKey[0] === 'page-layout-templates' ? queryData.templates : undefined, isSuccess: true, isFetching: false, isLoading: false, error: null, refetch: vi.fn() }),
-  useMutation: (options: { mutationFn: (...args: unknown[]) => Promise<unknown>; onSuccess?: (value: unknown) => Promise<void> }) => {
+  useMutation: (options: { mutationFn: (...args: unknown[]) => Promise<unknown>; onSuccess?: (value: unknown, variables?: unknown) => Promise<void>; onError?: (error: unknown, variables?: unknown) => void | Promise<void> }) => {
     const [error, setError] = React.useState<unknown>(null);
     const run = async (...args: unknown[]): Promise<unknown> => {
-      try { const value = await options.mutationFn(...args); await options.onSuccess?.(value); setError(null); return value; }
-      catch (cause) { setError(cause); throw cause; }
+      try { const value = await options.mutationFn(...args); await options.onSuccess?.(value, args[0]); setError(null); return value; }
+      catch (cause) { await options.onError?.(cause, args[0]); setError(cause); throw cause; }
     };
     return { mutate: (...args: unknown[]) => { void run(...args).catch(() => undefined); }, mutateAsync: run, isPending: false, error, reset: () => setError(null) };
   }
@@ -37,7 +38,10 @@ vi.mock('@/lib/confirmationPresentation', () => ({ useConfirmationPresentation: 
 vi.mock('@/hooks/useActiveResourceJobId', () => ({ useActiveResourceJobId: () => null }));
 vi.mock('@/hooks/usePanelInsertion', () => ({ usePanelInsertion: () => ({ blocker: null, operationActive: false, notice: null, insertAfter: vi.fn(), reload: vi.fn() }) }));
 vi.mock('@/hooks/useResetOnScopeChange', () => ({ useResetOnScopeChange: vi.fn() }));
-vi.mock('@/lib/confirm', () => ({ confirmAction: action, confirmDestructiveAction: action }));
+vi.mock('@/lib/confirm', () => ({ confirmAction, confirmDestructiveAction: confirmAction }));
+vi.mock('@/lib/confirmStoryStateAutofill', () => ({
+  confirmStoryStateAutofill: (input: { onConfirm: (options: undefined) => void }) => confirmAction({ onConfirm: () => input.onConfirm(undefined) })
+}));
 vi.mock('@/lib/api', () => ({ ApiError: class ApiError extends Error {} }));
 vi.mock('@/lib/config', () => ({ config: { apiBaseUrl: 'https://example.test', webEditorUrl: 'https://d2dw83tkmziksr.cloudfront.net/', episodeExportEnabled: false } }));
 vi.mock('@/lib/download', () => ({ appendOrganizationQuery: vi.fn(), downloadAuthenticatedFile: action }));
@@ -73,7 +77,11 @@ vi.mock('@/components/StoryStateAutofillOptions', () => ({ StoryStateAutofillOpt
 vi.mock('@/components/StoryGenerationControls', () => ({ StoryGenerationControls: (props: Record<string, unknown>) => React.createElement('StoryGenerationControls', props) }));
 vi.mock('@/components/WorkspaceHierarchyNavigator', () => ({ WorkspaceHierarchyNavigator: (props: Record<string, unknown>) => React.createElement('WorkspaceHierarchyNavigator', props) }));
 
-beforeEach(() => { action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); fetchEntities.mockReset(); openUrl.mockReset(); openUrl.mockResolvedValue(undefined); moreEntities=false; page.layout_config={}; queryData.entities.pages=[{entities:[]}]; panels[0].entities=[]; panels[0].dialogue=[]; });
+beforeEach(() => {
+  action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); fetchEntities.mockReset(); openUrl.mockReset(); confirmAction.mockReset(); generatePageSkeleton.mockReset(); autofillStory.mockReset();
+  openUrl.mockResolvedValue(undefined); generatePageSkeleton.mockResolvedValue({ job_id: 'skeleton-job', queued: true, story_plan_applied: false }); autofillStory.mockResolvedValue({ job_id: 'autofill-job', queued: true });
+  moreEntities=false; page.layout_config={}; queryData.pages={pages:[{pages:[page]}],pageParams:[null]}; queryData.panels={panels}; queryData.frames={frames}; queryData.entities.pages=[{entities:[]}]; panels[0].entities=[]; panels[0].dialogue=[];
+});
 afterEach(async () => { await act(async () => root?.unmount()); });
 describe('実際のPagesScreenの工程構成', () => {
   it('Web editor操作は設定済みのstaging originを開く', async () => {
@@ -105,18 +113,14 @@ describe('実際のPagesScreenの工程構成', () => {
     expect(action).toHaveBeenCalledOnce();
     expect(style().props.value).toBe('保持する画風');
   });
-  it('ステップ変更で保存やAIを呼ばずページ入力を保持し実コマ設定をpreviewに使う', async () => {
+  it('工程を連続表示して入力を保持し現在設定previewを表示しない', async () => {
     await act(async () => { root = create(<PagesScreen />); });
     const style = (): ReactTestRenderer['root'] => root!.root.findAllByType('field').find((node) => node.props.label === '参考にしたい作品・画風')!;
     await act(async () => style().props.onChangeText('保持する入力'));
-    for (const step of ['design', 'settings', 'create', 'settings']) {
-      await act(async () => root!.root.findByProps({ testID: `page-step-${step}` }).props.onPress());
-    }
     expect(style().props.value).toBe('保持する入力');
     expect(action).not.toHaveBeenCalled(); expect(quoteOpen).not.toHaveBeenCalled();
-    expect(root!.root.findAllByProps({ testID: 'page-settings-preview' })).toHaveLength(2);
-    expect(root!.root.findByType('LayoutTemplatePreview').props.frames).toHaveLength(1);
-    expect(root!.root.findByType('LayoutTemplatePreview').props.frames[0].vertices).toEqual(frames[0].vertices);
+    expect(root!.root.findAllByProps({ testID: 'page-settings-preview' })).toHaveLength(0);
+    expect(root!.root.findAll((node) => typeof node.props.testID === 'string' && node.props.testID.startsWith('page-step-'))).toHaveLength(0);
   });
   it('未保存のページ入力はページ・work・episode切替を止めるdirty editorとして登録する', async () => {
     await act(async () => { root = create(<PagesScreen />); });
@@ -155,15 +159,61 @@ describe('実際のPagesScreenの工程構成', () => {
     expect(style().props.value).toBe('');
     expect(action).not.toHaveBeenCalled();
   });
-  it('工程別CTAを分離しpage number選択とcolor/monochrome入口を維持する', async () => {
+  it('上部CTAを一本化しpage number選択とcolor/monochrome入口を維持する', async () => {
     await act(async () => { root = create(<PagesScreen />); });
-    expect(root!.root.findAllByType('StoryGenerationControls').map((node) => node.props.visibleAction)).toEqual(['skeleton', 'autofill']);
+    expect(root!.root.findAllByType('button').filter((node) => node.props.testID === 'page-story-autofill-primary')).toHaveLength(1);
+    expect(root!.root.findAllByType('StoryGenerationControls').map((node) => node.props.visibleAction)).toEqual(['skeleton']);
     const picker = root!.root.findAllByType('picker').find((node) => node.props.items?.some((item: { id: string }) => item.id === 'page'));
     expect(picker?.props.labelForItem(page)).toBe('1ページ');
-    const generation = root!.root.findByType('PageGenerationActions');
-    await act(async () => generation.props.onGenerateMonochrome());
+    const generation = root!.root.findByProps({ testID: 'page-monochrome-generation-action' });
+    await act(async () => generation.props.onPress());
     expect(quoteOpen).toHaveBeenCalledWith({ pageId: 'page', pageNumber: 1, renderStyle: 'monochrome' });
     expect(action).not.toHaveBeenCalled();
+  });
+
+  it('ページが無い場合は確認後にskeleton完了を待って同じ話へautofillを一度だけqueueする', async () => {
+    queryData.pages = { pages: [{ pages: [] }], pageParams: [null] };
+    queryData.panels = { panels: [] };
+    queryData.frames = { frames: [] };
+    await act(async () => { root = create(<PagesScreen />); });
+    await act(async () => {
+      root!.root.findAllByType('button').find((node) => node.props.testID === 'page-story-autofill-primary')!.props.onPress();
+      await Promise.resolve();
+    });
+    expect(confirmAction).toHaveBeenCalledOnce();
+    const confirm = confirmAction.mock.lastCall?.[0] as { onConfirm: () => void };
+    expect(typeof confirm.onConfirm).toBe('function');
+    await act(async () => { confirm.onConfirm(); await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(generatePageSkeleton).toHaveBeenCalledOnce();
+    expect(autofillStory).not.toHaveBeenCalled();
+    const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'skeleton-job');
+    await act(async () => { await job?.props.onCompleted(); });
+    expect(autofillStory).toHaveBeenCalledTimes(1);
+    expect(autofillStory).toHaveBeenCalledWith('episode', 'ja', null, undefined);
+  });
+
+  it('skeleton失敗時はautofillせず同じボタンから安全に再試行できる', async () => {
+    queryData.pages = { pages: [{ pages: [] }], pageParams: [null] };
+    queryData.panels = { panels: [] };
+    queryData.frames = { frames: [] };
+    await act(async () => { root = create(<PagesScreen />); });
+    const pressPrimary = async (): Promise<void> => {
+      await act(async () => {
+        root!.root.findAllByType('button').find((node) => node.props.testID === 'page-story-autofill-primary')!.props.onPress();
+        await Promise.resolve();
+      });
+      const confirm = confirmAction.mock.lastCall?.[0] as { onConfirm: () => void };
+      await act(async () => { confirm.onConfirm(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    };
+    await pressPrimary();
+    expect(generatePageSkeleton).toHaveBeenCalledOnce();
+    const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'skeleton-job');
+    await act(async () => { await job?.props.onFailed(); });
+    expect(autofillStory).not.toHaveBeenCalled();
+    await pressPrimary();
+    expect(generatePageSkeleton).toHaveBeenCalledTimes(2);
+    expect(autofillStory).not.toHaveBeenCalled();
   });
 });
 

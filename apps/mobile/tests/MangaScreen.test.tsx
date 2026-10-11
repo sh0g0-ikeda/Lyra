@@ -92,6 +92,9 @@ function activeStep(): string | undefined {
   return root?.root.findAll((node) => node.type === 'button' && node.props.accessibilityState?.selected === true)[0]?.props.testID;
 }
 
+// Unified Spec §§2, 10 / Mobile navigation: keep the three creation steps and
+// dirty-guarded previous navigation while removing the redundant library header.
+// Compact chrome must not change editor save/generation, API or credit contracts.
 describe('漫画制作ナビゲーション', () => {
   beforeEach(() => {
     selection = { ...defaultSelection, workId: 'work', chapterId: 'chapter', episodeId: 'episode' };
@@ -102,6 +105,15 @@ describe('漫画制作ナビゲーション', () => {
     activeCharacterEditors = 0; maxCharacterEditors = 0;
   });
   afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; });
+
+  it('制作中は3工程を維持して一覧ボタンを省き前の工程から一覧へ戻れる', async () => {
+    await render(); await resume();
+    expect(root?.root.findAll((node) => node.props?.testID === 'manga-back-library')).toHaveLength(0);
+    expect(root?.root.findAll((node) => node.type === 'button' && /^manga-step-/.test(node.props.testID ?? ''))).toHaveLength(3);
+    await press('manga-previous');
+    expect(root?.root.findAllByType('library')).toHaveLength(1);
+    expect(resolveDirtyEditors).toHaveBeenCalled();
+  });
 
   it('新しい話ではストーリーから始まり順に進んでもscope選択を変更しない', async () => {
     await render(); await resume();
@@ -118,7 +130,8 @@ describe('漫画制作ナビゲーション', () => {
     episode.story_full_draft = '保存済み本文';
     await render(); await resume();
     expect(activeStep()).toBe('manga-step-characters');
-    await press('manga-back-library');
+    await press('manga-previous');
+    await press('manga-previous');
     pages = [{ id: 'existing-page' }];
     await render(); await resume();
     expect(activeStep()).toBe('manga-step-pages');
@@ -138,7 +151,7 @@ describe('漫画制作ナビゲーション', () => {
     await press('manga-step-pages');
     expect(activeStep()).toBe('manga-step-characters');
     expect(activeCharacterEditors).toBe(1);
-    await press('manga-back-library');
+    await press('manga-previous');
     expect(activeStep()).toBe('manga-step-characters');
   });
 
@@ -151,7 +164,7 @@ describe('漫画制作ナビゲーション', () => {
     expect(hiddenPage?.props.style).toEqual({ display: 'none' });
     expect(hiddenPage?.props.accessibilityElementsHidden).toBe(true);
     expect(hiddenPage?.props.importantForAccessibility).toBe('no-hide-descendants');
-    await press('manga-back-library'); await resume();
+    await press('manga-previous'); await resume();
     expect(root?.root.findByType('pages').props.draft).toBe('未保存のページ入力');
     const hiddenStory = root?.root.findByProps({ testID: 'manga-story-editor' });
     expect(hiddenStory?.props.importantForAccessibility).toBe('no-hide-descendants');

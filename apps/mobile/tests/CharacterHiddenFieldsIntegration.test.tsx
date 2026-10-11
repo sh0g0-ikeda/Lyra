@@ -91,6 +91,6 @@ describe('非表示alias・既存空欄と構造化値の実画面payload保全'
   expect(updateEntity.mock.lastCall?.[1]).toMatchObject({free_description:'new details'});
   expect(root!.root.findAllByType('QuotedEntityImport')).toHaveLength(1);
   expect(root!.root.findAllByType('PrimaryButton').some(node=>node.props.label==='候補画像を保存')).toBe(false);
-  expect(root!.root.findAllByType('PrimaryButton').some(node=>node.props.label==='参照画像を確定')).toBe(true);
+  expect(root!.root.findAllByType('PrimaryButton').some(node=>node.props.label==='キャラ画像を確定')).toBe(true);
  });
 });

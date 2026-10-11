@@ -2,8 +2,8 @@ import { formatMessageTemplate } from '@/lib/i18n';
 import type { UiLanguage } from '@/domain/types';
 const copy = {
   en: {
-    cost: '{amount} credits', references: '{count} reference images', expiry: 'Expires: {date}', color: 'Color', monochrome: 'Monochrome',
-    title: 'Review price', reviewPreview: 'Review preview price', reviewImport: 'Upload image and review analysis price',
+    cost: '{amount} credits', references: '{count} character images', expiry: 'Expires: {date}', color: 'Color', monochrome: 'Monochrome',
+    title: 'Review price', reviewPreview: 'Preview character', reviewImport: 'Create a character from your image',
     entity_preview: 'Create an asset preview', entity_state_preview: 'Create a state preview', entity_import_analysis: 'Analyze the uploaded image',
     confirm: 'Accept this price and start', close: 'Back', refresh: 'Request a fresh quote', reconcile: 'Check acceptance status',
     quoting: 'Checking the saved inputs and price…', accepting: 'Submitting the request. Closing does not cancel an accepted request.',
@@ -21,8 +21,8 @@ const copy = {
     sourcePending: 'Confirm the imported image before requesting this preview.', quoteChanged: 'The input changed. Review a fresh quote before starting.'
   },
   ja: {
-    cost: '{amount}クレジット', references: '参照画像 {count}枚', expiry: '有効期限：{date}', color: 'カラー', monochrome: '白黒',
-    title: '料金を確認', reviewPreview: 'プレビュー料金を確認', reviewImport: '画像をアップロードして解析料金を確認',
+    cost: '{amount}クレジット', references: 'キャラ画像 {count}枚', expiry: '有効期限：{date}', color: 'カラー', monochrome: '白黒',
+    title: '料金を確認', reviewPreview: 'キャラをプレビューする', reviewImport: '手元の画像をキャラにする',
     entity_preview: '素材のプレビューを生成', entity_state_preview: '状態のプレビューを生成', entity_import_analysis: 'アップロードした画像を解析',
     confirm: 'この料金で開始', close: '戻る', refresh: '料金を確認し直す', reconcile: '受付状況を確認',
     quoting: '保存済み入力と料金を確認中…', accepting: '受付中です。閉じても受付済みの処理は取り消されません。',
@@ -37,7 +37,7 @@ const copy = {
     importError: '画像または解析状況を読み込めません。現在の入力は保持されています。',
     imageType: '5 MB以下のJPEG・PNG・WebP画像を選んでください。', uploadReady: 'アップロードが完了しました。開始前に解析料金を確認してください。',
     importPending: '画像を解析中です。入力の編集を続けられます。結果は確認後にのみ入力へ適用します。',
-    sourcePending: 'プレビュー料金を確認する前に、取り込んだ画像を確定してください。', quoteChanged: '入力が変更されました。開始前に料金を確認し直してください。'
+    sourcePending: 'キャラをプレビューする前に、取り込んだ画像を確定してください。', quoteChanged: '入力が変更されました。開始前に料金を確認し直してください。'
   }
 } as const;
 export function assetQuoteMessages(language: UiLanguage): typeof copy[UiLanguage] { return copy[language]; }

@@ -133,6 +133,13 @@ type TitleIntent =
   | { kind: 'create-episode'; work: WorkRecord; chapter: ChapterRecord }
   | { kind: 'rename-episode'; work: WorkRecord; chapter: ChapterRecord; episode: EpisodeRecord };
 
+interface ScopedExpansionState {
+  baseIds: Set<string>;
+  loaded: boolean;
+  overrides: Map<string, boolean>;
+  scope: string;
+}
+
 interface WorkNodeProps {
   api: StoryHierarchyApi;
   work: WorkRecord;
@@ -190,6 +197,16 @@ interface TreeRowProps {
 
 const sortedByOrder = <T extends { order: number }>(records: readonly T[]): T[] =>
   [...records].sort((left, right) => left.order - right.order);
+
+const resolvedExpansionIds = (state: ScopedExpansionState, scope: string): Set<string> => {
+  if (state.scope !== scope) return new Set();
+  const ids = new Set(state.baseIds);
+  for (const [id, expanded] of state.overrides) {
+    if (expanded) ids.add(id);
+    else ids.delete(id);
+  }
+  return ids;
+};
 
 const titleForChapter = (chapter: ChapterRecord, language: UiLanguage): string =>
   chapter.title?.trim() || t(language, 'component.storyHierarchySheet.chapterFallbackTitle', { order: chapter.order });
@@ -457,9 +474,8 @@ export function StoryHierarchySheet({
 }: StoryHierarchySheetProps): React.JSX.Element {
   const queryClient = useQueryClient();
   const expansionScope = `${userId}:${organizationId ?? 'personal'}`;
-  const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set());
-  const [expandedChapterIds, setExpandedChapterIds] = useState<Set<string>>(new Set());
-  const [loadedExpansionScope, setLoadedExpansionScope] = useState<string | null>(null);
+  const [workExpansion, setWorkExpansion] = useState<ScopedExpansionState>(() => ({ baseIds: new Set(), loaded: false, overrides: new Map(), scope: expansionScope }));
+  const [chapterExpansion, setChapterExpansion] = useState<ScopedExpansionState>(() => ({ baseIds: new Set(), loaded: false, overrides: new Map(), scope: expansionScope }));
   const [menuTarget, setMenuTarget] = useState<MenuTarget | null>(null);
   const [titleIntent, setTitleIntent] = useState<TitleIntent | null>(null);
   const [titleValue, setTitleValue] = useState('');
@@ -477,9 +493,18 @@ export function StoryHierarchySheet({
       if (!active) {
         return;
       }
-      setExpandedWorkIds(new Set(stored.workIds));
-      setExpandedChapterIds(new Set(stored.chapterIds));
-      setLoadedExpansionScope(expansionScope);
+      setWorkExpansion((current) => ({
+        baseIds: new Set(stored.workIds),
+        loaded: true,
+        overrides: current.scope === expansionScope ? current.overrides : new Map(),
+        scope: expansionScope
+      }));
+      setChapterExpansion((current) => ({
+        baseIds: new Set(stored.chapterIds),
+        loaded: true,
+        overrides: current.scope === expansionScope ? current.overrides : new Map(),
+        scope: expansionScope
+      }));
     });
     return () => {
       active = false;
@@ -488,25 +513,23 @@ export function StoryHierarchySheet({
 
   const effectiveExpandedWorkIds = useMemo(() => {
     const liveWorkIds = new Set(works.map((work) => work.id));
-    const storedIds = loadedExpansionScope === expansionScope ? expandedWorkIds : new Set<string>();
-    const result = new Set([...storedIds].filter((id) => liveWorkIds.has(id)));
+    const result = new Set([...resolvedExpansionIds(workExpansion, expansionScope)].filter((id) => liveWorkIds.has(id)));
     if (selectedWorkId !== null && liveWorkIds.has(selectedWorkId)) {
       result.add(selectedWorkId);
     }
     return result;
-  }, [expandedWorkIds, expansionScope, loadedExpansionScope, selectedWorkId, works]);
+  }, [expansionScope, selectedWorkId, workExpansion, works]);
 
   const effectiveExpandedChapterIds = useMemo(() => {
-    const storedIds = loadedExpansionScope === expansionScope ? expandedChapterIds : new Set<string>();
-    const result = new Set(storedIds);
+    const result = resolvedExpansionIds(chapterExpansion, expansionScope);
     if (selectedChapterId !== null) {
       result.add(selectedChapterId);
     }
     return result;
-  }, [expandedChapterIds, expansionScope, loadedExpansionScope, selectedChapterId]);
+  }, [chapterExpansion, expansionScope, selectedChapterId]);
 
   useEffect(() => {
-    if (loadedExpansionScope !== expansionScope) {
+    if (!workExpansion.loaded || !chapterExpansion.loaded || workExpansion.scope !== expansionScope || chapterExpansion.scope !== expansionScope) {
       return;
     }
     void saveStoryHierarchyExpansion(userId, organizationId, {
@@ -517,7 +540,8 @@ export function StoryHierarchySheet({
     effectiveExpandedChapterIds,
     effectiveExpandedWorkIds,
     expansionScope,
-    loadedExpansionScope,
+    workExpansion,
+    chapterExpansion,
     organizationId,
     userId
   ]);
@@ -525,35 +549,36 @@ export function StoryHierarchySheet({
   const sortedWorks = useMemo(() => [...works], [works]);
   const titleValid = titleValue.trim().length >= 1 && titleValue.trim().length <= 200;
 
-  const toggleSetId = (
-    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
-    id: string
+  const updateExpansionId = (
+    setter: React.Dispatch<React.SetStateAction<ScopedExpansionState>>,
+    id: string,
+    value: boolean | null
   ): void => {
     setter((current) => {
-      const next = new Set(current);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
+      const scoped = current.scope === expansionScope
+        ? current
+        : { baseIds: new Set<string>(), loaded: false, overrides: new Map<string, boolean>(), scope: expansionScope };
+      const expanded = scoped.overrides.get(id) ?? scoped.baseIds.has(id);
+      const overrides = new Map(scoped.overrides);
+      overrides.set(id, value ?? !expanded);
+      return { ...scoped, overrides };
     });
   };
 
   const selectWorkFromTree = (workId: string): void => {
-    setExpandedWorkIds((current) => new Set([...current, workId]));
+    updateExpansionId(setWorkExpansion, workId, true);
     onSelectWork(workId);
   };
 
   const selectChapterFromTree = (workId: string, chapterId: string): void => {
-    setExpandedWorkIds((current) => new Set([...current, workId]));
-    setExpandedChapterIds((current) => new Set([...current, chapterId]));
+    updateExpansionId(setWorkExpansion, workId, true);
+    updateExpansionId(setChapterExpansion, chapterId, true);
     onSelectChapter(workId, chapterId);
   };
 
   const selectEpisodeFromTree = (workId: string, chapterId: string, episodeId: string): void => {
-    setExpandedWorkIds((current) => new Set([...current, workId]));
-    setExpandedChapterIds((current) => new Set([...current, chapterId]));
+    updateExpansionId(setWorkExpansion, workId, true);
+    updateExpansionId(setChapterExpansion, chapterId, true);
     onSelectEpisode(workId, chapterId, episodeId);
   };
 
@@ -657,7 +682,7 @@ export function StoryHierarchySheet({
           overall_flow: null
         }, organizationId);
         confirmed = true;
-        setExpandedWorkIds((current) => new Set([...current, created.id]));
+        updateExpansionId(setWorkExpansion, created.id, true);
         await invalidateWorks();
         onSelectWork(created.id);
       } else if (titleIntent.kind === 'rename-work') {
@@ -684,8 +709,8 @@ export function StoryHierarchySheet({
           created = await create(true);
         }
         confirmed = true;
-        setExpandedWorkIds((current) => new Set([...current, titleIntent.work.id]));
-        setExpandedChapterIds((current) => new Set([...current, created.id]));
+        updateExpansionId(setWorkExpansion, titleIntent.work.id, true);
+        updateExpansionId(setChapterExpansion, created.id, true);
         await invalidateChapters(titleIntent.work.id);
         onSelectChapter(titleIntent.work.id, created.id);
       } else if (titleIntent.kind === 'rename-chapter') {
@@ -712,8 +737,8 @@ export function StoryHierarchySheet({
           created = await create(true);
         }
         confirmed = true;
-        setExpandedWorkIds((current) => new Set([...current, titleIntent.work.id]));
-        setExpandedChapterIds((current) => new Set([...current, titleIntent.chapter.id]));
+        updateExpansionId(setWorkExpansion, titleIntent.work.id, true);
+        updateExpansionId(setChapterExpansion, titleIntent.chapter.id, true);
         await queryClient.invalidateQueries({
           queryKey: episodesQueryKey(sessionKey, titleIntent.chapter.id, organizationId)
         });
@@ -799,11 +824,7 @@ export function StoryHierarchySheet({
         void api.deleteChapter(target.chapter.id, organizationId)
           .then(async () => {
             confirmed = true;
-            setExpandedChapterIds((current) => {
-              const next = new Set(current);
-              next.delete(target.chapter.id);
-              return next;
-            });
+            updateExpansionId(setChapterExpansion, target.chapter.id, false);
             onChapterDeleted(target.chapter.id);
             await invalidateChapters(target.work.id);
             await invalidateAllEpisodes();
@@ -1080,8 +1101,8 @@ export function StoryHierarchySheet({
                 onSelectChapter={selectChapterFromTree}
                 onSelectEpisode={selectEpisodeFromTree}
                 onSelectWork={selectWorkFromTree}
-                onToggleChapter={(chapterId) => toggleSetId(setExpandedChapterIds, chapterId)}
-                onToggleWork={(workId) => toggleSetId(setExpandedWorkIds, workId)}
+                onToggleChapter={(chapterId) => updateExpansionId(setChapterExpansion, chapterId, null)}
+                onToggleWork={(workId) => updateExpansionId(setWorkExpansion, workId, null)}
                 organizationId={organizationId}
                 selectedChapterId={selectedChapterId}
                 selectedEpisodeId={selectedEpisodeId}
@@ -1231,7 +1252,7 @@ const styles = StyleSheet.create({
     width: '100%'
   },
   branch: {
-    flex: 1
+    // FlatList cells must take their measured content height so nested episode rows remain scrollable.
   },
   chevronSpacer: {
     height: 44,

@@ -41,20 +41,19 @@ export function WorkspaceHierarchyNavigator({
     context.episodes.find(
       (candidate) => candidate.id === context.selectedEpisodeId
     ) ?? null;
-  const currentPath =
-    work === null || chapter === null || episode === null
-      ? t(language, 'component.workspaceHierarchy.selectEpisode')
-      : `${work.title} / ${
-          chapter.title?.trim() ||
-          t(language, 'component.storyHierarchySheet.chapterFallbackTitle', {
-            order: chapter.order
-          })
-        } / ${
-          episode.title?.trim() ||
-          t(language, 'component.storyHierarchySheet.episodeFallbackTitle', {
-            order: episode.order
-          })
-        }`;
+  const chapterTitle = chapter === null
+    ? null
+    : chapter.title?.trim() || t(language, 'component.storyHierarchySheet.chapterFallbackTitle', {
+      order: chapter.order
+    });
+  const episodeTitle = episode === null
+    ? t(language, 'component.workspaceHierarchy.selectEpisode')
+    : episode.title?.trim() || t(language, 'component.storyHierarchySheet.episodeFallbackTitle', {
+      order: episode.order
+    });
+  const workChapterContext = work === null || chapterTitle === null
+    ? null
+    : `${work.title} / ${chapterTitle}`;
 
   const selectEpisode = (
     workId: string,
@@ -92,9 +91,14 @@ export function WorkspaceHierarchyNavigator({
           <Text style={styles.title}>
             {t(language, 'component.workspaceHierarchy.title')}
           </Text>
-          <Text numberOfLines={1} style={styles.current}>
-            {currentPath}
+          <Text numberOfLines={1} style={styles.episode} testID="workspace-current-episode">
+            {episodeTitle}
           </Text>
+          {workChapterContext === null ? null : (
+            <Text numberOfLines={1} style={styles.current} testID="workspace-current-context">
+              {workChapterContext}
+            </Text>
+          )}
         </View>
         <ChevronRight color={colors.primary} size={22} strokeWidth={2.2} />
       </Pressable>
@@ -188,6 +192,11 @@ const styles = StyleSheet.create({
   current: {
     ...textStyles.caption,
     color: colors.ink
+  },
+  episode: {
+    ...textStyles.body,
+    color: colors.inkStrong,
+    fontWeight: '700'
   },
   icon: {
     alignItems: 'center',

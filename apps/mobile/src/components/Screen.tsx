@@ -42,10 +42,10 @@ export function Screen({
   const session = useOptionalAppState()?.session ?? null;
   const embedded = useContext(EmbeddedScreenContext);
   return (
-    <SafeAreaView edges={embedded ? ['bottom'] : ['top', 'bottom']} style={styles.safeArea} testID={testID}>
+    <SafeAreaView edges={embedded ? [] : ['top', 'bottom']} style={styles.safeArea} testID={testID}>
       <StatusBar backgroundColor={colors.canvas} barStyle="light-content" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardAvoider}>
-        <View style={styles.chrome}>
+        {embedded ? null : <View style={styles.chrome}>
           {session === null ? (
             <View accessibilityLabel="Language / 言語" style={styles.languageSwitcher}>
               <Pressable
@@ -74,11 +74,11 @@ export function Screen({
               </Pressable>
             </View>
           ) : <CreditBalanceBadge />}
-        </View>
+        </View>}
         <ScrollView
           automaticallyAdjustKeyboardInsets
           contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, embedded ? styles.embeddedContent : null]}
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           refreshControl={
@@ -121,6 +121,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     paddingBottom: 112
   },
+  embeddedContent: { paddingBottom: spacing.md },
   eyebrow: {
     color: colors.accent,
     fontSize: 11,

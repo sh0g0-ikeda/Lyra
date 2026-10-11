@@ -2,7 +2,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CharacterChoiceField } from '@/components/CharacterChoiceField';
-vi.mock('react-native', () => ({ Modal: 'modal', Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(value:T):T => value } }));
+vi.mock('react-native', () => ({ KeyboardAvoidingView: 'keyboard-avoiding-view', Modal: 'modal', Platform: { OS: 'android' }, Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(value:T):T => value } }));
 vi.mock('@/components/FormField', () => ({ FormField: (props:Record<string,unknown>) => React.createElement('field', props) }));
 const options = [{value:'',labelJa:'-',labelEn:'-'},{value:'military',labelJa:'軍服',labelEn:'Military'},{value:'school',labelJa:'制服',labelEn:'School'},{value:'casual',labelJa:'普段着',labelEn:'Casual'}];
 let root:ReactTestRenderer; afterEach(() => act(() => root?.unmount()));
@@ -24,5 +24,13 @@ describe('服装候補の検索と既存値保全', () => {
     const onChange = render(vi.fn(), 'school'); const search = root.root.findByProps({label:'選択肢を検索'});
     act(() => search.props.onChangeText('nonexistent')); expect(radios()).toHaveLength(0); expect(JSON.stringify(root.toJSON())).toContain('該当する選択肢はありません');
     act(() => search.props.onChangeText('')); expect(radios()).toHaveLength(5); expect(onChange).not.toHaveBeenCalled();
+  });
+  it('検索modalはAndroid keyboard表示中も候補をスクロールして選べる', () => {
+    render();
+    const keyboardAvoider = root.root.findByType('keyboard-avoiding-view');
+    expect(keyboardAvoider.props.behavior).toBe('height');
+    const menu = root.root.findByType('scroll');
+    expect(menu.props.keyboardShouldPersistTaps).toBe('handled');
+    expect(menu.props.style.flexShrink).toBe(1);
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { AccessibilityInfo, ActivityIndicator, findNodeHandle, Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, findNodeHandle, Image, Modal, Pressable, StyleSheet, Text, useWindowDimensions, View, type GestureResponderEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing, textStyles } from '@/constants/theme';
@@ -16,6 +16,36 @@ interface ImagePreviewModalProps {
   restoreFocusRef?: RefObject<View | null>;
 }
 
+interface PreviewPoint {
+  x: number;
+  y: number;
+}
+
+interface PreviewGesture {
+  initialDistance: number | null;
+  initialScale: number;
+  initialTranslation: PreviewPoint;
+  moved: boolean;
+  startPoint: PreviewPoint | null;
+}
+
+const MAX_ZOOM = 4;
+const MIN_ZOOM = 1;
+const DOUBLE_TAP_DELAY_MS = 280;
+
+function touchPoints(event: GestureResponderEvent): PreviewPoint[] {
+  return event.nativeEvent.touches.map((touch) => ({ x: touch.pageX, y: touch.pageY }));
+}
+
+function distanceBetween(points: readonly PreviewPoint[]): number | null {
+  if (points.length < 2) return null;
+  return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+}
+
+function constrain(value: number, limit: number): number {
+  return Math.max(-limit, Math.min(limit, value));
+}
+
 export function ImagePreviewModal({ contentId, uri, headers, language, onClose, restoreFocusRef }: ImagePreviewModalProps): React.JSX.Element {
   const [sharing, setSharing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -23,6 +53,109 @@ export function ImagePreviewModal({ contentId, uri, headers, language, onClose, 
   const previewWidth = Math.min(520, Math.max(240, windowWidth - spacing.lg * 2));
   const previewHeight = Math.min(720, Math.max(240, windowHeight - 250));
   const wasVisibleRef = useRef(uri !== null);
+  const [zoom, setZoom] = useState(MIN_ZOOM);
+  const [translation, setTranslation] = useState<PreviewPoint>({ x: 0, y: 0 });
+  const zoomRef = useRef(MIN_ZOOM);
+  const translationRef = useRef<PreviewPoint>({ x: 0, y: 0 });
+  const gestureRef = useRef<PreviewGesture | null>(null);
+  const lastTapAtRef = useRef(0);
+  const resetIdentityRef = useRef(`${uri ?? 'closed'}:${previewWidth}:${previewHeight}`);
+
+  const resetZoom = (): void => {
+    zoomRef.current = MIN_ZOOM;
+    translationRef.current = { x: 0, y: 0 };
+    gestureRef.current = null;
+    lastTapAtRef.current = 0;
+    setZoom(MIN_ZOOM);
+    setTranslation({ x: 0, y: 0 });
+  };
+
+  const applyZoom = (nextZoom: number): void => {
+    const constrainedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom));
+    zoomRef.current = constrainedZoom;
+    setZoom(constrainedZoom);
+    const xLimit = (previewWidth * (constrainedZoom - MIN_ZOOM)) / 2;
+    const yLimit = (previewHeight * (constrainedZoom - MIN_ZOOM)) / 2;
+    const constrainedTranslation = {
+      x: constrain(translationRef.current.x, xLimit),
+      y: constrain(translationRef.current.y, yLimit)
+    };
+    translationRef.current = constrainedTranslation;
+    setTranslation(constrainedTranslation);
+  };
+
+  const applyTranslation = (next: PreviewPoint, activeZoom = zoomRef.current): void => {
+    const xLimit = (previewWidth * (activeZoom - MIN_ZOOM)) / 2;
+    const yLimit = (previewHeight * (activeZoom - MIN_ZOOM)) / 2;
+    const constrained = { x: constrain(next.x, xLimit), y: constrain(next.y, yLimit) };
+    translationRef.current = constrained;
+    setTranslation(constrained);
+  };
+
+  const beginGesture = (event: GestureResponderEvent): void => {
+    const points = touchPoints(event);
+    const initialDistance = distanceBetween(points);
+    gestureRef.current = {
+      initialDistance,
+      initialScale: zoomRef.current,
+      initialTranslation: translationRef.current,
+      moved: false,
+      startPoint: initialDistance === null ? points[0] ?? null : null
+    };
+  };
+
+  const moveGesture = (event: GestureResponderEvent): void => {
+    const gesture = gestureRef.current;
+    if (gesture === null) return;
+    const points = touchPoints(event);
+    const nextDistance = distanceBetween(points);
+    if (nextDistance !== null) {
+      if (gesture.initialDistance === null) {
+        gesture.initialDistance = nextDistance;
+        gesture.initialScale = zoomRef.current;
+        gesture.startPoint = null;
+        return;
+      }
+      gesture.moved = true;
+      applyZoom(gesture.initialScale * (nextDistance / gesture.initialDistance));
+      return;
+    }
+    const point = points[0];
+    if (point === undefined || gesture.startPoint === null || zoomRef.current === MIN_ZOOM) return;
+    gesture.moved = gesture.moved || point.x !== gesture.startPoint.x || point.y !== gesture.startPoint.y;
+    applyTranslation({
+      x: gesture.initialTranslation.x + point.x - gesture.startPoint.x,
+      y: gesture.initialTranslation.y + point.y - gesture.startPoint.y
+    });
+  };
+
+  const endGesture = (): void => {
+    const gesture = gestureRef.current;
+    const wasPinch = gesture?.initialDistance !== null;
+    gestureRef.current = null;
+    if (zoomRef.current < 1.05) {
+      resetZoom();
+      return;
+    }
+    if (wasPinch || gesture?.moved) return;
+    const now = Date.now();
+    if (now - lastTapAtRef.current <= DOUBLE_TAP_DELAY_MS) {
+      resetZoom();
+      lastTapAtRef.current = 0;
+      return;
+    }
+    lastTapAtRef.current = now;
+  };
+
+  useEffect(() => {
+    const resetIdentity = `${uri ?? 'closed'}:${previewWidth}:${previewHeight}`;
+    if (resetIdentityRef.current === resetIdentity) {
+      return;
+    }
+    resetIdentityRef.current = resetIdentity;
+    const resetTimer = setTimeout(resetZoom, 0);
+    return () => clearTimeout(resetTimer);
+  }, [previewHeight, previewWidth, uri]);
 
   useEffect(() => {
     if (uri === null && wasVisibleRef.current && restoreFocusRef !== undefined) {
@@ -84,20 +217,33 @@ export function ImagePreviewModal({ contentId, uri, headers, language, onClose, 
             </Pressable>
           </View>
           {uri === null ? null : (
-            <ScrollView
-              centerContent
-              contentContainerStyle={styles.zoomContent}
-              maximumZoomScale={4}
-              minimumZoomScale={1}
-              showsHorizontalScrollIndicator={false}
-              showsVerticalScrollIndicator={false}
+            <View
+              onMoveShouldSetResponder={() => true}
+              onResponderGrant={beginGesture}
+              onResponderMove={moveGesture}
+              onResponderRelease={endGesture}
+              onResponderTerminate={endGesture}
+              onStartShouldSetResponder={() => true}
+              style={[styles.zoomSurface, { height: previewHeight, width: previewWidth }]}
+              testID="image-preview-zoom-surface"
             >
               <Image
                 resizeMode="contain"
                 source={headers === undefined ? { uri } : { uri, headers }}
-                style={{ height: previewHeight, width: previewWidth }}
+                style={[
+                  styles.previewImage,
+                  {
+                    height: previewHeight,
+                    width: previewWidth,
+                    transform: [
+                      { translateX: translation.x },
+                      { translateY: translation.y },
+                      { scale: zoom }
+                    ]
+                  }
+                ]}
               />
-            </ScrollView>
+            </View>
           )}
           <View style={styles.footer}>
             <Text style={styles.hint}>{t(language, "generated.components.ImagePreviewModal.pinch.to.zoom.then.pan.the.enlarged.imag.a4a196d1")}</Text>
@@ -162,6 +308,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     justifyContent: 'space-between'
   },
+  previewImage: {
+    position: 'absolute'
+  },
   previewShell: {
     maxWidth: 520,
     gap: spacing.md,
@@ -192,8 +341,9 @@ const styles = StyleSheet.create({
     flex: 1,
     fontWeight: '700'
   },
-  zoomContent: {
+  zoomSurface: {
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    overflow: 'hidden'
   }
 });

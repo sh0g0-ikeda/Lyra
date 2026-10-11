@@ -194,6 +194,76 @@ describe('shared mobile accessibility controls', () => {
     expect(share.props.style.minHeight).toBeGreaterThanOrEqual(44);
   });
 
+  // Android needs explicit responder handling because ScrollView zoom props are not a cross-platform pinch contract.
+  it('keeps an explicit pinch, pan, and double-tap reset surface for image preview on Android', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<ImagePreviewModal language="en" onClose={vi.fn()} uri="https://cdn.example.test/page.png" />);
+    });
+
+    const surface = renderer!.root.findByProps({ testID: 'image-preview-zoom-surface' });
+    expect(surface.props.onResponderGrant).toEqual(expect.any(Function));
+    expect(surface.props.onResponderMove).toEqual(expect.any(Function));
+    expect(surface.props.onResponderRelease).toEqual(expect.any(Function));
+
+    const event = (touches: readonly { pageX: number; pageY: number }[]) => ({ nativeEvent: { touches } });
+    act(() => {
+      surface.props.onResponderGrant(event([{ pageX: 0, pageY: 0 }, { pageX: 10, pageY: 0 }]));
+      surface.props.onResponderMove(event([{ pageX: 0, pageY: 0 }, { pageX: 100, pageY: 0 }]));
+      surface.props.onResponderRelease();
+    });
+    const image = renderer!.root.findByType('image');
+    expect(image.props.style[1].transform).toContainEqual({ scale: 4 });
+
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValueOnce(1_000).mockReturnValueOnce(1_100);
+    const doubleTapSurface = renderer!.root.findByProps({ testID: 'image-preview-zoom-surface' });
+    act(() => {
+      doubleTapSurface.props.onResponderGrant(event([{ pageX: 10, pageY: 10 }]));
+      doubleTapSurface.props.onResponderRelease();
+      doubleTapSurface.props.onResponderGrant(event([{ pageX: 10, pageY: 10 }]));
+      doubleTapSurface.props.onResponderRelease();
+    });
+    expect(renderer!.root.findByType('image').props.style[1].transform).toContainEqual({ scale: 1 });
+    now.mockRestore();
+  });
+
+  it('reclamps a panned preview after pinch zoom-out and resets it for a different image', async () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<ImagePreviewModal language="en" onClose={vi.fn()} uri="https://cdn.example.test/first.png" />);
+    });
+    const event = (touches: readonly { pageX: number; pageY: number }[]) => ({ nativeEvent: { touches } });
+    const surface = renderer!.root.findByProps({ testID: 'image-preview-zoom-surface' });
+    act(() => {
+      surface.props.onResponderGrant(event([{ pageX: 0, pageY: 0 }, { pageX: 10, pageY: 0 }]));
+      surface.props.onResponderMove(event([{ pageX: 0, pageY: 0 }, { pageX: 100, pageY: 0 }]));
+      surface.props.onResponderRelease();
+      surface.props.onResponderGrant(event([{ pageX: 0, pageY: 0 }]));
+      surface.props.onResponderMove(event([{ pageX: 1_000, pageY: 1_000 }]));
+      surface.props.onResponderRelease();
+      surface.props.onResponderGrant(event([{ pageX: 0, pageY: 0 }, { pageX: 100, pageY: 0 }]));
+      surface.props.onResponderMove(event([{ pageX: 0, pageY: 0 }, { pageX: 50, pageY: 0 }]));
+      surface.props.onResponderRelease();
+    });
+    const zoomedOut = renderer!.root.findByType('image').props.style[1].transform;
+    expect(zoomedOut).toContainEqual({ scale: 2 });
+    const { width: viewportWidth } = surface.props.style[1] as { width: number };
+    expect(zoomedOut).toContainEqual({ translateX: viewportWidth / 2 });
+
+    act(() => {
+      renderer!.update(<ImagePreviewModal language="en" onClose={vi.fn()} uri="https://cdn.example.test/second.png" />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(renderer!.root.findByType('image').props.style[1].transform).toEqual([
+      { translateX: 0 },
+      { translateY: 0 },
+      { scale: 1 }
+    ]);
+  });
+
   it('keeps screen content in safe areas and resizes for the Android keyboard', () => {
     let renderer: ReturnType<typeof create>;
     act(() => {
@@ -242,10 +312,10 @@ describe('shared mobile accessibility controls', () => {
     screenState.providerAvailable = true;
   });
 
-  it('制作shellに埋め込んだScreenではtop safe areaを二重に適用しない', () => {
+  it('制作shellに埋め込んだScreenではtop/bottom safe areaを二重に適用しない', () => {
     let renderer: ReturnType<typeof create>;
     act(() => { renderer = create(<EmbeddedScreenProvider><Screen title="Story">Content</Screen></EmbeddedScreenProvider>); });
-    expect(renderer!.root.findByType('safe-area-view').props.edges).toEqual(['bottom']);
+    expect(renderer!.root.findByType('safe-area-view').props.edges).toEqual([]);
     act(() => renderer!.unmount());
   });
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -14,9 +14,8 @@ import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { JobStatusCard } from '@/components/JobStatusCard';
 import { LayoutTemplatePreview, type FramePreviewDefinition } from '@/components/LayoutTemplatePreview';
 import { Notice } from '@/components/Notice';
-import { PageCreationStepActions, PageCreationStepNavigation, PageWorkflowSection } from '@/components/PageCreationWorkflow';
-import { PageSettingsPreview } from '@/components/PageSettingsPreview';
-import { inferPageCreationStep, nextPageInSequence, type PageCreationStep } from '@/domain/pageCreationWorkflow';
+import { PageJobHistory, PageStoryAutofillAction } from '@/components/PageCreationWorkflow';
+import { nextPageInSequence } from '@/domain/pageCreationWorkflow';
 import { pageWorkflowMessage } from '@/lib/pageWorkflowMessages';
 import { collectOperationFailures, operationFailure } from '@/lib/operationErrorContext';
 import { PageGenerationQuoteDialog } from '@/components/PageGenerationQuoteDialog';
@@ -25,8 +24,7 @@ import { usePageGenerationQuote } from '@/hooks/usePageGenerationQuote';
 import { usePageCompletion } from '@/hooks/usePageCompletion';
 import { useConfirmationPresentation } from '@/lib/confirmationPresentation';
 import { useMangaWorkflow } from '@/state/mangaWorkflow';
-import { PageCompletionActions } from '@/components/PageCompletionActions';
-import { PageGenerationActions } from '@/components/PageGenerationActions';
+import { PageCompletionActions, PageConfirmationAction, PageGenerationStartActions } from '@/components/PageCompletionActions';
 import { PageImageViewer } from '@/components/PageImageViewer';
 import { PageSceneAutofillAction } from '@/components/PageSceneAutofillAction';
 import { PageThumbnailPicker } from '@/components/PageThumbnailPicker';
@@ -681,9 +679,12 @@ export function PagesScreen(): React.JSX.Element {
   const [stateAutofillDraft, setStateAutofillDraft] = useState<{ scope: string; value: EpisodeStateAutofillChoice } | null>(null);
   const stateAutofillChoice = stateAutofillDraft?.scope === stateAutofillScope ? stateAutofillDraft.value : { enabled: false, overwrite: false };
   const currentAutofillScope = useRef({ scope: stateAutofillScope, available: stateAutofillAvailable, canGenerate });
+  const pendingStoryAutofillAfterSkeleton = useRef<{ scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined } | null>(null);
   useEffect(() => {
     currentAutofillScope.current = { scope: stateAutofillScope, available: stateAutofillAvailable, canGenerate };
+    if (pendingStoryAutofillAfterSkeleton.current?.scope !== stateAutofillScope) pendingStoryAutofillAfterSkeleton.current = null;
   }, [canGenerate, stateAutofillAvailable, stateAutofillScope]);
+  useEffect(() => () => { pendingStoryAutofillAfterSkeleton.current = null; }, []);
 
   const [styleReferenceTitle, setStyleReferenceTitle] = useState('');
   const [styleReferenceNotes, setStyleReferenceNotes] = useState('');
@@ -744,7 +745,10 @@ export function PagesScreen(): React.JSX.Element {
   const latestPageWorkflowScope = useRef(pageWorkflowScope);
   const pageQuoteIntent = useRef(0);
   const [nextPageLookup, setNextPageLookup] = useState<{ scope: string; error: boolean; loading: boolean } | null>(null);
-  useLayoutEffect(() => { latestPageWorkflowScope.current = pageWorkflowScope; pageQuoteIntent.current += 1; }, [pageWorkflowScope]);
+  useLayoutEffect(() => {
+    latestPageWorkflowScope.current = pageWorkflowScope;
+    pageQuoteIntent.current += 1;
+  }, [pageWorkflowScope]);
   const resultTriggerRef = useRef<View | null>(null);
   const screenScrollRef = useRef<ScrollView | null>(null);
 
@@ -1622,9 +1626,14 @@ export function PagesScreen(): React.JSX.Element {
         }
       }
       await Promise.allSettled(followUps);
+      if (!('job_id' in result) && result.story_plan_job_id === null) {
+        continueStoryAutofillAfterSkeleton();
+      }
     },
-    onError: () => {
+    onError: async () => {
+      pendingStoryAutofillAfterSkeleton.current = null;
       setPageDesignJobEnqueued(false);
+      await Promise.allSettled([invalidatePageDesignResources()]);
     }
   });
 
@@ -1656,15 +1665,31 @@ export function PagesScreen(): React.JSX.Element {
         invalidatePageDesignResources()
       ]);
     },
-    onError: (_error, request) => {
+    onError: async (_error, request) => {
       if (currentAutofillScope.current.scope === request.scope) setPageDesignJobEnqueued(false);
+      await Promise.allSettled([invalidatePageDesignResources()]);
     }
   });
+
+  function continueStoryAutofillAfterSkeleton(): void {
+    const pending = pendingStoryAutofillAfterSkeleton.current;
+    if (
+      pending === null ||
+      currentAutofillScope.current.scope !== pending.scope ||
+      !currentAutofillScope.current.canGenerate
+    ) {
+      pendingStoryAutofillAfterSkeleton.current = null;
+      return;
+    }
+    pendingStoryAutofillAfterSkeleton.current = null;
+    pageStoryAutofillMutation.mutate(pending);
+  }
 
   const cancelPageDesignJobMutation = useMutation({
     mutationFn: (job: GenerationJobRecord) =>
       api.cancelJob(job.id, organizationId),
     onSuccess: async () => {
+      pendingStoryAutofillAfterSkeleton.current = null;
       setPageDesignJobEnqueued(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['job', sessionKey] }),
@@ -1675,19 +1700,7 @@ export function PagesScreen(): React.JSX.Element {
     }
   });
 
-  const [pageStepSelection, setPageStepSelection] = useState<{ scope: string; step: PageCreationStep } | null>(null);
-  const pageStep = pageStepSelection?.scope === pageWorkflowScope ? pageStepSelection.step : inferPageCreationStep({
-    hasPage: selectedPage !== null,
-    hasFrames: frameDrafts.length > 0,
-    hasSettings: (panelsQuery.data?.panels ?? []).some((panel) => Boolean(panel.situation_text?.trim()) || panel.entities.length > 0 || panel.dialogue.length > 0),
-    hasImage: selectedPage?.generated_image != null
-  });
-  const changePageStep = (step: PageCreationStep): void => {
-    Keyboard.dismiss();
-    setPageStepSelection({ scope: pageWorkflowScope, step });
-    screenScrollRef.current?.scrollTo({ y: 0, animated: true });
-  };
-  const pageCreationFocused = focused && (mangaWorkflow === null || mangaWorkflow.activeStep === 'pages') && pageStep === 'create';
+  const pageCreationFocused = focused && (mangaWorkflow === null || mangaWorkflow.activeStep === 'pages');
   const generationQuotesAvailable = session?.capabilities?.generation_quotes === true;
   const generationQuote = usePageGenerationQuote({
     api, contextKey: pageWorkflowScope, organizationId, enabled: canGenerate && generationQuotesAvailable && pageCreationFocused,
@@ -1709,7 +1722,7 @@ export function PagesScreen(): React.JSX.Element {
       setLocalJob({ id: receipt.job_id, resourceId: target.pageId });
       if (originKey === pageWorkflowScope && pageCreationFocused) {
         const changed = await updateSelection({ pageId: target.pageId });
-        if (changed) setPageStepSelection({ scope: JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, target.pageId]), step: 'create' });
+        if (changed) screenScrollRef.current?.scrollTo({ y: 0, animated: true });
       }
       await Promise.allSettled([trackJob(receipt.job_id), invalidatePages(), invalidatePanels(), invalidateFrames()]);
     }
@@ -2071,8 +2084,17 @@ export function PagesScreen(): React.JSX.Element {
         language,
         available,
         choice,
+        includeSkeletonGeneration: pages.length === 0,
         isCurrent,
-        onConfirm: (options) => pageStoryAutofillMutation.mutate({ scope, episodeId, options })
+        onConfirm: (options) => {
+          const request = { scope, episodeId, options };
+          if (pages.length === 0) {
+            pendingStoryAutofillAfterSkeleton.current = request;
+            pageSkeletonMutation.mutate();
+            return;
+          }
+          pageStoryAutofillMutation.mutate(request);
+        }
       });
     });
   };
@@ -2127,7 +2149,6 @@ export function PagesScreen(): React.JSX.Element {
   const requestPageQuote = (renderStyle: 'color' | 'monochrome'): void => {
     pageQuoteIntent.current += 1;
     if (selectedPage === null) return;
-    changePageStep('create');
     completion.close();
     setResultRenderStyle(renderStyle);
     void generationQuote.controller.open({ pageId: selectedPage.id, pageNumber: selectedPage.page_number, renderStyle });
@@ -2305,15 +2326,7 @@ export function PagesScreen(): React.JSX.Element {
     () => frameDrafts.map(toFramePreviewDefinition),
     [frameDrafts]
   );
-  const previewPanels = (panelsQuery.data?.panels ?? []).map((panel) => panel.id === panelId ? {
-    ...panel, situation_text: nullable(situationText), background_note: nullable(backgroundNote),
-    entities: assignments.map(toAssignmentRecord), dialogue: dialogues
-  } : panel);
-  useEffect(() => mangaWorkflow?.registerPageBackHandler?.(() => {
-    if (pageStep === 'design') return false;
-    setPageStepSelection({ scope: pageWorkflowScope, step: pageStep === 'create' ? 'settings' : 'design' });
-    return true;
-  }), [mangaWorkflow, pageStep, pageWorkflowScope]);
+  useEffect(() => mangaWorkflow?.registerPageBackHandler?.(() => false), [mangaWorkflow]);
   const selectedImageAllowed = canDisplayMobileImage(selectedPage?.generated_image);
   const previewImagePage = pages.find((page) => page.id === previewImagePageId) ?? (selectedPage?.id === previewImagePageId ? selectedPage : null);
   const completion = usePageCompletion({
@@ -2335,10 +2348,6 @@ export function PagesScreen(): React.JSX.Element {
       completion.complete({ jobId, pageId, pageNumber: saved.page_number, imageSources: fullPageImageSourcesFor(saved), targetKey: JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, pageId]) });
     } catch { /* Fail closed; the existing image/refresh controls remain available. */ }
   };
-  const openCurrentResult = (): void => {
-    if (selectedPage === null || !canUseMobilePageImage(selectedPage) || activeServerJobId !== null) return;
-    completion.open({ jobId: completion.result?.jobId ?? `saved:${selectedPage.id}:${selectedPage.generated_image?.generated_at ?? selectedPage.updated_at}`, pageId: selectedPage.id, pageNumber: selectedPage.page_number, imageSources: selectedPageImageSources, targetKey: pageWorkflowScope });
-  };
   const requestNextPageQuote = async (): Promise<void> => {
     if (selectedPage === null || activeEpisodeId === null) return;
     const origin = pageWorkflowScope;
@@ -2349,7 +2358,7 @@ export function PagesScreen(): React.JSX.Element {
       const allPages = await api.getPages(activeEpisodeId, organizationId);
       if (latestPageWorkflowScope.current !== origin || pageQuoteIntent.current !== intent) return;
       const next = nextPageInSequence(allPages.pages, selectedPage.id);
-      if (next === null) { changePageStep('design'); return; }
+      if (next === null) { screenScrollRef.current?.scrollTo({ y: 0, animated: true }); return; }
       await generationQuote.controller.open({ pageId: next.id, pageNumber: next.page_number, renderStyle: resultRenderStyle });
     } catch { if (latestPageWorkflowScope.current === origin) setNextPageLookup({ scope: origin, error: true, loading: false }); }
     finally { setNextPageLookup((current) => current?.scope === origin ? { ...current, loading: false } : current); }
@@ -2409,87 +2418,16 @@ export function PagesScreen(): React.JSX.Element {
         />
       ) : null}
       {activeEpisodeId === null ? <Notice message={t(language, 'selectEpisodeFirst')} tone="warning" /> : null}
-      <PageCreationStepNavigation language={language} step={pageStep} hasPage={selectedPage !== null} onChange={changePageStep} />
-      <PageWorkflowSection active={pageStep === 'design'}>
-      <Section persistKey="pages:design" title={pageWorkflowMessage(language, 'design')} tone="highlight">
-        <Text style={styles.metric}>{pageWorkflowMessage(language, 'designCount', { pages: existingEpisodePageCount, panels: existingEpisodePanelCount })}</Text>
-        {selectedPage === null ? <Notice message={pageWorkflowMessage(language, 'noDesign')} tone="info" /> : <LayoutTemplatePreview frames={currentFramePreviewFrames} title={pageWorkflowMessage(language, 'currentDesign')} />}
-        <StoryGenerationControls visibleAction="skeleton"
-          canGenerate={canGenerate}
-          estimatedPagesInvalid={false}
-          hasActiveJob={pageDesignOperationActive}
-          jobEnqueued={pageDesignJobEnqueued}
-          language={language}
-          onApplyStory={() => { changePageStep('settings'); confirmPageStoryAutofill(); }}
-          onGenerateSkeleton={() => { changePageStep('design'); confirmPageSkeletonGeneration(); }}
-          overwrite={overwritePageSkeleton}
-          pagesLoading={pagesQuery.isLoading}
-          selectedEpisode={activeEpisodeId !== null}
-          skeletonLoading={pageSkeletonMutation.isPending}
-          storyApplyLoading={pageStoryAutofillMutation.isPending}
-        />
-      </Section>
-      </PageWorkflowSection>
-        <JobStatusCard
-          api={api}
-          cancelLoading={cancelPageDesignJobMutation.isPending}
-          jobId={displayedPageDesignJobId}
-          language={language}
-          organizationId={organizationId}
-          onCompleted={async () => {
-            const completedSkeleton =
-              localPageDesignJob?.id === displayedPageDesignJobId &&
-              localPageDesignJob.kind === 'skeleton';
-            setPageDesignJobEnqueued(false);
-            if (completedSkeleton) {
-              await clearPageSelectionAfterSkeleton();
-            }
-            await invalidatePageDesignResources();
-          }}
-          onFailed={async () => {
-            setPageDesignJobEnqueued(false);
-            await invalidatePageDesignResources();
-          }}
-          onCanceled={async () => {
-            setPageDesignJobEnqueued(false);
-            await invalidatePageDesignResources();
-          }}
-          onMissing={async () => {
-            setPageDesignJobEnqueued(false);
-            setLocalPageDesignJob((current) =>
-              current?.id === displayedPageDesignJobId ? null : current
-            );
-            await invalidatePageDesignResources();
-          }}
-          onCancel={async (job) => {
-            await cancelPageDesignJobMutation.mutateAsync(job);
-          }}
-          sessionKey={sessionKey}
-        />
-      {pageFailures.map((failure, index) => (
-        <PageErrorRecoveryNotice
-          key={`${failure.context.operation}-${index}`}
-          context={failure.context}
-          error={failure.error}
-          language={language}
-          onAccount={() => navigateAfterDirtyCheck('Account')}
-          onCharacters={() => navigateAfterDirtyCheck('Characters')}
-          onLayout={pageLayoutEditingUiEnabled ? () => setTemplateModalVisible(true) : undefined}
-          onLogin={() => {
-            void resolveDirtyEditors(language).then((canLeave) => {
-              if (canLeave) {
-                void logout();
-              }
-            });
-          }}
-          onReloadStale={() => {
-            void reloadAfterPageStale();
-          }}
-          onRetry={() => {
-            failure.retry();
-          }}
-        />
-      ))}
+      <PageStoryAutofillAction
+        canGenerate={canGenerate}
+        hasActiveJob={pageDesignOperationActive}
+        jobEnqueued={pageDesignJobEnqueued}
+        language={language}
+        loading={pageSkeletonMutation.isPending || pageStoryAutofillMutation.isPending}
+        onPress={confirmPageStoryAutofill}
+        pagesLoading={pagesQuery.isLoading}
+        selectedEpisode={activeEpisodeId !== null}
+      />
 
       <Section collapsible persistKey="pages:list" title={editorMessage(language, 'pageList')} subtitle={editorMessage(language, 'pageListHelp')}>
         <PageThumbnailPicker
@@ -2515,8 +2453,7 @@ export function PagesScreen(): React.JSX.Element {
           onEndReached={() => { void pagesQuery.fetchNextPage(); }} />
       </Section>
 
-      <PageWorkflowSection active={pageStep === 'settings'}>
-      <Section collapsible persistKey="pages:settings-autofill" title={pageWorkflowMessage(language, 'settings')} tone="highlight">
+      <PageJobHistory title={t(language, 'screen.pages.pageDesignHistory')}>
         <StoryStateAutofillOptions
           available={stateAutofillAvailable}
           disabled={!canGenerate || activeEpisodeId === null || pageDesignOperationActive}
@@ -2524,14 +2461,14 @@ export function PagesScreen(): React.JSX.Element {
           value={stateAutofillChoice}
           onChange={(value) => setStateAutofillDraft({ scope: stateAutofillScope, value })}
         />
-        <StoryGenerationControls visibleAction="autofill"
+        <StoryGenerationControls visibleAction="skeleton"
           canGenerate={canGenerate}
           estimatedPagesInvalid={false}
           hasActiveJob={pageDesignOperationActive}
           jobEnqueued={pageDesignJobEnqueued}
           language={language}
-          onApplyStory={() => { changePageStep('settings'); confirmPageStoryAutofill(); }}
-          onGenerateSkeleton={() => { changePageStep('design'); confirmPageSkeletonGeneration(); }}
+          onApplyStory={confirmPageStoryAutofill}
+          onGenerateSkeleton={confirmPageSkeletonGeneration}
           overwrite={overwritePageSkeleton}
           pagesLoading={pagesQuery.isLoading}
           selectedEpisode={activeEpisodeId !== null}
@@ -2539,8 +2476,38 @@ export function PagesScreen(): React.JSX.Element {
           storyApplyLoading={pageStoryAutofillMutation.isPending}
         />
         {stateAutofillAvailable ? <EpisodeStateAutofillResult jobId={displayedPageDesignJobId} episodeId={activeEpisodeId} entities={entities} canEdit={canEdit} /> : null}
-      </Section>
-      <PageSettingsPreview language={language} panels={previewPanels} entities={entities} pageNumber={selectedPage?.page_number ?? null} />
+        <JobStatusCard
+          api={api}
+          cancelLoading={cancelPageDesignJobMutation.isPending}
+          jobId={displayedPageDesignJobId}
+          language={language}
+          organizationId={organizationId}
+          onCompleted={async () => {
+            const completedSkeleton = localPageDesignJob?.id === displayedPageDesignJobId && localPageDesignJob.kind === 'skeleton';
+            setPageDesignJobEnqueued(false);
+            if (completedSkeleton) await clearPageSelectionAfterSkeleton();
+            await invalidatePageDesignResources();
+            if (completedSkeleton) continueStoryAutofillAfterSkeleton();
+          }}
+          onFailed={async () => { pendingStoryAutofillAfterSkeleton.current = null; setPageDesignJobEnqueued(false); await invalidatePageDesignResources(); }}
+          onCanceled={async () => { pendingStoryAutofillAfterSkeleton.current = null; setPageDesignJobEnqueued(false); await invalidatePageDesignResources(); }}
+          onMissing={async () => {
+            pendingStoryAutofillAfterSkeleton.current = null;
+            setPageDesignJobEnqueued(false);
+            setLocalPageDesignJob((current) => current?.id === displayedPageDesignJobId ? null : current);
+            await invalidatePageDesignResources();
+          }}
+          onCancel={async (job) => { await cancelPageDesignJobMutation.mutateAsync(job); }}
+          sessionKey={sessionKey}
+        />
+      </PageJobHistory>
+      {pageFailures.map((failure, index) => (
+        <PageErrorRecoveryNotice key={`${failure.context.operation}-${index}`} context={failure.context} error={failure.error} language={language}
+          onAccount={() => navigateAfterDirtyCheck('Account')} onCharacters={() => navigateAfterDirtyCheck('Characters')}
+          onLayout={pageLayoutEditingUiEnabled ? () => setTemplateModalVisible(true) : undefined}
+          onLogin={() => { void resolveDirtyEditors(language).then((canLeave) => { if (canLeave) void logout(); }); }}
+          onReloadStale={() => { void reloadAfterPageStale(); }} onRetry={() => { failure.retry(); }} />
+      ))}
       {selectedPage?.status === 'confirmed' ? (
         <Section
           persistKey="pages:confirmed-summary"
@@ -2964,9 +2931,6 @@ export function PagesScreen(): React.JSX.Element {
       </Section>
         </>
       )}
-      </PageWorkflowSection>
-      <PageWorkflowSection active={pageStep === 'create'}>
-      <PageSettingsPreview language={language} panels={previewPanels} entities={entities} pageNumber={selectedPage?.page_number ?? null} />
       <PageCompletionActions
         exportSection={config.episodeExportEnabled ? (
       <Section
@@ -3081,20 +3045,8 @@ export function PagesScreen(): React.JSX.Element {
         title={t(language, 'generate')}
         tone="highlight"
       >
-        <PageGenerationActions
-          canConfirm={canEdit && selectedPage !== null && !unsavedNewPanelDraft}
-          confirmDisabledReason={
-            !canEdit
-              ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee")
-              : selectedPage === null
-                ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
-                : unsavedNewPanelDraft
-                  ? t(language, 'screen.pages.unsavedNewPanelDraft')
-                  : undefined
-          }
-          confirmed={pageRequiresReopen}
-          confirmLoading={confirmPageMutation.isPending}
-          generateDisabled={
+        <PageGenerationStartActions
+          canGenerate={!(
             !generationQuotesAvailable ||
             !canGenerate ||
             selectedPage === null ||
@@ -3106,8 +3058,8 @@ export function PagesScreen(): React.JSX.Element {
             frameDraftsInvalid ||
             panelPayloadInvalid ||
             pageGenerationPending
-          }
-          generateDisabledReason={
+          )}
+          disabledReason={
             !generationQuotesAvailable ? pageWorkflowMessage(language, 'quoteUnavailable') :
             paidGenerationBlockedReason ?? (!canGenerate
               ? t(language, "generated.screens.PagesScreen.generation.permission.is.required.1bc5b7af")
@@ -3132,18 +3084,14 @@ export function PagesScreen(): React.JSX.Element {
           generateLoading={generatePageMutation.isPending}
           generateMonochromeLoading={generateMonochromePageMutation.isPending}
           language={language}
-          onConfirm={confirmConfirmPage}
           onGenerate={confirmGeneratePage}
           onGenerateMonochrome={confirmGenerateMonochromePage}
-          onReopen={confirmReopenPage}
-          reopenLoading={reopenPageMutation.isPending}
         />
         {!generationQuotesAvailable ? <Notice message={pageWorkflowMessage(language, 'quoteUnavailable')} tone="info" /> : null}
         <Text style={styles.caption}>{pageWorkflowMessage(language, 'quoteSaving')}</Text>
         <Text style={styles.caption}>{t(language, 'component.jobStatusCard.imageDurationEstimate')}</Text>
         {nextPageLookup?.scope === pageWorkflowScope && nextPageLookup.loading ? <Notice message={pageWorkflowMessage(language, 'morePages')} tone="info" /> : null}
         {nextPageLookup?.scope === pageWorkflowScope && nextPageLookup.error ? <Notice message={pageWorkflowMessage(language, 'quoteError')} tone="warning" /> : null}
-        {!canUseMobilePageImage(selectedPage) ? null : <PrimaryButton buttonRef={resultTriggerRef} disabled={activeServerJobId !== null} label={pageWorkflowMessage(language, 'viewResult')} onPress={openCurrentResult} variant="secondary" testID="page-open-result" />}
         <View style={styles.pageImageFrame}>
           {!selectedImageAllowed ? <Notice message={imageAccessNotice(language)} tone="warning" /> : selectedPage === null || selectedPage.generated_image === null || pageImageFailed ? (
             <Text style={styles.emptySmall}>
@@ -3236,6 +3184,23 @@ export function PagesScreen(): React.JSX.Element {
             tone="warning"
           />
         ) : null}
+        <PageConfirmationAction
+          buttonRef={resultTriggerRef}
+          canConfirm={canEdit && selectedPage !== null && !unsavedNewPanelDraft}
+          confirmed={pageRequiresReopen}
+          confirmLoading={confirmPageMutation.isPending}
+          disabledReason={!canEdit
+            ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee")
+            : selectedPage === null
+              ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
+              : unsavedNewPanelDraft
+                ? t(language, 'screen.pages.unsavedNewPanelDraft')
+                : undefined}
+          language={language}
+          onConfirm={confirmConfirmPage}
+          onReopen={confirmReopenPage}
+          reopenLoading={reopenPageMutation.isPending}
+        />
         <View style={styles.buttonRow}>
           <PrimaryButton
             disabled={!canExport || !canUseMobilePageImage(selectedPage)}
@@ -3282,8 +3247,6 @@ export function PagesScreen(): React.JSX.Element {
       </Section>
         )}
       />
-      </PageWorkflowSection>
-      <PageCreationStepActions language={language} step={pageStep} hasPage={selectedPage !== null} onChange={changePageStep} />
       <PageGenerationQuoteDialog
         state={{ ...generationQuote.state, phase: quoteDraftStale ? 'stale' : generationQuote.state.phase, visible: generationQuote.state.visible && pageCreationFocused }} language={language}
         canAccept={!quoteDraftStale && generationQuote.controller.canAccept()} onAccept={() => {
@@ -3300,7 +3263,7 @@ export function PagesScreen(): React.JSX.Element {
         renderStyle={resultRenderStyle} onRenderStyleChange={setResultRenderStyle}
         onClose={completion.close} onRegenerate={() => requestPageQuote(resultRenderStyle)}
         onNextPage={() => { void requestNextPageQuote().catch(() => undefined); }}
-        onReviewPages={() => { completion.close(); changePageStep('design'); screenScrollRef.current?.scrollTo({ y: 0, animated: true }); }}
+        onReviewPages={() => { completion.close(); screenScrollRef.current?.scrollTo({ y: 0, animated: true }); }}
         onExpand={(source) => { if (selectedPage === null || !canUseMobilePageImage(selectedPage)) return; completion.close(); setPreviewImagePageId(selectedPage.id); setPreviewImageHeaders(source.headers); setPreviewImageUri(source.uri); }}
         restoreFocusRef={resultTriggerRef}
       />

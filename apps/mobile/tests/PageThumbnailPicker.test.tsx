@@ -141,6 +141,28 @@ describe('PageThumbnailPicker', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it('拡大ボタンを48dpに保ちページ選択とは別の操作面にする', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <PageThumbnailPicker
+          emptyLabel="ページなし"
+          imageSourcesFor={() => [{ uri: 'https://cdn.lyra.test/page.png' }]}
+          language="ja"
+          onPreview={vi.fn()}
+          onSelect={vi.fn()}
+          pages={[page('page-1', 1, true)]}
+          selectedId={null}
+          statusLabelFor={(status) => status}
+        />
+      );
+    });
+
+    const preview = renderer!.root.findByProps({ accessibilityLabel: '1ページを拡大表示' });
+    expect(preview.props.style.height).toBeGreaterThanOrEqual(48);
+    expect(preview.props.style.width).toBeGreaterThanOrEqual(48);
+  });
+
   it('一覧末尾で次のページを一度だけ要求できる', () => {
     const onEndReached = vi.fn();
     let renderer: ReturnType<typeof create>;

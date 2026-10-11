@@ -763,6 +763,21 @@ Google, quote and Web-only-delivery capabilities remain gated until their own
 external and device checks pass. Detailed requirements, compatibility evidence and
 remaining gates are recorded in the documents below, not inferred from test totals.
 
+The compact Mobile creation shell retains Story, Characters and Pages and the
+existing manual-save/dirty-navigation contracts. Embedded editors omit the credit
+badge and redundant library header; the main tab navigator owns the bottom safe
+area. Character-image wording is presentation only: reference-set API fields and
+persisted image bindings retain their existing names and authorization.
+The Page editor places one story-autofill action immediately before its page list.
+When there are no pages, it first creates the skeleton without applying the story,
+then queues autofill only after completion for the same live episode/scope. A scope
+change or unmount stops the automatic continuation; existing pages allow explicit
+resume through the same action. Existing overwrite confirmation, saved-input
+validation, quote acceptance, active-job exclusion and outcome reconciliation stay
+in force. Hidden job-history content remains mounted so completion polling and
+recovery do not depend on expansion. Page confirmation precedes image saving;
+image preview retains its separate expansion, save and report operations.
+
 The optional state-copy v2 protocol uses a durable non-cascading journal,
 conditional image writes, retained ordinary markers and exact-version erasure.
 Admission defaults OFF; recovery, read authorization and retention remain active
