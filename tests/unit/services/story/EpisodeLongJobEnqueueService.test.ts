@@ -335,6 +335,23 @@ describe('Episode long job enqueue services', () => {
     expect(repository.createdJobs).toEqual([]);
   });
 
+  it('overwriteしない場合は画像保持flagをfalseへ正規化してlegacy commitと一致させる', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    const service = new EpisodePageSkeletonService(repository, new FakeSkeletonQueue());
+
+    await service.enqueueEpisodePageSkeleton('user-1', 'episode-1', {
+      overwriteExisting: false,
+      preserveGeneratedImages: true,
+      applyStoryPlan: false,
+      language: 'ja',
+    });
+
+    expect(repository.createdJobs[0]?.params).toMatchObject({
+      overwrite_existing: false,
+      preserve_generated_images: false,
+    });
+  });
+
   it('page skeleton enqueueはstale停止要求をfailedにせずcancelledへ確定する', async () => {
     const repository = new FakeEpisodePageSkeletonRepository();
     repository.activeJob = buildJob({

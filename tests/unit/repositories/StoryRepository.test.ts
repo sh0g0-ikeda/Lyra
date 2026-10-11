@@ -13,6 +13,7 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
     existing_page_count: 0,
     rollback_safe_page_count: 0,
   };
+  public skeletonPageRows: Array<{ id: string; page_number: number }> = [];
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -20,6 +21,18 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     this.values = values;
+
+    if (text.includes('FROM generation_jobs')) {
+      return {
+        command: 'SELECT', rowCount: 0, oid: 0, fields: [], rows: [],
+      };
+    }
+
+    if (text.includes('SELECT id, page_number')) {
+      return {
+        command: 'SELECT', rowCount: this.skeletonPageRows.length, oid: 0, fields: [], rows: this.skeletonPageRows as unknown as T[],
+      };
+    }
 
     if (text.includes('FOR UPDATE')) {
       return {
@@ -427,28 +440,69 @@ describe('PostgresStoryRepository', () => {
     expect(client.queries.some((query) => query.includes('page_skeleton_generated = TRUE'))).toBe(true);
   });
 
-  it('deletes existing pages first when overwriteExisting is enabled', async () => {
+  it('generated画像を保持するoverwriteでは既存ページを削除しない', async () => {
     const client = new QueryCapturingClient();
     client.lockRow = {
       id: '33333333-3333-4333-8333-333333333333',
       page_skeleton_generated: true,
       existing_page_count: 2,
     };
+    client.skeletonPageRows = [{ id: 'existing-page-1', page_number: 1 }];
     const repository = new PostgresStoryRepository(client, client);
 
     const result = await repository.createPageSkeleton(
       '33333333-3333-4333-8333-333333333333',
       'user-1',
-      [],
-      { overwriteExisting: true },
+      [{
+        pageNumber: 1,
+        purpose: 'preserve image',
+        suggestedPanelCount: 1,
+        suggestedLayout: 'splash_1',
+        panels: [{
+          order: 1,
+          panelRole: 'establish',
+          suggestedSize: 'splash',
+          situationHint: 'updated',
+          suggestedEntities: [],
+          suggestedDialogueHint: null,
+        }],
+      }],
+      { overwriteExisting: true, preserveGeneratedImages: true },
     );
 
-    expect(client.queries.some((query) => query.includes('DELETE FROM pages'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('DELETE FROM pages'))).toBe(false);
+    expect(client.queries.some((query) => query.includes('UPDATE pages'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('DELETE FROM panels'))).toBe(true);
     expect(result).toEqual({
-      pagesCreated: 0,
-      panelsCreated: 0,
+      pagesCreated: 1,
+      panelsCreated: 1,
       replacedExisting: true,
     });
+  });
+
+  it('generated画像を保持するoverwriteで既存ページがplanから欠ける場合は競合にする', async () => {
+    const client = new QueryCapturingClient();
+    client.lockRow = {
+      id: '33333333-3333-4333-8333-333333333333',
+      page_skeleton_generated: true,
+      existing_page_count: 1,
+    };
+    client.skeletonPageRows = [{ id: 'existing-page-2', page_number: 2 }];
+    const repository = new PostgresStoryRepository(client, client);
+
+    await expect(repository.createPageSkeleton(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      [{
+        pageNumber: 1,
+        purpose: 'missing existing page two',
+        suggestedPanelCount: 1,
+        suggestedLayout: 'splash_1',
+        panels: [{ order: 1, panelRole: 'establish', suggestedSize: 'splash', situationHint: 'updated', suggestedEntities: [], suggestedDialogueHint: null }],
+      }],
+      { overwriteExisting: true, preserveGeneratedImages: true },
+    )).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(client.queries.some((query) => query.includes('DELETE FROM pages'))).toBe(false);
   });
 
   it('rolls back only the expected fresh page skeleton for the owning user', async () => {

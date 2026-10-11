@@ -298,11 +298,12 @@ class FakeStoryCollaborationService implements StoryCollaborationServicePort {
 class FakePageSkeletonService implements PageSkeletonServicePort {
   public requestedEpisodeId: string | null = null;
   public overwriteExisting = false;
+  public preserveGeneratedImages = false;
 
   public async generateForEpisode(
     userId: string,
     requestedEpisodeId: string,
-    options?: { overwriteExisting?: boolean },
+    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean },
   ): Promise<{
     pagesCreated: number;
     panelsCreated: number;
@@ -315,15 +316,17 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
   public async prepareForEpisode(
     userId: string,
     requestedEpisodeId: string,
-    options?: { overwriteExisting?: boolean },
+    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean },
   ): Promise<PageSkeletonPreparation> {
     this.requestedEpisodeId = requestedEpisodeId;
     this.overwriteExisting = options?.overwriteExisting === true;
+    this.preserveGeneratedImages = options?.preserveGeneratedImages === true;
     return {
       userId,
       episodeId: requestedEpisodeId,
       organizationId: null,
       overwriteExisting: this.overwriteExisting,
+      preserveGeneratedImages: this.preserveGeneratedImages,
       pages: [],
     };
   }
@@ -927,6 +930,19 @@ describe('story routes', () => {
     expect(pageSkeletonService.requestedEpisodeId).toBe(episodeId);
   });
 
+  it('画像保持capabilityは認証済みclientだけにstrictな対応値を返す', async () => {
+    const app = createTestApp();
+    const unauthorized = await app.request('/api/story/page-skeleton-capabilities');
+    expect(unauthorized.status).toBe(401);
+
+    const token = await createToken();
+    const response = await app.request('/api/story/page-skeleton-capabilities', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ preserve_generated_images: true });
+  });
+
   it('page skeleton forwards overwrite_existing to the service', async () => {
     const pageSkeletonService = new FakePageSkeletonService();
     const app = createTestApp(new FakeStoryCollaborationService(), pageSkeletonService);
@@ -938,7 +954,7 @@ describe('story routes', () => {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ overwrite_existing: true, apply_story_plan: true }),
+      body: JSON.stringify({ overwrite_existing: true, preserve_generated_images: true, apply_story_plan: true }),
     });
 
     expect(response.status).toBe(201);
@@ -950,6 +966,7 @@ describe('story routes', () => {
       story_plan_job_id: null,
     });
     expect(pageSkeletonService.overwriteExisting).toBe(true);
+    expect(pageSkeletonService.preserveGeneratedImages).toBe(true);
   });
 
   it('page skeleton は apply_story_plan false のとき反映ジョブを作らない', async () => {
@@ -1304,10 +1321,10 @@ describe('story routes', () => {
     const token = await createToken();
     const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
       method:'POST', headers: {Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-      body:JSON.stringify({apply_story_plan:true}),
+      body:JSON.stringify({overwrite_existing:true,preserve_generated_images:true,apply_story_plan:true}),
     });
     expect(response.status).toBe(202);
-    expect(received).toMatchObject({applyStoryPlan:false});
+    expect(received).toMatchObject({overwriteExisting:true,preserveGeneratedImages:true,applyStoryPlan:false});
     await expect(response.json()).resolves.toMatchObject({story_plan_applied:false});
   });
 

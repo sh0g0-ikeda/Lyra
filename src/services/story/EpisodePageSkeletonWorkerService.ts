@@ -43,6 +43,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
     const episodeId = readStringParam(job.params, 'episode_id');
     const language = readLanguageParam(job.params, 'language');
     const overwriteExisting = readBooleanParam(job.params, 'overwrite_existing');
+    const preserveGeneratedImages = readBooleanParamOrDefault(job.params, 'preserve_generated_images', false);
     if (
       episodeId === null ||
       language === null ||
@@ -69,6 +70,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
 
       const preparation = await this.pageSkeletonService.prepareForEpisode(job.userId, episodeId, {
         overwriteExisting,
+        preserveGeneratedImages,
         language,
         allowCompilerFallback: false,
       }, job.organizationId);
@@ -130,12 +132,13 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       const episodeId = readStringParam(job.params, 'episode_id');
       const language = readLanguageParam(job.params, 'language');
       const overwriteExisting = readBooleanParam(job.params, 'overwrite_existing');
+      const preserveGeneratedImages = readBooleanParamOrDefault(job.params, 'preserve_generated_images', false);
       if (episodeId === null || language === null || overwriteExisting === null) {
         throw new ConfigurationError('Episode page skeleton job is missing required params');
       }
       // Provider, repair and schema validation finish before the DB transaction.
       const preparation = await this.pageSkeletonService.prepareForEpisode(job.userId, episodeId, {
-        overwriteExisting, language, allowCompilerFallback: false,
+        overwriteExisting, preserveGeneratedImages, language, allowCompilerFallback: false,
       }, job.organizationId);
       await commit.commitPreparedEpisodePageSkeleton(job, preparation);
       return { status: 'processed', jobStatus: 'completed' };
@@ -198,4 +201,9 @@ function readLanguageParam(params: Record<string, unknown>, key: string): AppLan
 function readBooleanParam(params: Record<string, unknown>, key: string): boolean | null {
   const value = params[key];
   return typeof value === 'boolean' ? value : null;
+}
+
+function readBooleanParamOrDefault(params: Record<string, unknown>, key: string, defaultValue: boolean): boolean {
+  const value = params[key];
+  return typeof value === 'boolean' ? value : defaultValue;
 }

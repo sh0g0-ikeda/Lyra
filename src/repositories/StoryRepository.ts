@@ -266,6 +266,7 @@ interface EpisodeSkeletonContextRow extends QueryResultRow {
   scene_involved_entity_ids: string[];
   page_skeleton_generated: boolean;
   existing_page_count: number;
+  existing_max_page_number: number;
   entities: unknown;
   scene_summaries: unknown;
 }
@@ -328,6 +329,11 @@ interface SkeletonLockRow extends QueryResultRow {
   rollback_safe_page_count?: number;
 }
 
+interface SkeletonPageLockRow extends QueryResultRow {
+  id: string;
+  page_number: number;
+}
+
 export class PostgresStoryRepository
   implements StoryRepository, WorkListPaginationRepository
 {
@@ -366,6 +372,12 @@ export class PostgresStoryRepository
     return runInTransaction(this.client, transactionRunner, work);
   }
 
+  private activeWorkDeletionPredicate(): string {
+    return this.schemaProfile === 'legacy_2debe_v1'
+      ? "(to_jsonb(works)->>'deletion_started_at') IS NULL"
+      : 'works.deletion_started_at IS NULL';
+  }
+
   public async findWorksByUserId(userId: string, organizationId: string | null = null): Promise<Work[]> {
     const result = await this.client.query<WorkRow>(
       `
@@ -385,6 +397,7 @@ export class PostgresStoryRepository
           )
         )
       )
+      AND ${this.activeWorkDeletionPredicate()}
       ORDER BY updated_at DESC, created_at DESC
       `,
       [userId, organizationId],
@@ -427,6 +440,7 @@ export class PostgresStoryRepository
           )
         )
       )
+      AND ${this.activeWorkDeletionPredicate()}
       AND (
         $3::timestamptz IS NULL
         OR works.updated_at < $3::timestamptz
@@ -533,6 +547,7 @@ export class PostgresStoryRepository
       SELECT *
       FROM works
       WHERE id = $1
+        AND ${this.activeWorkDeletionPredicate()}
         AND (
           ($3::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
           OR (
@@ -601,6 +616,7 @@ export class PostgresStoryRepository
           version = version + 1,
           updated_at = ${nextStoryRevisionSql('works')}
       WHERE id = $1
+          AND ${this.activeWorkDeletionPredicate()}
           AND ($20::timestamptz IS NULL OR date_trunc('milliseconds', works.updated_at) = $20::timestamptz)
         AND (
           ($19::uuid IS NULL AND user_id = $2 AND organization_id IS NULL)
@@ -2183,6 +2199,11 @@ export class PostgresStoryRepository
                WHERE pages.episode_id = episodes.id
              ) AS existing_page_count,
              (
+               SELECT COALESCE(MAX(pages.page_number), 0)::int
+               FROM pages
+               WHERE pages.episode_id = episodes.id
+             ) AS existing_max_page_number,
+             (
                SELECT COALESCE(
                  jsonb_agg(
                    jsonb_build_object(
@@ -2281,6 +2302,7 @@ export class PostgresStoryRepository
       entitiesInvolved: candidateEntityIds,
       pageSkeletonGenerated: row.page_skeleton_generated,
       existingPageCount: row.existing_page_count,
+      existingMaxPageNumber: row.existing_max_page_number,
       entities,
       sceneSummaries: toStringArray(row.scene_summaries),
     };
@@ -2471,10 +2493,11 @@ export class PostgresStoryRepository
     episodeId: string,
     userId: string,
     pages: PageSkeletonPageDraft[],
-    options?: { overwriteExisting?: boolean },
+    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean },
     organizationId: string | null = null,
   ): Promise<PageSkeletonPersistResult | null> {
     const overwriteExisting = options?.overwriteExisting === true;
+    const preserveGeneratedImages = overwriteExisting && options?.preserveGeneratedImages === true;
     return this.runLegacyGraphTransaction(userId, organizationId, async (transactionClient) => {
       const ownershipResult = await transactionClient.query<SkeletonLockRow>(
         `
@@ -2520,7 +2543,54 @@ export class PostgresStoryRepository
       }
       const replacedExisting = overwriteExisting && ownershipResult.rows[0].existing_page_count > 0;
 
-      if (replacedExisting) {
+      const existingPages = await transactionClient.query<SkeletonPageLockRow>(
+        `
+        SELECT id, page_number
+        FROM pages
+        WHERE episode_id = $1
+        ORDER BY page_number ASC
+        FOR UPDATE
+        `,
+        [episodeId],
+      );
+
+      const activeJobs = await transactionClient.query<IdRow>(
+        `
+        SELECT generation_jobs.id
+        FROM generation_jobs
+        WHERE generation_jobs.status IN ('queued', 'processing')
+          AND (
+            (generation_jobs.job_type = 'episode_story_autofill'
+              AND (generation_jobs.params->>'episode_id') = $1::text)
+            OR (
+              generation_jobs.job_type = 'page_generate'
+              AND EXISTS (
+                SELECT 1
+                FROM pages active_page
+                WHERE active_page.episode_id = $1::uuid
+                  AND active_page.id::text = (generation_jobs.params->>'page_id')
+              )
+            )
+          )
+        FOR UPDATE
+        `,
+        [episodeId],
+      );
+      if (activeJobs.rows.length > 0) {
+        throw new ConflictError('Episode has active page generation or story autofill work');
+      }
+
+      const existingPageIdsByNumber = new Map(
+        existingPages.rows.map((page) => [page.page_number, page.id]),
+      );
+      if (preserveGeneratedImages) {
+        const plannedPageNumbers = new Set(pages.map((page) => page.pageNumber));
+        if (existingPages.rows.some((page) => !plannedPageNumbers.has(page.page_number))) {
+          throw new ConflictError('Page skeleton plan must include every existing page');
+        }
+      }
+
+      if (replacedExisting && !preserveGeneratedImages) {
         await transactionClient.query(
           `
           DELETE FROM pages
@@ -2534,35 +2604,56 @@ export class PostgresStoryRepository
 
       for (const page of pages) {
         const frameDefinitions = buildPanelFrameTemplateInputs(page.suggestedLayout);
-        const pageResult = await transactionClient.query<IdRow>(
-          `
-          INSERT INTO pages (
-            episode_id,
-            page_number,
-            layout_config,
-            status
-          )
-          VALUES (
-            $1,
-            $2,
-            $3::jsonb,
-            'designing'
-          )
-          RETURNING id
-          `,
-          [
-            episodeId,
-            page.pageNumber,
-            JSON.stringify({
-              type: 'template',
-              template_id: page.suggestedLayout,
-              panel_count: page.suggestedPanelCount,
-              frame_definitions: frameDefinitions,
-            }),
-          ],
-        );
-
-        const pageId = pageResult.rows[0]?.id;
+        const layoutConfig = JSON.stringify({
+          type: 'template',
+          template_id: page.suggestedLayout,
+          panel_count: page.suggestedPanelCount,
+          frame_definitions: frameDefinitions,
+        });
+        const existingPageId = preserveGeneratedImages
+          ? existingPageIdsByNumber.get(page.pageNumber)
+          : undefined;
+        let pageId = existingPageId;
+        if (existingPageId !== undefined) {
+          await transactionClient.query(
+            'DELETE FROM panel_frames WHERE page_id = $1',
+            [existingPageId],
+          );
+          await transactionClient.query(
+            'DELETE FROM panels WHERE page_id = $1',
+            [existingPageId],
+          );
+          await transactionClient.query(
+            `
+            UPDATE pages
+            SET layout_config = $2::jsonb,
+                status = 'designing',
+                updated_at = clock_timestamp()
+            WHERE id = $1
+            `,
+            [existingPageId, layoutConfig],
+          );
+        } else {
+          const pageResult = await transactionClient.query<IdRow>(
+            `
+            INSERT INTO pages (
+              episode_id,
+              page_number,
+              layout_config,
+              status
+            )
+            VALUES (
+              $1,
+              $2,
+              $3::jsonb,
+              'designing'
+            )
+            RETURNING id
+            `,
+            [episodeId, page.pageNumber, layoutConfig],
+          );
+          pageId = pageResult.rows[0]?.id;
+        }
         if (pageId === undefined) {
           throw new ValidationError('Failed to create page skeleton page');
         }

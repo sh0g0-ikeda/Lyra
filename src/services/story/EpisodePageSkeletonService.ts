@@ -30,6 +30,7 @@ export interface EpisodePageSkeletonJobRepository
 
 export interface EnqueueEpisodePageSkeletonInput {
   overwriteExisting: boolean;
+  preserveGeneratedImages?: boolean;
   applyStoryPlan: boolean;
   language: AppLanguage;
 }
@@ -86,6 +87,7 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
         params: {
           episode_id: episodeId,
           overwrite_existing: input.overwriteExisting,
+          preserve_generated_images: input.overwriteExisting && input.preserveGeneratedImages === true,
           apply_story_plan: false,
           language: input.language,
           organization_id: organizationId,

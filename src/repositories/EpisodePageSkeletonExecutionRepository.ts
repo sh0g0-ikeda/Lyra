@@ -100,6 +100,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
         || preparation.organizationId !== (job.organizationId ?? null)
         || preparation.episodeId !== job.params.episode_id
         || preparation.overwriteExisting !== job.params.overwrite_existing
+        || (preparation.preserveGeneratedImages ?? false) !== (job.params.preserve_generated_images === true)
         || preparation.sourceFingerprint === undefined) {
         throw new ConflictError('Page skeleton attempt or source no longer matches');
       }
@@ -144,7 +145,10 @@ export class PostgresEpisodePageSkeletonExecutionRepository
         throw new ConflictError('Page skeleton source changed during generation');
       }
       const result = await story.createPageSkeleton(preparation.episodeId, job.userId, preparation.pages,
-        { overwriteExisting: preparation.overwriteExisting }, preparation.organizationId);
+        {
+          overwriteExisting: preparation.overwriteExisting,
+          ...(preparation.preserveGeneratedImages === true ? { preserveGeneratedImages: true } : {}),
+        }, preparation.organizationId);
       if (result === null) throw new NotFoundError('Episode not found');
       if (!(await new PostgresEpisodePageSkeletonExecutionRepository(bound, this.schemaProfile)
         .completeEpisodePageSkeleton({ jobId: job.id, userId: job.userId, result, storyPlanApplied: false, storyPlanResult: null }))) {

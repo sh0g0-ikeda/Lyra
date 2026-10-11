@@ -48,6 +48,7 @@ export interface PageSkeletonServicePort {
 
 export interface PageSkeletonGenerationOptions {
   overwriteExisting?: boolean;
+  preserveGeneratedImages?: boolean;
   language?: AppLanguage;
   /**
    * Legacy synchronous calls can still build a deterministic draft when the
@@ -62,6 +63,7 @@ export interface PageSkeletonPreparation {
   episodeId: string;
   organizationId: string | null;
   overwriteExisting: boolean;
+  preserveGeneratedImages?: boolean;
   pages: PageSkeletonPageDraft[];
   /** Required by the explicit legacy atomic commit strategy. */
   sourceFingerprint?: string;
@@ -95,6 +97,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     organizationId: string | null = null,
   ): Promise<PageSkeletonPreparation> {
     const overwriteExisting = options?.overwriteExisting === true;
+    const preserveGeneratedImages = overwriteExisting && options?.preserveGeneratedImages === true;
     const language = options?.language ?? 'ja';
     const allowCompilerFallback = options?.allowCompilerFallback !== false;
     const context = await this.storyRepository.findEpisodePageSkeletonContextByIdAndUserId(
@@ -112,17 +115,20 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     if (!overwriteExisting && context.existingPageCount > 0) {
       throw new ConflictError('Episode already has pages');
     }
-    if (context.estimatedPages > STORY_AI_LIMITS.maxSkeletonPages) {
+    const plannedPageCount = preserveGeneratedImages
+      ? Math.max(context.estimatedPages, context.existingMaxPageNumber)
+      : context.estimatedPages;
+    if (plannedPageCount > STORY_AI_LIMITS.maxSkeletonPages) {
       throw new ValidationError(
-        `estimatedPages must be ${STORY_AI_LIMITS.maxSkeletonPages} or less to generate a page skeleton`,
+        `planned page count must be ${STORY_AI_LIMITS.maxSkeletonPages} or less to generate a page skeleton`,
       );
     }
 
     let pages: PageSkeletonPageDraft[];
     try {
       pages = await this.storyAiClient.generatePageSkeleton({
-        systemPrompt: buildPageSkeletonSystemPrompt(context.estimatedPages, language),
-        userPrompt: buildPageSkeletonUserPrompt(context),
+        systemPrompt: buildPageSkeletonSystemPrompt(plannedPageCount, language),
+        userPrompt: buildPageSkeletonUserPrompt({ ...context, estimatedPages: plannedPageCount }),
       });
     } catch (error) {
       if (error instanceof AppError) {
@@ -138,14 +144,14 @@ export class PageSkeletonService implements PageSkeletonServicePort {
           'AI page skeleton generation did not complete. Please retry after a few minutes.',
         );
       }
-      pages = buildFallbackPageSkeleton({ ...context, language });
+      pages = buildFallbackPageSkeleton({ ...context, estimatedPages: plannedPageCount, language });
     }
 
     const allowedEntityIds = context.entities.map((entity) => entity.id);
     pages = repairGeneratedPageSkeleton(pages, allowedEntityIds);
 
     try {
-      validatePageSkeleton(context.estimatedPages, allowedEntityIds, pages);
+      validatePageSkeleton(plannedPageCount, allowedEntityIds, pages);
     } catch (error) {
       if (!(error instanceof ValidationError)) {
         throw error;
@@ -161,10 +167,10 @@ export class PageSkeletonService implements PageSkeletonServicePort {
         );
       }
       pages = repairGeneratedPageSkeleton(
-        buildFallbackPageSkeleton({ ...context, language }),
+        buildFallbackPageSkeleton({ ...context, estimatedPages: plannedPageCount, language }),
         allowedEntityIds,
       );
-      validatePageSkeleton(context.estimatedPages, allowedEntityIds, pages);
+      validatePageSkeleton(plannedPageCount, allowedEntityIds, pages);
     }
 
     return {
@@ -172,6 +178,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       episodeId,
       organizationId,
       overwriteExisting,
+      preserveGeneratedImages,
       pages,
       sourceFingerprint,
     };
@@ -184,7 +191,12 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       preparation.episodeId,
       preparation.userId,
       preparation.pages,
-      { overwriteExisting: preparation.overwriteExisting },
+      {
+        overwriteExisting: preparation.overwriteExisting,
+        ...(preparation.preserveGeneratedImages === true
+          ? { preserveGeneratedImages: true }
+          : {}),
+      },
       preparation.organizationId,
     );
     if (result === null) {

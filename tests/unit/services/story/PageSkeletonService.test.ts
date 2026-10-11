@@ -47,6 +47,7 @@ class FakeStoryRepository implements StoryRepository {
     ],
     pageSkeletonGenerated: false,
     existingPageCount: 0,
+    existingMaxPageNumber: 0,
     entities: [
       {
         id: '11111111-1111-4111-8111-111111111111',
@@ -67,7 +68,7 @@ class FakeStoryRepository implements StoryRepository {
   };
 
   public createdPages: PageSkeletonPageDraft[] = [];
-  public lastCreateOptions: { overwriteExisting?: boolean } | undefined;
+  public lastCreateOptions: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean } | undefined;
 
   public async findWorksByUserId(): Promise<Work[]> {
     return [];
@@ -722,6 +723,28 @@ describe('PageSkeletonService', () => {
       replacedExisting: true,
     });
     expect(repository.lastCreateOptions).toEqual({ overwriteExisting: true });
+  });
+
+  it('画像保持再設計では既存最大ページ番号を生成枚数の下限にする', async () => {
+    const repository = new FakeStoryRepository();
+    if (repository.skeletonContext !== null) {
+      repository.skeletonContext.pageSkeletonGenerated = true;
+      repository.skeletonContext.existingPageCount = 2;
+      repository.skeletonContext.existingMaxPageNumber = 4;
+    }
+    const service = new PageSkeletonService(repository, new FakeStoryAiClient());
+
+    await service.generateForEpisode(
+      'user-1',
+      '33333333-3333-4333-8333-333333333333',
+      { overwriteExisting: true, preserveGeneratedImages: true },
+    );
+
+    expect(repository.createdPages.map((page) => page.pageNumber)).toEqual([1, 2, 3, 4]);
+    expect(repository.lastCreateOptions).toEqual({
+      overwriteExisting: true,
+      preserveGeneratedImages: true,
+    });
   });
 
   it('compacts long page skeleton context before sending it to the model', async () => {
