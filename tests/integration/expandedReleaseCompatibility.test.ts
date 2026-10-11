@@ -31,7 +31,10 @@ for(const profile of ['canonical','production44_expanded_pg18_v1'] as const){
     afterAll(async()=>{if(pool)await pool.end();if(admin){await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();}});
     it('exact current schemaを認定し同じread-only transactionでinvariantと既存mobile policyを確認する',async()=>{
       const before=Number((await pool.query('SELECT COUNT(*)::int AS n FROM schema_migrations')).rows[0].n);
-      const report=await checkReleaseCompatibility(database,{profile:'new-mobile',mobileClientIds:[],runtime},{schemaProfile:profile});
+      // The invalid-index invariant scans the whole test DB, including other
+      // suites whose concurrent index builds temporarily expose invalid rows.
+      // Use the shared migration lock without narrowing the production check.
+      const report=await withPostgresTestMigrationLock(admin,()=>checkReleaseCompatibility(database,{profile:'new-mobile',mobileClientIds:[],runtime},{schemaProfile:profile}));
       expect(report).toMatchObject({ok:true,journalPresent:false,remoteStoragePolicyVerified:false,violations:[]});
       expect(report.checkedCount).toBeGreaterThan(10);
       expect(Number((await pool.query('SELECT COUNT(*)::int AS n FROM schema_migrations')).rows[0].n)).toBe(before);
