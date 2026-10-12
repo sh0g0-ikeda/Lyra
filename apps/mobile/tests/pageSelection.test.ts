@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { selectPageForEpisode } from '@/domain/pageSelection';
+import { initialPageAndPanel, selectPageForEpisode } from '@/domain/pageSelection';
 import type { PageRecord } from '@/domain/types';
 
 const page = (episodeId: string): PageRecord => ({
@@ -33,5 +33,11 @@ describe('pageSelection', () => {
 
   it('話が未選択の場合は保存済みページを採用しない', () => {
     expect(selectPageForEpisode(page('episode-1'), null)).toBeNull();
+  });
+
+  it('初回と自動入力完了時は最小ページ番号と最小保存順のコマを選ぶ', () => {
+    const later = { ...page('episode-1'), id: 'page-2', page_number: 2 };
+    expect(initialPageAndPanel([later, page('episode-1')], [{ id: 'panel-2', order: 2 }, { id: 'panel-1', order: 1 }]))
+      .toEqual({ pageId: 'page-1', panelId: 'panel-1' });
   });
 });

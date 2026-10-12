@@ -9,6 +9,13 @@ export type EpisodeStateAutofillRequestOptions =
   | { state_autofill_enabled: boolean; state_autofill_version?: never; state_assignment_policy?: never }
   | { state_autofill_enabled?: never; state_autofill_version: 'v1'; state_assignment_policy: 'overwrite_existing' };
 
+/** New Mobile uses source-backed state application whenever the server advertises it. */
+export function automaticStateAutofillRequestOptions(
+  available: boolean
+): EpisodeStateAutofillRequestOptions | undefined {
+  return available ? { state_autofill_enabled: true } : undefined;
+}
+
 export function stateAutofillRequestOptions(
   available: boolean,
   choice: EpisodeStateAutofillChoice

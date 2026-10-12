@@ -10,15 +10,18 @@ const panels: PanelRecord[] = [{ id: 'panel', page_id: 'page', order: 1, panel_r
 const frames: PanelFrameRecord[] = [{ id: 'frame', page_id: 'page', panel_id: 'panel', vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], border_style: 'solid', border_width: 1, border_color: '#000000', z_index: 1, reading_order: 1 }];
 const queryData = { pages: { pages: [{ pages: [page] }], pageParams: [null] }, entities: { pages: [{ entities: [] as EntityRecord[] }], pageParams: [null] }, panels: { panels }, frames: { frames }, scenes: { scenes: [] }, readiness: { ready: true, blockers: [], warnings: [], estimated_credit_cost: 8, page_revision: 'revision' }, templates: { templates: [] } };
 let moreEntities = false;
+let screenSelection = { organizationId: null as string | null, workId: 'work', chapterId: 'chapter', episodeId: 'episode', pageId: 'page' as string | null, entityId: null as string | null };
+let workspaceSelection = { selectedWorkId: 'work', selectedEpisodeId: 'episode' };
+let activeDesignJobId: string | null = null;
 let skeletonCapability: { preserve_generated_images: boolean } | undefined;
-const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl, confirmAction, generatePageSkeleton, autofillStory } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn(), openUrl: vi.fn().mockResolvedValue(undefined), confirmAction: vi.fn(), generatePageSkeleton: vi.fn(), autofillStory: vi.fn() }));
+const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl, confirmAction, generatePageSkeleton, autofillStory, updateSelection, invalidateQueries } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn(), openUrl: vi.fn().mockResolvedValue(undefined), confirmAction: vi.fn(), generatePageSkeleton: vi.fn(), autofillStory: vi.fn(), updateSelection: vi.fn(), invalidateQueries: vi.fn().mockResolvedValue(undefined) }));
 const api = { updatePage: action, updatePanel: action, generatePage: action, generatePageSkeleton, autofillEpisodePagesFromStory: autofillStory };
 let root: ReactTestRenderer | undefined;
 vi.mock('@react-navigation/native', () => ({ useNavigation: () => ({ navigate: action }), useIsFocused: () => true }));
 vi.mock('react-native', () => ({ Keyboard: { dismiss: vi.fn() }, Linking: { openURL: openUrl }, Modal: 'modal', Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
 vi.mock('expo-image', () => ({ Image: { prefetch: vi.fn().mockResolvedValue(true) } }));
 vi.mock('@tanstack/react-query', () => ({
-  useQueryClient: () => ({ invalidateQueries: vi.fn(), setQueryData: vi.fn() }),
+  useQueryClient: () => ({ invalidateQueries, setQueryData: vi.fn() }),
   useInfiniteQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'pages' ? queryData.pages : queryData.entities, isSuccess: true, isFetching: false, hasNextPage: queryKey[0] === 'pages' ? false : moreEntities, isFetchingNextPage: false, fetchNextPage: fetchEntities, error: null }),
   useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'panels' ? queryData.panels : queryKey[0] === 'frames' ? queryData.frames : queryKey[0] === 'scenes' ? queryData.scenes : queryKey[0] === 'page-generation-readiness' ? queryData.readiness : queryKey[0] === 'page-layout-templates' ? queryData.templates : queryKey[0] === 'page-skeleton-capabilities' ? skeletonCapability : undefined, isSuccess: true, isFetching: false, isLoading: false, error: null, refetch: vi.fn() }),
   useMutation: (options: { mutationFn: (...args: unknown[]) => Promise<unknown>; onSuccess?: (value: unknown, variables?: unknown) => Promise<void>; onError?: (error: unknown, variables?: unknown) => void | Promise<void> }) => {
@@ -30,13 +33,13 @@ vi.mock('@tanstack/react-query', () => ({
     return { mutate: (...args: unknown[]) => { void run(...args).catch(() => undefined); }, mutateAsync: run, isPending: false, error, reset: () => setError(null) };
   }
 }));
-vi.mock('@/state/appState', () => ({ useAppState: () => ({ api, hasCapability: () => true, language: 'ja', logout: action, selection: { organizationId: null, workId: 'work', chapterId: 'chapter', episodeId: 'episode', pageId: 'page', entityId: null }, session: { capabilities: { generation_quotes: true } }, sessionKey: 'user', tokens: null, trackJob: action, updateSelection: action }) }));
+vi.mock('@/state/appState', () => ({ useAppState: () => ({ api, hasCapability: () => true, language: 'ja', logout: action, selection: screenSelection, session: { capabilities: { generation_quotes: true } }, sessionKey: 'user', tokens: null, trackJob: action, updateSelection }) }));
 vi.mock('@/state/dirtyState', () => ({ useDirtyEditorRegistration: dirtyRegistration, useDirtyState: () => ({ resolveDirtyEditors: vi.fn().mockResolvedValue(true), hasDirtyEditors: false }) }));
 vi.mock('@/state/mangaWorkflow', () => ({ useMangaWorkflow: () => ({ activeStep: 'pages' }) }));
 vi.mock('@/hooks/usePageGenerationQuote', () => ({ usePageGenerationQuote: () => ({ state: { phase: 'closed', visible: false, target: null, quote: null }, controller: { open: quoteOpen, close: vi.fn(), accept: vi.fn(), reconcile: vi.fn(), canAccept: () => false } }) }));
 vi.mock('@/hooks/usePageCompletion', () => ({ usePageCompletion: () => ({ result: null, visible: false, complete: vi.fn(), open: vi.fn(), close: vi.fn() }) }));
 vi.mock('@/lib/confirmationPresentation', () => ({ useConfirmationPresentation: () => false }));
-vi.mock('@/hooks/useActiveResourceJobId', () => ({ useActiveResourceJobId: () => null }));
+vi.mock('@/hooks/useActiveResourceJobId', () => ({ useActiveResourceJobId: () => activeDesignJobId }));
 vi.mock('@/hooks/usePanelInsertion', () => ({ usePanelInsertion: () => ({ blocker: null, operationActive: false, notice: null, insertAfter: vi.fn(), reload: vi.fn() }) }));
 vi.mock('@/hooks/useResetOnScopeChange', () => ({ useResetOnScopeChange: vi.fn() }));
 vi.mock('@/lib/confirm', () => ({ confirmAction, confirmDestructiveAction: confirmAction }));
@@ -46,7 +49,7 @@ vi.mock('@/lib/confirmStoryStateAutofill', () => ({
 vi.mock('@/lib/api', () => ({ ApiError: class ApiError extends Error {} }));
 vi.mock('@/lib/config', () => ({ config: { apiBaseUrl: 'https://example.test', webEditorUrl: 'https://d2dw83tkmziksr.cloudfront.net/', episodeExportEnabled: false } }));
 vi.mock('@/lib/download', () => ({ appendOrganizationQuery: vi.fn(), downloadAuthenticatedFile: action }));
-vi.mock('@/components/WorkspaceContextPicker', () => ({ useWorkspaceContextSelection: () => ({ selectedWorkId: 'work', selectedEpisodeId: 'episode' }) }));
+vi.mock('@/components/WorkspaceContextPicker', () => ({ useWorkspaceContextSelection: () => workspaceSelection }));
 vi.mock('@/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('@/components/Section', () => ({ Section: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('@/components/FormField', () => ({ FormField: (props: Record<string, unknown>) => React.createElement('field', props) }));
@@ -73,19 +76,83 @@ vi.mock('@/components/EntityStatePicker', () => ({ EntityStatePicker: (props: Re
 vi.mock('@/components/PanelEditorSections', () => ({ PanelEditorSections: (props: Record<string, unknown>) => React.createElement('PanelEditorSections', props) }));
 vi.mock('@/components/PanelOrderList', () => ({ PanelOrderList: (props: Record<string, unknown>) => React.createElement('PanelOrderList', props) }));
 vi.mock('@/components/SegmentedControl', () => ({ SegmentedControl: (props: Record<string, unknown>) => React.createElement('SegmentedControl', props) }));
-vi.mock('@/components/EpisodeStateAutofillResult', () => ({ EpisodeStateAutofillResult: (props: Record<string, unknown>) => React.createElement('EpisodeStateAutofillResult', props) }));
-vi.mock('@/components/StoryStateAutofillOptions', () => ({ StoryStateAutofillOptions: (props: Record<string, unknown>) => React.createElement('StoryStateAutofillOptions', props) }));
 vi.mock('@/components/StoryGenerationControls', () => ({ StoryGenerationControls: (props: Record<string, unknown>) => React.createElement('StoryGenerationControls', props) }));
 vi.mock('@/components/WorkspaceHierarchyNavigator', () => ({ WorkspaceHierarchyNavigator: (props: Record<string, unknown>) => React.createElement('WorkspaceHierarchyNavigator', props) }));
 
 beforeEach(() => {
-  action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); fetchEntities.mockReset(); openUrl.mockReset(); confirmAction.mockReset(); generatePageSkeleton.mockReset(); autofillStory.mockReset();
+  action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); confirmAction.mockReset(); generatePageSkeleton.mockReset(); autofillStory.mockReset(); updateSelection.mockReset(); invalidateQueries.mockReset();
+  screenSelection = { organizationId: null, workId: 'work', chapterId: 'chapter', episodeId: 'episode', pageId: 'page', entityId: null };
+  workspaceSelection = { selectedWorkId: 'work', selectedEpisodeId: 'episode' };
+  activeDesignJobId = null;
+  updateSelection.mockImplementation(async (next: { pageId?: string | null }) => {
+    screenSelection = { ...screenSelection, ...next };
+    return true;
+  });
   openUrl.mockResolvedValue(undefined); generatePageSkeleton.mockResolvedValue({ job_id: 'skeleton-job', queued: true, story_plan_applied: false }); autofillStory.mockResolvedValue({ job_id: 'autofill-job', queued: true });
+  invalidateQueries.mockResolvedValue(undefined);
   moreEntities=false; page.layout_config={}; queryData.pages={pages:[{pages:[page]}],pageParams:[null]}; queryData.panels={panels}; queryData.frames={frames}; queryData.entities.pages=[{entities:[]}]; panels[0].entities=[]; panels[0].dialogue=[];
   skeletonCapability = { preserve_generated_images: true };
 });
 afterEach(async () => { await act(async () => root?.unmount()); });
 describe('実際のPagesScreenの工程構成', () => {
+  it('ページ未選択で開くと最初のページとコマを編集対象にする', async () => {
+    screenSelection = { ...screenSelection, pageId: null };
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    expect(updateSelection).toHaveBeenCalledWith({ pageId: 'page' });
+  });
+
+  it('復元済みの有効なページでは最小保存順のコマを初回だけ選ぶ', async () => {
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    expect(root!.root.findByType('PanelOrderList').props.selectedPanelId).toBe('panel');
+    expect(updateSelection).not.toHaveBeenCalled();
+  });
+
+  it('ページ選択の永続化待ち後もキャッシュ済みの先頭コマを消さない', async () => {
+    let resolveSelection: ((changed: boolean) => void) | undefined;
+    updateSelection.mockImplementation(() => new Promise<boolean>((resolve) => { resolveSelection = resolve; }));
+    screenSelection = { ...screenSelection, pageId: null };
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    screenSelection = { ...screenSelection, pageId: 'page' };
+    await act(async () => { root!.update(<PagesScreen />); await Promise.resolve(); });
+    expect(root!.root.findByType('PanelOrderList').props.selectedPanelId).toBe('panel');
+
+    await act(async () => { resolveSelection?.(true); await Promise.resolve(); });
+    expect(root!.root.findByType('PanelOrderList').props.selectedPanelId).toBe('panel');
+  });
+
+  it('明示選択済みのページは再取得時に最初のページへ戻さない', async () => {
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    expect(updateSelection).not.toHaveBeenCalled();
+  });
+
+  it('復元したserver自動入力完了後も先頭ページとコマを選び直す', async () => {
+    activeDesignJobId = 'server-autofill-job';
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'server-autofill-job');
+    expect(job).toBeDefined();
+    await act(async () => { await job!.props.onCompleted(); });
+    expect(updateSelection).toHaveBeenCalledWith({ pageId: null }, { skipDirtyCheck: true });
+
+    await act(async () => { root!.update(<PagesScreen />); await Promise.resolve(); });
+    expect(updateSelection).toHaveBeenCalledWith({ pageId: 'page' });
+    await act(async () => { root!.update(<PagesScreen />); await Promise.resolve(); });
+    expect(root!.root.findByType('PanelOrderList').props.selectedPanelId).toBe('panel');
+  });
+
+  it('完了処理の待機中に話を切り替えた場合は新しい選択を消さない', async () => {
+    activeDesignJobId = 'server-autofill-job';
+    const releaseInvalidations: (() => void)[] = [];
+    invalidateQueries.mockImplementation(() => new Promise<void>((resolve) => { releaseInvalidations.push(resolve); }));
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'server-autofill-job');
+    const completion = job!.props.onCompleted();
+    workspaceSelection = { selectedWorkId: 'other-work', selectedEpisodeId: 'other-episode' };
+    screenSelection = { ...screenSelection, workId: 'other-work', episodeId: 'other-episode', pageId: 'page' };
+    await act(async () => { root!.update(<PagesScreen />); await Promise.resolve(); });
+    await act(async () => { releaseInvalidations.forEach((release) => release()); await completion; });
+    expect(updateSelection).not.toHaveBeenCalledWith({ pageId: null }, { skipDirtyCheck: true });
+  });
+
   it('Web editor操作は設定済みのstaging originを開く', async () => {
     await act(async () => { root = create(<PagesScreen />); });
     await act(async () => {

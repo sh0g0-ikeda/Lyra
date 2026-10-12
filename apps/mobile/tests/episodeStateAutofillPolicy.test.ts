@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { stateAutofillRequestOptions, readEpisodeStateResult } from '@/domain/episodeStateAutofillPolicy';
+import { automaticStateAutofillRequestOptions, stateAutofillRequestOptions, readEpisodeStateResult } from '@/domain/episodeStateAutofillPolicy';
 
 const id = (index: number): string => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 const candidate = { entity_id: id(1), candidate_state_id: null, starts_at_panel_id: id(2), suggested_name: '外傷', suggested_description: '右腕の傷', source_scene_id: null, source_field: 'story_full_draft', source_quote: '右腕に傷を負う', reason: 'missing_reference' };
 describe('状態自動入力の明示オプションと公開結果', () => {
+  it('新しい標準操作は対応サーバーへ状態反映ONだけを送る', () => {
+    expect(automaticStateAutofillRequestOptions(true)).toEqual({ state_autofill_enabled: true });
+    expect(automaticStateAutofillRequestOptions(false)).toBeUndefined();
+  });
   it('能力OFFでは旧API bodyを維持し、利用可能なら状態反映ONを明示する', () => {
     expect(stateAutofillRequestOptions(false, { enabled: true, overwrite: true })).toBeUndefined();
     expect(stateAutofillRequestOptions(true, { enabled: false, overwrite: true })).toEqual({ state_autofill_enabled: false });

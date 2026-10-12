@@ -39,10 +39,8 @@ import { RecordPicker } from '@/components/RecordPicker';
 import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 import { SegmentedControl } from '@/components/SegmentedControl';
-import { EpisodeStateAutofillResult } from '@/components/EpisodeStateAutofillResult';
-import { StoryStateAutofillOptions } from '@/components/StoryStateAutofillOptions';
 import { confirmStoryStateAutofill } from '@/lib/confirmStoryStateAutofill';
-import type { EpisodeStateAutofillChoice, EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
+import type { EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
 import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
 import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
 import {
@@ -74,7 +72,7 @@ import { canDisplayMobileImage, imageAccessNotice } from '@/domain/imageAccess';
 import { canUseMobilePageImage, mobilePageExportCandidates } from '@/domain/mobilePageImageAccess';
 import { buildEpisodeExportPayload } from '@/domain/pageExport';
 import { createSafeLayoutTemplatePayload, selectExcessPanels } from '@/domain/pageSafety';
-import { selectPageForEpisode } from '@/domain/pageSelection';
+import { initialPageAndPanel, selectPageForEpisode } from '@/domain/pageSelection';
 import {
   buildFullPageImageSources,
   buildPageThumbnailImageSources
@@ -674,8 +672,6 @@ export function PagesScreen(): React.JSX.Element {
   const canExport = hasCapability('export');
   const stateAutofillScope = JSON.stringify([sessionKey, organizationId, selection.workId, selection.episodeId]);
   const stateAutofillAvailable = session?.capabilities?.episode_state_autofill_v1 === true;
-  const [stateAutofillDraft, setStateAutofillDraft] = useState<{ scope: string; value: EpisodeStateAutofillChoice } | null>(null);
-  const stateAutofillChoice = stateAutofillDraft?.scope === stateAutofillScope ? stateAutofillDraft.value : { enabled: true, overwrite: false };
   const currentAutofillScope = useRef({ scope: stateAutofillScope, available: stateAutofillAvailable, canGenerate });
   const pendingStoryAutofillAfterSkeleton = useRef<{ scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined } | null>(null);
   useEffect(() => {
@@ -692,6 +688,9 @@ export function PagesScreen(): React.JSX.Element {
   const [templateId, setTemplateId] = useState('standard_4');
   const [templateModalVisible, setTemplateModalVisible] = useState(false);
   const [panelId, setPanelId] = useState<string | null>(null);
+  const initialSelectionScopeRef = useRef<string | null>(null);
+  const currentInitialSelectionScopeRef = useRef<string | null>(null);
+  const pendingInitialPanelPageRef = useRef<string | null>(null);
   const [panelRole, setPanelRole] = useState<PanelRecord['panel_role']>('action');
   const [panelSize, setPanelSize] = useState<PanelRecord['panel_size']>('standard');
   const [situationText, setSituationText] = useState('');
@@ -739,6 +738,7 @@ export function PagesScreen(): React.JSX.Element {
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
   const activeEpisodeId = workspaceContext.selectedEpisodeId;
+  const initialPageSelectionScope = JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId]);
   const pageWorkflowScope = JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, selection.pageId]);
   const latestPageWorkflowScope = useRef(pageWorkflowScope);
   const pageQuoteIntent = useRef(0);
@@ -747,6 +747,9 @@ export function PagesScreen(): React.JSX.Element {
     latestPageWorkflowScope.current = pageWorkflowScope;
     pageQuoteIntent.current += 1;
   }, [pageWorkflowScope]);
+  useLayoutEffect(() => {
+    currentInitialSelectionScopeRef.current = initialPageSelectionScope;
+  }, [initialPageSelectionScope]);
   const resultTriggerRef = useRef<View | null>(null);
   const screenScrollRef = useRef<ScrollView | null>(null);
 
@@ -799,6 +802,30 @@ export function PagesScreen(): React.JSX.Element {
     selectedPageCandidate?.episode_id === activeEpisodeId
       ? selectedPageCandidate
       : null;
+  useEffect(() => {
+    if (activeEpisodeId === null || !pagesQuery.isSuccess) return;
+    if (initialSelectionScopeRef.current === initialPageSelectionScope) return;
+
+    if (selection.pageId !== null) {
+      if (selectedPage === null) return;
+      initialSelectionScopeRef.current = initialPageSelectionScope;
+      pendingInitialPanelPageRef.current = selectedPage.id;
+      setPanelId(null);
+      return;
+    }
+
+    const target = initialPageAndPanel(pages, []);
+    if (target.pageId === null) return;
+    initialSelectionScopeRef.current = initialPageSelectionScope;
+    pendingInitialPanelPageRef.current = target.pageId;
+    setPanelId(null);
+    const scope = initialPageSelectionScope;
+    void updateSelection({ pageId: target.pageId }).then((changed) => {
+      if (!changed || currentInitialSelectionScopeRef.current !== scope) {
+        if (pendingInitialPanelPageRef.current === target.pageId) pendingInitialPanelPageRef.current = null;
+      }
+    });
+  }, [activeEpisodeId, initialPageSelectionScope, pages, pagesQuery.isSuccess, selectedPage, selection.pageId, updateSelection]);
   const selectedPageDetailNotFound =
     shouldFetchSelectedPageDetail &&
     selectedPageQuery.error instanceof ApiError &&
@@ -990,6 +1017,12 @@ export function PagesScreen(): React.JSX.Element {
     () => panelsQuery.data?.panels.find((panel) => panel.id === panelId) ?? null,
     [panelId, panelsQuery.data?.panels]
   );
+  useEffect(() => {
+    if (pendingInitialPanelPageRef.current !== selectedPage?.id || !panelsQuery.isSuccess) return;
+    const target = initialPageAndPanel([selectedPage], panelsQuery.data?.panels ?? []);
+    pendingInitialPanelPageRef.current = null;
+    setPanelId(target.panelId);
+  }, [panelsQuery.data?.panels, panelsQuery.isSuccess, selectedPage]);
 
   const selectedFrame = useMemo(
     () => frameDrafts.find((frame) => frame.id === frameId) ?? null,
@@ -2062,15 +2095,13 @@ export function PagesScreen(): React.JSX.Element {
     const episodeId = activeEpisodeId;
     const scope = stateAutofillScope;
     const available = stateAutofillAvailable;
-    const choice = { ...stateAutofillChoice };
     const isCurrent = (): boolean => currentAutofillScope.current.scope === scope && currentAutofillScope.current.canGenerate &&
-      (!choice.enabled || !available || currentAutofillScope.current.available);
+      (!available || currentAutofillScope.current.available);
     void resolveDirtyEditors(language).then((canContinue) => {
       if (!canContinue || !isCurrent()) return;
       confirmStoryStateAutofill({
         language,
         available,
-        choice,
         includeSkeletonGeneration: true,
         isCurrent,
         overwriteSummary: overwritePageSkeleton
@@ -2413,13 +2444,6 @@ export function PagesScreen(): React.JSX.Element {
         />
       ) : null}
       {activeEpisodeId === null ? <Notice message={t(language, 'selectEpisodeFirst')} tone="warning" /> : null}
-      <StoryStateAutofillOptions
-        available={stateAutofillAvailable}
-        disabled={!canGenerate || activeEpisodeId === null || pageDesignOperationActive || !safeRedesignAvailable}
-        language={language}
-        value={stateAutofillChoice}
-        onChange={(value) => setStateAutofillDraft({ scope: stateAutofillScope, value })}
-      />
       {safeRedesignBlockReason === undefined ? null : <Notice message={safeRedesignBlockReason} tone="warning" />}
       <PageStoryAutofillAction
         blockReason={safeRedesignBlockReason}
@@ -2457,7 +2481,6 @@ export function PagesScreen(): React.JSX.Element {
           onEndReached={() => { void pagesQuery.fetchNextPage(); }} />
       </Section>
 
-      {stateAutofillAvailable ? <EpisodeStateAutofillResult jobId={displayedPageDesignJobId} episodeId={activeEpisodeId} entities={entities} canEdit={canEdit} /> : null}
       <JobStatusCard
           api={api}
           cancelLoading={cancelPageDesignJobMutation.isPending}
@@ -2465,10 +2488,18 @@ export function PagesScreen(): React.JSX.Element {
           language={language}
           organizationId={organizationId}
           onCompleted={async () => {
+            const completionScope = initialPageSelectionScope;
             const completedSkeleton = localPageDesignJob?.id === displayedPageDesignJobId && localPageDesignJob.kind === 'skeleton';
             setPageDesignJobEnqueued(false);
-            if (completedSkeleton) await clearPageSelectionAfterSkeleton();
             await invalidatePageDesignResources();
+            if (currentInitialSelectionScopeRef.current !== completionScope) return;
+            initialSelectionScopeRef.current = null;
+            pendingInitialPanelPageRef.current = null;
+            setPanelId(null);
+            const cleared = await updateSelection({ pageId: null }, { skipDirtyCheck: true });
+            if (!cleared || currentInitialSelectionScopeRef.current !== completionScope) {
+              return;
+            }
             if (completedSkeleton) continueStoryAutofillAfterSkeleton();
           }}
           onFailed={async () => { pendingStoryAutofillAfterSkeleton.current = null; setPageDesignJobEnqueued(false); await invalidatePageDesignResources(); }}
