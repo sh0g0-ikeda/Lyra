@@ -91,6 +91,38 @@ describe('resolveEpisodeStateAssignments', () => {
     })).toThrowError(EpisodeStatePlanError);
   });
 
+  it('許可された未設定base stateだけはpreserveでconfirmed transitionへ置換する', () => {
+    const resolved = resolveEpisodeStateAssignments({
+      panels: [panel(1, 1, [assignment(ACTOR)])],
+      startingStates: [],
+      transitions: [transition('p1-1', INJURED)],
+      policy: 'preserve_existing',
+      allowUnassignedStateFill: true,
+      existingAssignmentsByPanelId: new Map([['p1-1', [assignment(ACTOR)]]]),
+    });
+
+    expect(resolved[0]?.assignments[0]?.stateId).toBe(INJURED);
+  });
+
+  it('許可されても既存の確定stateとの差分やentity消失は拒否する', () => {
+    expect(() => resolveEpisodeStateAssignments({
+      panels: [panel(1, 1, [assignment(ACTOR)])],
+      startingStates: [],
+      transitions: [transition('p1-1', INJURED)],
+      policy: 'preserve_existing',
+      allowUnassignedStateFill: true,
+      existingAssignmentsByPanelId: new Map([['p1-1', [assignment(ACTOR, 'manual-state')]]]),
+    })).toThrowError(EpisodeStatePlanError);
+    expect(() => resolveEpisodeStateAssignments({
+      panels: [panel(1, 1, [])],
+      startingStates: [],
+      transitions: [],
+      policy: 'preserve_existing',
+      allowUnassignedStateFill: true,
+      existingAssignmentsByPanelId: new Map([['p1-1', [assignment(ACTOR)]]]),
+    })).toThrowError(EpisodeStatePlanError);
+  });
+
   it('既存割当の完全なsnapshotが無い場合に保護モードで処理を拒否する', () => {
     const incomplete = {
       panels: [panel(1, 1, [assignment(ACTOR)])],

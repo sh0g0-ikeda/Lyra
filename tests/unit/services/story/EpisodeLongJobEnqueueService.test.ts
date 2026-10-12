@@ -235,6 +235,127 @@ describe('Episode long job enqueue services', () => {
     });
   });
 
+  it('server defaultは未割当だけを補完する内部intentをjobへ固定する', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const service = new EpisodeStoryAutofillService(
+      repository, new FakeStoryQueue(), undefined, undefined, undefined, true, true,
+    );
+
+    await service.enqueueEpisodeStoryAutofill('user-1', 'episode-1', 'ja');
+
+    expect(repository.createdJobs[0]?.params).toEqual({
+      episode_id: 'episode-1', language: 'ja', organization_id: null,
+      state_autofill_enabled: true,
+      state_autofill_origin: 'server_default',
+      state_autofill_version: 'v1',
+      state_assignment_policy: 'preserve_existing',
+    });
+  });
+
+  it('明示booleanは有効無効のintentを保持し高度指定との混在を拒否する', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const service = new EpisodeStoryAutofillService(
+      repository, new FakeStoryQueue(), undefined, undefined, undefined, true, true,
+    );
+
+    await service.enqueueEpisodeStoryAutofill(
+      'user-1', 'enabled', 'ja', null, { stateAutofillEnabled: true },
+    );
+    await service.enqueueEpisodeStoryAutofill(
+      'user-1', 'disabled', 'en', null, { stateAutofillEnabled: false },
+    );
+
+    expect(repository.createdJobs[0]?.params).toMatchObject({
+      state_autofill_enabled: true,
+      state_autofill_origin: 'request_enabled',
+      state_autofill_version: 'v1',
+      state_assignment_policy: 'preserve_existing',
+    });
+    expect(repository.createdJobs[1]?.params).toEqual({
+      episode_id: 'disabled', language: 'en', organization_id: null,
+      state_autofill_enabled: false,
+      state_autofill_origin: 'request_disabled',
+    });
+    await expect(service.enqueueEpisodeStoryAutofill(
+      'user-1', 'mixed', 'ja', null,
+      { stateAutofillEnabled: true, stateAutofillVersion: 'v1' },
+    )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('再試行はretryableなstory jobの内部intentと言語と法人scopeを保持して再enqueueする', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const service = new EpisodeStoryAutofillService(
+      repository, new FakeStoryQueue(), undefined, undefined, undefined, true, false,
+    );
+    const source = buildJob({
+      userId: 'original-org-member',
+      jobType: 'episode_story_autofill',
+      status: 'failed',
+      organizationId: 'org-1',
+      errorMessage: 'provider timeout',
+      params: {
+        episode_id: 'episode-1', language: 'en', organization_id: 'org-1',
+        state_autofill_enabled: true,
+        state_autofill_origin: 'server_default',
+        state_autofill_version: 'v1',
+        state_assignment_policy: 'preserve_existing',
+      },
+    });
+
+    await service.retryEpisodeStoryAutofill('user-1', source);
+
+    expect(repository.createdJobs[0]?.params).toEqual(source.params);
+    expect(repository.createdJobs[0]?.userId).toBe('user-1');
+    expect(repository.createdJobs[0]?.organizationId).toBe('org-1');
+  });
+
+  it('再試行は旧省略を現在のserver defaultへ解決し明示v1は明示契約のまま保つ', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const service = new EpisodeStoryAutofillService(
+      repository, new FakeStoryQueue(), undefined, undefined, undefined, true, true,
+    );
+    const legacy = buildJob({
+      id: 'legacy', jobType: 'episode_story_autofill', status: 'failed',
+      errorMessage: 'provider timeout', params: { episode_id: 'legacy-episode', language: 'ja' },
+    });
+    const explicit = buildJob({
+      id: 'explicit', jobType: 'episode_story_autofill', status: 'failed',
+      errorMessage: 'provider timeout', params: {
+        episode_id: 'explicit-episode', language: 'en',
+        state_autofill_version: 'v1', state_assignment_policy: 'preserve_existing',
+      },
+    });
+
+    await service.retryEpisodeStoryAutofill('user-1', legacy);
+    await service.retryEpisodeStoryAutofill('user-1', explicit);
+
+    expect(repository.createdJobs[0]?.params).toMatchObject({
+      state_autofill_enabled: true, state_autofill_origin: 'server_default',
+      state_autofill_version: 'v1', state_assignment_policy: 'preserve_existing',
+    });
+    expect(repository.createdJobs[1]?.params).toEqual({
+      episode_id: 'explicit-episode', language: 'en', organization_id: null,
+      state_autofill_version: 'v1', state_assignment_policy: 'preserve_existing',
+    });
+  });
+
+  it('再試行は別種job・未完了job・入力不正failureをenqueueしない', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const service = new EpisodeStoryAutofillService(
+      repository, new FakeStoryQueue(), undefined, undefined, undefined, true, true,
+    );
+    const invalidJobs = [
+      buildJob({ jobType: 'page_generate', status: 'failed', errorMessage: 'provider timeout' }),
+      buildJob({ jobType: 'episode_story_autofill', status: 'processing' }),
+      buildJob({ jobType: 'episode_story_autofill', status: 'failed', errorMessage: 'missing required params' }),
+    ];
+
+    for (const job of invalidJobs) {
+      await expect(service.retryEpisodeStoryAutofill('user-1', job)).rejects.toMatchObject({ code: 'CONFLICT' });
+    }
+    expect(repository.createdJobs).toEqual([]);
+  });
+
   it('story autofill enqueueはstale停止要求をfailedにせずcancelledへ確定する', async () => {
     const repository = new FakeEpisodeStoryAutofillRepository();
     repository.activeJob = buildJob({

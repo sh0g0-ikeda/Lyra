@@ -601,6 +601,29 @@ is locked: work-deletion guards on those writes would otherwise conflict with th
 caller's own work lock. Attempt, actor, organization, episode and cancellation
 checks precede the commit gate; a conflict or failed save rolls the whole gate back.
 
+State-aware episode autofill resolves original-source transitions to confirmed,
+authorized entity-state IDs before the same atomic save. The existing V1,
+continuity V3 and inline-repair gates must all be enabled. The additional
+`EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED` flag defaults to false; deployment
+configuration may enable it without changing older request/response contracts.
+An omitted request option uses that configured default. Optional
+`state_autofill_enabled:true` enables safe supplementation and false explicitly
+disables it. This boolean cannot be combined with the existing V1 version/policy
+options. Only default or boolean-enabled requests may fill an existing NULL/base
+assignment from a validated state plan. Non-NULL manual assignments remain
+protected; explicit V1 `preserve_existing` still protects NULL as before.
+Ambiguous, unavailable or stale state references fail rather than substituting
+a base character. The intent/origin stays internal and is excluded from strict
+older-client job responses.
+
+Authenticated `POST /api/jobs/:id/retry` accepts only a failed, retryable episode
+story-autofill job. Personal ownership or organization `edit_work` scope is checked
+before replay. It preserves language and original state intent/policy, captures
+current authorized story inputs, and reuses existing admission, cancellation,
+zero-credit and atomic-save boundaries. Mobile defaults state supplementation ON
+only when capability is advertised; its explicit OFF and server retry preserve
+user intent. Other job retry flows are unchanged.
+
 Cancellation request metadata is paired, cancellation and commit start are mutually
 exclusive, and a cancelled job carries ordered request, cancellation, and completion
 timestamps. New writes are protected before legacy rows are validated. Production

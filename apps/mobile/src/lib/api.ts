@@ -5,6 +5,7 @@ import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStar
 import { z, type ZodType } from 'zod';
 import type { EditableEntityState, NamedEntityStatePayload } from '@/domain/entityStateEditor';
 import type { InsertPanelAfterPayload, PanelStructureResult } from '@/domain/panelInsertion';
+import type { EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
 import { onlineManager } from '@tanstack/react-query';
 
 import {
@@ -1281,7 +1282,7 @@ export class LyraMobileApiClient {
     episodeId: string,
     language: 'ja' | 'en',
     organizationId?: string | null,
-    stateOptions?: { state_autofill_version: 'v1'; state_assignment_policy: 'preserve_existing' | 'overwrite_existing' }
+    stateOptions?: EpisodeStateAutofillRequestOptions,
   ): Promise<{ job_id: string }> {
     return this.request(
       `/api/episodes/${episodeId}/autofill-pages-from-story${organizationQuery(organizationId)}`,
@@ -1290,6 +1291,17 @@ export class LyraMobileApiClient {
       method: 'POST',
       body: { language, ...stateOptions }
       }
+    );
+  }
+
+  public retryEpisodeStoryAutofillJob(
+    jobId: string,
+    organizationId?: string | null,
+  ): Promise<{ job_id: string }> {
+    return this.request(
+      `/api/jobs/${encodeURIComponent(jobId)}/retry${organizationQuery(organizationId)}`,
+      jobAcceptedSchema,
+      { method: 'POST' },
     );
   }
 

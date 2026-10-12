@@ -55,6 +55,19 @@ describe('resolveEpisodePlanStateAssignments', () => {
       .toBe(INJURED);
   });
 
+  it('server default経路だけはnullを未割当として計画状態を補完する', () => {
+    const request = input('preserve_existing');
+    expect(() => resolveEpisodePlanStateAssignments(request)).toThrowError(EpisodeStatePlanError);
+
+    const result = resolveEpisodePlanStateAssignments({
+      ...request,
+      allowUnassignedStateFill: true,
+    });
+
+    expect(result.get(FIRST)?.[0]?.stateId).toBeNull();
+    expect(result.get(SECOND)?.[0]?.stateId).toBe(INJURED);
+  });
+
   it('明示的な空の人物一覧を上書きする場合に既存配置を削除する', () => {
     const request = input('overwrite_existing');
     request.suggestion.pages[0]!.panels[0]!.entities = [];

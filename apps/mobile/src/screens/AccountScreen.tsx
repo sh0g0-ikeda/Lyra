@@ -794,7 +794,7 @@ async function retryGenerationJob(
   }
   const jobLanguage = readJobLanguageParam(job) ?? language;
   if (job.job_type === 'episode_story_autofill') {
-    await api.autofillEpisodePagesFromStory(episodeId, jobLanguage, organizationId);
+    await api.retryEpisodeStoryAutofillJob(job.id, organizationId);
     return;
   }
   await api.generatePageSkeleton(

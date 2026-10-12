@@ -405,6 +405,10 @@ class FakeEpisodeStoryAutofillService implements EpisodeStoryAutofillServicePort
     this.requestedEpisodeId = requestedEpisodeId;
     return { jobId: '55555555-5555-4555-8555-555555555555' };
   }
+
+  public async retryEpisodeStoryAutofill(): Promise<EnqueueEpisodeStoryAutofillResult> {
+    throw new Error('not used');
+  }
 }
 
 describe('story routes', () => {

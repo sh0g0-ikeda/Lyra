@@ -646,6 +646,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       jobService: resolvedDependencies.jobService,
+      episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       organizationService: resolvedDependencies.organizationService,
     }),
   );
@@ -1015,6 +1016,10 @@ function resolveDependencies(
         jobTypes: EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
       },
       env.EPISODE_STATE_AUTOFILL_V1_ENABLED
+        && env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED
+        && env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
+      env.EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED
+        && env.EPISODE_STATE_AUTOFILL_V1_ENABLED
         && env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED
         && env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
     );

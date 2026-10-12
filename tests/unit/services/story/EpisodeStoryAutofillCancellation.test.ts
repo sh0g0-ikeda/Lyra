@@ -294,6 +294,62 @@ describe('EpisodeStoryAutofillWorkerService cancellation', () => {
     });
   });
 
+  it('server default intentだけは未割当状態の補完をworkerへ許可する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = {
+      ...repository.job.params,
+      state_autofill_enabled: true,
+      state_autofill_origin: 'server_default',
+      state_autofill_version: 'v1',
+      state_assignment_policy: 'preserve_existing',
+    };
+    const pageService = new ControlledPageService();
+    pageService.result = {
+      ...buildApplyResult(),
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'preserve_existing',
+      stateTransitions: [],
+    };
+
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.stateOptions).toEqual({
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'preserve_existing',
+      allowUnassignedStateFill: true,
+    });
+  });
+
+  it('明示無効intentはstate planを起動しない', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = {
+      ...repository.job.params,
+      state_autofill_enabled: false,
+      state_autofill_origin: 'request_disabled',
+    };
+    const pageService = new ControlledPageService();
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.stateOptions).toBeUndefined();
+  });
+
+  it('boolean intentと不整合なpolicyは旧処理へ読み替えず失敗にする', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = {
+      ...repository.job.params,
+      state_autofill_enabled: false,
+      state_autofill_origin: 'request_disabled',
+      state_autofill_version: 'v1',
+      state_assignment_policy: 'preserve_existing',
+    };
+    const pageService = new ControlledPageService();
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'failed' });
+    expect(pageService.autofillCalls).toBe(0);
+  });
+
   it('未知の状態反映versionは旧処理へ読み替えず失敗にする', async () => {
     const repository = new FakeExecutionRepository();
     repository.job.params = { ...repository.job.params, state_autofill_version: 'unknown' };

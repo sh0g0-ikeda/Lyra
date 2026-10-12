@@ -675,7 +675,7 @@ export function PagesScreen(): React.JSX.Element {
   const stateAutofillScope = JSON.stringify([sessionKey, organizationId, selection.workId, selection.episodeId]);
   const stateAutofillAvailable = session?.capabilities?.episode_state_autofill_v1 === true;
   const [stateAutofillDraft, setStateAutofillDraft] = useState<{ scope: string; value: EpisodeStateAutofillChoice } | null>(null);
-  const stateAutofillChoice = stateAutofillDraft?.scope === stateAutofillScope ? stateAutofillDraft.value : { enabled: false, overwrite: false };
+  const stateAutofillChoice = stateAutofillDraft?.scope === stateAutofillScope ? stateAutofillDraft.value : { enabled: true, overwrite: false };
   const currentAutofillScope = useRef({ scope: stateAutofillScope, available: stateAutofillAvailable, canGenerate });
   const pendingStoryAutofillAfterSkeleton = useRef<{ scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined } | null>(null);
   useEffect(() => {

@@ -78,6 +78,10 @@ suite('generation job reporting compatibility', () => {
         cancelJob: async () => { throw new Error('Not used'); },
         hideJobFromHistory: async () => { throw new Error('Not used'); },
       },
+      episodeStoryAutofillService: {
+        enqueueEpisodeStoryAutofill: async () => { throw new Error('Not used'); },
+        retryEpisodeStoryAutofill: async () => { throw new Error('Not used'); },
+      },
     });
     const first = await app.request('/jobs?limit=1');
     expect(first.status).toBe(200);

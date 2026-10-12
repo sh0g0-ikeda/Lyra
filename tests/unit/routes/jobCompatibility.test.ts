@@ -11,7 +11,16 @@ const job: GenerationJob = { id, userId: id, organizationId: null, jobType: 'ent
 const auth: MiddlewareHandler<AppEnv> = async (c, next) => { c.set('user', { id, supabaseId: id, email: 'user@example.test', displayName: null, planCode: 'free' }); await next(); };
 function setup(current = job, organizationService?: { requireMembership: (...args: unknown[]) => Promise<unknown> }) {
   const service = { getJob: vi.fn().mockResolvedValue(current), cancelJob: vi.fn().mockResolvedValue(current), listJobHistory: vi.fn().mockResolvedValue({ jobs: [current], nextCursor: null }), hideJobFromHistory: vi.fn() };
-  const app = createJobRoutes({ jobService: service, organizationService: organizationService as never, authMiddleware: auth, rateLimitMiddleware: async (_c, next) => next() });
+  const app = createJobRoutes({
+    jobService: service,
+    episodeStoryAutofillService: {
+      enqueueEpisodeStoryAutofill: async () => { throw new Error('Not used'); },
+      retryEpisodeStoryAutofill: async () => { throw new Error('Not used'); },
+    },
+    organizationService: organizationService as never,
+    authMiddleware: auth,
+    rateLimitMiddleware: async (_c, next) => next(),
+  });
   app.onError((error, c) => c.json({ error: error.message }, 422));
   return { app, service };
 }

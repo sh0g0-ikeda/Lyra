@@ -3567,6 +3567,19 @@ describe('PageService', () => {
     expect(beginCommitCount).toBe(1);
     expect(transactionAssignments.updates).toHaveLength(1);
     expect(atomicCompleted).toBe(1);
+    const defaultFillResult = await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
+      {
+        statePlanVersion: 'episode_state_plan_v1',
+        stateAssignmentPolicy: 'preserve_existing',
+        allowUnassignedStateFill: true,
+      },
+    );
+    expect(defaultFillResult.stateTransitions).toHaveLength(1);
+    expect(transactionAssignments.updates[1]?.assignments[0]?.stateId).toBe(stateId);
+    expect(beginCommitCount).toBe(2);
+    expect(atomicCompleted).toBe(2);
     proposedStateTransitions = [];
     auditCompiler.audits = [
       { accepted: true, issues: [] },
@@ -3580,8 +3593,8 @@ describe('PageService', () => {
       { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
       { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
     )).rejects.toMatchObject({ code: 'STATE_MAPPING_AMBIGUOUS' });
-    expect(beginCommitCount).toBe(1);
-    expect(transactionAssignments.updates).toHaveLength(1);
+    expect(beginCommitCount).toBe(2);
+    expect(transactionAssignments.updates).toHaveLength(2);
     auditCompiler.audits = [{ accepted: false, issues: [{
       code: 'timeline_discontinuity', severity: 'error', pageIds: ['page-1'],
       message: 'A stated injury has no state boundary', repairInstruction: 'Confirm the state boundary',
@@ -3591,8 +3604,8 @@ describe('PageService', () => {
       { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
       { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
     )).rejects.toMatchObject({ code: 'STATE_MAPPING_AMBIGUOUS' });
-    expect(beginCommitCount).toBe(1);
-    expect(transactionAssignments.updates).toHaveLength(1);
+    expect(beginCommitCount).toBe(2);
+    expect(transactionAssignments.updates).toHaveLength(2);
   });
 
   it('キャンセル制御付きの処理は機能フラグが無効でも原子的保存へ委譲する', async () => {

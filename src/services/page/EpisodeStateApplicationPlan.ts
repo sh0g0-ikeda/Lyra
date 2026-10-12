@@ -18,6 +18,7 @@ export interface ResolveEpisodePlanStateAssignmentsInput {
   startingStates: readonly EpisodeStartingEntityState[];
   transitions: readonly EpisodeStateTransition[];
   policy: StateAssignmentPolicy;
+  allowUnassignedStateFill?: boolean;
 }
 
 /** Resolves states on the final planned character list before any page or assignment is saved. */
@@ -63,6 +64,7 @@ export function resolveEpisodePlanStateAssignments(
         transitions: input.transitions,
         policy: input.policy,
         existingAssignmentsByPanelId,
+        allowUnassignedStateFill: input.allowUnassignedStateFill,
       })
     : resolveEpisodeStateAssignments({
         panels,

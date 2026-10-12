@@ -120,6 +120,7 @@ export interface PageServicePort {
 export interface EpisodeStateAutofillOptions {
   statePlanVersion: 'episode_state_plan_v1';
   stateAssignmentPolicy: StateAssignmentPolicy;
+  allowUnassignedStateFill?: boolean;
 }
 
 export interface EpisodePagePlanExecutionControl {
@@ -508,6 +509,7 @@ export class PageService implements PageServicePort {
         startingStates: context.episode.startingEntityStates ?? [],
         transitions: stateTransitions,
         policy: stateOptions.stateAssignmentPolicy,
+        allowUnassignedStateFill: stateOptions.allowUnassignedStateFill,
       });
       await executionControl?.checkpoint();
     }
@@ -553,6 +555,7 @@ export class PageService implements PageServicePort {
               startingStates: lockedContext.episode.startingEntityStates ?? [],
               transitions: stateTransitions,
               policy: stateOptions.stateAssignmentPolicy,
+              allowUnassignedStateFill: stateOptions.allowUnassignedStateFill,
             });
           }
 

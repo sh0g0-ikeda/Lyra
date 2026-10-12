@@ -57,15 +57,26 @@ const languageBodySchema = z
   })
   .strict();
 const episodeStoryAutofillBodySchema = languageBodySchema.extend({
+  state_autofill_enabled: z.boolean().optional(),
   state_autofill_version: z.literal('v1').optional(),
   state_assignment_policy: z.enum(['preserve_existing', 'overwrite_existing']).optional(),
-}).strict().refine(
-  (body) => body.state_assignment_policy === undefined || body.state_autofill_version === 'v1',
-  {
-    message: 'state_assignment_policy requires state_autofill_version=v1',
-    path: ['state_assignment_policy'],
-  },
-);
+}).strict().superRefine((body, context) => {
+  if (body.state_assignment_policy !== undefined && body.state_autofill_version !== 'v1') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'state_assignment_policy requires state_autofill_version=v1',
+      path: ['state_assignment_policy'],
+    });
+  }
+  if (body.state_autofill_enabled !== undefined
+    && (body.state_autofill_version !== undefined || body.state_assignment_policy !== undefined)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'state_autofill_enabled cannot be combined with version or policy',
+      path: ['state_autofill_enabled'],
+    });
+  }
+});
 const generatePageBodySchema = z.object({
   render_style: z.enum(['color', 'monochrome']).optional().default('color'),
 }).strict();
@@ -181,7 +192,9 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
       episodeId,
       body.data.language,
       organizationId,
-      body.data.state_autofill_version === undefined
+      body.data.state_autofill_enabled !== undefined
+        ? { stateAutofillEnabled: body.data.state_autofill_enabled }
+        : body.data.state_autofill_version === undefined
         ? undefined
         : {
             stateAutofillVersion: 'v1',
