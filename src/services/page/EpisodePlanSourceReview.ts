@@ -153,10 +153,20 @@ export function buildEpisodePlanSourceReviewEvidenceArtifacts(
   });
   if (2 + catalog.units.length * (largestItem.length + 1)
     > EPISODE_PLAN_SOURCE_REVIEW_RESPONSE_MAX_CHARS) return null;
+  const fieldRows: string[] = [];
+  let currentPageId: string | null = null;
+  for (const [id, field] of evidence.entries()) {
+    if (field.pageId !== currentPageId) {
+      currentPageId = field.pageId;
+      fieldRows.push('page|' + field.pageId);
+    }
+    fieldRows.push(id + '|' + field.ref);
+  }
   const fieldDisplay = [
     '[PANEL FIELD EVIDENCE - DISPLAYED DRAFT ONLY]',
     'Each integer ID below refers to that exact displayed panel field. Text is in COMPILED EPISODE DRAFT or COMPLETE DIALOGUE. Page purpose/continuity are never panel evidence.',
-    ...evidence.map((field, id) => id + '|' + field.pageId + '|' + field.ref),
+    'A page header applies to every following field row until the next page header.',
+    ...fieldRows,
     '[END PANEL FIELD EVIDENCE]',
   ].join('\n');
   if (fieldDisplay.length > EPISODE_PLAN_SOURCE_REVIEW_FIELD_DISPLAY_MAX_CHARS) return null;

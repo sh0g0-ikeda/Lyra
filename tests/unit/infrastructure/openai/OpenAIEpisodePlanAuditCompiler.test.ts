@@ -1,4 +1,3 @@
-import { STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY } from '../../../../src/infrastructure/openai/StoryEditorialPrompts.js';
 import { describe, expect, it, vi } from 'vitest';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEpisodePlanAuditCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
@@ -18,8 +17,6 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
         requests.push(payload);
-        expect(JSON.stringify(payload.input)).toContain(STORY_SPEAKER_POLICY);
-        expect(JSON.stringify(payload.input)).toContain(STORY_DIALOGUE_FLOW_POLICY);
         return {
           body: {
             output_text: JSON.stringify({
@@ -152,7 +149,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     );
     expect(input[0]?.content[0]?.text).toContain('Return field-level repairs');
     expect(input[0]?.content[0]?.text).toContain(
-      'Every field named in changed_fields must have a corresponding patch value',
+      'every changed field must carry its intended value',
     );
     expect(request?.max_output_tokens).toBeGreaterThanOrEqual(10_000);
     expect(text.format).toMatchObject({ type: 'json_schema', strict: true });
@@ -211,6 +208,76 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const galleryItemId = readObject(compositionProperties.gallery_item_id);
     const galleryItemVariants = readArray(galleryItemId.anyOf);
     expect(readObject(galleryItemVariants[0]).maxLength).toBe(100);
+  });
+
+  it('16ページ監査は完全な入力と検証契約を保ったまま監査専用promptを有限にする', async () => {
+    const pageIds = Array.from({ length: 16 }, (_value, index) => {
+      const suffix = String(index + 1).padStart(12, '0');
+      return `10000000-0000-4000-8000-${suffix}`;
+    });
+    const compilerBrief = [
+      '[FULL STORY DRAFT - SOURCE DATA]',
+      '原作本文を省略しない。原因から行動、継続、完了までを描く。',
+      '[COMPLETE DIALOGUE]',
+      'Page 1 (10000000-0000-4000-8000-000000000001)',
+      '  Panel 1',
+      '    p1.d1="そのまま続けて"|speech:entity-1@right',
+    ].join('\n');
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: {
+            status: 'completed',
+            output_text: JSON.stringify(buildAcceptedAuditPayload(pageIds)),
+          },
+          requestId: 'req-compact-sixteen-page-audit',
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief,
+      language: 'ja',
+      pageIds,
+      coverageCatalog: buildCoverageCatalog(pageIds),
+    });
+
+    const request = requests[0];
+    const input = request?.input as Array<{ content: Array<{ text: string }> }>;
+    const systemPrompt = input[0]?.content[0]?.text ?? '';
+    expect(input[1]?.content[0]?.text).toBe(compilerBrief);
+    for (const requiredContract of [
+      'Audit the complete episode across page boundaries as a manga continuity and readability editor.',
+      'Check every explicitly authored source dialogue line against COMPLETE DIALOGUE for exact interior wording and the unambiguous speaker or thinker and dialogue type assigned by the source.',
+      'For each source action chain, compare its prerequisite, action, immediate result, and stated order with actual panel fields.',
+      'Keep every ongoing source action active through intercut panels until the source explicitly ends it or changes the state.',
+      'The entities array contains only subjects visibly depicted in the panel.',
+      'The dialogue array is the exact reading and speaking order; preserve source words, speakers, questions, answers, knowledge, reactions, and chronology.',
+      'Validate Japanese manga balloon flow regardless of output language.',
+      'Judge readability from total text length, dialogue count, saved frame area, visual complexity, and dramatic purpose together.',
+      'Find accidental repeated beats, early revelations, broken responses, unsupported facts, and unmotivated changes of time, location, knowledge, costume, injury, or emotion.',
+      'Compare total text length, available frame area, silent-beat purpose, and neighboring pages; do not demand uniform density.',
+      'Use dialogue_density with severity=error for every panel above the entry cap; this is deterministic, not optional.',
+      'Every DETERMINISTIC FINDING is binding and needs a repair.',
+      'For cross-panel or cross-page redistribution, patch every affected source and destination dialogue array together, preserve true speakers and chronology, and preserve essential source information.',
+    ]) {
+      expect(systemPrompt).toContain(requiredContract);
+    }
+    expect(systemPrompt).not.toContain('Choose the visible subject and a distinct dramatic job per panel');
+    expect(systemPrompt).not.toContain('Use changes in shot distance, framing, and reaction/action emphasis');
+    expect(systemPrompt).not.toContain('First allocate necessary information across the whole requested story span');
+    expect(systemPrompt.match(/Return field-level repairs for (?:every|each) repairable error/gu)).toHaveLength(1);
+    expect(systemPrompt.length).toBeLessThan(10_000);
+
+    const schema = readObject(readObject(readObject(request?.text).format).schema);
+    const sourceCoverage = readObject(readObject(schema.properties).source_coverage);
+    expect(sourceCoverage.minItems).toBe(16);
+    expect(sourceCoverage.maxItems).toBe(16);
+    const pageIdSchema = readObject(readObject(readObject(sourceCoverage.items).properties).page_id);
+    expect(pageIdSchema.enum).toEqual(pageIds);
+    expect(request?.max_output_tokens).toBe(20_000);
   });
 
   it('source-owned modeはtrusted inputだけで監査system promptからgenerated ledger判断を外す', async () => {
@@ -377,7 +444,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v26');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v27');
     expect(requestCount).toBe(1);
   });
 

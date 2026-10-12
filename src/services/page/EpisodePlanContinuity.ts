@@ -1308,12 +1308,6 @@ function buildAuditPanelPresentation(
     `p${panel.order}.e=${formattedEntities === 'none' ? 'none' : JSON.stringify(formattedEntities)}${auditNonCitableSuffix(formattedEntities)}`,
   ].join('|');
   const fields = [
-    {
-      label: 'd',
-      refSuffix: null,
-      present: (panel.dialogue?.length ?? 0) > 0,
-      value: formatDialogueForBrief(panel.dialogue ?? [], MAX_AUDIT_PANEL_SUMMARY_CHARS, entityLabels),
-    },
     { label: `p${panel.order}.s`, refSuffix: 's', present: hasAuditText(panel.situationText), value: normalizeAuditExcerpt(panel.situationText) },
     { label: `p${panel.order}.b`, refSuffix: 'b', present: hasAuditText(panel.backgroundNote), value: normalizeAuditExcerpt(panel.backgroundNote) },
     {

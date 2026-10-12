@@ -7,6 +7,7 @@ export interface OpenAICompilerResponse {
   output?: unknown;
   status?: unknown;
   incomplete_details?: unknown;
+  usage?: unknown;
 }
 
 export type StructuredOpenAIResponseFailureReason =
@@ -54,7 +55,8 @@ export interface StructuredOpenAIRequest<T> {
 export async function requestStructuredOpenAIResponse<T>(
   options: StructuredOpenAIRequest<T>,
 ): Promise<T> {
-  const response = await options.client.postJson<OpenAICompilerResponse>('/responses', {
+  const requestStartedAt = performance.now();
+  const payload: Record<string, unknown> = {
     model: options.model,
     max_output_tokens: options.maxOutputTokens,
     text: {
@@ -67,7 +69,13 @@ export async function requestStructuredOpenAIResponse<T>(
     },
     input: options.input,
     ...(options.reasoningEffort === undefined ? {} : { reasoning: { effort: options.reasoningEffort } }),
-  });
+  };
+  const response = await options.client.postJson<OpenAICompilerResponse>('/responses', payload)
+    .catch((error: unknown) => {
+      recordAuditRequestMetrics(options, performance.now() - requestStartedAt, null);
+      throw error;
+    });
+  recordAuditRequestMetrics(options, performance.now() - requestStartedAt, response.body);
 
   const responseStateFailure = inspectStructuredResponseState(
     response.body,
@@ -113,6 +121,50 @@ export async function requestStructuredOpenAIResponse<T>(
   }
 
   return validated.data;
+}
+
+function recordAuditRequestMetrics<T>(
+  options: StructuredOpenAIRequest<T>,
+  elapsedMs: number,
+  body: OpenAICompilerResponse | null,
+): void {
+  if (!['episode_plan_audit', 'episode_plan_audit_coverage', 'episode_plan_audit_quote_correction'].includes(options.schemaName)) return;
+  // Usage is recorded before status validation so exhausted reasoning/output
+  // budgets are observable. No authored text, output, identifiers or errors are
+  // admitted; a telemetry failure cannot replace the result or retry reason.
+  try {
+    const usage = metricObject(body?.usage);
+    const status = body === null ? 'request_failed'
+      : body.status === 'completed' ? 'completed'
+      : body.status === 'incomplete' ? 'incomplete' : 'other';
+    const incompleteReason = status !== 'incomplete' ? null
+      : metricObject(body?.incomplete_details).reason === 'max_output_tokens' ? 'max_output_tokens' : 'other';
+    console.info('episode_plan_audit_request_metrics', {
+      schemaName: options.schemaName,
+      elapsedMs: Math.max(0, Math.round(elapsedMs)),
+      inputCharacters: options.input.reduce((sum, message) => sum + message.content.reduce(
+        (count, content) => count + (content.type === 'input_text' ? content.text.length : 0), 0,
+      ), 0),
+      schemaBytes: Buffer.byteLength(JSON.stringify(options.jsonSchema), 'utf8'),
+      maxOutputTokens: options.maxOutputTokens,
+      status,
+      incompleteReason,
+      inputTokens: metricCounter(usage.input_tokens),
+      cachedInputTokens: metricCounter(metricObject(usage.input_tokens_details).cached_tokens),
+      outputTokens: metricCounter(usage.output_tokens),
+      reasoningTokens: metricCounter(metricObject(usage.output_tokens_details).reasoning_tokens),
+    });
+  } catch {
+    // Observability is best-effort; provider validation remains authoritative.
+  }
+}
+
+function metricObject(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function metricCounter(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function inspectStructuredResponseState(

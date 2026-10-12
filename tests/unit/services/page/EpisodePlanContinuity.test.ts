@@ -16,6 +16,7 @@ import {
   validateEpisodeBeatPlanCoverage,
 } from '../../../../src/services/page/EpisodePlanContinuity.js';
 import type { EpisodeBeatPlan } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
+import { buildEpisodeAuditCapacityFixture } from '../../../fixtures/episodeAuditCapacity.js';
 
 const PAGE_COUNT = 32;
 const PANELS_PER_PAGE = 20;
@@ -31,6 +32,52 @@ describe('EpisodePlanContinuity', () => {
     const brief=buildEpisodePlanAuditBrief({context,plan,suggestion,language:'ja'});
     expect(brief).toContain('[TEXT DISTRIBUTION]');expect(brief).toContain('lines=5');
     expect(brief).toContain('p1.d5="exact-4"|thought:voice-id@right');
+  });
+
+  it('16ページ4コマの監査では完全台詞を正本にしてvisual要約へ重複させず全refを保持する', () => {
+    // Capacity contract: COMPLETE DIALOGUE is the one exact authored dialogue body.
+    const { context, plan, suggestion } = buildEpisodeAuditCapacityFixture();
+    const artifacts = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    });
+    const brief = artifacts.compilerBrief;
+
+    expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+    for (const page of suggestion.pages) {
+      expect(brief).toContain(`Page ${page.pageNumber} (${page.pageId})`);
+      expect(brief).toContain(`鍵${page.pageNumber}を確認して扉${page.pageNumber}を開ける。`);
+      expect(brief).toContain(`進行中の足音${page.pageNumber}は次のページまで続く。`);
+      const catalogPage = artifacts.coverageCatalog.pages.find((candidate) => candidate.pageId === page.pageId);
+      expect(catalogPage?.sources.some((source) => source.ref === 'source'
+        && source.text.includes(`鍵${page.pageNumber}を確認して扉${page.pageNumber}を開ける。`))).toBe(true);
+      for (const panel of page.panels) {
+        const dialogue = panel.dialogue?.[0];
+        expect(dialogue).toBeDefined();
+        expect(brief.split(dialogue!.text).length - 1).toBe(1);
+        expect(brief).toContain(`p${panel.order}.d1=${JSON.stringify(dialogue!.text)}|speech:10000000-0000-4000-8000-000000000001@right`);
+        expect(catalogPage?.outputs).toContainEqual(expect.objectContaining({
+          ref: `p${panel.order}.d1`,
+          text: dialogue!.text,
+        }));
+        expect(brief).toContain(`p${panel.order}.s=`);
+        expect(brief).toContain(`p${panel.order}.b=`);
+        expect(brief).toContain(`p${panel.order}.c=`);
+        expect(brief).toContain(`p${panel.order}.x=`);
+        expect(brief).toContain(`p${panel.order}.n=`);
+        expect(brief).toContain(`p${panel.order}.e=`);
+      }
+    }
+    expect(brief).not.toMatch(/^  Panel \d+\|[^\n]*\|d=/mu);
+    expect(artifacts.coverageCatalog.pages).toHaveLength(16);
+    expect(artifacts.coverageCatalog.pages.every((page) => page.outputs.some((output) => output.ref === 'p1.d1'))).toBe(true);
+    expect(artifacts.coverageCatalog.grounding).toBeDefined();
+    expect(artifacts.coverageCatalog.grounding?.pages.every(
+      (page) => page.authorities.some((authority) => authority.ref === 'page_source'),
+    )).toBe(true);
   });
 
   it('coverage catalogは原作sourceと実panel出力だけを短いrefで列挙する', () => {

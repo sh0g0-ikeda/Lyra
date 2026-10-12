@@ -415,6 +415,23 @@ and provider-supplied dialogue remain subject to the existing source-fidelity au
 The bounded coverage sidecar samples high-risk facts; it does not limit the full
 episode audit to those sampled facts. Legacy single-page fallback is unchanged.
 
+The episode auditor uses compact audit-specific instructions while retaining
+full-source fidelity, cross-page continuity, exact authored dialogue and speaker
+identity, visible state/action consistency, and the existing repair and coverage
+validation. Visual audit summaries do not repeat dialogue bodies: COMPLETE
+DIALOGUE remains the single complete ordered representation, and exact dialogue
+references and their server-side catalogs remain available for coverage and
+grounding. Panel-field evidence display groups its unchanged global integer IDs
+and field refs under one typed page header instead of repeating the page ID on
+every row; catalog order, page attribution and exact text remain unchanged.
+This does not compact or rewrite persisted authored text.
+Internal audit request metrics contain only request kind, elapsed time, bounded
+status categories, input/schema sizes and numeric provider token usage (including
+reasoning and cache usage). Missing or invalid counters remain null. Source text,
+provider output, identifiers and credentials are excluded; metrics failures do
+not change response validation, retries or persistence. Models, reasoning settings,
+token limits and the existing bounded retry policy remain unchanged.
+
 When line-start page headings in the original full story map completely,
 uniquely and in increasing order to existing page numbers, segmented beat,
 detail and audit inputs may also include the matching untouched contiguous
