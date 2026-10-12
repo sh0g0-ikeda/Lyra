@@ -81,7 +81,10 @@ Mobile identity-link returns use a fixed environment-specific scheme:
 cannot choose the return URL, and a browser return never proves linking success.
 Mobile Google-link reauthentication requests the native `COGNITO` provider with
 PKCE, `prompt=login` and `max_age=0`; it does not persist or replace the active
-session. This provider restriction belongs only to the Google-link wrapper;
+session. Staging challenge cleanup follows the explicit schedule-enabled switch,
+without a fixed calendar end while enabled; callback expiry rejection remains
+independent. Google-aware final cleanup is required before enabling teardown.
+This provider restriction belongs only to the Google-link wrapper;
 shared account-deletion reauthentication remains provider-neutral so Google-only
 accounts can obtain fresh proof. Native account verification failures before the start POST are distinct
 from an unknown start result and from a failed status read. Capability read
@@ -870,7 +873,12 @@ for existing v2 attempts when configured. Legacy unknown outcomes are never
 converted to completed evidence. Personal finalization requires verified fencing
 and original source cleanup before journal scrubbing; organization assets remain
 under organization authorization. Actual storage policy/retention acceptance is
-required before enablement. See the local design and audit follow-up below.
+required before enablement. State-preview activation also enables v2 admission;
+preview rollback closes new generation while retaining v2 admission, attestation
+and roles for already-admitted candidates. Copy admission may close only after
+proving no eligible historical candidates or installing a fail-closed guard; an
+unconfirmed completed candidate without a journal must not fall back to v1.
+See the local design and audit follow-up below.
 
 New unsaved person forms show the six editable basic defaults selected by the
 frontend design; existing blanks, imported suggestions, aliases and hidden fields

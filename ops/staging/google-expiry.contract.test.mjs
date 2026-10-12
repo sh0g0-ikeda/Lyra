@@ -38,8 +38,14 @@ test('SchedulerのCFN設定が正規のnetwork構造と解決可能な専用grou
   });
 });
 
-test('Schedulerの終了日時はAWS CFNが受理するミリ秒付きのUTC形式になる', () => {
-  assert.equal(template.Resources.GoogleLinkExpirySchedule.Properties.EndDate, '2026-10-10T00:00:00.000Z');
+test('Schedulerは明示的な有効化条件だけで寿命を管理し、暦日による終了日時を持たない', () => {
+  const schedule = template.Resources.GoogleLinkExpirySchedule;
+
+  assert.equal(Object.hasOwn(schedule.Properties, 'EndDate'), false);
+  assert.equal(schedule.Condition, 'GoogleExpiryConfigured');
+  assert.deepEqual(schedule.Properties.State, {
+    'Fn::If': ['GoogleExpiryScheduleConfigured', 'ENABLED', 'DISABLED'],
+  });
 });
 
 test('専用groupのSchedule ARNはCFNのdefault group読取を使わず正しい所有範囲になる', () => {
