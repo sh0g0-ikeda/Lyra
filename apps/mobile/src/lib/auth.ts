@@ -177,9 +177,13 @@ export const signInWithCognito = async (options: CognitoSignInOptions = {}): Pro
   return tokens;
 };
 
-// Linking proves recent ownership through the existing native Cognito method.
-// These short-lived tokens never replace the active persisted session.
+// Existing callers need provider-neutral fresh proof. These short-lived tokens
+// never replace the active persisted session.
 export const reauthenticateWithCognito = (): Promise<AuthTokens> =>
+  authorizeWithCognito({ reauthenticate: true });
+
+// Google linking alone must prove ownership through the native Cognito provider.
+export const reauthenticateNativeWithCognito = (): Promise<AuthTokens> =>
   authorizeWithCognito({ reauthenticate: true, nativeIdentityProvider: 'COGNITO' });
 
 export const signOutFromCognito = async (): Promise<void> => {

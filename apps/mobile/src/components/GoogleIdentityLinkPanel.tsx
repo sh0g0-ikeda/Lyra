@@ -10,7 +10,7 @@ import { textStyles } from '@/constants/theme';
 import type { GoogleLinkStatus } from '@/domain/googleAuth';
 import { useGoogleAuthCapabilities } from '@/hooks/useGoogleAuthCapabilities';
 import { ApiError, LyraMobileApiClient } from '@/lib/api';
-import { AuthError, reauthenticateWithCognito } from '@/lib/auth';
+import { AuthError, reauthenticateNativeWithCognito } from '@/lib/auth';
 import { confirmAction } from '@/lib/confirm';
 import { config } from '@/lib/config';
 import { googleAuthMessages } from '@/lib/googleAuthMessages';
@@ -75,7 +75,7 @@ export function GoogleIdentityLinkPanel({ onSignInAgain }: GoogleIdentityLinkPan
             cognitoRedirectUri: config.cognitoRedirectUri,
             expectedUserId: userId,
             currentUserId: () => mounted.current ? currentUser.current : null,
-            reauthenticate: reauthenticateWithCognito,
+            reauthenticate: reauthenticateNativeWithCognito,
             createClient: (tokens) => new LyraMobileApiClient(() => tokens.idToken),
             createRequestKey: Crypto.randomUUID,
             openBrowser: WebBrowser.openAuthSessionAsync

@@ -81,7 +81,9 @@ Mobile identity-link returns use a fixed environment-specific scheme:
 cannot choose the return URL, and a browser return never proves linking success.
 Mobile Google-link reauthentication requests the native `COGNITO` provider with
 PKCE, `prompt=login` and `max_age=0`; it does not persist or replace the active
-session. Native account verification failures before the start POST are distinct
+session. This provider restriction belongs only to the Google-link wrapper;
+shared account-deletion reauthentication remains provider-neutral so Google-only
+accounts can obtain fresh proof. Native account verification failures before the start POST are distinct
 from an unknown start result and from a failed status read. Capability read
 failure cannot discard a previously attempted start's request key or permit a new
 start while that result is unknown. Recovery status failures, including cold

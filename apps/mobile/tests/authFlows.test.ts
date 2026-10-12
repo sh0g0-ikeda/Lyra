@@ -15,9 +15,9 @@ beforeEach(() => {
   mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ id_token: 'cognito-id-token', access_token: 'access', refresh_token: 'refresh', expires_in: 3600 }) });
 });
 describe('Cognito sign-in options', () => {
-  // Cognito Managed Login accepts lang. Linking preparation must additionally
-  // pin fresh proof to the native COGNITO provider without weakening PKCE,
-  // redirect URI validation, or the separate Google sign-in contract.
+  // Generic callers (including account deletion) keep provider-neutral fresh
+  // proof. Google linking alone uses the explicit native wrapper below; both
+  // paths preserve PKCE and keep short-lived proof out of token storage.
   it('選択言語をManaged Loginへ渡しGoogleもCognito PKCE code flowを使う', async () => {
     const { signInWithCognito } = await import('@/lib/auth');
     await signInWithCognito();
@@ -30,9 +30,16 @@ describe('Cognito sign-in options', () => {
     expect(mocks.save).toHaveBeenCalledTimes(3);
     expect(mocks.fetch.mock.calls[1]?.[0]).toBe('https://auth.example.test/oauth2/token');
   });
-  it('連携用のfresh再認証はnative COGNITO・prompt login・max_age0を要求し既存保存tokenを置換しない', async () => {
+  it('既存callerのfresh再認証はproviderを強制せずprompt login・max_age0で既存保存tokenを置換しない', async () => {
     const { reauthenticateWithCognito } = await import('@/lib/auth');
     const tokens = await reauthenticateWithCognito();
+    expect(tokens.idToken).toBe('cognito-id-token');
+    expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'login', extraParams: { max_age: '0' }, usePKCE: true }));
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+  it('Google連携専用のfresh再認証だけがnative COGNITO providerを明示する', async () => {
+    const { reauthenticateNativeWithCognito } = await import('@/lib/auth');
+    const tokens = await reauthenticateNativeWithCognito();
     expect(tokens.idToken).toBe('cognito-id-token');
     expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'login', extraParams: { max_age: '0', identity_provider: 'COGNITO' }, usePKCE: true }));
     expect(mocks.save).not.toHaveBeenCalled();

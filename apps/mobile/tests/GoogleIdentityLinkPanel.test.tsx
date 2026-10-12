@@ -21,7 +21,7 @@ vi.mock('@/lib/auth', () => ({
   AuthError: class extends Error {
     constructor(message: string, public fatal = false, public code: 'ACCOUNT_LINK_REQUIRED' | null = null) { super(message); this.name = 'AuthError'; }
   },
-  reauthenticateWithCognito: mocks.reauthenticate
+  reauthenticateNativeWithCognito: mocks.reauthenticate
 }));
 vi.mock('@/lib/config', () => ({ config: mocks.config }));
 vi.mock('@/lib/api', () => ({ ApiError: class extends Error { constructor(message: string, public status: number, public code: string) { super(message); } }, LyraMobileApiClient: class { constructor(token: () => string) { mocks.currentToken = token; } getCurrentSession = mocks.fresh.getCurrentSession; startGoogleIdentityLink = mocks.fresh.startGoogleIdentityLink; getGoogleIdentityLinkStatus = mocks.fresh.getGoogleIdentityLinkStatus; } }));
