@@ -53,8 +53,8 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
     return this.client.transaction(async (transactionClient) => {
       const storyAutofillAttempt = input.storyAutofillAttempt;
       let storyAutofillCommitStarted = false;
-      if (this.schemaProfile === 'legacy_2debe_v1' && storyAutofillAttempt !== undefined) {
-        await this.beginLegacyStoryAutofillCommit(transactionClient, input);
+      if (storyAutofillAttempt !== undefined) {
+        await this.beginStoryAutofillCommit(transactionClient, input);
         storyAutofillCommitStarted = true;
       } else if (this.schemaProfile === 'legacy_2debe_v1' && input.organizationId === null) {
         await assertLegacyPersonalWriteAllowed(transactionClient, {
@@ -65,7 +65,7 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
       await this.lockEpisodeGraph(
         transactionClient,
         input,
-        this.schemaProfile === 'legacy_2debe_v1' && storyAutofillAttempt !== undefined,
+        storyAutofillAttempt !== undefined,
       );
 
       const transactionRunner = buildTransactionScopedRunner(transactionClient);
@@ -102,18 +102,23 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
         storyAutofillCommitStarted,
         ...(storyAutofillCommitStarted && storyAutofillAttempt !== undefined
           ? {
-              updateStoryAutofillProgress: async (progress) =>
-                storyAutofillExecutionRepository.updateEpisodeStoryAutofillProgressForAttempt(
-                  storyAutofillAttempt,
-                  progress,
-                ),
+              updateStoryAutofillProgress: async (progress) => this.schemaProfile === 'legacy_2debe_v1'
+                ? storyAutofillExecutionRepository.updateEpisodeStoryAutofillProgressForAttempt(
+                    storyAutofillAttempt,
+                    progress,
+                  )
+                : storyAutofillExecutionRepository.updateEpisodeStoryAutofillProgress({
+                    jobId: storyAutofillAttempt.id,
+                    userId: storyAutofillAttempt.userId,
+                    ...progress,
+                  }),
             }
           : {}),
       });
     });
   }
 
-  private async beginLegacyStoryAutofillCommit(
+  private async beginStoryAutofillCommit(
     client: DatabaseClient,
     input: EpisodePlanPersistenceInput,
   ): Promise<void> {
@@ -131,10 +136,12 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
     if (readEpisodeId(candidate.params) !== input.episodeId) {
       throw new ConflictError('Story autofill episode no longer matches');
     }
-    await assertLegacyPersonalWriteAllowed(client, {
-      userId: candidate.user_id,
-      organizationId: candidate.organization_id,
-    });
+    if (this.schemaProfile === 'legacy_2debe_v1' && candidate.organization_id === null) {
+      await assertLegacyPersonalWriteAllowed(client, {
+        userId: candidate.user_id,
+        organizationId: candidate.organization_id,
+      });
+    }
     if (candidate.organization_id !== null) {
       // Account anonymization locks the actor before deleting memberships, and
       // organization editors lock the organization before changing membership.

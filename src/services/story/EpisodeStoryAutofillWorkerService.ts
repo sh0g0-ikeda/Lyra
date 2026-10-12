@@ -200,7 +200,7 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
     const { id: jobId, userId } = job;
     return {
       jobId,
-      ...(this.legacyAttempt === undefined ? {} : { storyAutofillAttempt: job }),
+      storyAutofillAttempt: job,
       checkpoint: async () => {
         if (this.legacyAttempt !== undefined) {
           const settlement = await this.legacyAttempt.settleEpisodeStoryAutofillAttempt(job);

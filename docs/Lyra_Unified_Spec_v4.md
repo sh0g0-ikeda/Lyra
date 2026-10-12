@@ -576,6 +576,13 @@ and the complete generated plan is written in one PostgreSQL transaction. The
 transaction locks the authorized episode planning graph, rechecks the input
 fingerprint, and applies page, panel, and entity assignment changes together so a
 concurrent edit is not silently overwritten and a partial plan cannot be exposed.
+Queued autofill carries its claimed job attempt into that transaction for every
+repository schema profile. The commit marker, applying progress, page/panel writes,
+job completion and notification outbox use the same transaction-scoped connection.
+External job-control or progress callbacks must not run while the planning graph
+is locked: work-deletion guards on those writes would otherwise conflict with the
+caller's own work lock. Attempt, actor, organization, episode and cancellation
+checks precede the commit gate; a conflict or failed save rolls the whole gate back.
 
 Cancellation request metadata is paired, cancellation and commit start are mutually
 exclusive, and a cancelled job carries ordered request, cancellation, and completion

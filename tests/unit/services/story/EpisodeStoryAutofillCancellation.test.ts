@@ -196,12 +196,13 @@ describe('EpisodeStoryAutofillWorkerService cancellation', () => {
     expect(repository.failureInput?.errorMessage).not.toContain('database unavailable');
   });
 
-  it('通常の話全体反映もPageService内でjobを完了しworkerから重複完了しない', async () => {
+  it('canonical workerもclaim済みattemptを原子的なPageService保存へ渡しworkerから重複完了しない', async () => {
     const repository = new FakeExecutionRepository();
     const pageService = new ControlledPageService();
     const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
 
     expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.executionControl?.storyAutofillAttempt).toBe(repository.job);
     expect(repository.completeCalls).toBe(0);
   });
 
