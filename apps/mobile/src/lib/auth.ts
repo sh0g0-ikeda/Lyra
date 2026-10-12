@@ -125,10 +125,19 @@ interface CognitoSignInOptions {
   language?: UiLanguage;
 }
 
-const authorizeWithCognito = async (options: CognitoSignInOptions & { reauthenticate?: boolean } = {}): Promise<AuthTokens> => {
+interface CognitoAuthorizationOptions extends CognitoSignInOptions {
+  reauthenticate?: boolean;
+  nativeIdentityProvider?: 'COGNITO';
+}
+
+const authorizeWithCognito = async (options: CognitoAuthorizationOptions = {}): Promise<AuthTokens> => {
   const extraParams = {
     ...(options.reauthenticate ? { max_age: '0' } : {}),
-    ...(options.identityProvider === 'Google' ? { identity_provider: 'Google' } : {}),
+    ...(options.nativeIdentityProvider === 'COGNITO'
+      ? { identity_provider: 'COGNITO' }
+      : options.identityProvider === 'Google'
+        ? { identity_provider: 'Google' }
+        : {}),
     ...(options.language === undefined ? {} : { lang: options.language })
   };
   const request = new AuthSession.AuthRequest({
@@ -168,8 +177,10 @@ export const signInWithCognito = async (options: CognitoSignInOptions = {}): Pro
   return tokens;
 };
 
-// Linking proves recent native ownership without replacing the active session.
-export const reauthenticateWithCognito = (): Promise<AuthTokens> => authorizeWithCognito({ reauthenticate: true });
+// Linking proves recent ownership through the existing native Cognito method.
+// These short-lived tokens never replace the active persisted session.
+export const reauthenticateWithCognito = (): Promise<AuthTokens> =>
+  authorizeWithCognito({ reauthenticate: true, nativeIdentityProvider: 'COGNITO' });
 
 export const signOutFromCognito = async (): Promise<void> => {
   await clearAuthTokens();

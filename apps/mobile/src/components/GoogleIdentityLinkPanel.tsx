@@ -10,7 +10,7 @@ import { textStyles } from '@/constants/theme';
 import type { GoogleLinkStatus } from '@/domain/googleAuth';
 import { useGoogleAuthCapabilities } from '@/hooks/useGoogleAuthCapabilities';
 import { ApiError, LyraMobileApiClient } from '@/lib/api';
-import { reauthenticateWithCognito } from '@/lib/auth';
+import { AuthError, reauthenticateWithCognito } from '@/lib/auth';
 import { confirmAction } from '@/lib/confirm';
 import { config } from '@/lib/config';
 import { googleAuthMessages } from '@/lib/googleAuthMessages';
@@ -33,7 +33,7 @@ export function GoogleIdentityLinkPanel({ onSignInAgain }: GoogleIdentityLinkPan
   const mounted = useRef(true);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<GoogleLinkStatus | null>(null);
-  const [error, setError] = useState<'mismatch' | 'unknown' | 'reauth' | 'disabled' | 'conflict' | 'recovery' | null>(null);
+  const [error, setError] = useState<'mismatch' | 'unknown' | 'statusUnknown' | 'capability' | 'preparation' | 'accountLinkRequired' | 'reauth' | 'disabled' | 'conflict' | 'recovery' | null>(null);
   const [canContinue, setCanContinue] = useState(false);
   const [retryStart, setRetryStart] = useState(false);
   const [recoveryId, setRecoveryId] = useState<string | null>(null);
@@ -57,10 +57,15 @@ export function GoogleIdentityLinkPanel({ onSignInAgain }: GoogleIdentityLinkPan
   const run = async (operation: 'start' | 'check', newFlow = false): Promise<void> => {
     if (busyRef.current || userId === null) return;
     busyRef.current = true; setBusy(true); setError(null);
+    let capabilityCheckFailed = false;
+    let directStatusCheck = false;
     try {
       if (operation === 'start') {
         // Capabilities can be disabled while the account screen is open.
-        const freshCapabilities = await api.getGoogleAuthCapabilities();
+        const freshCapabilities = await api.getGoogleAuthCapabilities().catch((cause: unknown) => {
+          capabilityCheckFailed = true;
+          throw cause;
+        });
         if (!mounted.current || currentUser.current !== userId) return;
         if (!googleAllowedOnPlatform(freshCapabilities, Platform.OS, 'google_linking')) throw new Error('GOOGLE_LINK_DISABLED');
         if (newFlow || flow.current === null) {
@@ -77,11 +82,17 @@ export function GoogleIdentityLinkPanel({ onSignInAgain }: GoogleIdentityLinkPan
           });
         }
       }
-      const result = operation === 'start'
-        ? await flow.current!.start()
-        : flow.current?.challengeId !== null && flow.current !== null
-          ? await flow.current.check()
-          : recoveryId === null ? null : await api.getGoogleIdentityLinkStatus(recoveryId);
+      let result: GoogleLinkStatus | null;
+      if (operation === 'start') {
+        result = await flow.current!.start();
+      } else if (flow.current !== null && flow.current.challengeId !== null) {
+        result = await flow.current.check();
+      } else if (recoveryId === null) {
+        result = null;
+      } else {
+        directStatusCheck = true;
+        result = await api.getGoogleIdentityLinkStatus(recoveryId);
+      }
       if (mounted.current && currentUser.current === userId && result !== null) {
         if (operation === 'check' && flow.current === null && result.challenge_id !== recoveryId) throw new Error('INVALID_STATUS');
         setStatus(result); setRecoveryId(result.challenge_id); setRetryStart(false);
@@ -89,16 +100,33 @@ export function GoogleIdentityLinkPanel({ onSignInAgain }: GoogleIdentityLinkPan
       }
     } catch (cause) {
       if (mounted.current && currentUser.current === userId) {
-        const code = cause instanceof ApiError ? cause.code : cause instanceof Error ? cause.message : '';
-        const reason = code === 'RECENT_AUTH_REQUIRED' ? 'reauth'
+        const code = cause instanceof ApiError
+          ? cause.code
+          : cause instanceof AuthError
+            ? cause.code ?? cause.message
+            : cause instanceof Error ? cause.message : '';
+        const failureStage = capabilityCheckFailed
+          ? null
+          : directStatusCheck ? 'status' : flow.current?.failureStage ?? null;
+        const knownPreparationCollision = failureStage === 'preparation'
+          && cause instanceof AuthError
+          && cause.code === 'ACCOUNT_LINK_REQUIRED';
+        const reason = capabilityCheckFailed ? 'capability'
+          : code === 'RECENT_AUTH_REQUIRED' ? 'reauth'
           : code === 'GOOGLE_LINK_DISABLED' ? 'disabled'
           : code === 'IDENTITY_LINK_CONFLICT' ? 'conflict'
           : code === 'IDENTITY_LINK_RECOVERY_REQUIRED' ? 'recovery'
+          : knownPreparationCollision ? 'accountLinkRequired'
           : code === 'ACCOUNT_MISMATCH' ? 'mismatch'
-          : flow.current?.requiresReauthentication ? 'reauth' : 'unknown';
+          : failureStage === 'preparation' ? 'preparation'
+          : flow.current?.requiresReauthentication ? 'reauth'
+          : failureStage === 'status' ? 'statusUnknown'
+          : 'unknown';
         setError(reason);
-        setRetryStart(reason === 'unknown' && (flow.current?.canRetryStart ?? false));
-        if (flow.current?.challengeId != null) setRecoveryId(flow.current.challengeId);
+        setRetryStart(capabilityCheckFailed
+          ? flow.current?.canRetryStart ?? false
+          : reason === 'unknown' && failureStage === 'start' && (flow.current?.canRetryStart ?? false));
+        if (failureStage !== null && flow.current?.challengeId != null) setRecoveryId(flow.current.challengeId);
       }
     } finally {
       busyRef.current = false;
