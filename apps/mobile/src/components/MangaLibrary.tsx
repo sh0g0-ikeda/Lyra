@@ -52,7 +52,7 @@ export function MangaLibrary({
   };
 
   return (
-    <Screen chrome="language" title={t(language, 'navigation.library')} subtitle={t(language, 'navigation.libraryHelp')} testID="manga-library">
+    <Screen chrome="language" showHeader={false} title={t(language, 'navigation.library')} testID="manga-library">
       {context.error === null ? null : (
         <ActionableErrorNotice context={{ operation: 'loadHierarchy' }} retryMode="refresh" error={context.error} language={language} actions={{ retry: context.retry, login: () => void logout() }} />
       )}
@@ -62,7 +62,10 @@ export function MangaLibrary({
         testID="manga-create"
       />
       <MangaTutorial firstRun />
-      <WorkDeletionStatusList api={api} language={language} organizationId={selection.organizationId} sessionKey={sessionKey} />
+      <View>
+        <Text accessibilityRole="header" style={styles.title}>{t(language, 'navigation.library')}</Text>
+        <Text style={styles.help}>{t(language, 'navigation.libraryHelp')}</Text>
+      </View>
       {context.works.length === 0 && !context.isLoadingWorks && context.error === null ? <Text style={styles.help}>{t(language, 'emptyWorks')}</Text> : null}
       {context.works.map((item) => (
         <Pressable
@@ -78,6 +81,7 @@ export function MangaLibrary({
           <Text style={[styles.help, item.id === context.selectedWorkId ? styles.selectedText : null]}>{t(language, 'navigation.chooseWork')}</Text>
         </Pressable>
       ))}
+      <WorkDeletionStatusList api={api} language={language} organizationId={selection.organizationId} sessionKey={sessionKey} />
       {context.hasMoreWorks ? (
         <PrimaryButton label={t(language, 'navigation.moreWorks')} onPress={context.loadMoreWorks} loading={context.isFetchingMoreWorks} variant="secondary" />
       ) : null}

@@ -11,20 +11,29 @@ import { t } from '@/lib/i18n';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let canCreate = true;
+let language: 'en' | 'ja' = 'ja';
 let selection = { ...defaultSelection, organizationId: 'org', workId: 'old-work' };
 const updateSelection = vi.fn<() => Promise<boolean>>();
 const onResume = vi.fn();
 let root: ReactTestRenderer | undefined;
 const { resolveDirtyEditors } = vi.hoisted(() => ({ resolveDirtyEditors: vi.fn() }));
-vi.mock('react-native', () => ({ Pressable: 'button', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
+vi.mock('react-native', () => ({
+  KeyboardAvoidingView: 'keyboard', Platform: { OS: 'android' }, Pressable: 'button', RefreshControl: 'refresh',
+  ScrollView: 'scroll', StatusBar: 'status', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles }
+}));
+vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: 'safe-area' }));
 vi.mock('@/components/MangaTutorial', () => ({ MangaTutorial: (props: Record<string, unknown>) => React.createElement('tutorial', props) }));
-vi.mock('@/components/Screen', () => ({ Screen: ({ children, ...props }: { children: React.ReactNode }) => React.createElement('screen', props, children) }));
+vi.mock('@/components/Notice', () => ({ Notice: 'notice' }));
 vi.mock('@/components/PrimaryButton', () => ({ PrimaryButton: (props: Record<string, unknown>) => React.createElement('button', props) }));
 vi.mock('@/components/ActionableErrorNotice', () => ({ ActionableErrorNotice: (props: Record<string, unknown>) => React.createElement('error', props) }));
 vi.mock('@/components/StoryHierarchySheet', () => ({ StoryHierarchySheet: (props: Record<string, unknown>) => React.createElement('hierarchy', props) }));
 vi.mock('@/components/WorkDeletionStatusList', () => ({ WorkDeletionStatusList: (props: Record<string, unknown>) => React.createElement('work-deletions', props) }));
-vi.mock('@/state/appState', () => ({ useAppState: () => ({ api: {}, hasCapability: () => canCreate, language: 'ja', logout: vi.fn(), selection, session: { user: { id: 'user' } }, sessionKey: 'session', updateSelection }) }));
+vi.mock('@/state/appState', () => ({
+  useAppState: () => ({ api: {}, hasCapability: () => canCreate, language, logout: vi.fn(), selection, session: { user: { id: 'user' } }, sessionKey: 'session', updateSelection }),
+  useOptionalAppState: () => ({ session: { user: { id: 'user' } } })
+}));
 vi.mock('@/state/dirtyState', () => ({ useDirtyState: () => ({ resolveDirtyEditors }) }));
+vi.mock('@/state/networkStatus', () => ({ useNetworkStatus: () => ({ language, online: true, setLanguage: vi.fn() }) }));
 const work = { id: 'work', title: '漫画作品' } as WorkRecord;
 function context(works: WorkRecord[] = []): WorkspaceContextData {
   return { works, chapters: [], episodes: [], selectedWorkId: null, selectedChapterId: null, selectedEpisodeId: null, error: null, isLoadingWorks: false, isLoadingChapters: false, isLoadingEpisodes: false, hasMoreWorks: false, isFetchingMoreWorks: false, loadMoreWorks: vi.fn(), retry: vi.fn() };
@@ -39,7 +48,7 @@ async function press(id: string): Promise<void> {
 // Spec §10 Mobile: one-tap creation reuses authorized hierarchy CRUD; browsing
 // never creates. Pending hierarchy is not empty and selection stays legible.
 describe('漫画一覧と既存階層の保持', () => {
-  beforeEach(() => { canCreate = true; selection = { ...defaultSelection, organizationId: 'org', workId: 'old-work' }; updateSelection.mockReset().mockResolvedValue(true); resolveDirtyEditors.mockReset().mockResolvedValue(true); onResume.mockReset(); });
+  beforeEach(() => { canCreate = true; language = 'ja'; selection = { ...defaultSelection, organizationId: 'org', workId: 'old-work' }; updateSelection.mockReset().mockResolvedValue(true); resolveDirtyEditors.mockReset().mockResolvedValue(true); onResume.mockReset(); });
   afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; });
 
   it.each([[], [work]])('空一覧と既存一覧の両方で作成CTAが既存階層UIを開く', async (item) => {
@@ -80,8 +89,35 @@ describe('漫画一覧と既存階層の保持', () => {
   });
   it('ホームはログイン中でも言語切替を表示し選択した話の編集入口だけを残す', async () => {
     await render(context([work]));
-    expect(root?.root.findByType('screen').props.chrome).toBe('language');
+    expect(root?.root.findByProps({ accessibilityLabel: 'English' })).toBeDefined();
     expect(root?.root.findAll((node) => node.props.testID === 'manga-start-story')).toHaveLength(0);
+  });
+
+  // Screen's normal header precedes children, so this uses its real header contract.
+  // The home CTA and tutorial must stay above the explicit library context in both locales.
+  it.each(['ja', 'en'] as const)('ホームの通常表示は%sで作成・チュートリアル・一覧・作品の順に表示する', async (locale) => {
+    language = locale;
+    const works = [
+      { ...work, id: 'work-a', title: locale === 'ja' ? '作品A' : 'Work A' },
+      { ...work, id: 'work-b', title: locale === 'ja' ? '作品B' : 'Work B' },
+      { ...work, id: 'work-c', title: locale === 'ja' ? '作品C' : 'Work C' }
+    ];
+    await render(context(works));
+
+    const expected = [
+      t(locale, 'navigation.createManga'),
+      'tutorial',
+      t(locale, 'navigation.library'),
+      t(locale, 'navigation.libraryHelp'),
+      ...works.map((item) => item.title)
+    ];
+    const visibleOrder = root!.root.findByProps({ testID: 'manga-library' }).findAll((node) => (
+      (node.type === 'button' && node.props.testID === 'manga-create')
+      || node.type === 'tutorial'
+      || (node.type === 'text' && typeof node.props.children === 'string' && expected.includes(node.props.children))
+    )).map((node) => node.type === 'tutorial' ? 'tutorial' : node.type === 'button' ? node.props.label : node.props.children);
+
+    expect(visibleOrder).toEqual(expected);
   });
 
   it('新規作成を閉じてから作品を開く場合に作成ポップアップを再表示しない', async () => {

@@ -6,7 +6,7 @@ export const navigationTranslations = {
     'navigation.myPage': 'マイページ',
     'navigation.workflow': '漫画の制作工程',
     'navigation.library': '漫画一覧',
-    'navigation.libraryHelp': '作品・章・話を選び、続きから制作できます。',
+    'navigation.libraryHelp': '作品・章・話を選び、続きから製作できます。',
     'navigation.chooseWork': '作品・章・話を選ぶ',
     'navigation.createManga': '漫画を新規作成',
     'navigation.resume': '選択中の話を続ける',
