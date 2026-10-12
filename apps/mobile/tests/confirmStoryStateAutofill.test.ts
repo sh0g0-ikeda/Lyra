@@ -20,7 +20,7 @@ describe('状態自動入力の明示上書き確認', () => {
     confirmStoryStateAutofill({ language: 'en', available: true, choice, isCurrent: () => true, onConfirm: execute });
     choice.overwrite = true;
     confirm.mock.calls[0][0].onConfirm();
-    expect(execute).toHaveBeenCalledWith({ state_autofill_version: 'v1', state_assignment_policy: 'preserve_existing' });
+    expect(execute).toHaveBeenCalledWith({ state_autofill_enabled: true });
   });
   it('scopeや権限が変わった場合は承認されても古い対象へ送信しない', () => {
     const execute = vi.fn();
