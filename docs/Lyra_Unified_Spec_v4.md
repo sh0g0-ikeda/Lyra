@@ -510,6 +510,15 @@ unknown refs, structural/link errors and omitted diagnostics retain the existing
 retry branch. This does not add a request or relax model, token, cancellation,
 transport, semantic-review or persistence contracts. A finite content schema does
 not itself prove provider completion within the token budget.
+
+Coverage rejection records finite internal reason codes, violation counts,
+attempt, and retry mode; prose, citations, provider output and resource IDs never
+enter that diagnostic event. Diagnostic logging failures preserve the original
+compiler error and attempt bound. Structural coverage errors retain a full audit
+retry, while eligible citation failures retain their existing body-freezing rules.
+The known compiler invalid-source-coverage failure is presented as a retryable
+temporary generation failure, not as a request-input error. Public error codes
+and response schemas remain unchanged.
 Before freezing, repairs must cover their error pages and have valid, unique field
 targets under the existing repair contract. Each audit
 pass still has at most two logical structured requests, the existing 20k output

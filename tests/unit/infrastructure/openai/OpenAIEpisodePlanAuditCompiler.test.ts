@@ -738,6 +738,84 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(requestCount).toBe(2);
   });
 
+  it('coverage失敗は本文やrefを含まない有限diagnosticだけを記録する', async () => {
+    const invalidPayload = buildAcceptedAuditPayload([PAGE_ID]);
+    const coverage = invalidPayload.source_coverage as Array<Record<string, unknown>>;
+    const checks = coverage[0]?.checks as Array<Record<string, unknown>>;
+    checks[0]!.source_ref = 'PRIVATE-UNKNOWN-REF';
+    checks[0]!.source_quote = 'PRIVATE-STORY-TEXT';
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: { status: 'completed', output_text: JSON.stringify(invalidPayload) },
+          requestId: `PRIVATE-REQUEST-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+        compilerBrief: 'PRIVATE-COMPILER-BRIEF',
+        language: 'ja',
+        pageIds: [PAGE_ID],
+        coverageCatalog: buildCoverageCatalog([PAGE_ID]),
+      })).rejects.toThrow('invalid source coverage');
+      const diagnostics = warnSpy.mock.calls.filter(([event]) => event === 'episode_plan_audit_coverage_invalid');
+      expect(diagnostics).toHaveLength(2);
+      expect(diagnostics[0]?.[1]).toEqual({
+        attempt: 1,
+        retryMode: 'full',
+        reasonCode: 'citation_unknown_ref',
+        violationCount: 1,
+      });
+      expect(Object.keys(diagnostics[0]?.[1] as Record<string, unknown>).sort()).toEqual([
+        'attempt',
+        'reasonCode',
+        'retryMode',
+        'violationCount',
+      ]);
+      expect(JSON.stringify(diagnostics)).not.toMatch(/PRIVATE-|11111111|source_quote|requestId|error/i);
+      expect(requestCount).toBe(2);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('diagnostic logger失敗でも元のcoverage例外と二回上限を保持する', async () => {
+    const invalidPayload = buildAcceptedAuditPayload([PAGE_ID]);
+    const coverage = invalidPayload.source_coverage as Array<Record<string, unknown>>;
+    const checks = coverage[0]?.checks as Array<Record<string, unknown>>;
+    checks[0]!.source_quote = 'PRIVATE-STORY-TEXT';
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: { status: 'completed', output_text: JSON.stringify(invalidPayload) },
+          requestId: `req-logger-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {
+      throw new Error('logger unavailable');
+    });
+
+    try {
+      await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+        compilerBrief: 'PRIVATE-COMPILER-BRIEF',
+        language: 'ja',
+        pageIds: [PAGE_ID],
+        coverageCatalog: buildCoverageCatalog([PAGE_ID]),
+      })).rejects.toThrow('OpenAI episode plan audit compiler returned invalid source coverage');
+      expect(requestCount).toBe(2);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('source-owned監査はgenerated noteを原文根拠にしたbodyを凍結せず全監査を再試行する', async () => {
     // v22 design: coverageだけの再試行で保持できるのは、全errorがtypedな
     // visible authority catalogへexactに根拠付け済みのbodyだけである。
@@ -1086,6 +1164,54 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const coverageSchema = readObject(readObject(retrySchema.properties).source_coverage);
     const checksSchema = readObject(readObject(readObject(coverageSchema.items).properties).checks);
     expect(readObject(readObject(readObject(checksSchema.items).properties).source_ref).enum).toEqual(['source']);
+  });
+
+  it('同一page coverage重複はgrounded bodyを凍結せずfull監査を再試行する', async () => {
+    // Structural coverage failures cannot preserve the first provider body. Only
+    // citation-only failures are eligible for the bounded frozen-body retries.
+    const first = buildGroundedSourceOwnedAuditPayload({ accepted: false });
+    const firstCoverage = first.source_coverage as Array<Record<string, unknown>>;
+    firstCoverage.push(structuredClone(firstCoverage[0]!));
+    const second = buildGroundedSourceOwnedAuditPayload({ accepted: true });
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: {
+            status: 'completed',
+            output_text: JSON.stringify(requests.length === 1 ? first : second),
+          },
+          requestId: `req-duplicate-coverage-${requests.length}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+        compilerBrief: '[PAGE-LOCAL ORIGINAL SOURCE]\n原作では扉を開けて中へ入る。',
+        language: 'ja',
+        pageIds: [PAGE_ID],
+        coverageCatalog: buildGroundedCoverageCatalog(),
+        sourceOwnedPageContext: true,
+      });
+
+      expect(result.audit.accepted).toBe(true);
+      expect(requests).toHaveLength(2);
+      const retrySchema = readObject(readObject(readObject(requests[1]?.text).format).schema);
+      expect(readArray(retrySchema.required)).toContain('issues');
+      expect(readArray(retrySchema.required)).toContain('issue_grounding');
+      expect(readArray(retrySchema.required)).not.toEqual(['source_coverage']);
+      expect(warnSpy).toHaveBeenCalledWith('episode_plan_audit_coverage_invalid', {
+        attempt: 1,
+        retryMode: 'full',
+        reasonCode: 'coverage_page_duplicate',
+        violationCount: 1,
+      });
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('source-owned監査はrepair scopeが不正なbodyを凍結せず全監査を再試行する', async () => {

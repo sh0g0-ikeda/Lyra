@@ -174,6 +174,13 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
           if (!(error instanceof ConfigurationError)) {
             throw error;
           }
+          const coverageError = error instanceof EpisodePlanAuditCoverageError ? error : null;
+          safeConsoleWarn('episode_plan_audit_coverage_invalid', {
+            attempt,
+            retryMode: quoteOnlyAttempt ? 'quote_only' : coverageOnlyAttempt ? 'coverage_only' : 'full',
+            reasonCode: coverageError?.reasonCode ?? 'unclassified',
+            violationCount: coverageError?.violationCount ?? 1,
+          });
           retryInstruction = error instanceof EpisodePlanAuditCoverageError
             ? error.retryInstruction
             : 'Coverage correction for the retry: rebuild source_coverage from exact named refs and contiguous displayed quotes only.';
@@ -182,6 +189,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
             && !coverageOnlyAttempt
             && !quoteOnlyAttempt
             && error instanceof EpisodePlanAuditCoverageError
+            && error.canFreezeBody
           ) {
             const sourceOwnedCandidate = readSourceOwnedPayload(
               candidate,
@@ -233,7 +241,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
             },
           ];
         }
-        console.warn('episode_plan_audit_compiler_retry', {
+        safeConsoleWarn('episode_plan_audit_compiler_retry', {
           attempt,
           nextAttempt: attempt + 1,
           reason: error.reason,
@@ -1213,6 +1221,14 @@ function buildIssueGroundingJsonSchema(pageIdJsonSchema: Record<string, unknown>
       },
     },
   };
+}
+
+function safeConsoleWarn(event: string, details: Record<string, unknown>): void {
+  try {
+    console.warn(event, details);
+  } catch {
+    // Diagnostics must never replace the bounded compiler error or change retries.
+  }
 }
 
 function readSourceOwnedPayload(

@@ -18,6 +18,49 @@ describe('EpisodePlanAuditCoverage', () => {
   });
 
   it.each([
+    ['coverage欠落', () => ({ ...buildPresentAudit(), sourceCoverage: undefined }), 'coverage_missing', false],
+    ['page coverage欠落', () => {
+      const audit = buildPresentAudit();
+      audit.sourceCoverage = [];
+      return audit;
+    }, 'page_set_mismatch', false],
+    ['page coverage重複', () => {
+      const audit = buildPresentAudit();
+      audit.sourceCoverage!.push(structuredClone(audit.sourceCoverage![0]!));
+      return audit;
+    }, 'coverage_page_duplicate', false],
+    ['未知ref', () => {
+      const audit = buildPresentAudit();
+      audit.sourceCoverage![0]!.checks[0]!.outputEvidence[0]!.outputRef = 'PRIVATE-UNKNOWN-REF';
+      return audit;
+    }, 'citation_unknown_ref', true],
+    ['引用不一致', () => {
+      const audit = buildPresentAudit();
+      audit.sourceCoverage![0]!.checks[0]!.sourceQuote = 'PRIVATE-STORY-TEXT';
+      return audit;
+    }, 'citation_mismatch', true],
+    ['issueとrepairの未結線', () => {
+      const audit = buildMissingAudit();
+      audit.issues = [];
+      return audit;
+    }, 'issue_repair_link_missing', false],
+  ] as const)('%sは安全な有限reason codeだけを返す', (_label, buildAudit, reasonCode, canFreezeBody) => {
+    let thrown: unknown;
+    try {
+      validateEpisodePlanAuditCoverage(buildAudit(), buildCatalog());
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(EpisodePlanAuditCoverageError);
+    expect(thrown).toMatchObject({ reasonCode, violationCount: 1, canFreezeBody });
+    expect(JSON.stringify({
+      reasonCode: (thrown as EpisodePlanAuditCoverageError).reasonCode,
+      violationCount: (thrown as EpisodePlanAuditCoverageError).violationCount,
+    })).not.toContain('PRIVATE-');
+  });
+
+  it.each([
     ['偽の原作引用', { sourceQuote: '原作に存在しない引用' }],
     ['未知の出力参照', { outputRef: 'p9.s' }],
   ])('%sを拒否する', (_label, override) => {
