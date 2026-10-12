@@ -173,6 +173,32 @@ describe('direct entity reference upload', () => {
     expect(finalizeImport).not.toHaveBeenCalled();
   });
 
+  it('native upload taskの生成失敗はUPLOAD_FAILEDとして解析を開始しない', async () => {
+    const source: BinaryUploadSource = {
+      createUploadTask: vi.fn(() => { throw new Error('private native source error'); })
+    };
+    const finalizeImport = vi.fn();
+
+    await expect(
+      uploadAndImportEntityReference({
+        createPresignedUpload: vi.fn().mockResolvedValue(presignResult),
+        entityId: null,
+        entityType: 'character',
+        finalizeImport,
+        mimeType: 'image/png',
+        onProgress: vi.fn(),
+        onStageChange: vi.fn(),
+        sizeBytes: 1024,
+        source
+      })
+    ).rejects.toMatchObject<Partial<DirectEntityUploadError>>({
+      code: 'UPLOAD_FAILED',
+      retryable: false,
+      stage: 'upload'
+    });
+    expect(finalizeImport).not.toHaveBeenCalled();
+  });
+
   it('cancel signalでnative taskを中止し解析を開始しない', async () => {
     const task = createTaskHarness();
     const controller = new AbortController();

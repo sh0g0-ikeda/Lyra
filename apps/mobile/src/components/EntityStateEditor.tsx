@@ -120,7 +120,7 @@ function ScopedEntityStateEditor({ entity, parentDirty, parentBusy, initialCandi
     : unknownMutation(error) ? 'checkResult'
     : parentDirty || dirty ? 'dirty'
     : selected === null || payload === null || selected.updated_at === undefined ? 'invalid'
-    : baseReference === undefined || !canDisplayMobileImage(baseReference) || referenceQuery.data?.status !== 'ready' ? 'baseMissing'
+    : baseReference === undefined || !canDisplayMobileImage(baseReference) ? 'baseMissing'
     : busy || parentBusy || activeJob || receiptPending || quoteBusy ? 'processing' : null;
   useLayoutEffect(() => { currentRef.current = { scope, draft, selected, states, previewBlocker, baseId: baseReference?.ref_id, dirty, canEdit, parentBusy, parentDirty, error, candidateToken }; }, [scope, draft, selected, states, previewBlocker, baseReference?.ref_id, dirty, canEdit, parentBusy, parentDirty, error, candidateToken]);
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);

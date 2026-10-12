@@ -260,6 +260,22 @@ Generation and regeneration both create a new result from the current saved inpu
 A previous generated page image is not an implicit image reference. Confirmed entity
 reference images are explicit character-consistency inputs.
 
+Mobile state-preview availability follows the persisted primary character image,
+not the reference-set image count. A matching Mobile-compatible confirmed primary
+image is sufficient even when one or two images leave the set `partial`. Missing
+or unmatched primaries and unconfirmed candidates remain unavailable; capability,
+authorization, saved-input revision, active-job, and explicit quote acceptance
+checks still apply.
+
+Mobile import validates local file access and the existing 5 MB upload bound
+before preparing a network upload. When image-picker MIME and filename metadata
+are absent, the same validated file may be inspected for a PNG, JPEG, or WebP
+header; no conversion or larger upload is admitted. Local selection, format,
+size, and file-access failures are distinct from loading a submitted analysis job.
+The server still verifies actual bytes, MIME, size, and storage identity. Analysis
+starts only after explicit quote acceptance, and its validated result replaces
+draft fields only after a separate apply confirmation.
+
 Story-to-page autofill plans beat ownership across the complete episode before
 expanding the existing pages. Detail compilation uses adaptive, consecutive page
 packs sized by estimated structured-output cost; it must not use a fixed three-page

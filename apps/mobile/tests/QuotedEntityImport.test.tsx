@@ -4,13 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { QuotedEntityImport } from '@/components/QuotedEntityImport';
 const mocks = vi.hoisted(() => ({
   api: { createEntityReferenceUpload: vi.fn(), createGenerationQuote: vi.fn(), acceptGenerationQuote: vi.fn(), getGenerationQuote: vi.fn(), importEntityImage: vi.fn() },
-  session: { capabilities: { generation_quotes: true } }, pick: vi.fn(), confirm: vi.fn(), upload: vi.fn(), cancel: vi.fn(), release: vi.fn(), trackJob: vi.fn(), apply: vi.fn(), busy: vi.fn(), job: null as Record<string, unknown> | null
+  session: { capabilities: { generation_quotes: true } }, pick: vi.fn(), createFile: vi.fn(), detectMimeType: vi.fn(), confirm: vi.fn(), upload: vi.fn(), cancel: vi.fn(), release: vi.fn(), trackJob: vi.fn(), apply: vi.fn(), busy: vi.fn(), job: null as Record<string, unknown> | null
 }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.mock('react-native', () => ({ Text: 'text', View: 'view' }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => '00000000-0000-4000-8000-000000000003' }));
 vi.mock('expo-image-picker', () => ({ launchImageLibraryAsync: mocks.pick }));
-vi.mock('@/lib/expoBinaryUpload', () => ({ createExpoBinaryUploadFile: () => ({ exists: true, sizeBytes: 42, source: { createUploadTask: () => ({ uploadAsync: mocks.upload, cancel: mocks.cancel, release: mocks.release }) } }) }));
+vi.mock('@/lib/expoBinaryUpload', () => ({ createExpoBinaryUploadFile: mocks.createFile }));
 vi.mock('@/state/appState', () => ({ useAppState: () => ({ api: mocks.api, session: mocks.session, sessionKey: 'session', selection: { organizationId: null }, language: 'en', hasCapability: () => true, trackJob: mocks.trackJob }) }));
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: async () => undefined }), useQuery: () => ({ data: mocks.job ?? undefined, error: null, refetch: vi.fn() }) }));
 vi.mock('@/lib/confirm', () => ({ confirmAction: mocks.confirm }));
@@ -31,6 +31,8 @@ async function upload(): Promise<void> { await press('quoted-import-upload'); aw
 beforeEach(() => {
   vi.clearAllMocks(); mocks.job = null; mocks.session.capabilities.generation_quotes = true;
   mocks.pick.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///image.png', mimeType: 'image/png' }] });
+  mocks.detectMimeType.mockResolvedValue('image/png');
+  mocks.createFile.mockReturnValue({ exists: true, sizeBytes: 42, detectMimeType: mocks.detectMimeType, source: { createUploadTask: () => ({ uploadAsync: mocks.upload, cancel: mocks.cancel, release: mocks.release }) } });
   mocks.api.createEntityReferenceUpload.mockResolvedValue({ upload_url: 'https://upload.example/file', upload_token: 'uploaded', expires_at: '2099-01-01T00:00:00Z', upload_headers: { 'Content-Type': 'image/png', 'x-amz-server-side-encryption': 'AES256' } });
   mocks.upload.mockResolvedValue({ status: 200, body: '', headers: {} });
   mocks.api.createGenerationQuote.mockResolvedValue(quote); mocks.api.acceptGenerationQuote.mockResolvedValue(receipt);
@@ -62,6 +64,55 @@ describe('quoted import analysis', () => {
     await act(async () => { renderer.update(<QuotedEntityImport {...props} draftRevision="draft-3" />); });
     await confirm(); expect(mocks.apply).not.toHaveBeenCalled();
     await press('quoted-import-apply'); await confirm(); expect(mocks.apply).toHaveBeenCalledWith(result, 'draft-3');
+    act(() => renderer.unmount());
+  });
+  it.each(['image/png', 'image/jpeg', 'image/webp'] as const)('metadataなしでも検証済み%sのfile signatureなら見積へ進む', async (mimeType) => {
+    mocks.pick.mockResolvedValue({ canceled: false, assets: [{ uri: 'content://opaque', mimeType: null }] });
+    mocks.detectMimeType.mockResolvedValue(mimeType);
+    mocks.api.createEntityReferenceUpload.mockImplementation(async ({ mime_type }) => ({ upload_url: 'https://upload.example/file', upload_token: 'uploaded', expires_at: '2099-01-01T00:00:00Z', upload_headers: { 'Content-Type': mime_type, 'x-amz-server-side-encryption': 'AES256' } }));
+    await render(); await upload();
+    expect(mocks.detectMimeType).toHaveBeenCalledOnce();
+    expect(mocks.api.createEntityReferenceUpload).toHaveBeenCalledWith({ mime_type: mimeType, size_bytes: 42, entity_id: 'entity' }, null);
+    expect(mocks.api.createGenerationQuote).toHaveBeenCalledOnce();
+    act(() => renderer.unmount());
+  });
+  it('metadataが有効ならfile signatureを読まず既存のアップロード経路を維持する', async () => {
+    mocks.detectMimeType.mockRejectedValue(new Error('must not be read'));
+    await render(); await upload();
+    expect(mocks.detectMimeType).not.toHaveBeenCalled();
+    expect(mocks.api.createGenerationQuote).toHaveBeenCalledOnce();
+    act(() => renderer.unmount());
+  });
+  // Local picker and file failures must stop before upload, quote, or acceptance without exposing device details.
+  it.each([
+    ['picker access fails', () => { mocks.pick.mockRejectedValue(new Error('private picker path')); }, 'could not open that image'],
+    ['MIME is unsupported', () => { mocks.pick.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///image.heic', mimeType: 'image/heic' }] }); mocks.detectMimeType.mockResolvedValue(null); }, 'Choose a JPEG, PNG, or WebP image'],
+    ['file access fails', () => { mocks.createFile.mockImplementation(() => { throw new Error('private content URI'); }); }, 'could not be read'],
+    ['the selected file is empty', () => { mocks.createFile.mockReturnValue({ exists: true, sizeBytes: 0, source: {} }); }, 'could not be read'],
+    ['the selected file exceeds the bound', () => { mocks.createFile.mockReturnValue({ exists: true, sizeBytes: 5 * 1024 * 1024 + 1, source: {} }); }, '5 MB or smaller'],
+    ['an unknown signature is unsupported', () => { mocks.pick.mockResolvedValue({ canceled: false, assets: [{ uri: 'content://opaque', mimeType: null }] }); mocks.detectMimeType.mockResolvedValue(null); }, 'Choose a JPEG, PNG, or WebP image'],
+    ['a file signature read fails', () => { mocks.pick.mockResolvedValue({ canceled: false, assets: [{ uri: 'content://opaque', mimeType: null }] }); mocks.detectMimeType.mockRejectedValue(new Error('private file error')); }, 'could not be read'],
+  ])('%s stays local and never starts upload or paid analysis', async (_name, configure, expectedMessage) => {
+    configure(); await render(); await upload();
+    const output = JSON.stringify(renderer.toJSON());
+    expect(output).toContain(expectedMessage);
+    expect(output).not.toContain('could not be loaded');
+    expect(mocks.api.createEntityReferenceUpload).not.toHaveBeenCalled();
+    expect(mocks.api.createGenerationQuote).not.toHaveBeenCalled();
+    expect(mocks.api.acceptGenerationQuote).not.toHaveBeenCalled();
+    expect(mocks.api.importEntityImage).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+  it('signature読取中にscopeが変わるとuploadと見積を開始しない', async () => {
+    let resolve!: (mimeType: 'image/png') => void;
+    mocks.pick.mockResolvedValue({ canceled: false, assets: [{ uri: 'content://opaque', mimeType: null }] });
+    mocks.detectMimeType.mockImplementation(() => new Promise((done) => { resolve = done; }));
+    await render(); await upload();
+    await act(async () => { renderer.update(<QuotedEntityImport {...props} entityId="other-entity" />); });
+    await act(async () => { resolve('image/png'); });
+    expect(mocks.api.createEntityReferenceUpload).not.toHaveBeenCalled();
+    expect(mocks.api.createGenerationQuote).not.toHaveBeenCalled();
+    expect(mocks.api.acceptGenerationQuote).not.toHaveBeenCalled();
     act(() => renderer.unmount());
   });
   it('does not apply a different job or malformed completed result', async () => {

@@ -23,8 +23,17 @@ import { useAppState } from '@/state/appState';
 export type ImportedEntityDetails = Awaited<ReturnType<LyraMobileApiClient['importEntityImage']>>;
 interface Props { entityId: string | null; entityType: EntityType; entityName: string; workId: string | null; draftRevision: string; parentBusy?: boolean; onApply: (result: ImportedEntityDetails, expectedRevision: string) => void; onBusyChange: (busy: boolean) => void; }
 interface Upload { source: BinaryUploadSource; mimeType: EntityReferenceUploadMimeType; sizeBytes: number; token: string | null; scope: string; revision: string; }
+type LocalImageInputErrorCode = 'PICKER_FAILED' | 'MIME_UNSUPPORTED' | 'FILE_UNREADABLE' | 'FILE_TOO_LARGE';
+class LocalImageInputError extends Error {
+  public constructor(public readonly code: LocalImageInputErrorCode) {
+    super(code);
+    this.name = 'LocalImageInputError';
+  }
+}
+const maximumImageSizeBytes = 5 * 1024 * 1024;
 function mimeType(asset: ImagePicker.ImagePickerAsset): EntityReferenceUploadMimeType | null {
   if (asset.mimeType === 'image/png' || asset.mimeType === 'image/jpeg' || asset.mimeType === 'image/webp') return asset.mimeType;
+  if (asset.mimeType !== null && asset.mimeType !== undefined) return null;
   const source = `${asset.uri} ${asset.fileName ?? ''}`.toLowerCase();
   return /\.png\b/u.test(source) ? 'image/png' : /\.webp\b/u.test(source) ? 'image/webp' : /\.jpe?g\b/u.test(source) ? 'image/jpeg' : null;
 }
@@ -67,6 +76,11 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
   const activeJob = jobId !== null && (jobQuery.data === undefined || importJob?.status === 'queued' || importJob?.status === 'processing');
   const acceptancePending = quote.state.phase === 'unknown' || quote.state.phase === 'accepting';
   const busy = uploading || activeJob || acceptancePending;
+  const localImageError = error instanceof LocalImageInputError ? error : null;
+  const localImageMessage = localImageError?.code === 'PICKER_FAILED' ? copy.imagePickerError
+    : localImageError?.code === 'MIME_UNSUPPORTED' ? copy.imageType
+    : localImageError?.code === 'FILE_TOO_LARGE' ? copy.imageTooLarge
+    : localImageError?.code === 'FILE_UNREADABLE' ? copy.imageFileError : null;
   const onBusyChange = props.onBusyChange;
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   const openQuote = async (item: Upload): Promise<void> => {
@@ -82,12 +96,34 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
     try {
       let item = retry && upload?.scope === origin ? upload : null;
       if (item === null) {
-        const chosen = await ImagePicker.launchImageLibraryAsync({ allowsEditing: false, base64: false, mediaTypes: ['images'], quality: 1 });
+        let chosen: ImagePicker.ImagePickerResult;
+        try {
+          chosen = await ImagePicker.launchImageLibraryAsync({ allowsEditing: false, base64: false, mediaTypes: ['images'], quality: 1 });
+        } catch {
+          throw new LocalImageInputError('PICKER_FAILED');
+        }
         if (chosen.canceled || !alive.current || current.current.scope !== origin) return;
-        const asset = chosen.assets[0]; const kind = asset === undefined ? null : mimeType(asset);
-        if (asset === undefined || kind === null) throw new Error('INVALID_IMAGE');
-        const file = createExpoBinaryUploadFile(asset.uri);
-        if (!file.exists || file.sizeBytes <= 0 || file.sizeBytes > 5 * 1024 * 1024) throw new Error('INVALID_IMAGE');
+        const asset = chosen.assets[0];
+        if (asset === undefined) throw new LocalImageInputError('FILE_UNREADABLE');
+        const metadataKind = mimeType(asset);
+        let file: ReturnType<typeof createExpoBinaryUploadFile>;
+        try {
+          file = createExpoBinaryUploadFile(asset.uri);
+        } catch {
+          throw new LocalImageInputError('FILE_UNREADABLE');
+        }
+        if (!file.exists || file.sizeBytes <= 0) throw new LocalImageInputError('FILE_UNREADABLE');
+        if (file.sizeBytes > maximumImageSizeBytes) throw new LocalImageInputError('FILE_TOO_LARGE');
+        let kind = metadataKind;
+        if (kind === null) {
+          try {
+            kind = await file.detectMimeType();
+          } catch {
+            throw new LocalImageInputError('FILE_UNREADABLE');
+          }
+        }
+        if (!alive.current || current.current.scope !== origin || controller.signal.aborted) return;
+        if (kind === null) throw new LocalImageInputError('MIME_UNSUPPORTED');
         item = { source: file.source, mimeType: kind, sizeBytes: file.sizeBytes, token: null, scope: origin, revision: current.current.revision };
         setUpload(item);
       }
@@ -120,7 +156,7 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
     <EntityReferenceUploadStatus language={language} isPending={uploading} error={error instanceof DirectEntityUploadError ? error : null} onCancel={() => abort.current?.abort()} onRetry={() => { void startUpload(true); }} progress={progress} stage={stage} />
     {upload?.scope === scope && upload.token !== null && !uploading && !activeJob ? <PrimaryButton label={copy.title} onPress={() => { void openQuote(upload); }} variant="secondary" testID="quoted-import-review" /> : null}
     {acceptancePending ? <Notice message={copy.unknown} actionLabel={copy.reconcile} onAction={() => { void quote.controller.reconcile(); }} tone="warning" /> : null}
-    {error !== null && !(error instanceof DirectEntityUploadError) || jobQuery.error !== null || (importJob?.status === 'completed' && !parsedResult.success) ? <Notice message={copy.importError} tone="warning" /> : null}
+    {localImageMessage !== null ? <Notice message={localImageMessage} tone="warning" /> : error !== null && !(error instanceof DirectEntityUploadError) || jobQuery.error !== null || (importJob?.status === 'completed' && !parsedResult.success) ? <Notice message={copy.importError} tone="warning" /> : null}
     {activeJob ? <Text style={textStyles.caption}>{copy.importPending}</Text> : null}
     <JobStatusCard api={api} sessionKey={sessionKey} organizationId={organizationId} language={language} jobId={jobId} job={importJob ?? undefined} onCompleted={() => { void jobQuery.refetch(); }} />
     {result === null || appliedJobId === jobId ? null : <><Notice message={copy.importReady} tone="info" /><PrimaryButton label={copy.apply} onPress={apply} testID="quoted-import-apply" variant="secondary" /></>}
