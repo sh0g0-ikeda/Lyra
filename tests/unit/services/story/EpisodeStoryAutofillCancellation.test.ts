@@ -294,7 +294,7 @@ describe('EpisodeStoryAutofillWorkerService cancellation', () => {
     });
   });
 
-  it('server default intentだけは未割当状態の補完をworkerへ許可する', async () => {
+  it('過去のserver default preserve intentは保存方針を保ったまま視覚fallbackを許可する', async () => {
     const repository = new FakeExecutionRepository();
     repository.job.params = {
       ...repository.job.params,
@@ -317,6 +317,34 @@ describe('EpisodeStoryAutofillWorkerService cancellation', () => {
       statePlanVersion: 'episode_state_plan_v1',
       stateAssignmentPolicy: 'preserve_existing',
       allowUnassignedStateFill: true,
+      allowVisualStateFallback: true,
+    });
+  });
+
+  it('新しいboolean自動入力は話全体を上書きし視覚fallbackをworkerへ許可する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = {
+      ...repository.job.params,
+      state_autofill_enabled: true,
+      state_autofill_origin: 'request_enabled',
+      state_autofill_version: 'v1',
+      state_assignment_policy: 'overwrite_existing',
+    };
+    const pageService = new ControlledPageService();
+    pageService.result = {
+      ...buildApplyResult(),
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'overwrite_existing',
+      stateTransitions: [],
+    };
+
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.stateOptions).toEqual({
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'overwrite_existing',
+      allowUnassignedStateFill: true,
+      allowVisualStateFallback: true,
     });
   });
 

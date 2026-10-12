@@ -607,22 +607,35 @@ continuity V3 and inline-repair gates must all be enabled. The additional
 `EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED` flag defaults to false; deployment
 configuration may enable it without changing older request/response contracts.
 An omitted request option uses that configured default. Optional
-`state_autofill_enabled:true` enables safe supplementation and false explicitly
+`state_autofill_enabled:true` enables automatic source-backed state application and false explicitly
 disables it. This boolean cannot be combined with the existing V1 version/policy
-options. Only default or boolean-enabled requests may fill an existing NULL/base
-assignment from a validated state plan. Non-NULL manual assignments remain
-protected; explicit V1 `preserve_existing` still protects NULL as before.
-Ambiguous, unavailable or stale state references fail rather than substituting
-a base character. The intent/origin stays internal and is excluded from strict
-older-client job responses.
+options. New default or boolean-enabled requests update state assignments across
+the episode when the user explicitly runs story autofill. Registered, ready states
+continue until another registered state or an explicit return to the base state.
+Source-backed changes without a usable registered state use the current authorized
+character reference and editable visual instructions; they neither create state
+records/images nor require the user to create a missing state. A cosmetic overlay
+does not clear a continuing registered state. Exact source grounding, known entity
+and panel IDs, state ownership, reference readiness and the atomic input fingerprint
+remain mandatory. Invalid or stale references are never written as assignments.
+Older explicit V1 policies and an explicit OFF retain their request contracts;
+`preserve_existing` still protects NULL and non-NULL assignments. The intent/origin
+stays internal and is excluded from strict older-client job responses.
 
 Authenticated `POST /api/jobs/:id/retry` accepts only a failed, retryable episode
 story-autofill job. Personal ownership or organization `edit_work` scope is checked
 before replay. It preserves language and original state intent/policy, captures
 current authorized story inputs, and reuses existing admission, cancellation,
-zero-credit and atomic-save boundaries. Mobile defaults state supplementation ON
-only when capability is advertised; its explicit OFF and server retry preserve
-user intent. Other job retry flows are unchanged.
+zero-credit and atomic-save boundaries. Mobile uses automatic state application
+without an opt-in/overwrite checkbox or missing-state creation instructions when
+capability is advertised. Other job retry flows are unchanged.
+
+Mobile page management initially selects the first page and its first panel after
+the current episode's data becomes available. A newly completed story-autofill run
+also selects that initial editable panel. Routine query refreshes must not reset
+the user's subsequent selection, and stale responses from another scope must not
+select a page or panel in the current episode. Empty/loading lists remain distinct
+from authoritative loaded data; no phantom panel or implicit write is created.
 
 Cancellation request metadata is paired, cancellation and commit start are mutually
 exclusive, and a cancelled job carries ordered request, cancellation, and completion

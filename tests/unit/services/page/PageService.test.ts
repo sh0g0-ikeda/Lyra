@@ -3608,6 +3608,155 @@ describe('PageService', () => {
     expect(transactionAssignments.updates).toHaveLength(2);
   });
 
+  it('自動状態反映はREADY状態を維持し未登録の負傷を視覚描写として原子的に保存する', async () => {
+    const entityId = '11111111-1111-4111-8111-111111111111';
+    const readyStateId = '22222222-2222-4222-8222-222222222222';
+    const pendingStateId = '33333333-3333-4333-8333-333333333333';
+    const context = buildEpisodePlanningContext();
+    context.episode.storyFullDraft = 'Tension rises and Minerva injures her left arm.';
+    context.episode.startingEntityStates = [];
+    context.stateLibrary = [
+      {
+        entityId, stateId: readyStateId, name: '鬼', description: '登'.repeat(2_000),
+        revision: '2026-10-13T00:00:00.000Z', baseRefId: 'base-ref',
+        baseRefUpdatedAt: '2026-10-13T00:00:00.000Z', referenceReady: true,
+        referenceImage: {
+          refId: 'ready-ref', s3Key: 'private/ready.png', storageOwnerUserId: entityId,
+          imageModel: 'gpt-image-2', baseRefId: 'base-ref',
+          createdAt: '2026-10-13T00:00:00.000Z', inputFingerprint: 'ready-fingerprint',
+        },
+      },
+      {
+        entityId, stateId: pendingStateId, name: '負傷', description: '左腕に包帯を巻いている',
+        revision: '2026-10-13T00:00:00.000Z', baseRefId: 'base-ref',
+        baseRefUpdatedAt: '2026-10-13T00:00:00.000Z', referenceReady: false,
+        referenceImage: null,
+      },
+    ];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPanels = new FakePanelRepository();
+    const transactionAssignments = new FakePanelEntityAssignmentService();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(), panelRepository: transactionPanels,
+      panelEntityAssignmentService: transactionAssignments,
+      completeStoryAutofillJob: async () => true,
+    });
+    const stateCompiler = {
+      compileStateTransitions: async () => ({
+        plan: {
+          transitions: [{
+            entityId, stateId: readyStateId, startsAtPanelId: 'panel-1',
+            sourceSceneId: null, sourceField: 'middle' as const, sourceQuote: 'Tension rises',
+          }],
+          unresolved: [{
+            entityId, candidateStateId: pendingStateId, startsAtPanelId: 'panel-1',
+            suggestedName: '負傷', suggestedDescription: '左腕に包帯を巻いている',
+            sourceSceneId: null, sourceField: 'story_full_draft' as const,
+            sourceQuote: 'injures her left arm', reason: 'missing_reference' as const,
+          }],
+        },
+        compilerProvider: 'openai' as const, compilerModel: 'test',
+        compilerPromptVersion: 'episode_state_transition_v2',
+      }),
+    };
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), new FakeEpisodePagePlanCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => undefined },
+      {
+        statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing',
+        allowVisualStateFallback: true,
+      },
+    )).resolves.toMatchObject({ stateTransitions: [{ stateId: readyStateId }] });
+
+    expect(transactionAssignments.updates[0]?.assignments[0]?.stateId).toBe(readyStateId);
+    expect(transactionPanels.updatedPanels[0]?.input.situationText).toContain('鬼');
+    expect(transactionPanels.updatedPanels[0]?.input.situationText).not.toContain('登'.repeat(2_000));
+    expect(transactionPanels.updatedPanels[0]?.input.situationText).toContain('左腕に包帯');
+    expect(transactionPanels.updatedPanels[0]?.input.composition?.compositionPrompt).toContain('鬼');
+    expect(transactionPanels.updatedPanels[0]?.input.composition?.compositionPrompt).not.toContain('登'.repeat(2_000));
+    expect(transactionPanels.updatedPanels[0]?.input.composition?.compositionPrompt).toContain('左腕に包帯');
+  });
+
+  it('複数人物の長い視覚overlayが既存panel文字数上限を超える場合は何も保存しない', async () => {
+    const firstEntityId = '11111111-1111-4111-8111-111111111111';
+    const secondEntityId = '44444444-4444-4444-8444-444444444444';
+    const context = buildEpisodePlanningContext();
+    context.episode.storyFullDraft = 'Tension rises for both characters.';
+    context.entities.push({
+      id: secondEntityId, name: 'Second', entityType: 'character', freeDescription: null,
+      promptSupplement: null, structuredFields: {},
+    });
+    context.stateLibrary = [];
+    const baseCompiler = new FakeEpisodePagePlanCompiler();
+    const pageCompiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(input): Promise<CompiledEpisodePagePlan> {
+        const compiled = await baseCompiler.compilePlan(input);
+        const first = compiled.suggestion.pages[0]!.panels[0]!.entities![0]!;
+        compiled.suggestion.pages[0]!.panels[0]!.entities = [
+          first,
+          { ...first, entityId: secondEntityId, role: 'secondary' },
+        ];
+        return compiled;
+      },
+    };
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPanels = new FakePanelRepository();
+    const transactionAssignments = new FakePanelEntityAssignmentService();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(), panelRepository: transactionPanels,
+      panelEntityAssignmentService: transactionAssignments,
+      completeStoryAutofillJob: async () => true,
+    });
+    const longDescription = '視覚差分'.repeat(155);
+    const stateCompiler = {
+      compileStateTransitions: async () => ({
+        plan: {
+          transitions: [],
+          unresolved: [firstEntityId, secondEntityId].map((entityId) => ({
+            entityId, candidateStateId: null, startsAtPanelId: 'panel-1',
+            suggestedName: '継続状態', suggestedDescription: longDescription,
+            sourceSceneId: null, sourceField: 'middle' as const, sourceQuote: 'Tension rises',
+            reason: 'missing_reference' as const,
+          })),
+        },
+        compilerProvider: 'openai' as const, compilerModel: 'test',
+        compilerPromptVersion: 'episode_state_transition_v2',
+      }),
+    };
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), pageCompiler, undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+    let beginCommitCount = 0;
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      {
+        jobId: 'job-1', checkpoint: async () => undefined,
+        beginCommit: async () => { beginCommitCount += 1; },
+      },
+      {
+        statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing',
+        allowVisualStateFallback: true,
+      },
+    )).rejects.toMatchObject({ code: 'STATE_PLAN_INVALID' });
+    expect(persistence.calls).toHaveLength(0);
+    expect(transactionPanels.updatedPanels).toHaveLength(0);
+    expect(transactionAssignments.updates).toHaveLength(0);
+    expect(beginCommitCount).toBe(0);
+  });
+
   it('キャンセル制御付きの処理は機能フラグが無効でも原子的保存へ委譲する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildEpisodePlanningContext();

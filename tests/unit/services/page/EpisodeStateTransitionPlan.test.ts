@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { EpisodePagePlanContext } from '../../../../src/domain/types/page.js';
 import type { EpisodeStateTransition } from '../../../../src/domain/types/episodeStateTransition.js';
 import { EpisodeStatePlanError } from '../../../../src/services/page/EpisodeStateAssignmentResolver.js';
-import { validateEpisodeStateTransitionPlan } from '../../../../src/services/page/EpisodeStateTransitionPlan.js';
+import {
+  resolveEpisodeStateTransitionPlan,
+  validateEpisodeStateTransitionPlan,
+} from '../../../../src/services/page/EpisodeStateTransitionPlan.js';
 
 const ACTOR = '11111111-1111-4111-8111-111111111111';
 const OTHER = '22222222-2222-4222-8222-222222222222';
@@ -155,6 +158,49 @@ describe('validateEpisodeStateTransitionPlan', () => {
         reason: 'missing_reference',
       }],
     })).toThrowError(EpisodeStatePlanError);
+  });
+
+  it('自動入力では根拠が確認できる未登録状態を視覚描写として受理する', () => {
+    const unresolved = {
+      entityId: ACTOR,
+      candidateStateId: null,
+      startsAtPanelId: PANEL,
+      suggestedName: '負傷',
+      suggestedDescription: '腕に包帯を巻いている',
+      sourceSceneId: null,
+      sourceField: 'middle' as const,
+      sourceQuote: '腕を負傷した',
+      reason: 'missing_reference' as const,
+    };
+
+    expect(resolveEpisodeStateTransitionPlan(context(), {
+      transitions: [],
+      unresolved: [unresolved],
+    }, { allowVisualFallback: true })).toEqual({
+      transitions: [],
+      visualFallbacks: [unresolved],
+    });
+  });
+
+  it('自動入力でも保存本文にない引用や別人物の候補状態は拒否する', () => {
+    const base = {
+      entityId: ACTOR,
+      candidateStateId: null,
+      startsAtPanelId: PANEL,
+      suggestedName: '負傷',
+      suggestedDescription: '腕に包帯を巻いている',
+      sourceSceneId: null,
+      sourceField: 'middle' as const,
+      sourceQuote: '存在しない事件',
+      reason: 'missing_reference' as const,
+    };
+    expect(() => resolveEpisodeStateTransitionPlan(context(), {
+      transitions: [], unresolved: [base],
+    }, { allowVisualFallback: true })).toThrowError(EpisodeStatePlanError);
+    expect(() => resolveEpisodeStateTransitionPlan(context(), {
+      transitions: [],
+      unresolved: [{ ...base, entityId: OTHER, candidateStateId: INJURED, sourceQuote: '腕を負傷した' }],
+    }, { allowVisualFallback: true })).toThrowError(EpisodeStatePlanError);
   });
 
   it('別人物の既存状態を未確定候補として報告した場合に拒否する', () => {

@@ -29,12 +29,17 @@ describe('OpenAIEpisodeStateTransitionCompiler', () => {
     });
 
     expect(result.plan.transitions).toEqual([{ entityId: ENTITY, stateId: STATE, startsAtPanelId: PANEL, sourceSceneId: null, sourceField: 'middle', sourceQuote: '腕を負傷した' }]);
-    expect(result.compilerPromptVersion).toBe('episode_state_transition_v1');
+    expect(result.compilerPromptVersion).toBe('episode_state_transition_v2');
     const request = requests[0]!;
     const input = request.input as Array<{ content: Array<{ text: string }> }>;
     const userBrief = input[1]!.content[0]!.text;
+    const systemPrompt = input[0]!.content[0]!.text;
     expect(userBrief).not.toContain('private/state.png');
     expect(userBrief).not.toContain('owner-secret');
+    expect(systemPrompt).toContain('visual-only fallback');
+    expect(systemPrompt).toContain('Do not request or create a new state');
+    expect(systemPrompt).toContain('Do not drop an earlier unended visible change');
+    expect(systemPrompt).toContain('Keep suggested_description concise');
     const schema = (request.text as { format: { strict: boolean; schema: Record<string, unknown> } }).format;
     expect(schema.strict).toBe(true);
     const properties = schema.schema.properties as Record<string, unknown>;

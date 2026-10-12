@@ -310,13 +310,14 @@ function readStateAutofillOptions(
   if (enabled === true) {
     if ((origin !== 'server_default' && origin !== 'request_enabled')
       || version !== 'v1'
-      || policy !== 'preserve_existing') {
+      || (policy !== 'preserve_existing' && policy !== 'overwrite_existing')) {
       return null;
     }
     return {
       statePlanVersion: 'episode_state_plan_v1',
       stateAssignmentPolicy: policy,
       allowUnassignedStateFill: true,
+      allowVisualStateFallback: true,
     };
   }
   if (enabled !== undefined || origin !== undefined) {

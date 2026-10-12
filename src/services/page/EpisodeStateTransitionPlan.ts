@@ -7,6 +7,7 @@ import type {
   EpisodeStateTransition,
   EpisodeStateTransitionPlan,
   EpisodeStateTransitionSourceField,
+  EpisodeUnresolvedStateTransition,
 } from '../../domain/types/episodeStateTransition.js';
 import type { EpisodePagePlanContext } from '../../domain/types/page.js';
 import { EpisodeStatePlanError } from './EpisodeStateAssignmentResolver.js';
@@ -16,6 +17,24 @@ export function validateEpisodeStateTransitionPlan(
   context: EpisodePagePlanContext,
   plan: EpisodeStateTransitionPlan,
 ): EpisodeStateTransition[] {
+  return resolveEpisodeStateTransitionPlan(context, plan).transitions;
+}
+
+export interface ResolvedEpisodeStateTransitionPlan {
+  transitions: EpisodeStateTransition[];
+  visualFallbacks: EpisodeUnresolvedStateTransition[];
+}
+
+/**
+ * Validates every model-proposed boundary against the immutable saved source.
+ * Automatic story autofill may retain validated unresolved changes as visual-only directives;
+ * legacy callers remain blocking through validateEpisodeStateTransitionPlan.
+ */
+export function resolveEpisodeStateTransitionPlan(
+  context: EpisodePagePlanContext,
+  plan: EpisodeStateTransitionPlan,
+  options: { allowVisualFallback?: boolean } = {},
+): ResolvedEpisodeStateTransitionPlan {
   if (plan.transitions.length + plan.unresolved.length > MAX_EPISODE_STATE_TRANSITIONS) {
     throw new EpisodeStatePlanError('LIMIT_EXCEEDED', 'Episode state plan exceeds its limit');
   }
@@ -42,6 +61,8 @@ export function validateEpisodeStateTransitionPlan(
   }
 
   if (plan.unresolved.length > 0) {
+    const seenVisualBoundaries = new Set<string>();
+    let previousVisualPosition = -1;
     for (const candidate of plan.unresolved) {
       validateSource(context, candidate, entityIds, panelPosition);
       if (candidate.candidateStateId !== null) {
@@ -56,6 +77,22 @@ export function validateEpisodeStateTransitionPlan(
         || candidate.suggestedDescription.length > 2_000) {
         throw new EpisodeStatePlanError('STATE_PLAN_INVALID', 'Unresolved state suggestion is invalid');
       }
+      const position = panelPosition.get(candidate.startsAtPanelId)!;
+      const key = `${candidate.startsAtPanelId}:${candidate.entityId}`;
+      if (position < previousVisualPosition || seenVisualBoundaries.has(key)) {
+        throw new EpisodeStatePlanError(
+          'STATE_PLAN_INVALID',
+          'Episode visual state boundaries are duplicated or out of order',
+        );
+      }
+      previousVisualPosition = position;
+      seenVisualBoundaries.add(key);
+    }
+    if (options.allowVisualFallback === true) {
+      return {
+        transitions: validateTransitions(plan.transitions, context, entityIds, stateById, panelPosition),
+        visualFallbacks: plan.unresolved.map((candidate) => ({ ...candidate })),
+      };
     }
     throw new EpisodeStatePlanError(
       plan.unresolved.some((candidate) => candidate.reason === 'ambiguous_mapping')
@@ -66,9 +103,22 @@ export function validateEpisodeStateTransitionPlan(
     );
   }
 
+  return {
+    transitions: validateTransitions(plan.transitions, context, entityIds, stateById, panelPosition),
+    visualFallbacks: [],
+  };
+}
+
+function validateTransitions(
+  transitions: readonly EpisodeStateTransition[],
+  context: EpisodePagePlanContext,
+  entityIds: ReadonlySet<string>,
+  stateById: ReadonlyMap<string, NonNullable<EpisodePagePlanContext['stateLibrary']>[number]>,
+  panelPosition: ReadonlyMap<string, number>,
+): EpisodeStateTransition[] {
   const seenBoundaries = new Set<string>();
   let previousPosition = -1;
-  for (const transition of plan.transitions) {
+  for (const transition of transitions) {
     validateSource(context, transition, entityIds, panelPosition);
     validateEntityAndState(transition.entityId, transition.stateId, entityIds, stateById);
     const position = panelPosition.get(transition.startsAtPanelId)!;
@@ -80,7 +130,7 @@ export function validateEpisodeStateTransitionPlan(
     seenBoundaries.add(key);
   }
 
-  return plan.transitions.map((transition) => ({ ...transition }));
+  return transitions.map((transition) => ({ ...transition }));
 }
 
 function validateEntityAndState(

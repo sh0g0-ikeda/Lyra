@@ -252,7 +252,7 @@ function normalizeStateAutofillOptions(
     return {
       enabled: true,
       origin: 'request_enabled',
-      stateAssignmentPolicy: 'preserve_existing',
+      stateAssignmentPolicy: 'overwrite_existing',
     };
   }
   if (options.stateAutofillVersion !== 'v1') {
@@ -263,7 +263,7 @@ function normalizeStateAutofillOptions(
       ? {
           enabled: true,
           origin: 'server_default',
-          stateAssignmentPolicy: 'preserve_existing',
+          stateAssignmentPolicy: 'overwrite_existing',
         }
       : null;
   }
@@ -289,7 +289,7 @@ function readRetryStateAutofill(
   if (enabled === true) {
     if ((origin !== 'server_default' && origin !== 'request_enabled')
       || version !== 'v1'
-      || policy !== 'preserve_existing') {
+      || (policy !== 'preserve_existing' && policy !== 'overwrite_existing')) {
       throw new ConflictError('Episode story autofill job has invalid state options');
     }
     return { enabled: true, origin, stateAssignmentPolicy: policy };

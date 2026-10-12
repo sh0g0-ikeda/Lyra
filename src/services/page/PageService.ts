@@ -36,7 +36,11 @@ import type {
 } from '../../domain/types/page.js';
 import type { PanelComposition, PanelDialogueLine, UpdatePanelInput } from '../../domain/types/panel.js';
 import type { PanelEntityAssignment } from '../../domain/types/panelEntityAssignment.js';
-import type { EpisodeStateTransition, StateAssignmentPolicy } from '../../domain/types/episodeStateTransition.js';
+import type {
+  EpisodeStateTransition,
+  EpisodeUnresolvedStateTransition,
+  StateAssignmentPolicy,
+} from '../../domain/types/episodeStateTransition.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
@@ -67,9 +71,14 @@ import type {
   EpisodePlanPersistencePort,
   EpisodePlanPersistenceResources,
 } from './EpisodePlanPersistence.js';
-import { resolveEpisodePlanStateAssignments } from './EpisodeStateApplicationPlan.js';
+import {
+  applyEpisodeStateVisualDirectives,
+  resolveEpisodePlanStateAssignments,
+} from './EpisodeStateApplicationPlan.js';
 import { EpisodeStatePlanError } from './EpisodeStateAssignmentResolver.js';
-import { validateEpisodeStateTransitionPlan } from './EpisodeStateTransitionPlan.js';
+import {
+  resolveEpisodeStateTransitionPlan,
+} from './EpisodeStateTransitionPlan.js';
 import type {
   EpisodePlanAudit,
   EpisodePlanAuditIssue,
@@ -121,6 +130,7 @@ export interface EpisodeStateAutofillOptions {
   statePlanVersion: 'episode_state_plan_v1';
   stateAssignmentPolicy: StateAssignmentPolicy;
   allowUnassignedStateFill?: boolean;
+  allowVisualStateFallback?: boolean;
 }
 
 export interface EpisodePagePlanExecutionControl {
@@ -168,6 +178,7 @@ interface EpisodePlanExecutionResult {
   compilerPromptVersion: string | null;
   compilerError: string | null;
   stateTransitions?: EpisodeStateTransition[];
+  stateVisualFallbacks?: EpisodeUnresolvedStateTransition[];
 }
 
 interface PanelMergeResult {
@@ -499,10 +510,15 @@ export class PageService implements PageServicePort {
     }
 
     const stateTransitions = compiled.stateTransitions ?? null;
+    const stateVisualFallbacks = compiled.stateVisualFallbacks ?? [];
     if (stateOptions !== undefined && stateTransitions !== null) {
       const normalized = normalizeEpisodePlanToContext(context, compiled.suggestion, language);
       validateEpisodePlanAgainstContext(context, normalized);
-      validateEpisodeStateTransitionPlan(context, { transitions: stateTransitions, unresolved: [] });
+      resolveEpisodeStateTransitionPlan(
+        context,
+        { transitions: stateTransitions, unresolved: stateVisualFallbacks },
+        { allowVisualFallback: stateOptions.allowVisualStateFallback },
+      );
       resolveEpisodePlanStateAssignments({
         pages: context.pages,
         suggestion: normalized,
@@ -539,16 +555,28 @@ export class PageService implements PageServicePort {
           }
 
           let stateAssignmentsByPanelId: ReadonlyMap<string, readonly PanelEntityAssignment[]> | undefined;
+          let compiledForApply = compiled;
           if (stateOptions !== undefined && stateTransitions !== null) {
             if (resources.completeStoryAutofillJob === undefined) {
               throw new ConfigurationError('Episode state autofill job finalizer is not configured');
             }
             const normalized = normalizeEpisodePlanToContext(lockedContext, compiled.suggestion, language);
             validateEpisodePlanAgainstContext(lockedContext, normalized);
-            validateEpisodeStateTransitionPlan(lockedContext, {
-              transitions: stateTransitions,
-              unresolved: [],
-            });
+            resolveEpisodeStateTransitionPlan(
+              lockedContext,
+              { transitions: stateTransitions, unresolved: stateVisualFallbacks },
+              { allowVisualFallback: stateOptions.allowVisualStateFallback },
+            );
+            compiledForApply = {
+              ...compiled,
+              suggestion: applyEpisodeStateVisualDirectives({
+                context: lockedContext,
+                suggestion: normalized,
+                transitions: stateTransitions,
+                visualFallbacks: stateVisualFallbacks,
+                language,
+              }),
+            };
             stateAssignmentsByPanelId = resolveEpisodePlanStateAssignments({
               pages: lockedContext.pages,
               suggestion: normalized,
@@ -576,7 +604,7 @@ export class PageService implements PageServicePort {
           const result = await this.applyEpisodePlanSuggestion(
             lockedContext,
             userId,
-            compiled,
+            compiledForApply,
             language,
             organizationId,
             resources,
@@ -851,9 +879,9 @@ export class PageService implements PageServicePort {
         } satisfies CompiledEpisodeBeatPlan;
     validateEpisodeBeatPlanCoverage(context, compiledBeatPlan.plan);
 
-    const stateTransitions = stateOptions === undefined
+    const resolvedStatePlan = stateOptions === undefined
       ? undefined
-      : validateEpisodeStateTransitionPlan(context, (
+      : resolveEpisodeStateTransitionPlan(context, (
           await this.episodeStateTransitionCompiler!.compileStateTransitions({
             context,
             beatPlan: compiledBeatPlan.plan,
@@ -862,10 +890,12 @@ export class PageService implements PageServicePort {
               ? undefined
               : () => executionControl.checkpoint(),
           })
-        ).plan);
+        ).plan, { allowVisualFallback: stateOptions.allowVisualStateFallback });
+    const stateTransitions = resolvedStatePlan?.transitions;
+    const stateVisualFallbacks = resolvedStatePlan?.visualFallbacks;
     const stateLedger = stateTransitions === undefined
       ? undefined
-      : formatEpisodeStateTransitionLedger(stateTransitions);
+      : formatEpisodeStateTransitionLedger(stateTransitions, stateVisualFallbacks ?? []);
     // Resolve this once from the complete episode context. Chunk contexts do not
     // contain every source header and must never decide this trusted prompt mode.
     // Source ownership is enabled only after complete preflight and validated
@@ -919,7 +949,13 @@ export class PageService implements PageServicePort {
       });
     }
 
-    let combined = combineEpisodePlanExecutionResults(compiledChunks);
+    let combined = applyEpisodeStateVisualsToExecutionResult(
+      context,
+      combineEpisodePlanExecutionResults(compiledChunks),
+      stateTransitions,
+      stateVisualFallbacks,
+      language,
+    );
     if (this.episodePlanReliabilityOptions.inlineRepairEnabled === true) {
       const reviewed = await this.reviewAndRepairEpisodePlanInline(
         context,
@@ -930,7 +966,13 @@ export class PageService implements PageServicePort {
         stateLedger,
         sourceOwnedPageContext,
       );
-      return { ...reviewed, stateTransitions };
+      return {
+        ...applyEpisodeStateVisualsToExecutionResult(
+          context, reviewed, stateTransitions, stateVisualFallbacks, language,
+        ),
+        stateTransitions,
+        stateVisualFallbacks,
+      };
     }
 
     let audit = await this.auditEpisodePlanWithContinuityV3(
@@ -946,7 +988,7 @@ export class PageService implements PageServicePort {
     );
     let blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
     if (blockingIssues.length === 0) {
-      return { ...combined, stateTransitions };
+      return { ...combined, stateTransitions, stateVisualFallbacks };
     }
 
     const affectedChunkIndexes = resolveAffectedEpisodePlanChunkIndexes(
@@ -1005,10 +1047,22 @@ export class PageService implements PageServicePort {
         repaired,
         repairTargetPageIds,
       );
-      combined = combineEpisodePlanExecutionResults(compiledChunks);
+      combined = applyEpisodeStateVisualsToExecutionResult(
+        context,
+        combineEpisodePlanExecutionResults(compiledChunks),
+        stateTransitions,
+        stateVisualFallbacks,
+        language,
+      );
     }
 
-    combined = combineEpisodePlanExecutionResults(compiledChunks);
+    combined = applyEpisodeStateVisualsToExecutionResult(
+      context,
+      combineEpisodePlanExecutionResults(compiledChunks),
+      stateTransitions,
+      stateVisualFallbacks,
+      language,
+    );
     audit = await this.auditEpisodePlanWithContinuityV3(
       context,
       compiledBeatPlan.plan,
@@ -1039,7 +1093,7 @@ export class PageService implements PageServicePort {
       });
     }
 
-    return { ...combined, stateTransitions };
+    return { ...combined, stateTransitions, stateVisualFallbacks };
   }
 
   private async compileEpisodeSourceRequirements(
@@ -1916,6 +1970,26 @@ function combineEpisodePlanExecutionResults(
   };
 }
 
+function applyEpisodeStateVisualsToExecutionResult(
+  context: EpisodePagePlanContext,
+  result: EpisodePlanExecutionResult,
+  transitions: readonly EpisodeStateTransition[] | undefined,
+  visualFallbacks: readonly EpisodeUnresolvedStateTransition[] | undefined,
+  language: AppLanguage,
+): EpisodePlanExecutionResult {
+  if (transitions === undefined || visualFallbacks === undefined) return result;
+  return {
+    ...result,
+    suggestion: applyEpisodeStateVisualDirectives({
+      context,
+      suggestion: result.suggestion,
+      transitions,
+      visualFallbacks,
+      language,
+    }),
+  };
+}
+
 function combineCompiledEpisodeBeatPlans(
   results: CompiledEpisodeBeatPlan[],
 ): CompiledEpisodeBeatPlan {
@@ -2141,7 +2215,10 @@ function inferPageLeadEntityIdFromPanelSuggestions(
   return ranked[0]?.[0] ?? null;
 }
 
-function formatEpisodeStateTransitionLedger(transitions: readonly EpisodeStateTransition[]): string {
+function formatEpisodeStateTransitionLedger(
+  transitions: readonly EpisodeStateTransition[],
+  visualFallbacks: readonly EpisodeUnresolvedStateTransition[],
+): string {
   return [
     '[IMMUTABLE CHARACTER STATE BOUNDARIES]',
     ...(transitions.length === 0
@@ -2154,7 +2231,21 @@ function formatEpisodeStateTransitionLedger(transitions: readonly EpisodeStateTr
           `source_scene_id=${transition.sourceSceneId ?? 'none'}`,
           `source_quote=${transition.sourceQuote}`,
         ].join(' | '))),
+    '[SOURCE-GROUNDED VISUAL STATE OVERLAYS]',
+    ...(visualFallbacks.length === 0
+      ? ['(none proposed)']
+      : visualFallbacks.map((fallback) => [
+          `entity_id=${fallback.entityId}`,
+          `candidate_state_id=${fallback.candidateStateId ?? 'none'}`,
+          `starts_at_panel_id=${fallback.startsAtPanelId}`,
+          `appearance=${fallback.suggestedName}: ${fallback.suggestedDescription}`,
+          `source_field=${fallback.sourceField}`,
+          `source_scene_id=${fallback.sourceSceneId ?? 'none'}`,
+          `source_quote=${fallback.sourceQuote}`,
+        ].join(' | '))),
     'These boundaries include the starting panel. Keep the state through later panels until another boundary for that character.',
+    'A visual overlay does not replace or clear the current registered state reference. Keep its full appearance until a later registered/default boundary or visual overlay.',
+    'Do not request or create a state or image for a visual overlay.',
     'Do not invent or remove a state change while compiling or repairing page fields.',
     'Audit the boundaries against the saved story. A missing or contradictory change is a blocking timeline_discontinuity without a page field repair.',
   ].join('\n');

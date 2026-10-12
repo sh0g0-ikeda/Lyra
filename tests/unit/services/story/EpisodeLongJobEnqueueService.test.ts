@@ -235,7 +235,7 @@ describe('Episode long job enqueue services', () => {
     });
   });
 
-  it('server defaultは未割当だけを補完する内部intentをjobへ固定する', async () => {
+  it('server defaultは話全体の自動再入力として既存状態も更新するintentをjobへ固定する', async () => {
     const repository = new FakeEpisodeStoryAutofillRepository();
     const service = new EpisodeStoryAutofillService(
       repository, new FakeStoryQueue(), undefined, undefined, undefined, true, true,
@@ -248,7 +248,7 @@ describe('Episode long job enqueue services', () => {
       state_autofill_enabled: true,
       state_autofill_origin: 'server_default',
       state_autofill_version: 'v1',
-      state_assignment_policy: 'preserve_existing',
+      state_assignment_policy: 'overwrite_existing',
     });
   });
 
@@ -269,7 +269,7 @@ describe('Episode long job enqueue services', () => {
       state_autofill_enabled: true,
       state_autofill_origin: 'request_enabled',
       state_autofill_version: 'v1',
-      state_assignment_policy: 'preserve_existing',
+      state_assignment_policy: 'overwrite_existing',
     });
     expect(repository.createdJobs[1]?.params).toEqual({
       episode_id: 'disabled', language: 'en', organization_id: null,
@@ -331,7 +331,7 @@ describe('Episode long job enqueue services', () => {
 
     expect(repository.createdJobs[0]?.params).toMatchObject({
       state_autofill_enabled: true, state_autofill_origin: 'server_default',
-      state_autofill_version: 'v1', state_assignment_policy: 'preserve_existing',
+      state_autofill_version: 'v1', state_assignment_policy: 'overwrite_existing',
     });
     expect(repository.createdJobs[1]?.params).toEqual({
       episode_id: 'explicit-episode', language: 'en', organization_id: null,
