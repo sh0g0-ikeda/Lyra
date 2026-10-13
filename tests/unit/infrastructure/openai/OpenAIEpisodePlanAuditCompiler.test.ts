@@ -2,7 +2,148 @@ import { describe, expect, it, vi } from 'vitest';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEpisodePlanAuditCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
 
+const PAGE_ID = '11111111-1111-4111-8111-111111111111';
+const SECOND_PAGE_ID = '22222222-2222-4222-8222-222222222222';
+
 describe('OpenAIEpisodePlanAuditCompiler', () => {
+  it('blocking errorに修復がない場合はfull監査を一度再試行してpanel修復を受理する', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const beforeRetry = vi.fn(async () => undefined);
+    const responses = [
+      buildBlockingAuditPayload(),
+      buildBlockingAuditPayload({ repairPageId: PAGE_ID, repairField: 'dialogue' }),
+    ];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: { status: 'completed', output_text: JSON.stringify(responses.shift()) },
+          requestId: `req-repair-coverage-${requests.length}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[EPISODE DRAFT]\nPage 1',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+
+      beforeRetry,
+    });
+
+    expect(result.audit.panelRepairs).toEqual([
+      expect.objectContaining({ pageId: PAGE_ID, changedFields: ['dialogue'] }),
+    ]);
+    expect(requests).toHaveLength(2);
+    expect(beforeRetry).toHaveBeenCalledTimes(1);
+    const retryInput = requests[1]?.input as Array<{ content: Array<{ text: string }> }>;
+    expect(retryInput[2]?.content[0]?.text).toContain('error_indices=[0]');
+    expect(retryInput[2]?.content[0]?.text).not.toContain('The dialogue is duplicated');
+  });
+
+  it('blocking errorに修復が二回ともない場合は部分監査を返さず停止する', async () => {
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: { status: 'completed', output_text: JSON.stringify(buildBlockingAuditPayload()) },
+          requestId: `req-repair-missing-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[EPISODE DRAFT]\nPage 1',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+
+    })).rejects.toThrow('missing an applicable field-level repair');
+
+    expect(requestCount).toBe(2);
+  });
+
+  it('別pageまたは同pageの無関係field修復はblocking errorの修復として扱わない', async () => {
+    let requestCount = 0;
+    const responses = [
+      buildBlockingAuditPayload({ repairPageId: SECOND_PAGE_ID, repairField: 'dialogue' }),
+      buildBlockingAuditPayload({ repairPageId: PAGE_ID, repairField: 'panel_size' }),
+    ];
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: { status: 'completed', output_text: JSON.stringify(responses.shift()) },
+          requestId: `req-repair-unrelated-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[EPISODE DRAFT]\nPage 1\nPage 2',
+      language: 'ja',
+      pageIds: [PAGE_ID, SECOND_PAGE_ID],
+
+    })).rejects.toThrow('missing an applicable field-level repair');
+
+    expect(requestCount).toBe(2);
+  });
+
+  it('同pageのpanel-only dialogue修復は一回の監査で受理する', async () => {
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: {
+            status: 'completed',
+            output_text: JSON.stringify(buildBlockingAuditPayload({
+              repairPageId: PAGE_ID,
+              repairField: 'dialogue',
+            })),
+          },
+          requestId: 'req-panel-only-repair',
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[EPISODE DRAFT]\nPage 1',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+
+    });
+
+    expect(result.audit.panelRepairs).toHaveLength(1);
+    expect(requestCount).toBe(1);
+  });
+
+  it('blocking error修復の再試行前に停止された場合は二回目の外部APIを呼ばない', async () => {
+    let requestCount = 0;
+    const cancellationError = new Error('cancelled before repair coverage retry');
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return {
+          body: { status: 'completed', output_text: JSON.stringify(buildBlockingAuditPayload()) },
+          requestId: 'req-repair-coverage-cancel',
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[EPISODE DRAFT]\nPage 1',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+
+      beforeRetry: async () => {
+        throw cancellationError;
+      },
+    })).rejects.toBe(cancellationError);
+
+    expect(requestCount).toBe(1);
+  });
+
   it.each(['ja', 'en'] as const)('ページ横断の重複と会話配置を strict JSON で監査する (%s)', async (language) => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
@@ -14,7 +155,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
               accepted: false,
               issues: [
                 {
-                  code: 'duplicate_dialogue',
+                  code: 'duplicate_visual_beat',
                   severity: 'error',
                   page_ids: [
                     '11111111-1111-4111-8111-111111111111',
@@ -65,7 +206,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       accepted: false,
       issues: [
         {
-          code: 'duplicate_dialogue',
+          code: 'duplicate_visual_beat',
           severity: 'error',
           pageIds: [
             '11111111-1111-4111-8111-111111111111',
@@ -477,4 +618,40 @@ function readArray(value: unknown): unknown[] {
     throw new Error('Expected array');
   }
   return value;
+}
+
+
+function buildBlockingAuditPayload(input: {
+  repairPageId?: string;
+  repairField?: 'dialogue' | 'panel_size';
+} = {}): Record<string, unknown> {
+  const repair = input.repairPageId === undefined || input.repairField === undefined
+    ? []
+    : [{
+        page_id: input.repairPageId,
+        panel_order: 1,
+        changed_fields: [input.repairField],
+        patch: buildEmptyPanelPatch(input.repairField === 'dialogue'
+          ? {
+              dialogue: [{
+                entity_id: null,
+                text: 'A single replacement line.',
+                type: 'narration',
+                position: 'top',
+              }],
+            }
+          : { panel_size: 'large' }),
+      }];
+  return {
+    accepted: false,
+    issues: [{
+      code: 'duplicate_dialogue',
+      severity: 'error',
+      page_ids: [PAGE_ID],
+      message: 'The dialogue is duplicated.',
+      repair_instruction: 'Replace the duplicated line.',
+    }],
+    page_repairs: [],
+    panel_repairs: repair,
+  };
 }

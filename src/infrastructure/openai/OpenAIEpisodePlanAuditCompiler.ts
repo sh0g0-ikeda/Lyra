@@ -52,7 +52,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
       throw new ConfigurationError('Episode plan audit requires at least one page ID');
     }
 
-    const requestInput = [
+    let requestInput = [
       {
         role: 'system' as const,
         content: [{ type: 'input_text' as const, text: buildSystemPrompt(input.language) }],
@@ -65,7 +65,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
     let validated: AuditPayload | null = null;
     for (let attempt = 1; attempt <= EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS; attempt += 1) {
       try {
-        validated = await requestStructuredOpenAIResponse({
+        const candidate = await requestStructuredOpenAIResponse({
           client: this.client,
           model: this.options.model,
           reasoningEffort: this.options.reasoningEffort,
@@ -76,6 +76,20 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
           errorLabel: 'OpenAI episode plan audit compiler',
           input: requestInput,
         });
+        const repairViolations = findRepairCoverageViolations(candidate);
+        if (repairViolations.length > 0) {
+          requestInput = [...requestInput.slice(0, 2), {
+            role: 'user' as const,
+            content: [{ type: 'input_text' as const, text: buildRepairCoverageRetryInstruction(repairViolations) }],
+          }];
+          throw new StructuredOpenAIResponseError(
+            'OpenAI episode plan audit is missing an applicable field-level repair',
+            'invalid_payload',
+            true,
+            null,
+          );
+        }
+        validated = candidate;
         break;
       } catch (error) {
         if (
@@ -136,11 +150,49 @@ function buildSystemPrompt(language: CompileEpisodePlanAuditInput['language']): 
     'For cross-panel or cross-page redistribution, patch every affected source and destination dialogue array together, preserve true speakers and chronology, and preserve essential source information. Do not truncate excess lines or hide text via flags or visual fields.',
     'Return field-level repairs for each repairable error; change only named changed_fields. Do not alter page IDs, page numbers, panel orders, panel counts, or saved frame geometry.',
     'Keep unchanged fields null in patch payloads; every changed field must carry its intended value. Use [] rather than null to clear dialogue, entities, or source_scene_ids. Do not use null for roles, sizes, composition, dialogue_in_panel, dialogue_mode, or page_dialogue_toggle.',
-    'Do not return repairs for warnings or pages not named by an error. Set accepted=true only when no error remains; if a defect cannot be repaired safely within existing pages and source facts, report it instead of claiming success.',
+    'Every error needs a same-page, issue-code-compatible changed_fields repair; warnings and unrelated pages need no repair. Set accepted=true only when no error remains; if a defect cannot be repaired safely within existing pages and source facts, report it instead of claiming success.',
     `Write issue messages and repair instructions in natural ${outputLanguage}.`,
   ].join(' ');
 }
 type AuditPayload = ReturnType<typeof episodePlanAuditSchema.parse>;
+
+/** A provider repair can only address an error on the same page and in a compatible field. */
+function findRepairCoverageViolations(payload: AuditPayload): Array<{ index: number; code: string }> {
+  const repairs = [
+    ...payload.page_repairs.map((repair) => ({
+      pageId: repair.page_id,
+      changedFields: repair.changed_fields,
+    })),
+    ...payload.panel_repairs.map((repair) => ({
+      pageId: repair.page_id,
+      changedFields: repair.changed_fields,
+    })),
+  ];
+  return payload.issues.flatMap((issue, index) => {
+    if (issue.severity !== 'error') return [];
+    const compatibleFields = compatibleRepairFields[issue.code];
+    return repairs.some((repair) =>
+      issue.page_ids.includes(repair.pageId)
+      && repair.changedFields.some((field) => compatibleFields.includes(field)),
+    ) ? [] : [{ index, code: issue.code }];
+  });
+}
+
+function buildRepairCoverageRetryInstruction(violations: readonly { index: number; code: string }[]): string {
+  const shown = violations.slice(0, 16);
+  return `Audit repair correction: invalid_error_count=${violations.length}; error_indices=[${shown.map((item) => item.index).join(',')}]; issue_codes=[${shown.map((item) => item.code).join(',')}]. Regenerate the complete audit with same-page, issue-code-compatible changed_fields repairs for every listed error; do not repair warnings or unrelated pages.`;
+}
+
+const compatibleRepairFields: Record<AuditPayload['issues'][number]['code'], readonly string[]> = {
+  dialogue_density: ['dialogue'],
+  duplicate_dialogue: ['dialogue'],
+  duplicate_visual_beat: ['panel_role', 'panel_size', 'situation_text', 'composition', 'sfx_text', 'background_note', 'panel_notes', 'entities'],
+  timeline_discontinuity: ['source_scene_ids', 'page_purpose', 'continuity_note', 'dialogue_mode', 'page_dialogue_toggle', 'panel_role', 'situation_text', 'composition', 'dialogue', 'sfx_text', 'background_note', 'panel_notes', 'entities'],
+  dialogue_misplacement: ['dialogue'],
+  knowledge_violation: ['dialogue'],
+  page_handoff_break: ['page_purpose', 'continuity_note', 'dialogue_mode', 'page_dialogue_toggle', 'panel_role', 'situation_text', 'composition', 'dialogue', 'sfx_text', 'background_note', 'panel_notes', 'entities'],
+  unsupported_story_fact: ['source_scene_ids', 'page_purpose', 'continuity_note', 'dialogue_mode', 'page_dialogue_toggle', 'panel_role', 'situation_text', 'composition', 'dialogue', 'sfx_text', 'background_note', 'panel_notes', 'entities'],
+};
 
 function mapPageRepair(
   repair: AuditPayload['page_repairs'][number],
