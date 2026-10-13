@@ -93,7 +93,13 @@ are not useful image-model prompt content.
 Schema validity alone is not sufficient. Successful compiler output is checked for
 empty entity assignments, missing visual beats, generic repeated composition,
 speaker/dialogue mismatch, invalid page coverage, and frame/panel count mismatch.
-Repair is field-level where possible. Deterministic fallback must use only entities
+Repair is field-level where possible. Blocking errors require at least one repair
+on a named page with changed fields compatible with the issue category. A repair
+on another page or an unrelated field does not satisfy this gate. A source or continuity repair inspects every visible field of its affected panel and changes all conflicting fields together, while preserving source-faithful fields. Missing repairs
+trigger complete-audit correction within the existing two-attempt compiler limit;
+cancellation is checked before retry. Warnings remain non-blocking, and page-only
+and panel-only repairs are supported. Identities, frame geometry, schema, and
+atomic persistence remain unchanged. Deterministic fallback must use only entities
 supported by the story context and must not promote unrelated work entities.
 
 Fallback use is recorded in server logs and job metadata, not exposed as technical
@@ -120,3 +126,19 @@ take.
 - dialogue speaker validation and narration behavior
 - requested page/panel count coverage
 - duplicate active-job prevention and terminal recovery
+
+The continuity audit brief includes bounded actual composition, custom notes,
+background, panel notes, effects, and entity custom actions. Complete source and
+dialogue remain reserved before visual compaction within the existing 150,000
+character ceiling. Handoff repairs align conflicting place/action fields together.
+Only nonempty saved visual fields are rendered. Each present field reserves a
+minimum excerpt before the optional dialogue preview; if all present fields
+cannot fit, the compiler fails closed instead of dropping a field at the tail.
+
+Handoff repair validation uses a service-built snapshot of original situation,
+composition/custom-note, and background values. When a corrected field removes
+an exact whole peer value of at least four normalized characters, retaining that
+value in another field of the same panel triggers the existing bounded full-audit
+retry. Unrelated fields, short or partial values, other panels, and other issue
+categories are excluded. This internal snapshot is not persisted or exposed by
+HTTP contracts, and contains no authority beyond the schema-safe current draft.

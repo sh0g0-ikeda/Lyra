@@ -120,6 +120,117 @@ describe('EpisodePlanContinuity', () => {
     expect(brief).toContain(`P${PAGE_COUNT}コマ${STORY_AI_LIMITS.maxPanelsPerPage}の必要な台詞3`);
   }, 20_000);
 
+  it('16ページ4コマの監査 brief は修復対象の可視composition背景とcustom actionを保持する', () => {
+    const auditPageCount = 16;
+    const context = buildContext();
+    const plan = buildBeatPlan();
+    const suggestion = buildVerboseSuggestion();
+    context.pages = context.pages.slice(0, auditPageCount);
+    plan.pages = plan.pages.slice(0, auditPageCount);
+    suggestion.pages = suggestion.pages.slice(0, auditPageCount);
+    const entityId = '10000000-0000-4000-8000-000000000016';
+    context.entities = [{
+      id: entityId,
+      name: '幸助',
+      entityType: 'character',
+      freeDescription: null,
+      promptSupplement: null,
+      structuredFields: {},
+    }];
+    for (const page of suggestion.pages) {
+      page.panels = page.panels.slice(0, 4);
+      for (const panel of page.panels) {
+        panel.dialogue = panel.dialogue!.slice(0, 4).map((line, index) => ({
+          ...line,
+          text: `P${page.pageNumber}コマ${panel.order}の完全台詞${index}`,
+        }));
+      }
+    }
+    const target = suggestion.pages[auditPageCount - 1]!.panels[3]!;
+    const compositionMarker = '屋上庭園の石像を見下ろす俯瞰';
+    const customMarker = '壊れた柵越しに視線を石像へ導く';
+    const backgroundMarker = '雨上がりの屋上庭園と濡れた石畳';
+    const actionMarker = '石像の欠片を握りしめる';
+    target.situationText = '幸助は屋上庭園の石像へ駆け寄る。';
+    target.composition = {
+      source: 'custom',
+      galleryItemId: null,
+      shotType: 'wide',
+      angle: 'bird_eye',
+      compositionPrompt: compositionMarker,
+      customNote: customMarker,
+    };
+    target.backgroundNote = backgroundMarker;
+    target.entities = [{
+      entityId,
+      role: 'primary',
+      expression: 'surprised',
+      customExpression: null,
+      action: 'custom',
+      customAction: actionMarker,
+      position: 'center',
+      facingDirection: 'front',
+      effectNote: null,
+      stateId: null,
+    }];
+
+    const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+
+    expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+    expect(brief).toContain(compositionMarker);
+    expect(brief).toContain(customMarker);
+    expect(brief).toContain(backgroundMarker);
+    expect(brief).toContain(actionMarker);
+    expect(brief).toContain('P' + auditPageCount + 'コマ4の完全台詞3');
+  }, 20_000);
+  it('高密度監査 brief は全可視fieldの最低抜粋を収められない場合に欠落させず停止する', () => {
+    const context = buildContext();
+    const plan = buildBeatPlan();
+    const suggestion = buildVerboseSuggestion();
+    const entityId = '10000000-0000-4000-8000-000000000024';
+    const sourcePrefix = '先頭source制約'.repeat(550);
+    context.chapter.purpose = sourcePrefix;
+    context.chapter.startingState = sourcePrefix;
+    context.chapter.endingState = sourcePrefix;
+    context.chapter.emotionCurve = sourcePrefix;
+
+    for (const page of suggestion.pages) {
+      for (const panel of page.panels) {
+        panel.dialogue = panel.dialogue!.slice(0, 1).map((line, index) => ({
+          ...line,
+          text: '台詞' + index,
+        }));
+      }
+    }
+    const target = suggestion.pages[PAGE_COUNT - 1]!.panels[PANELS_PER_PAGE - 1]!;
+    target.situationText = '雨の屋上で石像へ走る';
+    target.composition = {
+      source: 'custom',
+      galleryItemId: null,
+      shotType: 'wide',
+      angle: 'bird_eye',
+      compositionPrompt: '壊れた柵から石像を見下ろす',
+      customNote: '濡れた石畳を前景に置く',
+    };
+    target.backgroundNote = '雨上がりの屋上庭園';
+    target.panelNotes = '次のコマへ視線をつなぐ';
+    target.sfxText = 'ザア';
+    target.entities = [{
+      entityId,
+      role: 'primary',
+      expression: 'surprised',
+      customExpression: null,
+      action: 'custom',
+      customAction: '石像の欠片を握る',
+      position: 'center',
+      facingDirection: 'front',
+      effectNote: null,
+      stateId: null,
+    }];
+
+    expect(() => buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' }))
+      .toThrow('cannot fit visible field excerpts');
+  }, 20_000);
   it('全文を安全な入力上限に収められない場合は欠落した要約で監査しない', () => {
     expect(() => buildEpisodePlanAuditBrief({ context: buildContext(), plan: buildBeatPlan(), suggestion: buildVerboseSuggestion(), language: 'ja' })).toThrow('complete dialogue');
   }, 20_000);

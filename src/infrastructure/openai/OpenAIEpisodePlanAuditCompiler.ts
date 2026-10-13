@@ -52,7 +52,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
       throw new ConfigurationError('Episode plan audit requires at least one page ID');
     }
 
-    const requestInput = [
+    let requestInput = [
       {
         role: 'system' as const,
         content: [{ type: 'input_text' as const, text: buildSystemPrompt(input.language) }],
@@ -65,7 +65,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
     let validated: AuditPayload | null = null;
     for (let attempt = 1; attempt <= EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS; attempt += 1) {
       try {
-        validated = await requestStructuredOpenAIResponse({
+        const candidate = await requestStructuredOpenAIResponse({
           client: this.client,
           model: this.options.model,
           reasoningEffort: this.options.reasoningEffort,
@@ -76,6 +76,33 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
           errorLabel: 'OpenAI episode plan audit compiler',
           input: requestInput,
         });
+        const repairViolations = findRepairCoverageViolations(candidate);
+        if (repairViolations.length > 0) {
+          requestInput = [...requestInput.slice(0, 2), {
+            role: 'user' as const,
+            content: [{ type: 'input_text' as const, text: buildRepairCoverageRetryInstruction(repairViolations) }],
+          }];
+          throw new StructuredOpenAIResponseError(
+            'OpenAI episode plan audit is missing an applicable field-level repair',
+            'invalid_payload',
+            true,
+            null,
+          );
+        }
+        const staleHandoffFields = findStaleHandoffRepairFields(candidate, input.visualSnapshot);
+        if (staleHandoffFields.length > 0) {
+          requestInput = [...requestInput.slice(0, 2), {
+            role: 'user' as const,
+            content: [{ type: 'input_text' as const, text: buildStaleHandoffRetryInstruction(staleHandoffFields) }],
+          }];
+          throw new StructuredOpenAIResponseError(
+            'OpenAI episode plan audit left a stale handoff field',
+            'invalid_payload',
+            true,
+            null,
+          );
+        }
+        validated = candidate;
         break;
       } catch (error) {
         if (
@@ -134,13 +161,144 @@ function buildSystemPrompt(language: CompileEpisodePlanAuditInput['language']): 
     'Use dialogue_density with severity=error for every panel above the entry cap; this is deterministic, not optional. Within the cap, use error only for a concrete reading/story defect; use warning for a justified non-blocking improvement, not taste.',
     'Every DETERMINISTIC FINDING is binding and needs a repair. Inspect all over-limit panels in TEXT DISTRIBUTION, not only an example panel from a grouped finding.',
     'For cross-panel or cross-page redistribution, patch every affected source and destination dialogue array together, preserve true speakers and chronology, and preserve essential source information. Do not truncate excess lines or hide text via flags or visual fields.',
+    'For a source or continuity repair, inspect all visible fields of every affected panel—situation_text, composition, background_note, and entities including custom_action—and repair every conflicting field together. Do not rewrite source-faithful visible fields.',
     'Return field-level repairs for each repairable error; change only named changed_fields. Do not alter page IDs, page numbers, panel orders, panel counts, or saved frame geometry.',
+    'For page_handoff_break, align situation_text, composition.composition_prompt, background_note, and entities.custom_action to the same source-supported place and action; repair each contradictory value rather than leaving the old place in another visible field.',
     'Keep unchanged fields null in patch payloads; every changed field must carry its intended value. Use [] rather than null to clear dialogue, entities, or source_scene_ids. Do not use null for roles, sizes, composition, dialogue_in_panel, dialogue_mode, or page_dialogue_toggle.',
-    'Do not return repairs for warnings or pages not named by an error. Set accepted=true only when no error remains; if a defect cannot be repaired safely within existing pages and source facts, report it instead of claiming success.',
+    'Every error needs a same-page, issue-code-compatible changed_fields repair; warnings and unrelated pages need no repair. Set accepted=true only when no error remains; if a defect cannot be repaired safely within existing pages and source facts, report it instead of claiming success.',
     `Write issue messages and repair instructions in natural ${outputLanguage}.`,
   ].join(' ');
 }
 type AuditPayload = ReturnType<typeof episodePlanAuditSchema.parse>;
+
+/** A provider repair can only address an error on the same page and in a compatible field. */
+function findRepairCoverageViolations(payload: AuditPayload): Array<{ index: number; code: string }> {
+  const repairs = [
+    ...payload.page_repairs.map((repair) => ({
+      pageId: repair.page_id,
+      changedFields: repair.changed_fields,
+    })),
+    ...payload.panel_repairs.map((repair) => ({
+      pageId: repair.page_id,
+      changedFields: repair.changed_fields,
+    })),
+  ];
+  return payload.issues.flatMap((issue, index) => {
+    if (issue.severity !== 'error') return [];
+    const compatibleFields = compatibleRepairFields[issue.code];
+    return repairs.some((repair) =>
+      issue.page_ids.includes(repair.pageId)
+      && repair.changedFields.some((field) => compatibleFields.includes(field)),
+    ) ? [] : [{ index, code: issue.code }];
+  });
+}
+
+function buildRepairCoverageRetryInstruction(violations: readonly { index: number; code: string }[]): string {
+  const shown = violations.slice(0, 16);
+  return `Audit repair correction: invalid_error_count=${violations.length}; error_indices=[${shown.map((item) => item.index).join(',')}]; issue_codes=[${shown.map((item) => item.code).join(',')}]. Regenerate the complete audit with same-page, issue-code-compatible changed_fields repairs for every listed error; do not repair warnings or unrelated pages.`;
+}
+
+type HandoffVisualField = 'situation_text' | 'composition' | 'background_note';
+
+interface StaleHandoffRepairField {
+  pageId: string;
+  panelOrder: number;
+  field: HandoffVisualField;
+}
+
+const HANDOFF_STALE_PEER_MIN_CHARS = 4;
+
+const HANDOFF_VISUAL_FIELDS: readonly HandoffVisualField[] = [
+  'situation_text', 'composition', 'background_note',
+];
+
+function findStaleHandoffRepairFields(
+  payload: AuditPayload,
+  snapshot: CompileEpisodePlanAuditInput['visualSnapshot'],
+): StaleHandoffRepairField[] {
+  if (snapshot === undefined) return [];
+  const handoffPages = new Set(payload.issues.flatMap((issue) =>
+    issue.severity === 'error' && issue.code === 'page_handoff_break' ? issue.page_ids : [],
+  ));
+  const violations = new Map<string, StaleHandoffRepairField>();
+  for (const repair of payload.panel_repairs) {
+    if (!handoffPages.has(repair.page_id)) continue;
+    const original = snapshot.panels.find((panel) =>
+      panel.pageId === repair.page_id && panel.panelOrder === repair.panel_order,
+    );
+    if (original === undefined) continue;
+    const changed = new Set(repair.changed_fields);
+    for (const editedField of HANDOFF_VISUAL_FIELDS) {
+      if (!changed.has(editedField)) continue;
+      const oldEditedValues = readOriginalVisualValues(original, editedField);
+      const newEditedValues = readPatchedVisualValues(repair, editedField);
+      for (const peerField of HANDOFF_VISUAL_FIELDS) {
+        if (peerField === editedField) continue;
+        for (const oldPeerValue of readOriginalVisualValues(original, peerField)) {
+          if (
+            !oldEditedValues.some((value) => value.includes(oldPeerValue))
+            || newEditedValues.some((value) => value.includes(oldPeerValue))
+          ) continue;
+          const resultingPeerValues = changed.has(peerField)
+            ? readPatchedVisualValues(repair, peerField)
+            : readOriginalVisualValues(original, peerField);
+          if (!resultingPeerValues.some((value) => value.includes(oldPeerValue))) continue;
+          const violation = { pageId: repair.page_id, panelOrder: repair.panel_order, field: peerField };
+          violations.set(`${violation.pageId}\0${violation.panelOrder}\0${violation.field}`, violation);
+        }
+      }
+    }
+  }
+  return [...violations.values()];
+}
+
+function normalizeHandoffVisualValue(value: string | null | undefined): string[] {
+  const normalized = value?.replace(/\s+/gu, ' ').trim() ?? '';
+  return normalized.length >= HANDOFF_STALE_PEER_MIN_CHARS ? [normalized] : [];
+}
+
+function readOriginalVisualValues(
+  panel: NonNullable<CompileEpisodePlanAuditInput['visualSnapshot']>['panels'][number],
+  field: HandoffVisualField,
+): readonly string[] {
+  if (field === 'situation_text') return panel.situationText;
+  if (field === 'composition') return panel.composition;
+  return panel.backgroundNote;
+}
+
+function readPatchedVisualValues(
+  repair: AuditPayload['panel_repairs'][number],
+  field: HandoffVisualField,
+): string[] {
+  if (field === 'situation_text') return normalizeHandoffVisualValue(repair.patch.situation_text);
+  if (field === 'background_note') return normalizeHandoffVisualValue(repair.patch.background_note);
+  return [
+    ...normalizeHandoffVisualValue(repair.patch.composition?.composition_prompt),
+    ...normalizeHandoffVisualValue(repair.patch.composition?.custom_note),
+  ];
+}
+
+function buildStaleHandoffRetryInstruction(violations: readonly StaleHandoffRepairField[]): string {
+  const shown = violations.slice(0, 16);
+  return [
+    `Audit handoff correction for the retry: stale_field_count=${violations.length}.`,
+    ...shown.map((item) =>
+      `page_id=${JSON.stringify(item.pageId)} panel_order=${item.panelOrder} stale_field=${item.field}`,
+    ),
+    'Regenerate the complete audit and remove each shared stale value from the named field repair.',
+  ].join('\n');
+}
+
+const compatibleRepairFields: Record<AuditPayload['issues'][number]['code'], readonly string[]> = {
+  dialogue_density: ['dialogue'],
+  duplicate_dialogue: ['dialogue'],
+  duplicate_visual_beat: ['panel_role', 'panel_size', 'situation_text', 'composition', 'sfx_text', 'background_note', 'panel_notes', 'entities'],
+  timeline_discontinuity: ['source_scene_ids', 'page_purpose', 'continuity_note', 'dialogue_mode', 'page_dialogue_toggle', 'panel_role', 'situation_text', 'composition', 'dialogue', 'sfx_text', 'background_note', 'panel_notes', 'entities'],
+  dialogue_misplacement: ['dialogue'],
+  knowledge_violation: ['dialogue'],
+  page_handoff_break: ['page_purpose', 'continuity_note', 'dialogue_mode', 'page_dialogue_toggle', 'panel_role', 'situation_text', 'composition', 'dialogue', 'sfx_text', 'background_note', 'panel_notes', 'entities'],
+  unsupported_story_fact: ['source_scene_ids', 'page_purpose', 'continuity_note', 'dialogue_mode', 'page_dialogue_toggle', 'panel_role', 'situation_text', 'composition', 'dialogue', 'sfx_text', 'background_note', 'panel_notes', 'entities'],
+};
 
 function mapPageRepair(
   repair: AuditPayload['page_repairs'][number],
