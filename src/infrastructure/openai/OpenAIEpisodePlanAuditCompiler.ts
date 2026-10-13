@@ -176,6 +176,7 @@ function buildSystemPrompt(
     'Every DETERMINISTIC FINDING is binding and must be reported. Inspect all over-limit panels in TEXT DISTRIBUTION, not only an example panel from a grouped finding.',
     'For cross-panel or cross-page redistribution, patch every affected source and destination dialogue array together, preserve true speakers and chronology, and preserve essential source information. Do not truncate excess lines or hide text via flags or visual fields.',
     'Return field-level repairs for each repairable error on its named pages, with changed_fields compatible with the issue code. Change only those fields; preserve page IDs, page numbers, panel orders, panel counts, and frame geometry.',
+    'Copy identifier fields only from supplied UUIDs; use JSON null for an ambiguous dialogue speaker or default state, never a name, default, none, or the string null.',
     'When repairing a source or continuity conflict, check situation_text, composition, background_note, panel_notes, and visible entity actions together; repair every conflicting visible field in the affected panels, and preserve source-faithful fields.',
     'For page_handoff_break, align situation_text, composition.composition_prompt, background_note, and entities.custom_action to the same source-supported place and action; repair each contradictory value rather than leaving the old place in another visible field.',
     'Keep unchanged fields null in patch payloads; every changed field must carry its intended value. Use [] rather than null to clear dialogue, entities, or source_scene_ids. Do not use null for roles, sizes, composition, dialogue_in_panel, dialogue_mode, or page_dialogue_toggle.',
@@ -374,6 +375,10 @@ function nullableString(maxLength: number): Record<string, unknown> {
   };
 }
 
+const nullableUuid = {
+  anyOf: [{ type: 'string', format: 'uuid' }, { type: 'null' }],
+} as const;
+
 const nullableBoolean = {
   anyOf: [{ type: 'boolean' }, { type: 'null' }],
 } as const;
@@ -415,7 +420,7 @@ const dialogueLineJsonSchema = {
   additionalProperties: false,
   required: ['entity_id', 'text', 'type', 'position'],
   properties: {
-    entity_id: nullableString(100),
+    entity_id: nullableUuid,
     text: { type: 'string', minLength: 1, maxLength: 500 },
     type: { type: 'string', enum: ['speech', 'thought', 'narration', 'shout', 'whisper'] },
     position: { type: 'string', enum: ['top', 'bottom', 'left', 'right', 'center'] },
@@ -438,7 +443,7 @@ const entityAssignmentJsonSchema = {
     'state_id',
   ],
   properties: {
-    entity_id: { type: 'string', minLength: 1, maxLength: 100 },
+    entity_id: { type: 'string', format: 'uuid' },
     role: { type: 'string', enum: ['primary', 'secondary', 'background'] },
     expression: {
       type: 'string',
@@ -460,7 +465,7 @@ const entityAssignmentJsonSchema = {
       'three_quarter_right',
     ]),
     effect_note: nullableString(500),
-    state_id: nullableString(100),
+    state_id: nullableUuid,
   },
 } as const;
 
@@ -559,7 +564,7 @@ function buildEpisodePlanAuditJsonSchema(
                 'page_dialogue_toggle',
               ],
               properties: {
-                source_scene_ids: nullableArray({ type: 'string' }, 100),
+                source_scene_ids: nullableArray({ type: 'string', format: 'uuid' }, 100),
                 page_purpose: nullableString(500),
                 continuity_note: nullableString(1000),
                 dialogue_mode: nullableEnum(['image_baked', 'balloon_only', 'mixed']),

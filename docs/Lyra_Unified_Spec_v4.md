@@ -487,6 +487,8 @@ The detail provider schema mirrors UUID constraints for page, scene, assignment
 entity, dialogue speaker, and source-placement page IDs. Nullable state/speaker IDs
 use JSON null for absent references; names and string sentinel labels are never IDs.
 Server context/ownership checks still independently reject unknown or foreign UUIDs.
+The audit repair provider schema uses the same UUID/null constraints for scene, entity, speaker and state references, while page
+targets remain enumerated from the known draft. Arbitrary gallery keys remain strings.
 
 Schema, bounded strings and arrays, known page/panel targets, unique repair fields
 and actual values for every changed field remain hard validation. Invalid typed

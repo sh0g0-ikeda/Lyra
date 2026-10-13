@@ -130,6 +130,22 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const panelRepairs = readObject(properties.panel_repairs);
     const panelRepairProperties = readObject(readObject(panelRepairs.items).properties);
     expect(readObject(panelRepairProperties.page_id).enum).toEqual([PAGE_ID, SECOND_PAGE_ID]);
+    const panelPatch = readObject(panelRepairProperties.patch);
+    const panelPatchProperties = readObject(panelPatch.properties);
+    const dialogueArray = readObject(readArray(readObject(panelPatchProperties.dialogue).anyOf)[0]);
+    const dialogueItemProperties = readObject(readObject(dialogueArray.items).properties);
+    expect(dialogueItemProperties).toHaveProperty('entity_id');
+    expect(dialogueItemProperties.entity_id)
+      .toEqual({ anyOf: [{ type: 'string', format: 'uuid' }, { type: 'null' }] });
+    const entitiesArray = readObject(readArray(readObject(panelPatchProperties.entities).anyOf)[0]);
+    const entityProperties = readObject(readObject(entitiesArray.items).properties);
+    expect(entityProperties.entity_id).toEqual({ type: 'string', format: 'uuid' });
+    expect(entityProperties.state_id).toEqual({ anyOf: [{ type: 'string', format: 'uuid' }, { type: 'null' }] });
+    const pageRepairs = readObject(properties.page_repairs);
+    const pageRepairProperties = readObject(readObject(pageRepairs.items).properties);
+    const pagePatch = readObject(readObject(pageRepairProperties.patch).properties);
+    const sourceSceneIds = readObject(readArray(readObject(pagePatch.source_scene_ids).anyOf)[0]);
+    expect(sourceSceneIds.items).toEqual({ type: 'string', format: 'uuid' });
     expect(panelRepairs.maxItems).toBeTypeOf('number');
     expect(issues.maxItems).toBeTypeOf('number');
   });
