@@ -21,7 +21,7 @@ import { createExpoBinaryUploadFile } from '@/lib/expoBinaryUpload';
 import { jobQueryKey } from '@/lib/queryKeys';
 import { useAppState } from '@/state/appState';
 export type ImportedEntityDetails = Awaited<ReturnType<LyraMobileApiClient['importEntityImage']>>;
-interface Props { entityId: string | null; entityType: EntityType; entityName: string; workId: string | null; draftRevision: string; parentBusy?: boolean; onApply: (result: ImportedEntityDetails, expectedRevision: string) => void; onBusyChange: (busy: boolean) => void; }
+interface Props { entityId: string | null; entityType: EntityType; entityName: string; workId: string | null; draftRevision: string; parentBusy?: boolean; autoStart?: boolean; onAutoStartConsumed?: () => void; onRequireSavedEntity?: () => Promise<void>; onApply: (result: ImportedEntityDetails, expectedRevision: string) => void; onBusyChange: (busy: boolean) => void; }
 interface Upload { source: BinaryUploadSource; mimeType: EntityReferenceUploadMimeType; sizeBytes: number; token: string | null; scope: string; revision: string; }
 type LocalImageInputErrorCode = 'PICKER_FAILED' | 'MIME_UNSUPPORTED' | 'FILE_UNREADABLE' | 'FILE_TOO_LARGE';
 class LocalImageInputError extends Error {
@@ -54,7 +54,11 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
   const [job, setJob] = useState<{ id: string; scope: string; revision: string } | null>(null);
   const [appliedJobId, setAppliedJobId] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
-  const lock = useRef(false); const alive = useRef(true);
+  const lock = useRef(false); const entityPreparation = useRef<Promise<void> | null>(null); const alive = useRef(true);
+  const autoStartKey = props.autoStart === true ? `${scope}:${props.draftRevision}` : null;
+  const onAutoStartConsumed = props.onAutoStartConsumed;
+  const consumedAutoStartKey = useRef<string | null>(null);
+  const startUploadRef = useRef<(retry: boolean) => Promise<void>>(async () => undefined);
   const current = useRef({ scope, revision: props.draftRevision, enabled });
   useLayoutEffect(() => { current.current = { scope, revision: props.draftRevision, enabled }; }, [scope, props.draftRevision, enabled]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; abort.current?.abort(); }; }, []);
@@ -143,7 +147,30 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
     } catch (cause) { if (alive.current && current.current.scope === origin) setError(cause); }
     finally { lock.current = false; if (abort.current === controller) abort.current = null; if (alive.current) setUploading(false); }
   };
-  const requestUpload = (): void => confirmAction({ language, title: copy.reviewImport, message: appendAiProviderDisclosure(copy.imageType, language, 'image'), confirmLabel: copy.reviewImport, onConfirm: () => { void startUpload(false); } });
+  useLayoutEffect(() => { startUploadRef.current = startUpload; });
+  useEffect(() => {
+    if (autoStartKey === null || consumedAutoStartKey.current === autoStartKey) return;
+    consumedAutoStartKey.current = autoStartKey;
+    onAutoStartConsumed?.();
+    void startUploadRef.current(false);
+  }, [autoStartKey, onAutoStartConsumed]);
+  const beginUpload = async (): Promise<void> => {
+    if (props.entityId !== null) {
+      await startUpload(false);
+      return;
+    }
+    if (props.onRequireSavedEntity === undefined || entityPreparation.current !== null) return;
+    const preparation = props.onRequireSavedEntity();
+    entityPreparation.current = preparation;
+    try {
+      await preparation;
+    } catch (cause) {
+      if (alive.current) setError(cause);
+    } finally {
+      if (entityPreparation.current === preparation) entityPreparation.current = null;
+    }
+  };
+  const requestUpload = (): void => confirmAction({ language, title: copy.reviewImport, message: appendAiProviderDisclosure(copy.imageType, language, 'image'), confirmLabel: copy.reviewImport, onConfirm: () => { void beginUpload(); } });
   const apply = (): void => {
     if (result === null || jobId === null || job?.scope !== scope) return;
     const revision = current.current.revision; const id = jobId;

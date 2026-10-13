@@ -26,9 +26,9 @@ vi.mock('@tanstack/react-query',()=>({useQueryClient:()=>queryClient,
  useInfiniteQuery:()=>({...query({pages}),hasNextPage:false,isFetchingNextPage:false,fetchNextPage:vi.fn()}),
  useQuery:(options:{queryKey:readonly unknown[]})=>options.queryKey[0] === 'entity-detail'
    ? {...query(entityDetail),error:entityDetailError,refetch:refetchEntity} : query(undefined),
- useMutation:(options:{mutationFn:()=>Promise<unknown>;onSuccess?:(value:unknown)=>Promise<void>;onError?:(error:unknown)=>void})=>{
- const run=async():Promise<unknown>=>{try{const value=await options.mutationFn();await options.onSuccess?.(value);return value;}catch(error){options.onError?.(error);throw error;}};
- return {mutateAsync:run,mutate:()=>{void run();},isPending:false,error:null,reset:vi.fn()};}
+ useMutation:(options:{mutationFn:(variables?:unknown)=>Promise<unknown>;onSuccess?:(value:unknown,variables?:unknown)=>Promise<void>;onError?:(error:unknown)=>void})=>{
+ const run=async(variables?:unknown):Promise<unknown>=>{try{const value=await options.mutationFn(variables);await options.onSuccess?.(value,variables);return value;}catch(error){options.onError?.(error);throw error;}};
+ return {mutateAsync:run,mutate:(variables?:unknown)=>{void run(variables);},isPending:false,error:null,reset:vi.fn()};}
 }));
 vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob,updateSelection})}));
 vi.mock('@/state/dirtyState',()=>({useDirtyState:()=>({resolveDirtyEditors}),useDirtyEditorRegistration:(input:typeof registration)=>{registration=input;}}));
@@ -256,6 +256,66 @@ describe('新規人物だけの編集可能な初期値', () => {
     expect(createEntity.mock.lastCall?.[1].structured_fields).toEqual({
       gender_expression: 'female', character_identity: { aliases: ['Import, Hero'] },
     });
+  });
+
+  it('新規draftの画像importは既存の保存経路を一度だけ完了して保存済みentityで再開する', async () => {
+    // Design: paid image analysis must start only after the draft has one stable,
+    // owned entity id; the resumed picker is scoped to that persisted record.
+    await render();
+    await act(async () => field('名前').props.onChangeText('Imported hero'));
+    const importControl = root!.root.findByType('QuotedEntityImport');
+
+    await act(async () => {
+      await Promise.all([
+        importControl.props.onRequireSavedEntity(),
+        importControl.props.onRequireSavedEntity(),
+      ]);
+    });
+
+    expect(createEntity).toHaveBeenCalledOnce();
+    expect(updateSelection).toHaveBeenCalledWith(
+      { entityId: 'created' },
+      { skipDirtyCheck: true },
+    );
+
+    const created = { ...entity, id: 'created', name: 'Imported hero' };
+    pages = [{ entities: [created] }];
+    await rerender();
+    const resumedImport = root!.root.findByType('QuotedEntityImport');
+    expect(resumedImport.props.entityId).toBe('created');
+    expect(resumedImport.props.autoStart).toBe(true);
+
+    await act(async () => resumedImport.props.onAutoStartConsumed());
+    await rerender();
+    expect(root!.root.findByType('QuotedEntityImport').props.autoStart).toBe(false);
+  });
+
+  it.each(['work', 'organization', 'session'] as const)('%s変更中に画像import用の保存が完了しても現在の選択を汚染せず再開しない', async (scope) => {
+    // A late create response belongs to the workspace that started it. It must
+    // neither select that entity in the new workspace nor resume its picker.
+    let finishCreate: ((value: EntityRecord) => void) | undefined;
+    createEntity.mockImplementationOnce(() => new Promise<EntityRecord>((resolve) => { finishCreate = resolve; }));
+    await render();
+    await act(async () => field('名前').props.onChangeText('Imported hero'));
+    const pending = root!.root.findByType('QuotedEntityImport').props.onRequireSavedEntity();
+    await act(async () => { await Promise.resolve(); });
+
+    if (scope === 'work') selection.workId = 'other-work';
+    if (scope === 'organization') selection.organizationId = 'organization';
+    if (scope === 'session') sessionKey = 'other-user';
+    await rerender();
+    await act(async () => {
+      finishCreate?.({ ...entity, id: 'late-created', name: 'Imported hero' });
+      await pending;
+    });
+    await rerender();
+
+    expect(selection.entityId).toBeNull();
+    expect(updateSelection).not.toHaveBeenCalledWith(
+      { entityId: 'late-created' },
+      { skipDirtyCheck: true },
+    );
+    expect(root!.root.findAllByType('QuotedEntityImport').some(node => node.props.autoStart === true)).toBe(false);
   });
 
   it.each(['work', 'organization', 'session'])('%sを変更した新規formは旧draftを引き継がず別の初期値から始まる', async (scope) => {

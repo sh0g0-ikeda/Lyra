@@ -39,6 +39,26 @@ beforeEach(() => {
   mocks.api.getGenerationQuote.mockResolvedValue({ ...receipt, job_id: null, accepted_at: null }); mocks.trackJob.mockResolvedValue(undefined);
 });
 describe('quoted import analysis', () => {
+  it('保存直後の再開要求はpickerを一度だけ開始して要求を消費する', async () => {
+    const onAutoStartConsumed = vi.fn();
+    await render({ autoStart: true, onAutoStartConsumed });
+    await vi.waitFor(() => expect(mocks.pick).toHaveBeenCalledOnce());
+    expect(onAutoStartConsumed).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      renderer.update(
+        <QuotedEntityImport
+          {...props}
+          autoStart
+          onAutoStartConsumed={onAutoStartConsumed}
+        />,
+      );
+    });
+
+    expect(mocks.pick).toHaveBeenCalledOnce();
+    act(() => renderer.unmount());
+  });
+
   it('gates the paid workflow and preserves the legacy API without calling it', async () => {
     mocks.session.capabilities.generation_quotes = false; await render();
     expect(renderer.root.findByProps({ testID: 'quoted-import-upload' }).props.disabled).toBe(true);
