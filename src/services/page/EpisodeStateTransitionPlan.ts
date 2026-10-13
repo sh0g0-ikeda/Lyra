@@ -26,7 +26,8 @@ export interface ResolvedEpisodeStateTransitionPlan {
 }
 
 /**
- * Validates every model-proposed boundary against the immutable saved source.
+ * Validates model-proposed IDs, boundaries and saved-source fields. Literal quote
+ * matching is required by legacy callers; automatic autofill treats quotes as auxiliary metadata.
  * Automatic story autofill may retain validated unresolved changes as visual-only directives;
  * legacy callers remain blocking through validateEpisodeStateTransitionPlan.
  */
@@ -64,7 +65,7 @@ export function resolveEpisodeStateTransitionPlan(
     const seenVisualBoundaries = new Set<string>();
     let previousVisualPosition = -1;
     for (const candidate of plan.unresolved) {
-      validateSource(context, candidate, entityIds, panelPosition);
+      validateSource(context, candidate, entityIds, panelPosition, options.allowVisualFallback === true);
       if (candidate.candidateStateId !== null) {
         const state = stateById.get(candidate.candidateStateId);
         if (state === undefined || state.entityId !== candidate.entityId
@@ -90,7 +91,7 @@ export function resolveEpisodeStateTransitionPlan(
     }
     if (options.allowVisualFallback === true) {
       return {
-        transitions: validateTransitions(plan.transitions, context, entityIds, stateById, panelPosition),
+        transitions: validateTransitions(plan.transitions, context, entityIds, stateById, panelPosition, options.allowVisualFallback === true),
         visualFallbacks: plan.unresolved.map((candidate) => ({ ...candidate })),
       };
     }
@@ -104,7 +105,7 @@ export function resolveEpisodeStateTransitionPlan(
   }
 
   return {
-    transitions: validateTransitions(plan.transitions, context, entityIds, stateById, panelPosition),
+    transitions: validateTransitions(plan.transitions, context, entityIds, stateById, panelPosition, options.allowVisualFallback === true),
     visualFallbacks: [],
   };
 }
@@ -115,11 +116,12 @@ function validateTransitions(
   entityIds: ReadonlySet<string>,
   stateById: ReadonlyMap<string, NonNullable<EpisodePagePlanContext['stateLibrary']>[number]>,
   panelPosition: ReadonlyMap<string, number>,
+  allowAuxiliaryQuoteMismatch: boolean,
 ): EpisodeStateTransition[] {
   const seenBoundaries = new Set<string>();
   let previousPosition = -1;
   for (const transition of transitions) {
-    validateSource(context, transition, entityIds, panelPosition);
+    validateSource(context, transition, entityIds, panelPosition, allowAuxiliaryQuoteMismatch);
     validateEntityAndState(transition.entityId, transition.stateId, entityIds, stateById);
     const position = panelPosition.get(transition.startsAtPanelId)!;
     const key = `${transition.startsAtPanelId}:${transition.entityId}`;
@@ -159,6 +161,7 @@ function validateSource(
   source: Pick<EpisodeStateTransition, 'entityId' | 'startsAtPanelId' | 'sourceSceneId' | 'sourceField' | 'sourceQuote'>,
   entityIds: ReadonlySet<string>,
   panelPosition: ReadonlyMap<string, number>,
+  allowAuxiliaryQuoteMismatch: boolean,
 ): void {
   if (!entityIds.has(source.entityId) || !panelPosition.has(source.startsAtPanelId)) {
     throw new EpisodeStatePlanError('STATE_PLAN_INVALID', 'Episode state source references an unknown ID');
@@ -169,7 +172,8 @@ function validateSource(
   }
   const savedText = sourceText(context, source.sourceField, source.sourceSceneId);
   const quote = normalizeSourceText(source.sourceQuote);
-  if (savedText === null || quote.length === 0 || !normalizeSourceText(savedText).includes(quote)) {
+  if (savedText === null || normalizeSourceText(savedText).length === 0 || quote.length === 0
+    || (!allowAuxiliaryQuoteMismatch && !normalizeSourceText(savedText).includes(quote))) {
     throw new EpisodeStatePlanError('STATE_PLAN_INVALID', 'Episode state quote is not present in the saved story');
   }
 }

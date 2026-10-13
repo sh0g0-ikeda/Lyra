@@ -24,7 +24,7 @@ import {
 const EPISODE_STATE_TRANSITION_COMPILER_MODEL = 'gpt-5';
 const EPISODE_STATE_TRANSITION_COMPILER_MAX_TOKENS = 12_000;
 const EPISODE_STATE_TRANSITION_COMPILER_MAX_ATTEMPTS = 2;
-const EPISODE_STATE_TRANSITION_COMPILER_VERSION = 'episode_state_transition_v2';
+const EPISODE_STATE_TRANSITION_COMPILER_VERSION = 'episode_state_transition_v3';
 const EPISODE_STATE_TRANSITION_COMPILER_MAX_INPUT_ITEMS = 512;
 const EPISODE_STATE_TRANSITION_COMPILER_MAX_INPUT_CHARS = 120_000;
 
@@ -111,7 +111,8 @@ function buildSystemPrompt(language: CompileEpisodeStateTransitionInput['languag
     'Keep suggested_description concise (prefer at most 300 characters) while preserving every continuing visible change supported by the saved source.',
     'Do not drop an earlier unended visible change; include it in each later complete appearance until the saved source explicitly ends it.',
     'Do not generate images, call tools, or charge credits.',
-    `Write suggested names, descriptions, reasons, and quotes in natural ${outputLanguage}.`,
+    `Write suggested names, descriptions, and reasons in natural ${outputLanguage}.`,
+    'Copy source_quote directly from its named saved source field in the original language. Never translate or paraphrase the quote.',
   ].join(' ');
 }
 

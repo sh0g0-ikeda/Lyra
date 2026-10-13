@@ -29,7 +29,7 @@ describe('OpenAIEpisodeStateTransitionCompiler', () => {
     });
 
     expect(result.plan.transitions).toEqual([{ entityId: ENTITY, stateId: STATE, startsAtPanelId: PANEL, sourceSceneId: null, sourceField: 'middle', sourceQuote: '腕を負傷した' }]);
-    expect(result.compilerPromptVersion).toBe('episode_state_transition_v2');
+    expect(result.compilerPromptVersion).toBe('episode_state_transition_v3');
     const request = requests[0]!;
     const input = request.input as Array<{ content: Array<{ text: string }> }>;
     const userBrief = input[1]!.content[0]!.text;

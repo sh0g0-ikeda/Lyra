@@ -484,20 +484,28 @@ The combined draft is reviewed for cross-page repetition, dialogue placement,
 chronology, page handoffs, entity assignment, and editable visual fields before any
 page or panel content is persisted. Review repairs are field-level patches: page and
 panel identity, order, and panel count are immutable. Unknown identifiers or invalid
-patch targets are rejected. Semantic review uses at most two audit passes and applies
-each pass's validated field-level repairs once; it must not recursively audit or
-repair. The first audit is required. A clean first audit proceeds directly to the
-deterministic gate, including when a state-transition ledger is present; an
-unchanged draft is not audited a second time. If the second audit remains unavailable after
-its structured-output retry, the already repaired draft proceeds to the deterministic
-gate instead of being discarded. After bounded repair, schema, identifier, structure,
-and deterministic cross-page duplicate errors block persistence. Residual semantic-
-only findings, including patchless or mixed patchable/residual findings, are
-retained as safe telemetry and do not discard otherwise usable content. These
+patch targets are rejected. Each autofill performs one semantic audit. The existing
+structured-output retry remains bounded within that audit. The inline path applies
+its validated field-level repairs once; the legacy non-inline path recompiles each
+affected chunk once. Both paths then proceed to local deterministic validation and
+must not submit the repaired draft for another semantic audit. After bounded repair,
+schema, identifier, structure, and deterministic cross-page duplicate errors block
+persistence. Residual semantic-only findings, including patchless or mixed
+patchable/residual findings, do not discard otherwise usable content. These
 termination rules apply equally with or without a validated state ledger. State
-references are still independently checked before saving and again under the
-atomic planning lock; cancellation, authorization and concurrency errors remain hard. The plan uses each existing page's frame count as its story capacity and
-carries scene character-state notes such as costume and injury through the global
+references are still independently checked before saving and again under the atomic
+planning lock; cancellation, authorization and concurrency errors remain hard.
+
+Automatic state planning with visual fallback requires a bounded, nonblank source
+quote and a source field or scene ID that identifies real non-null saved source.
+Literal containment is provenance metadata in this mode, so a paraphrased or
+translated quote does not reject an otherwise valid plan. Entity, panel and state
+ownership, READY references, and transition ordering remain hard validation. Legacy
+strict state validation continues to require exact source-quote containment.
+Generated assignments may use a registered READY state owned by the assigned entity
+even when it is not preassigned to a scene; unknown, foreign-entity and unready states
+remain invalid. The plan uses each existing page's frame count as its story capacity
+and carries scene character-state notes such as costume and injury through the global
 continuity brief.
 
 Episode autofill supports cooperative cancellation while queued or before the

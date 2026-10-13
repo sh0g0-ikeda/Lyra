@@ -976,19 +976,20 @@ export class PageService implements PageServicePort {
       };
     }
 
-    let audit = await this.auditEpisodePlanWithContinuityV3(
+    const audit = await this.auditEpisodePlanWithContinuityV3(
       context,
       compiledBeatPlan.plan,
       combined.suggestion,
       language,
       progressReporter,
       1,
-      2,
+      1,
       stateLedger,
       sourceOwnedPageContext,
     );
-    let blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
+    const blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
     if (blockingIssues.length === 0) {
+      this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
       return { ...combined, stateTransitions, stateVisualFallbacks };
     }
 
@@ -1057,42 +1058,7 @@ export class PageService implements PageServicePort {
       );
     }
 
-    combined = applyEpisodeStateVisualsToExecutionResult(
-      context,
-      combineEpisodePlanExecutionResults(compiledChunks),
-      stateTransitions,
-      stateVisualFallbacks,
-      language,
-    );
-    audit = await this.auditEpisodePlanWithContinuityV3(
-      context,
-      compiledBeatPlan.plan,
-      combined.suggestion,
-      language,
-      progressReporter,
-      2,
-      2,
-      stateLedger,
-      sourceOwnedPageContext,
-    );
-    blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
-    if (blockingIssues.length > 0) {
-      if (stateLedger !== undefined) {
-        throw new ConfigurationError(
-          `Episode continuity audit still found ${blockingIssues.length} issue(s) after bounded repair`,
-        );
-      }
-      this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
-      console.warn('episode_page_plan_continuity_v3_bounded_review_completed', {
-        episodeId: context.episodeId,
-        repairPassCount: 1,
-        secondAuditReportedErrorCount: blockingIssues.length,
-        issueCodes: blockingIssues.map((issue) => issue.code),
-        affectedPageIds: Array.from(
-          new Set(blockingIssues.flatMap((issue) => issue.pageIds)),
-        ),
-      });
-    }
+    this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
 
     return { ...combined, stateTransitions, stateVisualFallbacks };
   }
@@ -1297,12 +1263,13 @@ export class PageService implements PageServicePort {
       language,
       progressReporter,
       1,
-      2,
+      1,
       stateLedger,
       sourceOwnedPageContext,
     );
     logEpisodePlanAuditSummary(context.episodeId, 1, firstAudit);
     if (!hasBlockingEpisodePlanAuditIssues(firstAudit.issues)) {
+      this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
       return combined;
     }
 
@@ -1327,85 +1294,8 @@ export class PageService implements PageServicePort {
       ...combined,
       suggestion: normalizedSuggestion,
     };
-
-    let finalAudit: EpisodePlanAudit;
-    try {
-      finalAudit = await this.auditEpisodePlanWithContinuityV3(
-        context,
-        plan,
-        repairedCombined.suggestion,
-        language,
-        progressReporter,
-        2,
-        2,
-        stateLedger,
-        sourceOwnedPageContext,
-      );
-    } catch (error) {
-      if (!(error instanceof ConfigurationError)) {
-        throw error;
-      }
-      this.assertDeterministicallyValidEpisodePlan(context, repairedCombined.suggestion);
-      console.warn('episode_page_plan_continuity_v3_second_audit_unavailable', {
-        episodeId: context.episodeId,
-        reason: sanitizePersistedErrorMessage(
-          error,
-          'Episode continuity verification unavailable',
-        ),
-      });
-      return repairedCombined;
-    }
-    logEpisodePlanAuditSummary(context.episodeId, 2, finalAudit);
-    if (!hasBlockingEpisodePlanAuditIssues(finalAudit.issues)) {
-      return repairedCombined;
-    }
-    const reportedErrors = finalAudit.issues.filter(
-      (issue) => issue.severity === 'error',
-    );
-    const finalRepairCount =
-      (finalAudit.pageRepairs?.length ?? 0) + (finalAudit.panelRepairs?.length ?? 0);
-    let finalSuggestion = repairedCombined.suggestion;
-
-    if (finalRepairCount > 0) {
-      const repairPageIds = new Set([
-        ...(finalAudit.pageRepairs ?? []).map((repair) => repair.pageId),
-        ...(finalAudit.panelRepairs ?? []).map((repair) => repair.pageId),
-      ]);
-      finalSuggestion = this.applyValidatedEpisodePlanAuditRepairs(
-        context,
-        finalSuggestion,
-        {
-          ...finalAudit,
-          issues: finalAudit.issues.filter(
-            (issue) =>
-              issue.severity !== 'error' ||
-              issue.pageIds.some((pageId) => repairPageIds.has(pageId)),
-          ),
-        },
-        language,
-      );
-      console.info('episode_page_plan_continuity_v3_final_repairs_applied', {
-        episodeId: context.episodeId,
-        pageRepairCount: finalAudit.pageRepairs?.length ?? 0,
-        panelRepairCount: finalAudit.panelRepairs?.length ?? 0,
-      });
-    }
-
-    this.assertDeterministicallyValidEpisodePlan(context, finalSuggestion);
-
-    console.warn('episode_page_plan_continuity_v3_bounded_review_completed', {
-      episodeId: context.episodeId,
-      repairPassCount: finalRepairCount > 0 ? 2 : 1,
-      secondAuditReportedErrorCount: reportedErrors.length,
-      issueCodes: reportedErrors.map((issue) => issue.code),
-      affectedPageIds: Array.from(
-        new Set(reportedErrors.flatMap((issue) => issue.pageIds)),
-      ),
-    });
-    return {
-      ...repairedCombined,
-      suggestion: finalSuggestion,
-    };
+    this.assertDeterministicallyValidEpisodePlan(context, repairedCombined.suggestion);
+    return repairedCombined;
   }
 
   private assertDeterministicallyValidEpisodePlan(
@@ -2294,10 +2184,15 @@ function validateEpisodePlanAgainstContext(
   const sceneIds = new Set(context.scenes.map((scene) => scene.id));
   const pageIds = new Set(context.pages.map((page) => page.pageId));
   const entityIds = new Set(context.entities.map((entity) => entity.id));
-  const stateIds = new Set(
+  const sceneStateIds = new Set(
     context.scenes.flatMap((scene) =>
       scene.entityStates.map((state) => state.stateId),
     ),
+  );
+  const readyLibraryStateKeys = new Set(
+    (context.stateLibrary ?? [])
+      .filter((state) => state.referenceReady && state.referenceImage !== null)
+      .map((state) => `${state.entityId}:${state.stateId}`),
   );
 
   const seenPageIds = new Set<string>();
@@ -2347,7 +2242,9 @@ function validateEpisodePlanAgainstContext(
         if (!entityIds.has(assignment.entityId)) {
           throw new ValidationError('Episode page plan assignment referenced an entity outside the episode');
         }
-        if (assignment.stateId !== null && !stateIds.has(assignment.stateId)) {
+        if (assignment.stateId !== null
+          && !sceneStateIds.has(assignment.stateId)
+          && !readyLibraryStateKeys.has(`${assignment.entityId}:${assignment.stateId}`)) {
           throw new ValidationError('Episode page plan assignment referenced a scene entity state outside the episode');
         }
       }
