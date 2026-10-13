@@ -573,7 +573,13 @@ function hasText(value: string | null | undefined): boolean {
   return value !== null && value !== undefined && value.trim().length > 0;
 }
 
-const AUDIT_GROUNDING_POLICY = 'For basis=deterministic, copy the typed finding code and exact target page_ids with source_evidence=[]. For issue_grounding use page_source for the PAGE-LOCAL ORIGINAL SOURCE, not source_coverage ref source. For basis=source, cover every and only affected page with exact substrings of its named authority. Copy output evidence exactly from the named same-page unrepaired draft field, never from repair patches; only source_omission or ongoing_action_dropped may omit output evidence.';
+const AUDIT_GROUNDING_POLICY = [
+  'For basis=deterministic, copy the typed finding code and exact target page_ids with source_evidence=[]. Do not broaden that deterministic grounding beyond the typed finding\'s target pages.',
+  'For issue_grounding use page_source for the PAGE-LOCAL ORIGINAL SOURCE, not source_coverage ref source.',
+  'For basis=source, cover every and only affected page with exact substrings of its named authority.',
+  'Every output_evidence.page_id must be one of that issue\'s page_ids. An earlier unchanged page may explain repetition or continuity, but it is context only and never output evidence for a later-only issue. Do not add an intact context page to issue page_ids or repairs merely to make grounding pass.',
+  'Copy output evidence exactly from the named same-page unrepaired draft field, never from repair patches; only source_omission or ongoing_action_dropped may omit output evidence.',
+].join(' ');
 
 const AUDIT_VISIBLE_SOURCE_POLICY = [
   'Preserve every required source fact and action in concrete visible or text fields. A generic label such as an explanation, entry, or decision is not a substitute for the causal fact or completed action required by the source.',

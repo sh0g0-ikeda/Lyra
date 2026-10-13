@@ -514,6 +514,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
     expect(systemPrompts[0]).toContain('ledger ownership including text_plan');
     expect(systemPrompts[0]).toContain('page entry/exit/handoff');
+    expect(systemPrompts[0]).not.toContain('Every output_evidence.page_id must be one of that issue\'s page_ids');
     expect(systemPrompts[1]).not.toContain('ledger ownership including text_plan');
     expect(systemPrompts[1]).not.toContain('page entry/exit/handoff');
     expect(systemPrompts[1]).not.toContain('ledger');
@@ -521,6 +522,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(systemPrompts[1]).not.toContain('[FULL STORY DRAFT - SOURCE DATA]');
     expect(systemPrompts[1]).toContain('prerequisite, action, immediate result, and stated order');
     expect(systemPrompts[1]).toContain('COMPLETE DIALOGUE');
+    expect(systemPrompts[1]).toContain('Every output_evidence.page_id must be one of that issue\'s page_ids');
+    expect(systemPrompts[1]).toContain('Do not add an intact context page to issue page_ids or repairs');
     const legacySchema = readObject(readObject(readObject(requests[0]?.text).format).schema);
     expect(readArray(legacySchema.required)).not.toContain('issue_grounding');
     expect(readObject(legacySchema.properties)).not.toHaveProperty('issue_grounding');
