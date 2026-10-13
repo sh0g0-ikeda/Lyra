@@ -87,8 +87,9 @@ export class PostgresGenerationQuoteRepository {
   }
   public async pruneUnaccepted(limit=100):Promise<number>{
     const result=await this.database.query(
-      `WITH expired AS (SELECT id FROM generation_quotes WHERE accepted_job_id IS NULL AND expires_at<NOW()-INTERVAL '1 day'
-        ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED)
+      `WITH expired AS (SELECT q.id FROM generation_quotes q WHERE q.accepted_job_id IS NULL AND q.expires_at<NOW()-INTERVAL '1 day'
+        AND NOT EXISTS (SELECT 1 FROM work_deletion_requests wr WHERE wr.work_id=lyra_work_resource_uuid(q.plan->>'workId'))
+        ORDER BY q.expires_at LIMIT $1 FOR UPDATE OF q SKIP LOCKED)
        DELETE FROM generation_quotes q USING expired WHERE q.id=expired.id RETURNING q.id`,
       [Math.max(1,Math.min(1000,limit))],
     );

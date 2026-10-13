@@ -74,18 +74,32 @@ export class PostgresQuotedImportExecutionRepository {
       `SELECT j.id,j.user_id,j.organization_id FROM generation_jobs j WHERE j.job_type='entity_import_analysis' AND ($2::uuid IS NULL OR j.id=$2::uuid) AND (
         (j.status IN ('queued','processing') AND ${IMPORT_PROGRESS_SQL}<$3)
         OR (j.status='failed' AND NOT EXISTS (SELECT 1 FROM credit_ledger l WHERE l.job_id=j.id AND l.type='refund'))
-       ) ORDER BY j.created_at LIMIT $1`,[Math.max(1,Math.min(100,limit)),jobId,staleBefore],
+        ) AND NOT EXISTS (
+          SELECT 1 FROM work_deletion_resources wd JOIN work_deletion_requests wr ON wr.id=wd.request_id
+          WHERE wd.kind='job' AND wd.resource_id=j.id
+        ) ORDER BY j.created_at LIMIT $1`,[Math.max(1,Math.min(100,limit)),jobId,staleBefore],
     );
     let count=0;
     for(const row of result.rows){
-      const jobs=new PostgresGenerationJobRepository(this.database,this.persistenceProfile);
-      if(await jobs.finalizeCancellation(row.id)){count++;continue;}
-      const quote=await new PostgresGenerationQuoteRepository(this.database).findAcceptedJob(row.id);
-      // A system settlement uses the accepted actor even if organization membership was revoked.
-      const job={id:row.id,userId:row.user_id,organizationId:row.organization_id,creditCost:quote.plan.amountCredits};
-      await this.failAndRefund(job,'Import analysis worker stopped or its result is unknown; reconcile this receipt before retrying',staleBefore);
-      count++;
+      try{
+        const jobs=new PostgresGenerationJobRepository(this.database,this.persistenceProfile);
+        if(await jobs.finalizeCancellation(row.id)){count++;continue;}
+        const quote=await new PostgresGenerationQuoteRepository(this.database).findAcceptedJob(row.id);
+        // A system settlement uses the accepted actor even if organization membership was revoked.
+        const job={id:row.id,userId:row.user_id,organizationId:row.organization_id,creditCost:quote.plan.amountCredits};
+        await this.failAndRefund(job,'Import analysis worker stopped or its result is unknown; reconcile this receipt before retrying',staleBefore);
+        count++;
+      }catch(error){
+        // The deletion worker owns terminal mutations for fenced jobs. Keep the
+        // bounded batch moving so one such row cannot block unrelated refunds.
+        if(isWorkDeletionGuardError(error))continue;
+        throw error;
+      }
     }
     return count;
   }
+}
+
+function isWorkDeletionGuardError(error:unknown):boolean{
+  return error!==null&&typeof error==='object'&&'constraint'in error&&error.constraint==='work_deletion_write_guard';
 }
