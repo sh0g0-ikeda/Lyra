@@ -1277,18 +1277,35 @@ export class PageService implements PageServicePort {
       currentChunk: null,
       totalChunks: null,
     });
-    const normalizedSuggestion = this.applyValidatedEpisodePlanAuditRepairs(
-      context,
-      combined.suggestion,
-      firstAudit,
-      language,
-    );
-    const repairedCombined: EpisodePlanExecutionResult = {
-      ...combined,
-      suggestion: normalizedSuggestion,
-    };
-    this.assertDeterministicallyValidEpisodePlan(context, repairedCombined.suggestion);
-    return repairedCombined;
+    try {
+      const normalizedSuggestion = this.applyValidatedEpisodePlanAuditRepairs(
+        context,
+        combined.suggestion,
+        firstAudit,
+        language,
+      );
+      const repairedCombined: EpisodePlanExecutionResult = {
+        ...combined,
+        suggestion: normalizedSuggestion,
+      };
+      this.assertDeterministicallyValidEpisodePlan(context, repairedCombined.suggestion);
+      return repairedCombined;
+    } catch (error) {
+      if (!isDiscardableEpisodePlanAuditRepairError(error)) {
+        throw error;
+      }
+
+      // Audit repairs are optional. Preserve the typed draft only when the
+      // unchanged draft still passes every context and deterministic gate.
+      this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
+      console.warn('episode_page_plan_continuity_v3_repair_skipped', {
+        episodeId: context.episodeId,
+        reason: error instanceof ValidationError
+          ? 'invalid_repair_context'
+          : 'invalid_repair_contract',
+      });
+      return combined;
+    }
   }
 
   private assertDeterministicallyValidEpisodePlan(
@@ -1759,6 +1776,25 @@ function logEpisodePlanAuditSummary(
     pageRepairCount: audit.pageRepairs?.length ?? 0,
     panelRepairCount: audit.panelRepairs?.length ?? 0,
   });
+}
+
+function isDiscardableEpisodePlanAuditRepairError(error: unknown): boolean {
+  if (error instanceof ValidationError) {
+    switch (error.message) {
+      case 'Episode page plan referenced a scene outside the episode':
+      case 'Episode page plan dialogue referenced an entity outside the episode':
+      case 'Episode page plan assignment referenced an entity outside the episode':
+      case 'Episode page plan assignment referenced a scene entity state outside the episode':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  return error instanceof ConfigurationError && (
+    error.message.startsWith('Episode plan audit repair ') ||
+    error.message.startsWith('Episode continuity deterministic verification found ')
+  );
 }
 
 function buildEpisodePlanChunkContext(

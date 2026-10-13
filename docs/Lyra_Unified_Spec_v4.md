@@ -498,8 +498,14 @@ page or panel content is persisted. Review repairs are field-level patches: page
 panel identity, order, and panel count are immutable. Unknown identifiers or invalid
 patch targets are rejected. Each autofill performs one semantic audit. The existing
 structured-output retry remains bounded within that audit. The inline path applies
-its validated field-level repairs once; the legacy non-inline path recompiles each
-affected chunk once. Both paths then proceed to local deterministic validation and
+its validated field-level repairs once. If those optional patches contain an
+unknown target, unavailable/foreign state or entity, or introduce a deterministic
+contradiction, the inline path rejects the entire patch batch and validates the
+original draft locally. Only an independently valid original draft may continue;
+invalid original content, cancellation, unexpected failures, and locked-context
+ownership/state/fingerprint checks still block saving. This fallback makes no
+additional provider call. The legacy non-inline path recompiles each affected
+chunk once. Both paths then proceed to local deterministic validation and
 must not submit the repaired draft for another semantic audit. After bounded repair,
 schema, identifier, structure, and deterministic cross-page duplicate errors block
 persistence. Residual semantic-only findings, including patchless or mixed
