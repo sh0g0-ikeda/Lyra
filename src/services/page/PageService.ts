@@ -2080,10 +2080,10 @@ function formatEpisodeStateTransitionLedger(
       ? ['(none proposed)']
       : transitions.map((transition) => [
           `entity_id=${transition.entityId}`,
-          `state_id=${transition.stateId ?? 'default'}`,
+          `state_id=${transition.stateId ?? 'null'}`,
           `starts_at_panel_id=${transition.startsAtPanelId}`,
           `source_field=${transition.sourceField}`,
-          `source_scene_id=${transition.sourceSceneId ?? 'none'}`,
+          `source_scene_id=${transition.sourceSceneId ?? 'null'}`,
           `source_quote=${transition.sourceQuote}`,
         ].join(' | '))),
     '[SOURCE-GROUNDED VISUAL STATE OVERLAYS]',
@@ -2091,13 +2091,14 @@ function formatEpisodeStateTransitionLedger(
       ? ['(none proposed)']
       : visualFallbacks.map((fallback) => [
           `entity_id=${fallback.entityId}`,
-          `candidate_state_id=${fallback.candidateStateId ?? 'none'}`,
+          `candidate_state_id=${fallback.candidateStateId ?? 'null'}`,
           `starts_at_panel_id=${fallback.startsAtPanelId}`,
           `appearance=${fallback.suggestedName}: ${fallback.suggestedDescription}`,
           `source_field=${fallback.sourceField}`,
-          `source_scene_id=${fallback.sourceSceneId ?? 'none'}`,
+          `source_scene_id=${fallback.sourceSceneId ?? 'null'}`,
           `source_quote=${fallback.sourceQuote}`,
         ].join(' | '))),
+    'Editable entity state_id must be a listed state UUID or JSON null for the default state; never write default or none as an ID. A candidate_state_id is only diagnostic context and must not replace the registered reference.',
     'These boundaries include the starting panel. Keep the state through later panels until another boundary for that character.',
     'A visual overlay does not replace or clear the current registered state reference. Keep its full appearance until a later registered/default boundary or visual overlay.',
     'Do not request or create a state or image for a visual overlay.',

@@ -413,6 +413,100 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     expect(requestCount).toBe(2);
   });
 
+  it('state_idを既存UUIDまたはdefault用nullに限定してproviderへ要求する', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    let responseStateId: string | null = '33333333-3333-4333-8333-333333333333';
+    let requestCount = 0;
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        requestCount += 1;
+        return {
+          body: {
+            output_text: JSON.stringify({
+              pages: [{
+                page_id: '11111111-1111-4111-8111-111111111111',
+                page_number: 1,
+                panels: [{
+                  order: 1,
+                  entities: [{
+                    entity_id: '22222222-2222-4222-8222-222222222222',
+                    role: 'primary',
+                    expression: 'calm',
+                    custom_expression: null,
+                    action: 'standing_firm',
+                    custom_action: null,
+                    position: 'center',
+                    facing_direction: null,
+                    effect_note: null,
+                    state_id: responseStateId,
+                  }],
+                }],
+              }],
+            }),
+          },
+          requestId: `req-state-id-contract-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .resolves.toMatchObject({
+        suggestion: { pages: [{ panels: [{ entities: [{ stateId: responseStateId }] }] }] },
+      });
+    responseStateId = null;
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .resolves.toMatchObject({
+        suggestion: { pages: [{ panels: [{ entities: [{ stateId: null }] }] }] },
+      });
+
+    const schema = (requests[0]?.text as {
+      format: {
+        schema: {
+          properties: {
+            pages: {
+              items: {
+                properties: {
+                  panels: {
+                    items: {
+                      properties: {
+                        entities: {
+                          items: {
+                            properties: {
+                              state_id: { anyOf: Array<{ type: string; format?: string }> };
+                            };
+                          };
+                        };
+                      };
+                    };
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    }).format.schema;
+    const stateIdSchema = schema.properties.pages.items.properties.panels.items
+      .properties.entities.items.properties.state_id;
+    expect(stateIdSchema.anyOf).toEqual([
+      { type: 'string', format: 'uuid' },
+      { type: 'null' },
+    ]);
+    const systemPrompt = (requests[0]?.input as Array<{ content: Array<{ text: string }> }>)[0]
+      ?.content[0]?.text ?? '';
+    expect(systemPrompt).toContain(
+      'state_id must be an existing state UUID or JSON null for the default state; never use strings such as default or none',
+    );
+
+    responseStateId = 'default';
+    requestCount = 0;
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .rejects.toMatchObject({ reason: 'invalid_payload' });
+    expect(requestCount).toBe(2);
+  });
+
   it('provider schemaの文字列上限とpanel orderは保存時Zod契約に一致する', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {

@@ -3767,6 +3767,48 @@ describe('PageService', () => {
     },
   );
 
+  it('通常状態への復帰は詳細生成と監査へstate_id=nullとして渡す', async () => {
+    const context = buildEpisodePlanningContext();
+    context.episode.startingEntityStates = [];
+    context.stateLibrary = [];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const pageCompiler = new FakeEpisodePagePlanCompiler();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(), panelRepository: new FakePanelRepository(),
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+      completeStoryAutofillJob: async () => true,
+    });
+    const stateCompiler = {
+      compileStateTransitions: async () => ({
+        plan: {
+          transitions: [{
+            entityId: '11111111-1111-4111-8111-111111111111', stateId: null,
+            startsAtPanelId: 'panel-1', sourceSceneId: null,
+            sourceField: 'middle' as const, sourceQuote: 'Tension rises',
+          }], unresolved: [],
+        }, compilerProvider: 'openai' as const, compilerModel: 'test',
+        compilerPromptVersion: 'episode_state_transition_v2',
+      }),
+    };
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), pageCompiler, undefined,
+      new FakeEpisodeBeatPlanCompiler(), auditCompiler, true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+    await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => undefined },
+      { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
+    );
+    expect(pageCompiler.inputs[0]?.compilerBrief).toContain('state_id=null');
+    expect(pageCompiler.inputs[0]?.compilerBrief).not.toContain('state_id=default');
+    expect(auditCompiler.inputs[0]?.compilerBrief).toContain('state_id=null');
+    expect(auditCompiler.inputs).toHaveLength(1);
+  });
+
   it('自動状態反映はREADY状態を維持し未登録の負傷を視覚描写として原子的に保存する', async () => {
     const entityId = '11111111-1111-4111-8111-111111111111';
     const readyStateId = '22222222-2222-4222-8222-222222222222';

@@ -290,6 +290,9 @@ Detail provider text and panel-order limits match their receiving Zod bounds. On
 blank optional text fields already admitting null are normalized to null; meaningful
 text is not truncated. Required dialogue, UUIDs, reference ownership, known targets
 and array bounds retain their existing validation and finite retry limits.
+State ledgers and detail provider schemas represent the default state as JSON null,
+never a label in a UUID field. The provider state-ID schema accepts UUID or null;
+unknown UUIDs still fail the existing authorized-reference validation.
 
 For a complete original-page mapping without character-state opt-in, bounded
 original-source requirement extraction replaces the existing beat-plan pack calls.
