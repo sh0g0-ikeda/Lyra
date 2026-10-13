@@ -66,6 +66,7 @@ import {
   buildEpisodeBeatPlanCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
   buildEpisodePlanAuditBrief,
+  buildEpisodePlanAuditVisualSnapshot,
   describeSavedFrameCapacity,
   detectDeterministicContinuityIssues,
   fingerprintEpisodePlanningContext,
@@ -1063,6 +1064,7 @@ export class PageService implements PageServicePort {
       compilerBrief: buildEpisodePlanAuditBrief({ context, plan, suggestion, language }),
       language,
       pageIds: context.pages.map((page) => page.pageId),
+      visualSnapshot: buildEpisodePlanAuditVisualSnapshot(suggestion),
       beforeRetry: async () => {
         await reportEpisodePlanProgress(progressReporter, {
           stage: 'auditing_episode',

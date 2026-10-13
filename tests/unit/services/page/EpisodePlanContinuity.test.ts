@@ -196,7 +196,7 @@ describe('EpisodePlanContinuity', () => {
 
     for (const page of suggestion.pages) {
       for (const panel of page.panels) {
-        panel.dialogue = panel.dialogue!.slice(0, 4).map((line, index) => ({
+        panel.dialogue = panel.dialogue!.slice(0, 1).map((line, index) => ({
           ...line,
           text: '台詞' + index,
         }));

@@ -1385,6 +1385,10 @@ describe('PageService', () => {
       'page-6',
       'page-7',
     ]);
+    expect(auditCompiler.inputs[0]?.visualSnapshot?.panels).toHaveLength(7);
+    expect(auditCompiler.inputs[0]?.visualSnapshot?.panels[0]).toEqual(
+      expect.objectContaining({ pageId: 'page-1', panelOrder: 1 }),
+    );
     expect(progressEvents.find((progress) => progress.stage === 'auditing_episode')).toMatchObject({
       currentChunk: null,
       totalChunks: null,

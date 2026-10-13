@@ -17,11 +17,35 @@ import type {
   EpisodePagePlanSuggestion,
 } from '../../domain/types/page.js';
 import type { EpisodeBeatPlan, EpisodeBeatPlanPage } from './EpisodeBeatPlanCompiler.js';
-import type { EpisodePlanAuditIssue } from './EpisodePlanAuditCompiler.js';
+import type {
+  EpisodePlanAuditIssue,
+  EpisodePlanAuditVisualSnapshot,
+} from './EpisodePlanAuditCompiler.js';
 
 const STORY_BEAT_DUPLICATE_MIN_NORMALIZED_CHARS = 8;
 const DIALOGUE_DUPLICATE_MIN_NORMALIZED_CHARS = 6;
 const VISUAL_DUPLICATE_MIN_NORMALIZED_CHARS = 12;
+const AUDIT_STALE_PEER_MIN_CHARS = 4;
+
+export function buildEpisodePlanAuditVisualSnapshot(
+  suggestion: EpisodePagePlanSuggestion,
+): EpisodePlanAuditVisualSnapshot {
+  const values = (candidates: Array<string | null | undefined>): string[] => candidates
+    .map((value) => value?.replace(/\s+/gu, ' ').trim() ?? '')
+    .filter((value) => value.length >= AUDIT_STALE_PEER_MIN_CHARS);
+  return {
+    panels: suggestion.pages.flatMap((page) => page.panels.map((panel) => ({
+      pageId: page.pageId,
+      panelOrder: panel.order,
+      situationText: values([panel.situationText]),
+      composition: values([
+        panel.composition?.compositionPrompt,
+        panel.composition?.customNote,
+      ]),
+      backgroundNote: values([panel.backgroundNote]),
+    }))),
+  };
+}
 // Story/chapter API fields allow up to 2,000 characters. Keep the complete
 // supported input after alias expansion while still bounding malformed data.
 const EPISODE_ARC_FIELD_MAX_CHARS = 2_200;

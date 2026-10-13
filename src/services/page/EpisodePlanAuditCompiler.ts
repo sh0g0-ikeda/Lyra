@@ -77,7 +77,21 @@ export interface CompileEpisodePlanAuditInput {
   compilerBrief: string;
   language: AppLanguage;
   pageIds: string[];
+  /** Immutable service-built visual values used only to reject stale handoff repairs. */
+  visualSnapshot?: EpisodePlanAuditVisualSnapshot;
   beforeRetry?: () => Promise<void>;
+}
+
+export interface EpisodePlanAuditVisualSnapshotPanel {
+  readonly pageId: string;
+  readonly panelOrder: number;
+  readonly situationText: readonly string[];
+  readonly composition: readonly string[];
+  readonly backgroundNote: readonly string[];
+}
+
+export interface EpisodePlanAuditVisualSnapshot {
+  readonly panels: readonly EpisodePlanAuditVisualSnapshotPanel[];
 }
 
 export interface CompiledEpisodePlanAudit {
