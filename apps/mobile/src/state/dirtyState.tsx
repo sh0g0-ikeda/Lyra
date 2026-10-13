@@ -12,11 +12,9 @@ import {
 import {
   applyDirtyStateChoice,
   navigationBlockingRegistrations,
-  type DirtyEditorRegistration,
-  type DirtyStateChoice
+  type DirtyEditorRegistration
 } from '@/domain/dirtyStatePolicy';
 import type { UiLanguage } from '@/domain/types';
-import { UnsavedChangesResolutionDialog } from '@/components/UnsavedChangesResolutionDialog';
 
 interface DirtyStateContextValue {
   clearResolvedRevision: (id: string) => void;
@@ -29,22 +27,13 @@ interface DirtyStateContextValue {
 
 const DirtyStateContext = createContext<DirtyStateContextValue | null>(null);
 
-interface PendingDirtyResolution {
-  language: UiLanguage;
-  registrations: readonly DirtyEditorRegistration[];
-  resolve: (allowed: boolean) => void;
-}
-
 export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.Element {
   const registrationsRef = useRef(new Map<string, DirtyEditorRegistration>());
   const resolvedRevisionsRef = useRef(new Map<string, string>());
   const resolutionRef = useRef<Promise<boolean> | null>(null);
   const backgroundSaveRef = useRef<Promise<boolean> | null>(null);
-  const pendingResolutionRef = useRef<PendingDirtyResolution | null>(null);
   const [registrationCount, setRegistrationCount] = useState(0);
   const [navigationBlockingCount, setNavigationBlockingCount] = useState(0);
-  const [pendingResolution, setPendingResolution] =
-    useState<PendingDirtyResolution | null>(null);
 
   const updateRegistrationCounts = useCallback((): void => {
     setRegistrationCount(registrationsRef.current.size);
@@ -105,38 +94,23 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     [updateRegistrationCounts]
   );
 
-  const settlePendingResolution = useCallback((choice: DirtyStateChoice): void => {
-    const pending = pendingResolutionRef.current;
-    if (pending === null) {
-      return;
-    }
-    pendingResolutionRef.current = null;
-    setPendingResolution(null);
-    void applyDirtyStateChoice(pending.registrations, choice).then((allowed) => {
-      if (allowed) {
-        removeResolvedRegistrations(pending.registrations);
-      }
-      pending.resolve(allowed);
-    });
-  }, [removeResolvedRegistrations]);
-
-  const resolveDirtyEditors = useCallback(function resolve(language: UiLanguage, options?: { includeNonBlocking?: boolean }): Promise<boolean> {
+  const resolveDirtyEditors = useCallback(function resolve(_language: UiLanguage, _options?: { includeNonBlocking?: boolean }): Promise<boolean> {
     if (registrationsRef.current.size === 0) {
       return Promise.resolve(true);
     }
     if (resolutionRef.current !== null) {
-      if (options?.includeNonBlocking) return resolutionRef.current.then((allowed) => allowed ? resolve(language, options) : false);
+      if (_options?.includeNonBlocking) return resolutionRef.current.then((allowed) => allowed ? resolve(_language, _options) : false);
       return resolutionRef.current;
     }
-    const allRegistrations = [...registrationsRef.current.values()];
-    const registrations = options?.includeNonBlocking ? allRegistrations : navigationBlockingRegistrations(allRegistrations);
+    const registrations = [...registrationsRef.current.values()];
     if (registrations.length === 0) {
       return Promise.resolve(true);
     }
-    const resolution = new Promise<boolean>((resolve) => {
-      const pending = { language, registrations, resolve };
-      pendingResolutionRef.current = pending;
-      setPendingResolution(pending);
+    const resolution = applyDirtyStateChoice(registrations, 'discard').then((allowed) => {
+      if (allowed) {
+        removeResolvedRegistrations(registrations);
+      }
+      return allowed;
     });
     resolutionRef.current = resolution;
     void resolution.finally(() => {
@@ -145,7 +119,7 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
       }
     });
     return resolution;
-  }, []);
+  }, [removeResolvedRegistrations]);
 
   const saveDirtyEditors = useCallback((): Promise<boolean> => {
     if (registrationsRef.current.size === 0) {
@@ -170,16 +144,6 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
     return save;
   }, [removeResolvedRegistrations]);
 
-  useEffect(
-    () => () => {
-      const pending = pendingResolutionRef.current;
-      pendingResolutionRef.current = null;
-      resolutionRef.current = null;
-      pending?.resolve(false);
-    },
-    []
-  );
-
   const value = useMemo<DirtyStateContextValue>(
     () => ({
       clearResolvedRevision,
@@ -202,11 +166,6 @@ export function DirtyStateProvider({ children }: PropsWithChildren): React.JSX.E
   return (
     <DirtyStateContext.Provider value={value}>
       {children}
-      <UnsavedChangesResolutionDialog
-        language={pendingResolution?.language ?? 'ja'}
-        onSelect={settlePendingResolution}
-        visible={pendingResolution !== null}
-      />
     </DirtyStateContext.Provider>
   );
 }

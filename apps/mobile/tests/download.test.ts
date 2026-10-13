@@ -13,7 +13,9 @@ const {
   fileDeleteMock,
   fileCopyMock,
   isAvailableAsyncMock,
+  mediaLibraryCreateAssetMock,
   platformMock,
+  requestMediaLibraryPermissionsAsyncMock,
   requestDirectoryPermissionsAsyncMock,
   shareAsyncMock
 } = vi.hoisted(() => ({
@@ -22,7 +24,9 @@ const {
   fileDeleteMock: vi.fn(),
   fileCopyMock: vi.fn(),
   isAvailableAsyncMock: vi.fn(),
+  mediaLibraryCreateAssetMock: vi.fn(),
   platformMock: { OS: 'ios' },
+  requestMediaLibraryPermissionsAsyncMock: vi.fn(),
   requestDirectoryPermissionsAsyncMock: vi.fn(),
   shareAsyncMock: vi.fn()
 }));
@@ -58,6 +62,11 @@ vi.mock('expo-sharing', () => ({
   shareAsync: shareAsyncMock
 }));
 
+vi.mock('expo-media-library', () => ({
+  Asset: { create: mediaLibraryCreateAssetMock },
+  requestPermissionsAsync: requestMediaLibraryPermissionsAsyncMock,
+}));
+
 vi.mock('@/lib/config', () => ({
   config: { apiBaseUrl: 'https://api.example.test' }
 }));
@@ -65,6 +74,8 @@ vi.mock('@/lib/config', () => ({
 beforeEach(() => {
   platformMock.OS = 'ios';
   vi.clearAllMocks();
+  requestMediaLibraryPermissionsAsyncMock.mockResolvedValue({ status: 'granted' });
+  mediaLibraryCreateAssetMock.mockResolvedValue({ id: 'asset-1' });
 });
 
 describe('mobile download filenames', () => {
@@ -120,34 +131,55 @@ describe('mobile download filenames', () => {
     );
   });
 
-  it('Androidでは選択したフォルダへ画像を実ファイルとして保存する', async () => {
+  it('Android画像は選択フォルダを開かずライブラリへ保存する', async () => {
     platformMock.OS = 'android';
     downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/page.png' });
-    requestDirectoryPermissionsAsyncMock.mockResolvedValue({
-      directoryUri: 'content://downloads/tree',
-      granted: true
-    });
-    createFileAsyncMock.mockResolvedValue('content://downloads/page.png');
-    fileCopyMock.mockResolvedValue(undefined);
+    await expect(downloadAuthenticatedFile({
+      path: '/api/pages/page-1/export-image',
+      filename: 'page.png',
+      mimeType: 'image/png',
+      tokens: null
+    })).resolves.toBe('file:///cache/page.png');
+    expect(mediaLibraryCreateAssetMock).toHaveBeenCalledWith('file:///cache/page.png');
+    expect(requestDirectoryPermissionsAsyncMock).not.toHaveBeenCalled();
+    expect(shareAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it('画像はフォルダ選択や共有を開かず画像ライブラリへ直接保存する', async () => {
+    platformMock.OS = 'android';
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/page.png' });
+    requestMediaLibraryPermissionsAsyncMock.mockResolvedValue({ status: 'granted' });
+    await expect(downloadAuthenticatedFile({
+      path: '/api/pages/page-1/export-image',
+      filename: 'page.png',
+      mimeType: 'image/png',
+      tokens: null
+    })).resolves.toBe('file:///cache/page.png');
+
+    expect(requestMediaLibraryPermissionsAsyncMock).toHaveBeenCalledOnce();
+    expect(requestMediaLibraryPermissionsAsyncMock).toHaveBeenCalledWith(true, ['photo']);
+    expect(mediaLibraryCreateAssetMock).toHaveBeenCalledWith('file:///cache/page.png');
+    expect(requestDirectoryPermissionsAsyncMock).not.toHaveBeenCalled();
+    expect(shareAsyncMock).not.toHaveBeenCalled();
+  });
+
+  // expo-media-library on web cannot grant write access; preserve the established share fallback.
+  it('Web画像はMediaLibrary権限を要求せず共有経路へ渡す', async () => {
+    platformMock.OS = 'web';
+    downloadAsyncMock.mockResolvedValue({ status: 200, uri: 'file:///cache/page.png' });
+    isAvailableAsyncMock.mockResolvedValue(true);
+    shareAsyncMock.mockResolvedValue(undefined);
 
     await expect(downloadAuthenticatedFile({
       path: '/api/pages/page-1/export-image',
       filename: 'page.png',
       mimeType: 'image/png',
       tokens: null
-    })).resolves.toBe('content://downloads/page.png');
+    })).resolves.toBe('file:///cache/page.png');
 
-    expect(createFileAsyncMock).toHaveBeenCalledWith(
-      'content://downloads/tree',
-      'page',
-      'image/png'
-    );
-    expect(fileCopyMock).toHaveBeenCalledWith(
-      'file:///cache/page.png',
-      'content://downloads/page.png',
-      { overwrite: true }
-    );
-    expect(shareAsyncMock).not.toHaveBeenCalled();
+    expect(requestMediaLibraryPermissionsAsyncMock).not.toHaveBeenCalled();
+    expect(mediaLibraryCreateAssetMock).not.toHaveBeenCalled();
+    expect(shareAsyncMock).toHaveBeenCalledWith('file:///cache/page.png', { mimeType: 'image/png' });
   });
 
   it('AndroidではPDF全体をJavaScriptへ展開せず選択フォルダへ保存する', async () => {
@@ -230,20 +262,13 @@ describe('mobile download filenames', () => {
     expect(shareAsyncMock).not.toHaveBeenCalled();
   });
 
-  it('AndroidではAPIが返した実際の画像MIMEに合う拡張子で保存する', async () => {
+  it('AndroidではAPIが返した実際の画像MIMEをライブラリへ保存する', async () => {
     platformMock.OS = 'android';
     downloadAsyncMock.mockResolvedValue({
       status: 200,
       uri: 'file:///cache/page.png',
       mimeType: 'image/jpeg'
     });
-    requestDirectoryPermissionsAsyncMock.mockResolvedValue({
-      directoryUri: 'content://downloads/tree',
-      granted: true
-    });
-    createFileAsyncMock.mockResolvedValue('content://downloads/page.jpg');
-    fileCopyMock.mockResolvedValue(undefined);
-
     await downloadAuthenticatedFile({
       path: '/api/pages/page-1/export-image',
       filename: 'page',
@@ -251,11 +276,8 @@ describe('mobile download filenames', () => {
       tokens: null
     });
 
-    expect(createFileAsyncMock).toHaveBeenCalledWith(
-      'content://downloads/tree',
-      'page',
-      'image/jpeg'
-    );
+    expect(mediaLibraryCreateAssetMock).toHaveBeenCalledWith('file:///cache/page.png');
+    expect(requestDirectoryPermissionsAsyncMock).not.toHaveBeenCalled();
   });
 
   it('Androidのフォルダ選択が取消例外を返した場合も共有画面を開かない', async () => {

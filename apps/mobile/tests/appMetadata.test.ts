@@ -183,7 +183,7 @@ describe('production app metadata', () => {
     }
   });
 
-  it('未使用のcamera、microphone、overlay、push、legacy storage権限を最終Manifestから除外する', () => {
+  it('不要な読取等の権限を除外し、画像保存に必要な旧Android書込権限を許可する', () => {
     const imagePickerPlugin = config.expo.plugins?.find(
       (plugin): plugin is [
         string,
@@ -209,7 +209,6 @@ describe('production app metadata', () => {
         'android.permission.SYSTEM_ALERT_WINDOW',
         'android.permission.VIBRATE',
         'android.permission.WAKE_LOCK',
-        'android.permission.WRITE_EXTERNAL_STORAGE',
         'com.anddoes.launcher.permission.UPDATE_COUNT',
         'com.google.android.c2dm.permission.RECEIVE',
         'com.htc.launcher.permission.READ_SETTINGS',
@@ -228,6 +227,16 @@ describe('production app metadata', () => {
         'me.everything.badger.permission.BADGE_COUNT_WRITE',
       ]),
     );
+  });
+
+  it('直接画像保存は写真だけの権限とiOS追加保存の説明を設定する', () => {
+    const mediaLibraryPlugin = config.expo.plugins?.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-media-library');
+    expect(mediaLibraryPlugin).toEqual(['expo-media-library', expect.objectContaining({
+      savePhotosPermission: expect.any(String),
+      granularPermissions: ['photo'],
+      isAccessMediaLocationEnabled: false,
+    })]);
+    expect(config.expo.android?.blockedPermissions).not.toContain('android.permission.WRITE_EXTERNAL_STORAGE');
   });
 
   it('iOS privacy manifest で tracking 無効を明示する', () => {

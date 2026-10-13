@@ -3,7 +3,7 @@
     "name": "Lyra Mobile",
     "slug": "lyra-mobile",
     "scheme": "lyra-mobile",
-    "version": "0.1.18",
+    "version": "0.1.19",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -38,6 +38,17 @@
           "photosPermission": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。"
         }
       ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "選択したキャラ画像を取り込むために写真を利用します。",
+          "savePhotosPermission": "作成した画像を端末の写真ライブラリへ保存します。",
+          "granularPermissions": [
+            "photo"
+          ],
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
       "expo-sharing",
       "expo-web-browser",
       "expo-image",
@@ -54,7 +65,8 @@
       "bundleIdentifier": "com.lyra.mobile",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSPhotoLibraryUsageDescription": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。"
+        "NSPhotoLibraryUsageDescription": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。",
+        "NSPhotoLibraryAddUsageDescription": "作成した画像を端末の写真ライブラリへ保存します。"
       },
       "privacyManifests": {
         "NSPrivacyTracking": false,
@@ -124,7 +136,6 @@
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.VIBRATE",
         "android.permission.WAKE_LOCK",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
         "com.anddoes.launcher.permission.UPDATE_COUNT",
         "com.google.android.c2dm.permission.RECEIVE",
         "com.htc.launcher.permission.READ_SETTINGS",

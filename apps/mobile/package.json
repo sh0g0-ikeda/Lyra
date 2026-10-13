@@ -1,6 +1,6 @@
 {
   "name": "lyra-mobile",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -39,6 +39,7 @@
     "expo-iap": "^4.7.0",
     "expo-image": "~57.0.5",
     "expo-image-picker": "~57.0.20",
+    "expo-media-library": "~57.0.5",
     "expo-notifications": "57.0.22",
     "expo-secure-store": "~57.0.4",
     "expo-sharing": "~57.0.23",

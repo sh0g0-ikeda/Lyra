@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { Asset, requestPermissionsAsync } from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 
@@ -83,11 +84,25 @@ const downloadedMimeType = (
   return requestedMimeType;
 };
 
+const isImageMimeType = (mimeType: string): boolean => mimeType.startsWith('image/');
+
+const saveImageToLibrary = async (sourceUri: string): Promise<string> => {
+  const permission = await requestPermissionsAsync(true, ['photo']);
+  if (permission.status !== 'granted') {
+    throw new MobileFileTransferError('DOWNLOAD_CANCELED');
+  }
+  await Asset.create(sourceUri);
+  return sourceUri;
+};
+
 const saveDownloadedFile = async (
   sourceUri: string,
   filename: string,
   mimeType: string
 ): Promise<string> => {
+  if (Platform.OS !== 'web' && isImageMimeType(mimeType)) {
+    return saveImageToLibrary(sourceUri);
+  }
   if (Platform.OS === 'android') {
     let permission: FileSystem.FileSystemRequestDirectoryPermissionsResult;
     try {

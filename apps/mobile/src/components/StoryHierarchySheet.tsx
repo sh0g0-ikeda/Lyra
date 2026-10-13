@@ -168,6 +168,8 @@ interface WorkNodeProps {
   onSelectWork: (workId: string) => void;
   onSelectChapter: (workId: string, chapterId: string) => void;
   onSelectEpisode: (workId: string, chapterId: string, episodeId: string) => void;
+  onCreateChapter: (work: WorkRecord) => void;
+  onCreateEpisode: (work: WorkRecord, chapter: ChapterRecord) => void;
   onOpenMenu: (target: MenuTarget) => void;
 }
 
@@ -188,6 +190,7 @@ interface ChapterNodeProps {
   onToggle: () => void;
   onSelectChapter: (workId: string, chapterId: string) => void;
   onSelectEpisode: (workId: string, chapterId: string, episodeId: string) => void;
+  onCreateEpisode: (work: WorkRecord, chapter: ChapterRecord) => void;
   onOpenMenu: (target: MenuTarget) => void;
 }
 
@@ -309,6 +312,7 @@ function ChapterNode({
   onToggle,
   onSelectChapter,
   onSelectEpisode,
+  onCreateEpisode,
   onOpenMenu
 }: ChapterNodeProps): React.JSX.Element {
   const queryEnabled = visible && expanded;
@@ -355,6 +359,17 @@ function ChapterNode({
               tone="warning"
             />
           )}
+          {canEdit ? (
+            <Pressable
+              accessibilityLabel={t(language, 'component.storyHierarchySheet.addEpisodeHere')}
+              accessibilityRole="button"
+              onPress={() => onCreateEpisode(work, chapter)}
+              style={styles.branchAddButton}
+            >
+              <Plus color={colors.primary} size={18} strokeWidth={2.2} />
+              <Text style={styles.branchAddLabel}>{t(language, "generated.components.StoryHierarchySheet.add.episode.ad67475b")}</Text>
+            </Pressable>
+          ) : null}
           {episodes.map((episode, episodeIndex) => {
             const episodeTitle = titleForEpisode(episode, language);
             return (
@@ -407,6 +422,8 @@ function WorkNode({
   onSelectWork,
   onSelectChapter,
   onSelectEpisode,
+  onCreateChapter,
+  onCreateEpisode,
   onOpenMenu
 }: WorkNodeProps): React.JSX.Element {
   const queryEnabled = visible && expanded;
@@ -452,6 +469,17 @@ function WorkNode({
               tone="warning"
             />
           )}
+          {canEdit ? (
+            <Pressable
+              accessibilityLabel={t(language, 'component.storyHierarchySheet.addChapterHere')}
+              accessibilityRole="button"
+              onPress={() => onCreateChapter(work)}
+              style={styles.branchAddButton}
+            >
+              <Plus color={colors.primary} size={18} strokeWidth={2.2} />
+              <Text style={styles.branchAddLabel}>{t(language, "generated.components.StoryHierarchySheet.add.chapter.774ad8c0")}</Text>
+            </Pressable>
+          ) : null}
           {chapters.map((chapter, chapterIndex) => (
             <ChapterNode
               api={api}
@@ -463,6 +491,7 @@ function WorkNode({
               key={chapter.id}
               language={language}
               onOpenMenu={onOpenMenu}
+              onCreateEpisode={onCreateEpisode}
               onSelectChapter={onSelectChapter}
               onSelectEpisode={onSelectEpisode}
               onToggle={() => onToggleChapter(chapter.id)}
@@ -1332,6 +1361,8 @@ export function StoryHierarchySheet({
                 key={work.id}
                 language={language}
                 onOpenMenu={setMenuTarget}
+                onCreateChapter={(work) => openTitleIntent({ kind: 'create-chapter', work })}
+                onCreateEpisode={(work, chapter) => openTitleIntent({ kind: 'create-episode', work, chapter })}
                 onSelectChapter={selectChapterFromTree}
                 onSelectEpisode={selectEpisodeFromTree}
                 onSelectWork={selectWorkFromTree}
@@ -1487,6 +1518,18 @@ const styles = StyleSheet.create({
   },
   branch: {
     // FlatList cells must take their measured content height so nested episode rows remain scrollable.
+  },
+  branchAddButton: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    minHeight: 44,
+    paddingHorizontal: spacing.xl
+  },
+  branchAddLabel: {
+    ...textStyles.body,
+    color: colors.primary,
+    fontWeight: '700'
   },
   chevronSpacer: {
     height: 44,

@@ -309,6 +309,26 @@ describe('StoryHierarchySheet', () => {
     expect(api.getChapters).toHaveBeenCalledWith('work-2', null);
   });
 
+  // Expanded branches expose creation at the list boundary so users do not need the overflow menu.
+  it('展開済みの作品と章ではリスト直前の追加操作が既存のタイトル入力を開く', async () => {
+    const renderer = await renderSheet();
+
+    const addChapter = renderer.root.findByProps({ accessibilityLabel: 'この作品に章を追加' });
+    await act(async () => {
+      addChapter.props.onPress();
+    });
+    expect(renderer.root.findByType('input')).toBeDefined();
+
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === 'キャンセル')?.props.onClick();
+    });
+    const addEpisode = renderer.root.findByProps({ accessibilityLabel: 'この章に話を追加' });
+    await act(async () => {
+      addEpisode.props.onPress();
+    });
+    expect(renderer.root.findByType('input')).toBeDefined();
+  });
+
   // Opening the creation entry point is a one-shot view intent. Tenant scope
   // changes while the sheet stays open must never replay a create operation.
   it('新規作成入口では作品追加を一度だけ開きscope変更後に再表示しない', async () => {
