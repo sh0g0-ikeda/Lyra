@@ -459,6 +459,36 @@ describe('実際のPagesScreenの工程構成', () => {
     expect(dirtyRegistration.mock.lastCall?.[0]).toMatchObject({ dirty: true });
   });
 
+  it('枠保存中にwire既定値と同値になる不正文字列へ変えても再取得で入力を失わない', async () => {
+    let releaseFrameSave: ((value: { frames: PanelFrameRecord[] }) => void) | undefined;
+    replaceFrames.mockImplementationOnce(() =>
+      new Promise<{ frames: PanelFrameRecord[] }>((resolve) => { releaseFrameSave = resolve; })
+    );
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    const readingOrder = (): ReactTestRenderer['root'] =>
+      root!.root.findAllByType('field').find((node) => node.props.label === '読み順')!;
+
+    await act(async () => {
+      root!.root.findByProps({ testID: 'frame-save' }).props.onPress();
+      await Promise.resolve();
+    });
+    await act(async () => { readingOrder().props.onChangeText(''); });
+    queryData.frames = {
+      frames: [{ ...frames[0]!, id: 'server-refreshed-while-saving' }],
+    };
+    await act(async () => {
+      root!.update(<PagesScreen />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      releaseFrameSave?.({ frames });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(readingOrder().props.value).toBe('');
+    expect(dirtyRegistration.mock.lastCall?.[0]).toMatchObject({ dirty: true });
+  });
+
   it('画像保持capabilityを確認できない旧serverでは既存ページを上書きしない', async () => {
     skeletonCapability = undefined;
     await act(async () => { root = create(<PagesScreen />); });

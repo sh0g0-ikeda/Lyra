@@ -1123,9 +1123,9 @@ export function PagesScreen(): React.JSX.Element {
   const frameDraftScope = selectedPage === null
     ? null
     : JSON.stringify([sessionKey, organizationId, selectedPage.id]);
-  const frameDraftRevision = JSON.stringify(frameDrafts.map(toFrameUpdateInput));
+  const frameDraftRevision = JSON.stringify(frameDrafts);
   const serverFrameRevision = JSON.stringify(
-    (framesQuery.data?.frames ?? []).map(toFrameDraft).map(toFrameUpdateInput)
+    (framesQuery.data?.frames ?? []).map(toFrameDraft)
   );
   const frameValuesDiffer =
     lastSyncedFrameRevision !== null && frameDraftRevision !== lastSyncedFrameRevision;
@@ -1584,11 +1584,11 @@ export function PagesScreen(): React.JSX.Element {
       frames,
       organizationId,
       pageId: selectedPage.id,
-      revision: JSON.stringify(frames),
+      revision: frameDraftRevision,
       scope: frameDraftScope,
       sessionKey,
     };
-  }, [frameDraftScope, frameDrafts, language, lastSyncedFrameScope, organizationId, selectedPage, sessionKey]);
+  }, [frameDraftRevision, frameDraftScope, frameDrafts, language, lastSyncedFrameScope, organizationId, selectedPage, sessionKey]);
 
   const replaceFramesMutation = useMutation({
     mutationFn: (request: FrameSaveRequest) => {
@@ -1676,7 +1676,7 @@ export function PagesScreen(): React.JSX.Element {
 
   const pageEditorRevision = JSON.stringify({
     pageId: selectedPage?.id ?? null,
-    frameDrafts: frameDrafts.map(toFrameUpdateInput),
+    frameDraftRevision,
     page: {
       continuityNote,
       pagePurpose,
