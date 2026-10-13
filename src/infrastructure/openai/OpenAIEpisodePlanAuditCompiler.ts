@@ -42,6 +42,7 @@ import type {
   CompiledEpisodePlanAudit,
   CompileEpisodePlanAuditInput,
   EpisodePlanAudit,
+  EpisodePlanAuditIssueCode,
   EpisodePlanAuditPageRepair,
   EpisodePlanAuditPageRepairField,
   EpisodePlanAuditPanelRepair,
@@ -167,6 +168,26 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
               null,
             );
           }
+        }
+        const repairCoverageViolations = findBlockingIssueRepairCoverageViolations(
+          candidateAudit,
+          readPatchOptionalValidatedStateIssueIndexes(
+            candidate,
+            sourceReviewCatalog !== undefined,
+            input.groundingAuthorities,
+          ),
+        );
+        if (repairCoverageViolations.length > 0) {
+          retryInstruction = buildRepairCoverageRetryInstruction(repairCoverageViolations);
+          frozenSourceOwnedBody = null;
+          frozenLinkMetadata = null;
+          frozenQuoteCorrectionPlan = null;
+          throw new StructuredOpenAIResponseError(
+            'OpenAI episode plan audit is missing an applicable field-level repair',
+            'invalid_payload',
+            true,
+            null,
+          );
         }
         try {
           validateEpisodePlanAuditCoverage(candidateAudit, input.coverageCatalog);
@@ -615,7 +636,7 @@ function buildSystemPrompt(
     'Use dialogue_density with severity=error for every panel above the entry cap; this is deterministic, not optional. Within the cap, use error only for a concrete reading/story defect; use warning for a justified non-blocking improvement, not taste.',
     'Every DETERMINISTIC FINDING is binding and needs a repair. Inspect all over-limit panels in TEXT DISTRIBUTION, not only an example panel from a grouped finding.',
     'For cross-panel or cross-page redistribution, patch every affected source and destination dialogue array together, preserve true speakers and chronology, and preserve essential source information. Do not truncate excess lines or hide text via flags or visual fields.',
-    'Return field-level repairs for each repairable error; change only named changed_fields. Do not alter page IDs, page numbers, panel orders, panel counts, or saved frame geometry.',
+    'Return field-level repairs for each repairable error on its named pages, with changed_fields compatible with the issue code. Change only those fields; preserve page IDs, page numbers, panel orders, panel counts, and frame geometry.',
     'Keep unchanged fields null in patch payloads; every changed field must carry its intended value. Use [] rather than null to clear dialogue, entities, or source_scene_ids. Do not use null for roles, sizes, composition, dialogue_in_panel, dialogue_mode, or page_dialogue_toggle.',
     'Do not return repairs for warnings or pages not named by an error. Set accepted=true only when no error remains; if a defect cannot be repaired safely within existing pages and source facts, report it instead of claiming success.',
     `Write issue messages and repair instructions in natural ${outputLanguage}.`,
@@ -633,6 +654,73 @@ const sourceReviewAuditSchema = sourceOwnedAuditSchema.extend({
 const coverageOnlyAuditSchema = episodePlanAuditSchema.pick({ source_coverage: true }).strict();
 type SourceOwnedAuditPayload = z.infer<typeof sourceOwnedAuditSchema>
   | z.infer<typeof sourceReviewAuditSchema>;
+
+type EpisodePlanAuditRepairField = EpisodePlanAuditPageRepairField
+  | EpisodePlanAuditPanelRepairField;
+
+const VISUAL_CONTENT_REPAIR_FIELDS: readonly EpisodePlanAuditRepairField[] = [
+  'situationText',
+  'composition',
+  'dialogue',
+  'sfxText',
+  'backgroundNote',
+  'panelNotes',
+  'entities',
+];
+
+const COMPATIBLE_REPAIR_FIELDS_BY_ISSUE = {
+  duplicate_dialogue: new Set<EpisodePlanAuditRepairField>(['dialogue']),
+  dialogue_density: new Set<EpisodePlanAuditRepairField>(['dialogue']),
+  duplicate_visual_beat: new Set<EpisodePlanAuditRepairField>([
+    'panelRole',
+    'panelSize',
+    'situationText',
+    'composition',
+    'sfxText',
+    'backgroundNote',
+    'panelNotes',
+    'entities',
+  ]),
+  timeline_discontinuity: new Set<EpisodePlanAuditRepairField>([
+    'sourceSceneIds',
+    'pagePurpose',
+    'continuityNote',
+    'dialogueMode',
+    'pageDialogueToggle',
+    'panelRole',
+    ...VISUAL_CONTENT_REPAIR_FIELDS,
+  ]),
+  dialogue_misplacement: new Set<EpisodePlanAuditRepairField>(['dialogue']),
+  knowledge_violation: new Set<EpisodePlanAuditRepairField>(['dialogue']),
+  page_handoff_break: new Set<EpisodePlanAuditRepairField>([
+    'pagePurpose',
+    'continuityNote',
+    'dialogueMode',
+    'pageDialogueToggle',
+    'panelRole',
+    ...VISUAL_CONTENT_REPAIR_FIELDS,
+  ]),
+  unsupported_story_fact: new Set<EpisodePlanAuditRepairField>([
+    'sourceSceneIds',
+    'pagePurpose',
+    'continuityNote',
+    ...VISUAL_CONTENT_REPAIR_FIELDS,
+  ]),
+  source_omission: new Set<EpisodePlanAuditRepairField>(VISUAL_CONTENT_REPAIR_FIELDS),
+  ongoing_action_dropped: new Set<EpisodePlanAuditRepairField>(VISUAL_CONTENT_REPAIR_FIELDS),
+  visible_entity_mismatch: new Set<EpisodePlanAuditRepairField>([
+    'situationText',
+    'composition',
+    'backgroundNote',
+    'panelNotes',
+    'entities',
+  ]),
+} satisfies Readonly<Record<EpisodePlanAuditIssueCode, ReadonlySet<EpisodePlanAuditRepairField>>>;
+
+interface BlockingIssueRepairCoverageViolation {
+  issueIndex: number;
+  code: EpisodePlanAuditIssueCode;
+}
 
 function mapAuditPayload(payload: AuditPayload): EpisodePlanAudit {
   return {
@@ -665,6 +753,79 @@ function mapAuditPayload(payload: AuditPayload): EpisodePlanAudit {
       })),
     })),
   };
+}
+
+/**
+ * The provider contract has no explicit issue-to-repair index. The strongest
+ * safe server-side relation available is therefore a same-page repair with a
+ * field category that can address the issue code. Content-level correctness is
+ * still checked by the bounded second episode audit.
+ */
+function findBlockingIssueRepairCoverageViolations(
+  audit: EpisodePlanAudit,
+  patchOptionalIssueIndexes: ReadonlySet<number>,
+): BlockingIssueRepairCoverageViolation[] {
+  const repairs = [
+    ...(audit.pageRepairs ?? []).map((repair) => ({
+      pageId: repair.pageId,
+      changedFields: repair.changedFields as readonly EpisodePlanAuditRepairField[],
+    })),
+    ...(audit.panelRepairs ?? []).map((repair) => ({
+      pageId: repair.pageId,
+      changedFields: repair.changedFields as readonly EpisodePlanAuditRepairField[],
+    })),
+  ];
+
+  return audit.issues.flatMap((issue, issueIndex) => {
+    if (issue.severity !== 'error' || patchOptionalIssueIndexes.has(issueIndex)) {
+      return [];
+    }
+    const compatibleFields = COMPATIBLE_REPAIR_FIELDS_BY_ISSUE[issue.code];
+    const hasApplicableRepair = repairs.some((repair) =>
+      issue.pageIds.includes(repair.pageId)
+      && repair.changedFields.some((field) => compatibleFields.has(field)),
+    );
+    return hasApplicableRepair ? [] : [{ issueIndex, code: issue.code }];
+  });
+}
+
+function readPatchOptionalValidatedStateIssueIndexes(
+  payload: AuditPayload | SourceOwnedAuditPayload,
+  sourceReview: boolean,
+  authorities: CompileEpisodePlanAuditInput['groundingAuthorities'],
+): ReadonlySet<number> {
+  const validatedStateRefs = new Set(
+    (authorities ?? [])
+      .filter((authority) => authority.kind === 'validated_state')
+      .map((authority) => authority.ref),
+  );
+  if (validatedStateRefs.size === 0 || !('issue_grounding' in payload)) {
+    return new Set();
+  }
+  return new Set(
+    readSourceOwnedGroundings(payload, sourceReview)
+      .filter((grounding) =>
+        grounding.basis === 'source'
+        && grounding.source_evidence.length > 0
+        && grounding.source_evidence.every((evidence) =>
+          validatedStateRefs.has(evidence.source_ref),
+        ),
+      )
+      .map((grounding) => grounding.issue_index),
+  );
+}
+
+function buildRepairCoverageRetryInstruction(
+  violations: readonly BlockingIssueRepairCoverageViolation[],
+): string {
+  const shown = violations.slice(0, 16);
+  return [
+    `Audit repair correction for the retry: invalid_error_count=${violations.length}; `
+      + `shown_error_count=${shown.length}; omitted_error_count=${violations.length - shown.length}.`,
+    `error_indices=[${shown.map((violation) => violation.issueIndex).join(',')}]`,
+    `issue_codes=[${shown.map((violation) => violation.code).join(',')}]`,
+    'Regenerate the complete audit. Every listed severity=error issue must have at least one same-page field-level repair whose changed_fields can correct that issue code. Do not add repairs for warnings or unrelated pages.',
+  ].join('\n');
 }
 
 function mapPageRepair(

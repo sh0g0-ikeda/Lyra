@@ -71,7 +71,15 @@ Schema validity alone is not sufficient. Successful compiler output is checked f
 incorrectly empty assignments where the source requires a visible character,
 missing source facts or continuing actions, missing visual beats, generic repeated composition,
 speaker/dialogue mismatch, invalid page coverage, and frame/panel count mismatch.
-Repair is field-level where possible. Deterministic fallback must use only entities
+Repair is field-level where possible. An error must have a repair on one of its
+named pages with changed fields compatible with the error category; a repair on
+another page or an unrelated field does not satisfy this gate. Missing repairs
+trigger a complete-audit correction within the existing two-attempt compiler
+limit, with a cancellation checkpoint before retry. Warnings and validated-state
+findings that cannot be patched through this contract retain their read-only
+behavior. Page-only and panel-only repairs remain supported. Schema, identities,
+frame geometry, and atomic persistence are unchanged.
+Deterministic fallback must use only entities
 supported by the story context and must not promote unrelated work entities or
 repopulate explicit empty lists for character-free cutaways.
 
