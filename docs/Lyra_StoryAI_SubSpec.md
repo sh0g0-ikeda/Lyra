@@ -125,3 +125,11 @@ present checks require one or two exact visible citations with null repair links
 missing checks require no output citations and a non-null same-code panel link.
 Typed grounding source references are restricted to trusted catalog authorities
 and explicitly supplied authorities; exact same-page quotations remain validated.
+
+Handoff repair validation uses a service-built snapshot of original situation,
+composition/custom-note, and background values. When a corrected field removes
+an exact whole peer value of at least four normalized characters, retaining that
+value in another field of the same panel triggers the existing bounded full-audit
+retry. Unrelated fields, short or partial values, other panels, and other issue
+categories are excluded. This internal snapshot is not persisted or exposed by
+HTTP contracts, and contains no authority beyond the schema-safe current draft.

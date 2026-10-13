@@ -95,6 +95,7 @@ import {
   buildEpisodeDetailContinuitySupplement,
   buildFullStoryDraftSourceSection,
   buildEpisodePlanAuditArtifacts,
+  buildEpisodePlanAuditVisualSnapshot,
   detectDeterministicContinuityIssues,
   fingerprintEpisodePlanningContext,
   mergeEpisodePlanAuditIssues,
@@ -1524,6 +1525,7 @@ export class PageService implements PageServicePort {
       language,
       pageIds: context.pages.map((page) => page.pageId),
       coverageCatalog: auditArtifacts.coverageCatalog,
+      visualSnapshot: buildEpisodePlanAuditVisualSnapshot(suggestion),
       sourceOwnedPageContext,
       ...(stateLedger === undefined ? {} : {
         groundingAuthorities: [{

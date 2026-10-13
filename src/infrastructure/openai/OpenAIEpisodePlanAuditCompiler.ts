@@ -194,6 +194,19 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
             null,
           );
         }
+        const staleHandoffFields = findStaleHandoffRepairFields(candidate, input.visualSnapshot);
+        if (staleHandoffFields.length > 0) {
+          retryInstruction = buildStaleHandoffRetryInstruction(staleHandoffFields);
+          frozenSourceOwnedBody = null;
+          frozenLinkMetadata = null;
+          frozenQuoteCorrectionPlan = null;
+          throw new StructuredOpenAIResponseError(
+            'OpenAI episode plan audit left a stale handoff field',
+            'invalid_payload',
+            true,
+            null,
+          );
+        }
         try {
           validateEpisodePlanAuditCoverage(candidateAudit, input.coverageCatalog);
         } catch (error) {
@@ -836,6 +849,97 @@ function buildRepairCoverageRetryInstruction(
     `error_indices=[${shown.map((violation) => violation.issueIndex).join(',')}]`,
     `issue_codes=[${shown.map((violation) => violation.code).join(',')}]`,
     'Regenerate the complete audit. Every listed severity=error issue must have at least one same-page field-level repair whose changed_fields can correct that issue code. Do not add repairs for warnings or unrelated pages.',
+  ].join('\n');
+}
+
+type HandoffVisualField = 'situation_text' | 'composition' | 'background_note';
+
+interface StaleHandoffRepairField {
+  pageId: string;
+  panelOrder: number;
+  field: HandoffVisualField;
+}
+
+function findStaleHandoffRepairFields(
+  payload: AuditPayload,
+  snapshot: CompileEpisodePlanAuditInput['visualSnapshot'],
+): StaleHandoffRepairField[] {
+  if (snapshot === undefined) return [];
+  const handoffPages = new Set(payload.issues.flatMap((issue) =>
+    issue.severity === 'error' && issue.code === 'page_handoff_break' ? issue.page_ids : [],
+  ));
+  const violations = new Map<string, StaleHandoffRepairField>();
+  for (const repair of payload.panel_repairs) {
+    if (!handoffPages.has(repair.page_id)) continue;
+    const original = snapshot.panels.find((panel) =>
+      panel.pageId === repair.page_id && panel.panelOrder === repair.panel_order,
+    );
+    if (original === undefined) continue;
+    const changed = new Set(repair.changed_fields);
+    for (const editedField of HANDOFF_VISUAL_FIELDS) {
+      if (!changed.has(editedField)) continue;
+      const oldEditedValues = readOriginalVisualValues(original, editedField);
+      const newEditedValues = readPatchedVisualValues(repair, editedField);
+      for (const peerField of HANDOFF_VISUAL_FIELDS) {
+        if (peerField === editedField) continue;
+        for (const oldPeerValue of readOriginalVisualValues(original, peerField)) {
+          if (
+            !oldEditedValues.some((value) => value.includes(oldPeerValue))
+            || newEditedValues.some((value) => value.includes(oldPeerValue))
+          ) continue;
+          const resultingPeerValues = changed.has(peerField)
+            ? readPatchedVisualValues(repair, peerField)
+            : readOriginalVisualValues(original, peerField);
+          if (!resultingPeerValues.some((value) => value.includes(oldPeerValue))) continue;
+          const violation = { pageId: repair.page_id, panelOrder: repair.panel_order, field: peerField };
+          violations.set(`${violation.pageId}\0${violation.panelOrder}\0${violation.field}`, violation);
+        }
+      }
+    }
+  }
+  return [...violations.values()];
+}
+
+const HANDOFF_STALE_PEER_MIN_CHARS = 4;
+
+const HANDOFF_VISUAL_FIELDS: readonly HandoffVisualField[] = [
+  'situation_text', 'composition', 'background_note',
+];
+
+function normalizeHandoffVisualValue(value: string | null | undefined): string[] {
+  const normalized = value?.replace(/\s+/gu, ' ').trim() ?? '';
+  return normalized.length >= HANDOFF_STALE_PEER_MIN_CHARS ? [normalized] : [];
+}
+
+function readOriginalVisualValues(
+  panel: NonNullable<CompileEpisodePlanAuditInput['visualSnapshot']>['panels'][number],
+  field: HandoffVisualField,
+): readonly string[] {
+  if (field === 'situation_text') return panel.situationText;
+  if (field === 'composition') return panel.composition;
+  return panel.backgroundNote;
+}
+
+function readPatchedVisualValues(
+  repair: AuditPayload['panel_repairs'][number],
+  field: HandoffVisualField,
+): string[] {
+  if (field === 'situation_text') return normalizeHandoffVisualValue(repair.patch.situation_text);
+  if (field === 'background_note') return normalizeHandoffVisualValue(repair.patch.background_note);
+  return [
+    ...normalizeHandoffVisualValue(repair.patch.composition?.composition_prompt),
+    ...normalizeHandoffVisualValue(repair.patch.composition?.custom_note),
+  ];
+}
+
+function buildStaleHandoffRetryInstruction(violations: readonly StaleHandoffRepairField[]): string {
+  const shown = violations.slice(0, 16);
+  return [
+    `Audit handoff correction for the retry: stale_field_count=${violations.length}.`,
+    ...shown.map((item) =>
+      `page_id=${JSON.stringify(item.pageId)} panel_order=${item.panelOrder} stale_field=${item.field}`,
+    ),
+    'Regenerate the complete audit and remove each shared stale value from the named field repair.',
   ].join('\n');
 }
 

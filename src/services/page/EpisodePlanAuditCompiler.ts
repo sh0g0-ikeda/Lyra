@@ -150,7 +150,21 @@ export interface CompileEpisodePlanAuditInput {
   sourceOwnedPageContext?: boolean;
   /** Additional visible, validated authority appended by the service (for example state transitions). */
   groundingAuthorities?: EpisodePlanAuditGroundingAuthority[];
+  /** Immutable service-built visual values used only to reject stale handoff repairs. */
+  visualSnapshot?: EpisodePlanAuditVisualSnapshot;
   beforeRetry?: () => Promise<void>;
+}
+
+export interface EpisodePlanAuditVisualSnapshotPanel {
+  readonly pageId: string;
+  readonly panelOrder: number;
+  readonly situationText: readonly string[];
+  readonly composition: readonly string[];
+  readonly backgroundNote: readonly string[];
+}
+
+export interface EpisodePlanAuditVisualSnapshot {
+  readonly panels: readonly EpisodePlanAuditVisualSnapshotPanel[];
 }
 
 export interface CompiledEpisodePlanAudit {

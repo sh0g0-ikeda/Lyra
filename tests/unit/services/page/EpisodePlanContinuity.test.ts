@@ -8,6 +8,7 @@ import {
   buildEpisodeBeatPlanSegmentCompilerBrief,
   buildEpisodeDetailContinuitySupplement,
   buildEpisodePlanAuditArtifacts,
+  buildEpisodePlanAuditVisualSnapshot,
   buildEpisodePlanAuditBrief,
   buildEpisodePlanAuditCoverageCatalog,
   buildEpisodePlanSourceReviewForContext,
@@ -24,6 +25,28 @@ const DIALOGUE_LINES_PER_PANEL = 20;
 const MAX_CONTINUITY_BRIEF_CHARS = 150_000;
 
 describe('EpisodePlanContinuity', () => {
+  it('監査visual snapshotは4文字以上の同一panel可視値だけを正規化して保持する', () => {
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+    suggestion.pages[0]!.panels = suggestion.pages[0]!.panels.slice(0, 1);
+    const panel = suggestion.pages[0]!.panels[0]!;
+    panel.situationText = ' 奏が  屋上庭園へ走る ';
+    panel.composition = { ...panel.composition, compositionPrompt: '屋上庭園', customNote: '短い値' };
+    panel.backgroundNote = '長廊下';
+
+    const snapshot = buildEpisodePlanAuditVisualSnapshot(suggestion);
+    panel.situationText = '変更後の本文';
+    panel.composition = { ...panel.composition, compositionPrompt: '変更後の構図' };
+    panel.backgroundNote = '変更後の背景';
+
+    expect(snapshot).toEqual({ panels: [{
+      pageId: suggestion.pages[0]!.pageId,
+      panelOrder: panel.order,
+      situationText: ['奏が 屋上庭園へ走る'],
+      composition: ['屋上庭園'],
+      backgroundNote: [],
+    }] });
+  });
   it('audits true dialogue counts, complete voice IDs and frame area before shortened visuals',()=>{
     const context=buildContext();const plan=buildBeatPlan();const suggestion=buildVerboseSuggestion();
     suggestion.pages=suggestion.pages.slice(0,1);suggestion.pages[0]!.panels=suggestion.pages[0]!.panels.slice(0,1);

@@ -13,6 +13,71 @@ const SECOND_PAGE_ID = '22222222-2222-4222-8222-222222222222';
 
 describe('OpenAIEpisodePlanAuditCompiler', () => {
 
+  it('handoff修正が共有旧値を残した場合だけ完全修正へ再試行する', async () => {
+    const responses = [buildHandoffAuditPayload(false), buildHandoffAuditPayload(true)];
+    const requests: Record<string, unknown>[] = [];
+    const client = { postJson: async (_path: string, request: Record<string, unknown>) => {
+      requests.push(request);
+      return { body: { output_text: JSON.stringify(responses[requests.length - 1]) } };
+    } } as unknown as OpenAIClient;
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: 'fixture', language: 'ja', pageIds: [PAGE_ID],
+      coverageCatalog: buildCoverageCatalog([PAGE_ID]),
+      visualSnapshot: buildHandoffVisualSnapshot('屋上庭園'),
+    });
+    expect(requests).toHaveLength(2);
+    expect(JSON.stringify(requests[1]?.input)).toContain('stale_field=composition');
+    expect(result.audit.panelRepairs?.[0]?.changedFields).toEqual([
+      'situationText', 'composition', 'backgroundNote',
+    ]);
+  });
+
+  it('handoff修正が共有旧値を二度残した場合は失敗し正しい無関係欄は要求しない', async () => {
+    for (const { composition, situationText, shouldReject } of [
+      { composition: '屋上庭園', shouldReject: true },
+      { composition: '廊下を見通す構図', shouldReject: false },
+      { composition: '屋上庭園の全景', shouldReject: false },
+      { composition: '屋上庭', shouldReject: false },
+      { composition: '屋上  庭園', situationText: '奏が  屋上   庭園へ突然走る', shouldReject: true },
+    ]) {
+      let requestCount = 0;
+      const client = { postJson: async () => {
+        requestCount += 1;
+        return { body: { output_text: JSON.stringify(buildHandoffAuditPayload(false)) } };
+      } } as unknown as OpenAIClient;
+      const promise = new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+        compilerBrief: 'fixture', language: 'ja', pageIds: [PAGE_ID],
+        coverageCatalog: buildCoverageCatalog([PAGE_ID]),
+        visualSnapshot: buildHandoffVisualSnapshot(composition, 1, situationText),
+      });
+      if (shouldReject) {
+        await expect(promise).rejects.toThrow('stale handoff field');
+        expect(requestCount).toBe(2);
+      } else {
+        await expect(promise).resolves.toEqual(expect.objectContaining({ audit: expect.any(Object) }));
+        expect(requestCount).toBe(1);
+      }
+    }
+  });
+
+  it.each([
+    { label: '別panel', panelOrder: 2, issueCode: 'page_handoff_break' },
+    { label: 'handoff以外', panelOrder: 1, issueCode: 'timeline_discontinuity' },
+  ])('$labelは共有旧値ゲートの対象にしない', async ({ panelOrder, issueCode }) => {
+    let requestCount = 0;
+    const client = { postJson: async () => {
+      requestCount += 1;
+      return { body: { status: 'completed', output_text: JSON.stringify(
+        buildHandoffAuditPayload(false, issueCode),
+      ) } };
+    } } as unknown as OpenAIClient;
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: 'fixture', language: 'ja', pageIds: [PAGE_ID],
+      coverageCatalog: buildCoverageCatalog([PAGE_ID]),
+      visualSnapshot: buildHandoffVisualSnapshot('屋上庭園', panelOrder),
+    })).resolves.toEqual(expect.objectContaining({ audit: expect.any(Object) }));
+    expect(requestCount).toBe(1);
+  });
   it.each(['page_handoff_break', 'duplicate_dialogue'])('missing確認は既存の根拠付き%s修正へ直接リンクできる', async (code) => {
     const payload = buildGroundedSourceOwnedAuditPayload({ accepted: false });
     (payload.issues as Array<Record<string, unknown>>)[0]!.code = code;
@@ -2049,6 +2114,49 @@ function buildAcceptedAuditPayload(pageIds: string[]): Record<string, unknown> {
     page_repairs: [],
     panel_repairs: [],
     source_coverage: buildSourceCoveragePayload(pageIds),
+  };
+}
+
+function buildHandoffVisualSnapshot(
+  composition: string,
+  panelOrder = 1,
+  situationText = '奏が屋上庭園へ突然走る',
+) {
+  const normalize = (value: string): string => value.replace(/\s+/gu, ' ').trim();
+  const normalizedPeer = normalize(composition);
+  const normalizedPeers = normalizedPeer.length >= 4 ? [normalizedPeer] : [];
+  return { panels: [{
+    pageId: PAGE_ID,
+    panelOrder,
+    situationText: [normalize(situationText)],
+    composition: normalizedPeers,
+    backgroundNote: normalizedPeers,
+  }] };
+}
+
+function buildHandoffAuditPayload(
+  complete: boolean,
+  issueCode = 'page_handoff_break',
+): Record<string, unknown> {
+  const composition = {
+    source: 'custom', gallery_item_id: null, composition_prompt: '廊下を見通す構図',
+    shot_type: 'wide', angle: 'front', custom_note: null,
+  };
+  return {
+    accepted: false,
+    issues: [{ code: issueCode, severity: 'error', page_ids: [PAGE_ID], message: 'handoff', repair_instruction: 'repair' }],
+    page_repairs: [],
+    panel_repairs: [{
+      page_id: PAGE_ID, panel_order: 1,
+      changed_fields: complete
+        ? ['situation_text', 'composition', 'background_note']
+        : ['situation_text'],
+      patch: buildEmptyPanelPatch({
+        situation_text: '奏が廊下へ突然走る',
+        ...(complete ? { composition, background_note: '廊下' } : {}),
+      }),
+    }],
+    source_coverage: buildSourceCoveragePayload([PAGE_ID]),
   };
 }
 
