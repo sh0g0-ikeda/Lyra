@@ -468,7 +468,7 @@ const episodeBeatPlanJsonSchema = {
     pages: {
       type: 'array',
       minItems: 1,
-      maxItems: STORY_AI_LIMITS.maxPanelsPerPage,
+      maxItems: STORY_AI_LIMITS.maxSkeletonPages,
       items: {
         type: 'object',
         additionalProperties: false,

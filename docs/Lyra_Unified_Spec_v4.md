@@ -278,7 +278,7 @@ draft fields only after a separate apply confirmation.
 
 Story-to-page autofill plans beat ownership across the complete episode before
 expanding the existing pages. The normal path first requests the full-episode beat
-plan once. Only a confirmed beat structured-output capacity failure activates the
+plan once. Beat and outline response schemas use the episode page limit (32), not the per-page panel limit (8); every existing page must remain covered exactly once. Only a confirmed beat structured-output capacity failure activates the
 existing compact outline and segmented ledger fallback; page count or an estimated
 pack count alone must not add those provider calls. Other failures retain their
 existing bounded retry/error handling and do not activate capacity fallback. Detail compilation uses adaptive, consecutive page

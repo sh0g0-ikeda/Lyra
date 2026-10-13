@@ -31,7 +31,7 @@ const episodeBeatPlanPageSchema = z
 
 export const episodeBeatPlanSchema = z
   .object({
-    pages: z.array(episodeBeatPlanPageSchema).min(1).max(8),
+    pages: z.array(episodeBeatPlanPageSchema).min(1).max(STORY_AI_LIMITS.maxSkeletonPages),
   })
   .strict();
 
