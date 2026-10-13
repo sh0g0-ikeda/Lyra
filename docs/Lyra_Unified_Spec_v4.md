@@ -286,6 +286,11 @@ packs sized by estimated structured-output cost; it must not use a fixed three-p
 split. A page is never split between packs, and a pack may contain the full episode
 when it fits the safe output budget.
 
+Detail provider text and panel-order limits match their receiving Zod bounds. Only
+blank optional text fields already admitting null are normalized to null; meaningful
+text is not truncated. Required dialogue, UUIDs, reference ownership, known targets
+and array bounds retain their existing validation and finite retry limits.
+
 For a complete original-page mapping without character-state opt-in, bounded
 original-source requirement extraction replaces the existing beat-plan pack calls.
 Source extraction v11 uses consecutive packs of at most four complete pages;

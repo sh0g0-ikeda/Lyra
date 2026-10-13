@@ -292,6 +292,8 @@ function sanitizeEpisodePagePlanPayload(value: unknown): unknown {
 
       return {
         ...page,
+        page_purpose: normalizeBlankNullableText(page.page_purpose),
+        continuity_note: normalizeBlankNullableText(page.continuity_note),
         page: sanitizedPageSettings,
         panels: page.panels.map((panel) => sanitizePanelLikeObject(panel)),
       };
@@ -316,9 +318,13 @@ function sanitizePanelLikeObject(value: unknown): unknown {
     ...value,
     panel_role: nullableToUndefined(normalizePanelRole(value.panel_role)),
     panel_size: nullableToUndefined(normalizePanelSize(value.panel_size)),
+    situation_text: normalizeBlankNullableText(value.situation_text),
     composition,
     dialogue_in_panel: nullableToUndefined(value.dialogue_in_panel),
     dialogue: Array.isArray(value.dialogue) ? value.dialogue : undefined,
+    sfx_text: normalizeBlankNullableText(value.sfx_text),
+    background_note: normalizeBlankNullableText(value.background_note),
+    panel_notes: normalizeBlankNullableText(value.panel_notes),
     entities: Array.isArray(value.entities)
       ? value.entities.map((entity) => sanitizeEntityAssignment(entity))
       : undefined,
@@ -332,9 +338,16 @@ function sanitizeEntityAssignment(value: unknown): unknown {
 
   return {
     ...value,
+    custom_expression: normalizeBlankNullableText(value.custom_expression),
+    custom_action: normalizeBlankNullableText(value.custom_action),
     position: normalizeEntityPosition(value.position),
     facing_direction: normalizeFacingDirection(value.facing_direction),
+    effect_note: normalizeBlankNullableText(value.effect_note),
   };
+}
+
+function normalizeBlankNullableText(value: unknown): unknown {
+  return typeof value === 'string' && value.trim().length === 0 ? null : value;
 }
 
 function pruneNullablePageSettings(value: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -353,11 +366,11 @@ function pruneNullablePageSettings(value: Record<string, unknown>): Record<strin
 function pruneNullableComposition(value: Record<string, unknown>): Record<string, unknown> | undefined {
   const sanitized = {
     source: nullableToUndefined(value.source),
-    gallery_item_id: value.gallery_item_id ?? null,
-    composition_prompt: value.composition_prompt ?? null,
+    gallery_item_id: normalizeBlankNullableText(value.gallery_item_id) ?? null,
+    composition_prompt: normalizeBlankNullableText(value.composition_prompt) ?? null,
     shot_type: value.shot_type ?? null,
     angle: value.angle ?? null,
-    custom_note: value.custom_note ?? null,
+    custom_note: normalizeBlankNullableText(value.custom_note) ?? null,
   };
 
   if (
@@ -532,6 +545,12 @@ const nullableStringSchema = {
   anyOf: [{ type: 'string' }, { type: 'null' }],
 } as const;
 
+function nullableTextSchema(maxLength: number): Record<string, unknown> {
+  return {
+    anyOf: [{ type: 'string', maxLength }, { type: 'null' }],
+  };
+}
+
 const nullableBooleanSchema = {
   anyOf: [{ type: 'boolean' }, { type: 'null' }],
 } as const;
@@ -605,11 +624,11 @@ const nullableCompositionSchema = {
       ],
       properties: {
         source: nullableCompositionSourceSchema,
-        gallery_item_id: nullableStringSchema,
-        composition_prompt: nullableStringSchema,
+        gallery_item_id: nullableTextSchema(100),
+        composition_prompt: nullableTextSchema(1_000),
         shot_type: nullableShotTypeSchema,
         angle: nullableAngleSchema,
-        custom_note: nullableStringSchema,
+        custom_note: nullableTextSchema(1_000),
       },
     },
     { type: 'null' },
@@ -627,7 +646,7 @@ const nullableDialogueArraySchema = {
         required: ['entity_id', 'text', 'type', 'position'],
         properties: {
           entity_id: nullableStringSchema,
-          text: { type: 'string' },
+          text: { type: 'string', minLength: 1, maxLength: 500 },
           type: {
             type: 'string',
             enum: ['speech', 'thought', 'narration', 'shout', 'whisper'],
@@ -668,18 +687,18 @@ const entityAssignmentsSchema = {
         type: 'string',
         enum: ['determined', 'calm', 'angry', 'sad', 'surprised', 'custom'],
       },
-      custom_expression: nullableStringSchema,
+      custom_expression: nullableTextSchema(200),
       action: {
         type: 'string',
         enum: ['standing_firm', 'attacking', 'defending', 'running', 'custom'],
       },
-      custom_action: nullableStringSchema,
+      custom_action: nullableTextSchema(200),
       position: {
         type: 'string',
         enum: ['left', 'center', 'right', 'background'],
       },
       facing_direction: nullableStringSchema,
-      effect_note: nullableStringSchema,
+      effect_note: nullableTextSchema(500),
       state_id: nullableStringSchema,
     },
   },
@@ -729,8 +748,8 @@ const episodePagePlanJsonSchema = {
             maxItems: 100,
             items: { type: 'string' },
           },
-          page_purpose: nullableStringSchema,
-          continuity_note: nullableStringSchema,
+          page_purpose: nullableTextSchema(500),
+          continuity_note: nullableTextSchema(1_000),
           page: nullablePageSettingsSchema,
           panels: {
             type: 'array',
@@ -753,16 +772,16 @@ const episodePagePlanJsonSchema = {
                 'entities',
               ],
               properties: {
-                order: { type: 'integer', minimum: 1, maximum: 10000 },
+                order: { type: 'integer', minimum: 1, maximum: 1_000 },
                 panel_role: nullablePanelRoleSchema,
                 panel_size: nullablePanelSizeSchema,
-                situation_text: nullableStringSchema,
+                situation_text: nullableTextSchema(2_000),
                 composition: nullableCompositionSchema,
                 dialogue_in_panel: nullableBooleanSchema,
                 dialogue: nullableDialogueArraySchema,
-                sfx_text: nullableStringSchema,
-                background_note: nullableStringSchema,
-                panel_notes: nullableStringSchema,
+                sfx_text: nullableTextSchema(200),
+                background_note: nullableTextSchema(2_000),
+                panel_notes: nullableTextSchema(2_000),
                 entities: entityAssignmentsSchema,
               },
             },
