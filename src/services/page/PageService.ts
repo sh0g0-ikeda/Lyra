@@ -1098,16 +1098,6 @@ export class PageService implements PageServicePort {
     language: AppLanguage,
     progressReporter: EpisodePagePlanProgressReporter | undefined,
   ): Promise<CompiledEpisodeBeatPlan> {
-    const packs = packEpisodeBeatPlanLedgerPages(context.pages);
-    if (packs.length > 1) {
-      return this.compileSegmentedEpisodeBeatPlan(
-        context,
-        language,
-        packs,
-        progressReporter,
-      );
-    }
-
     try {
       return await this.episodeBeatPlanCompiler!.compileBeatPlan({
         compilerBrief: buildEpisodeBeatPlanCompilerBrief(context, language),
@@ -1123,10 +1113,13 @@ export class PageService implements PageServicePort {
         pageCount: context.pages.length,
         reason: 'structured_output_limit',
       });
+      const capacityPacks = packEpisodeBeatPlanLedgerPages(context.pages);
       return this.compileSegmentedEpisodeBeatPlan(
         context,
         language,
-        splitEpisodeBeatPlanPages(context.pages),
+        capacityPacks.length > 1
+          ? capacityPacks
+          : splitEpisodeBeatPlanPages(context.pages),
         progressReporter,
       );
     }

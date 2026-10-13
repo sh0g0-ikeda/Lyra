@@ -277,7 +277,11 @@ starts only after explicit quote acceptance, and its validated result replaces
 draft fields only after a separate apply confirmation.
 
 Story-to-page autofill plans beat ownership across the complete episode before
-expanding the existing pages. Detail compilation uses adaptive, consecutive page
+expanding the existing pages. The normal path first requests the full-episode beat
+plan once. Only a confirmed beat structured-output capacity failure activates the
+existing compact outline and segmented ledger fallback; page count or an estimated
+pack count alone must not add those provider calls. Other failures retain their
+existing bounded retry/error handling and do not activate capacity fallback. Detail compilation uses adaptive, consecutive page
 packs sized by estimated structured-output cost; it must not use a fixed three-page
 split. A page is never split between packs, and a pack may contain the full episode
 when it fits the safe output budget.
