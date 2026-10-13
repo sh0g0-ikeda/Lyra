@@ -207,7 +207,11 @@ export function buildEpisodeBeatPlanSegmentCompilerBrief(input: {
   ].join('\n');
 }
 
-function buildEpisodeBeatPlanSourceSections(context: EpisodePagePlanContext): string[] {
+function buildEpisodeBeatPlanSourceSections(
+  context: EpisodePagePlanContext,
+  options: { includeFullStoryDraft?: boolean } = {},
+): string[] {
+  const fullStoryDraftSourceSection = buildFullStoryDraftSourceSection(context);
   const entities = buildCanonicalEntityReferences(context);
   const entityNames = new Map(context.entities.map((entity) => [entity.id, entity.name] as const));
   const canonicalize = (
@@ -271,7 +275,7 @@ function buildEpisodeBeatPlanSourceSections(context: EpisodePagePlanContext): st
     `Middle: ${canonicalize(context.episode.middle, EPISODE_ARC_FIELD_MAX_CHARS)}`,
     `Climax: ${canonicalize(context.episode.climax, EPISODE_ARC_FIELD_MAX_CHARS)}`,
     `Ending hook: ${canonicalize(context.episode.endingHook, EPISODE_ARC_FIELD_MAX_CHARS)}`,
-    ...buildFullStoryDraftSourceSection(context),
+    ...(options.includeFullStoryDraft === false ? [] : fullStoryDraftSourceSection),
     '',
     '[SCENES]',
     scenes.join('\n') || '(none)',
@@ -296,8 +300,8 @@ export function buildFullStoryDraftSourceSection(context: EpisodePagePlanContext
   ];
 }
 
-// Page-local excerpts are an optional prompt aid. The full source remains the
-// authority, and any ambiguous mapping disables every local excerpt together.
+// Legacy page-local excerpts are optional. Source-owned audits require the same
+// complete mapping and reserve one canonical global-plus-page source display.
 function buildPageSourceExcerpts(
   context: EpisodePagePlanContext,
 ): ReadonlyMap<string, PageSourceExcerpt> | null {
@@ -341,6 +345,39 @@ function buildPageSourceExcerpts(
     });
   }
   return excerpts.size === orderedPages.length ? excerpts : null;
+}
+
+function formatCanonicalOriginalSourceSection(
+  context: EpisodePagePlanContext,
+  excerpts: ReadonlyMap<string, PageSourceExcerpt>,
+): string[] {
+  const storyFullDraft = context.episode.storyFullDraft;
+  if (typeof storyFullDraft !== 'string') {
+    throw new ConfigurationError('Source-owned page context requires a complete original source mapping');
+  }
+  const orderedPages = [...context.pages].sort(compareContextPages);
+  const firstPage = excerpts.get(orderedPages[0]?.pageId ?? '');
+  if (firstPage === undefined) {
+    throw new ConfigurationError('Source-owned page context requires a complete original source mapping');
+  }
+  const globalSource = storyFullDraft.slice(0, firstPage.start);
+  const lines = [
+    '[COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP]',
+    ...(globalSource.length === 0 ? [] : [
+      '[GLOBAL ORIGINAL SOURCE]',
+      globalSource,
+      '[END GLOBAL ORIGINAL SOURCE]',
+    ]),
+  ];
+  for (const page of orderedPages) {
+    const excerpt = excerpts.get(page.pageId);
+    if (excerpt === undefined) {
+      throw new ConfigurationError('Source-owned page context requires a complete original source mapping');
+    }
+    lines.push(...formatAuditPageSourceLines(excerpt));
+  }
+  lines.push('[END COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP]');
+  return lines;
 }
 
 export function hasCompletePageSourceMapping(
@@ -640,10 +677,30 @@ export function buildEpisodePlanAuditArtifacts(input: {
   const panelCount = pages.reduce((count, page) => count + page.panels.length, 0);
   const entityLabels = buildEntityLabelLookup(input.context);
   const sourceOwnedPageContext = input.sourceOwnedPageContext === true;
+  if (sourceOwnedPageContext) {
+    const contextPageIds = new Set(input.context.pages.map((page) => page.pageId));
+    const draftPageIds = new Set(pages.map((page) => page.pageId));
+    if (
+      contextPageIds.size !== input.context.pages.length
+      || draftPageIds.size !== pages.length
+      || draftPageIds.size !== contextPageIds.size
+      || pages.some((page) => !contextPageIds.has(page.pageId))
+    ) {
+      throw new ConfigurationError(
+        'Source-owned episode audit requires an exact one-to-one draft page set',
+      );
+    }
+  }
   const pageSourceExcerpts = buildPageSourceExcerpts(input.context);
   if (sourceOwnedPageContext && pageSourceExcerpts === null) {
     throw new ConfigurationError('Source-owned page context requires a complete original source mapping');
   }
+  const sourceSections = buildEpisodeBeatPlanSourceSections(input.context, {
+    includeFullStoryDraft: !sourceOwnedPageContext,
+  });
+  const canonicalOriginalSourceLines = sourceOwnedPageContext
+    ? formatCanonicalOriginalSourceSection(input.context, pageSourceExcerpts!)
+    : [];
   const planByPageId = new Map(input.plan.pages.map((page) => [page.pageId, page] as const));
   const localizedPageLedgers = new Map<string, string>();
   for (const page of pages) {
@@ -668,7 +725,9 @@ export function buildEpisodePlanAuditArtifacts(input: {
     'Audit the complete compiled episode before anything is saved.',
     `Output language: ${input.language === 'en' ? 'English' : 'Japanese'}`,
     '',
-    ...buildEpisodeBeatPlanSourceSections(input.context),
+    ...sourceSections,
+    '',
+    ...canonicalOriginalSourceLines,
     '',
     '[ALL PAGES]',
     ...formatEpisodeBeatPlanPageReferences(input.context.pages),
@@ -714,14 +773,16 @@ export function buildEpisodePlanAuditArtifacts(input: {
       ? 'Check the entire draft against the original source, not each page in isolation.'
       : 'Check the entire draft against the source and ledger, not each page in isolation.',
     sourceOwnedPageContext
-      ? 'Compare every PAGE-LOCAL ORIGINAL SOURCE block with the immediately following page. That exact excerpt is the complete page ownership contract.'
+      ? 'Compare each PAGE-LOCAL ORIGINAL SOURCE block in the canonical source section above with the compiled page carrying the same page ID. That exact excerpt is the complete page ownership contract.'
       : 'When a PAGE-LOCAL ORIGINAL SOURCE block is present, compare that exact excerpt with the immediately following page. The generated ledger allocates page ownership but never shortens, replaces, or overrides explicit original source.',
     ...(sourceOwnedPageContext ? [
       'For issue_grounding, page_source means that page\'s exact original excerpt; global_source means the original preface before the first page heading; source_context means the displayed scene and entity-state source fields; validated_state means the separately displayed validated state-transition ledger. Compiled purpose, continuity, panel notes, entity metadata, and other draft fields are output evidence only and never original-source authority.',
     ] : []),
     'Return source_coverage for every page with one or two highest-risk source facts. Prioritize prerequisites, repeated actions such as again/retry, cause-action-result chains, and final closure actions.',
     'If the source assigns a decision basis, completion boundary, negative or continuing constraint, final viewpoint, or concrete pose that is absent or contradicted in panel fields, reserve a check for it before sampling dialogue or an already-obvious present fact.',
-    'source_ref=source ranges only over SOURCE DATA, including FULL STORY DRAFT. Copy a contiguous literal from that range only.',
+    sourceOwnedPageContext
+      ? 'source_ref=source ranges only over the displayed SOURCE DATA and COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP. Copy a contiguous literal from that range only.'
+      : 'source_ref=source ranges only over SOURCE DATA, including FULL STORY DRAFT. Copy a contiguous literal from that range only.',
     ...(sourceOwnedPageContext
       ? ['Never cite COMPILED EPISODE DRAFT, page purpose, or continuity metadata as a source.']
       : ['source_ref=ledger ranges only over that page\'s GLOBAL EPISODE LEDGER row. Never cite COMPILED EPISODE DRAFT as a source.']),
@@ -744,7 +805,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
     (total, ledger) => total + ledger.length + 1,
     0,
   );
-  const localizedSourceChars = pageSourceExcerpts === null
+  const localizedSourceChars = sourceOwnedPageContext || pageSourceExcerpts === null
     ? 0
     : pages.reduce((total, page) => {
         const excerpt = pageSourceExcerpts.get(page.pageId);
@@ -773,7 +834,8 @@ export function buildEpisodePlanAuditArtifacts(input: {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
   }
   const includeLocalizedSources =
-    pageSourceExcerpts !== null
+    !sourceOwnedPageContext
+    && pageSourceExcerpts !== null
     && pages.every((page) => pageSourceExcerpts.has(page.pageId))
     && baseRemaining - localizedSourceChars >= panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
     && baseRemaining - localizedSourceChars >= minimumPanelSummaryChars;
@@ -808,6 +870,9 @@ export function buildEpisodePlanAuditArtifacts(input: {
       includeLocalizedLedgers ? localizedPageLedgers.get(page.pageId) : undefined,
       includeLocalizedSources ? pageSourceExcerpts?.get(page.pageId) : undefined,
     ));
+  const renderedPagesById = new Map(
+    renderedPages.map((page) => [page.pageId, page] as const),
+  );
   const sourceReview = includeSourceReview
     ? buildEpisodePlanSourceReviewEvidenceArtifacts(sourceReviewCandidate.catalog, renderedPages)
     : null;
@@ -818,13 +883,14 @@ export function buildEpisodePlanAuditArtifacts(input: {
   if (brief.length > AUDIT_BRIEF_MAX_CHARS) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
   }
-  const sourceSections = buildEpisodeBeatPlanSourceSections(input.context);
-  const sourceText = sourceSections.join('\n');
+  const sourceText = sourceOwnedPageContext
+    ? [...sourceSections, '', ...canonicalOriginalSourceLines].join('\n')
+    : sourceSections.join('\n');
   const sourceContextText = buildGroundingSourceContext(sourceSections).join('\n');
   const globalOriginalSource = buildGlobalOriginalSource(input.context);
   const groundingAuthoritiesByPage = new Map<string, EpisodePlanAuditGroundingAuthority[]>();
   if (sourceOwnedPageContext) {
-    for (const page of pages) {
+    for (const page of [...input.context.pages].sort(compareContextPages)) {
       const pageSource = pageSourceExcerpts?.get(page.pageId);
       if (pageSource === undefined) {
         throw new ConfigurationError('Episode audit grounding is missing page source authority');
@@ -861,11 +927,14 @@ export function buildEpisodePlanAuditArtifacts(input: {
       }),
       ...(sourceOwnedPageContext ? {
         grounding: {
-          pages: renderedPages.map((renderedPage) => ({
-            pageId: renderedPage.pageId,
-            authorities: groundingAuthoritiesByPage.get(renderedPage.pageId) ?? [],
-            outputs: renderedPage.outputs,
-          })),
+          pages: [...input.context.pages].sort(compareContextPages).map((page) => {
+            const renderedPage = renderedPagesById.get(page.pageId);
+            return {
+              pageId: page.pageId,
+              authorities: groundingAuthoritiesByPage.get(page.pageId) ?? [],
+              outputs: renderedPage?.outputs ?? [],
+            };
+          }),
           deterministicIssues: deterministicIssues.map((issue) => ({
             code: issue.code,
             pageIds: [...issue.pageIds],

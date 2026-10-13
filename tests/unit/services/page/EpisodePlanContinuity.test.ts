@@ -3,6 +3,7 @@ import type {
   EpisodePagePlanContext,
   EpisodePagePlanSuggestion,
 } from '../../../../src/domain/types/page.js';
+import { EPISODE_FULL_STORY_DRAFT_MAX_CHARS } from '../../../../src/domain/constants/generation.js';
 import {
   buildEpisodeBeatPlanCompilerBrief,
   buildEpisodeBeatPlanSegmentCompilerBrief,
@@ -101,6 +102,114 @@ describe('EpisodePlanContinuity', () => {
     expect(artifacts.coverageCatalog.grounding?.pages.every(
       (page) => page.authorities.some((authority) => authority.ref === 'page_source'),
     )).toBe(true);
+    expect(artifacts.coverageCatalog.sourceReview?.units).toHaveLength(context.pages.length * 3);
+    expect(brief.match(/\[COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP\]/gu)).toHaveLength(1);
+    expect(brief.match(/\[PAGE-LOCAL ORIGINAL SOURCE\]/gu)).toHaveLength(16);
+    expect(brief).not.toContain('[FULL STORY DRAFT - SOURCE DATA]');
+  });
+
+  it('source-owned監査のcanonical原文はglobal prefixと全page sliceをrawのまま連結できる', () => {
+    // Source-owned audits reserve one canonical raw-source display: global prefix
+    // followed by every exact page slice. Eligible SOURCE UNIT REVIEW remains a
+    // separate, deliberately lossless semantic-review display.
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 2);
+    const exactGlobal = '  序文。\r\n';
+    const exactPageOne = '1ページ目：開始する。  \r\n次の動作へ進む。\t\r\n';
+    const exactPageTwo = '2ページ目：完了する。 \t';
+    context.episode.storyFullDraft = exactGlobal + exactPageOne + exactPageTwo;
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 2);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 2).map((page) => ({
+      ...page,
+      panels: page.panels.slice(0, 1),
+    }));
+
+    const artifacts = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    });
+    const brief = artifacts.compilerBrief;
+
+    expect(brief.match(/\[COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP\]/gu)).toHaveLength(1);
+    expect(brief).not.toContain('[FULL STORY DRAFT - SOURCE DATA]');
+    expect(brief.match(/\[PAGE-LOCAL ORIGINAL SOURCE\]/gu)).toHaveLength(2);
+    expect(readCanonicalSourceBlock(brief, 'GLOBAL ORIGINAL SOURCE')).toBe(exactGlobal);
+    expect(readCanonicalPageSourceBlock(brief, 1, pageId(1))).toBe(exactPageOne);
+    expect(readCanonicalPageSourceBlock(brief, 2, pageId(2))).toBe(exactPageTwo);
+    expect(
+      readCanonicalSourceBlock(brief, 'GLOBAL ORIGINAL SOURCE')
+      + readCanonicalPageSourceBlock(brief, 1, pageId(1))
+      + readCanonicalPageSourceBlock(brief, 2, pageId(2)),
+    ).toBe(context.episode.storyFullDraft);
+
+    const firstCatalogPage = artifacts.coverageCatalog.pages[0]!;
+    expect(firstCatalogPage.sources).toHaveLength(1);
+    const displayedSourceText = firstCatalogPage.sources[0]!.text;
+    expect(brief).toContain(displayedSourceText);
+    expect(displayedSourceText).toContain(exactPageOne);
+    expect(displayedSourceText).toContain(exactPageTwo);
+    expect(displayedSourceText).toContain('次の動作へ進む');
+    expect(displayedSourceText).not.toContain('動作へ進む。\t\r\n2ページ目');
+    expect(brief).toContain(exactPageOne);
+    expect(artifacts.coverageCatalog.grounding?.pages[0]?.authorities)
+      .toContainEqual({ ref: 'global_source', text: exactGlobal, kind: 'original_global' });
+    expect(artifacts.coverageCatalog.grounding?.pages[0]?.authorities)
+      .toContainEqual({ ref: 'page_source', text: exactPageOne, kind: 'original_page' });
+    expect(artifacts.coverageCatalog.grounding?.pages[1]).toEqual(expect.objectContaining({
+      pageId: pageId(2),
+      authorities: expect.arrayContaining([
+        { ref: 'page_source', text: exactPageTwo, kind: 'original_page' },
+      ]),
+      outputs: expect.arrayContaining([expect.objectContaining({ ref: 'p1.s' })]),
+    }));
+  });
+
+  it.each([
+    ['missing', (pages: EpisodePagePlanSuggestion['pages']) => pages.slice(0, 1)],
+    ['duplicate', (pages: EpisodePagePlanSuggestion['pages']) => [pages[0]!, pages[0]!]],
+    ['unknown', (pages: EpisodePagePlanSuggestion['pages']) => [
+      pages[0]!,
+      { ...pages[1]!, pageId: '00000000-0000-4000-8000-999999999999' },
+    ]],
+  ])('source-owned監査は%s draft page setをprovider送信前に拒否する', (_case, mutatePages) => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 2);
+    context.episode.storyFullDraft = '1ページ目：開始する。\n2ページ目：完了する。';
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 2);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = mutatePages(suggestion.pages.slice(0, 2));
+
+    expect(() => buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    })).toThrow('Source-owned episode audit requires an exact one-to-one draft page set');
+  });
+
+  it('source-owned監査でも原文8k上限を超える入力はcanonical表示前に拒否する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 1);
+    context.episode.storyFullDraft = `1ページ目：${'原'.repeat(EPISODE_FULL_STORY_DRAFT_MAX_CHARS)}`;
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 1);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 1);
+
+    expect(() => buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    })).toThrow('Episode full story draft exceeds the prompt source limit');
   });
 
   it('coverage catalogは原作sourceと実panel出力だけを短いrefで列挙する', () => {
@@ -728,8 +837,10 @@ describe('EpisodePlanContinuity', () => {
       context, plan, suggestion, language: 'ja', sourceOwnedPageContext: true,
     });
     expect(constrained.coverageCatalog.sourceReview).toBeUndefined();
+    expect(constrained.compilerBrief).toContain('[COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP]');
     expect(constrained.compilerBrief).toContain('[PAGE-LOCAL ORIGINAL SOURCE] Page 1');
     expect(constrained.compilerBrief).toContain(context.episode.storyFullDraft);
+    expect(constrained.compilerBrief).not.toContain('[FULL STORY DRAFT - SOURCE DATA]');
   });
 
   it('page見出し前の原文をtrimせずoriginal_global unitとauthorityへ保持する', () => {
@@ -771,6 +882,8 @@ describe('EpisodePlanContinuity', () => {
       context.episode.storyFullDraft = storyFullDraft;
       const plan = buildBeatPlan();
       plan.pages = plan.pages.slice(0, 2);
+      const suggestion = buildVerboseSuggestion();
+      suggestion.pages = suggestion.pages.slice(0, 2);
       const sourceBrief = buildEpisodeBeatPlanCompilerBrief(context, 'ja');
       const detail = buildEpisodeDetailContinuitySupplement({
         context,
@@ -781,6 +894,14 @@ describe('EpisodePlanContinuity', () => {
 
       expect(sourceBrief).toContain(storyFullDraft);
       expect(detail).not.toContain('[CURRENT CHUNK ORIGINAL SOURCE]');
+
+      expect(() => buildEpisodePlanAuditArtifacts({
+        context,
+        plan,
+        suggestion,
+        language: 'ja',
+        sourceOwnedPageContext: true,
+      })).toThrow('Source-owned page context requires a complete original source mapping');
     }
 
     const duplicateContext = buildContext();
@@ -1460,6 +1581,28 @@ function pageId(pageNumber: number): string {
 
 function briefContainsPage(brief: string, pageNumber: number): boolean {
   return brief.includes(`Page ${pageNumber} (${pageId(pageNumber)})`);
+}
+
+function readCanonicalSourceBlock(brief: string, label: string): string {
+  const startMarker = `[${label}]`;
+  const endMarker = `[END ${label}]`;
+  return readExactSourceBlock(brief, startMarker, endMarker);
+}
+
+function readCanonicalPageSourceBlock(brief: string, pageNumber: number, id: string): string {
+  return readExactSourceBlock(
+    brief,
+    `[PAGE-LOCAL ORIGINAL SOURCE] Page ${pageNumber} (${id})`,
+    `[END PAGE-LOCAL ORIGINAL SOURCE] Page ${pageNumber} (${id})`,
+  );
+}
+
+function readExactSourceBlock(brief: string, startMarker: string, endMarker: string): string {
+  const start = brief.indexOf(`${startMarker}\n`);
+  const end = brief.indexOf(`\n${endMarker}`, start + startMarker.length + 1);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return brief.slice(start + startMarker.length + 1, end);
 }
 
 function section(value: string, startMarker: string, endMarker: string): string {

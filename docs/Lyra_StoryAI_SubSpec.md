@@ -133,3 +133,12 @@ value in another field of the same panel triggers the existing bounded full-audi
 retry. Unrelated fields, short or partial values, other panels, and other issue
 categories are excluded. This internal snapshot is not persisted or exposed by
 HTTP contracts, and contains no authority beyond the schema-safe current draft.
+
+Source-owned audit prompts render original source once as an ordered canonical
+global-preface and page-source section. The raw original slices, page ownership,
+global chronology, exact source quotations, offsets and state authorities remain
+unchanged. Complete original source, dialogue and minimum panel evidence reserve
+their space before optional displays; insufficient capacity fails closed.
+Coverage references match the displayed source. Optional source-unit comparison
+catalogs remain separate and bounded. Legacy audit/detail prompts, client APIs,
+provider model, reasoning, retry limits, output limits and persistence are unchanged.

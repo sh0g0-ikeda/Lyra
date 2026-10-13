@@ -501,7 +501,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       coverageCatalog,
     });
     await compiler.auditPlan({
-      compilerBrief: '[FULL STORY DRAFT - SOURCE DATA]\n1ページ目：原文。',
+      compilerBrief: '[COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP]\n[PAGE-LOCAL ORIGINAL SOURCE] Page 1\n1ページ目：原文。',
       language: 'ja',
       pageIds: [PAGE_ID],
       coverageCatalog,
@@ -517,6 +517,8 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(systemPrompts[1]).not.toContain('ledger ownership including text_plan');
     expect(systemPrompts[1]).not.toContain('page entry/exit/handoff');
     expect(systemPrompts[1]).not.toContain('ledger');
+    expect(systemPrompts[1]).toContain('COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP');
+    expect(systemPrompts[1]).not.toContain('[FULL STORY DRAFT - SOURCE DATA]');
     expect(systemPrompts[1]).toContain('prerequisite, action, immediate result, and stated order');
     expect(systemPrompts[1]).toContain('COMPLETE DIALOGUE');
     const legacySchema = readObject(readObject(readObject(requests[0]?.text).format).schema);
@@ -639,7 +641,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     });
 
     expect(result.audit.accepted).toBe(true);
-    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v27');
+    expect(result.compilerPromptVersion).toBe('episode_plan_audit_v28');
     expect(requestCount).toBe(1);
   });
 

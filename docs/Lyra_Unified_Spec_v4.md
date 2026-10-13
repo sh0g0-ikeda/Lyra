@@ -434,14 +434,28 @@ token limits and the existing bounded retry policy remain unchanged.
 
 When line-start page headings in the original full story map completely,
 uniquely and in increasing order to existing page numbers, segmented beat,
-detail and audit inputs may also include the matching untouched contiguous
+detail and legacy audit inputs may also include the matching untouched contiguous
 original page excerpts. Generated ledgers allocate pages; they must not restrict
 the original facts to a compressed summary or reverse an explicit completion
 boundary. Ambiguous or incomplete headings omit this optional local supplement
-and retain the full-source input. Audit supplements must fit the existing input
-budget after full source, complete dialogue and minimum panel evidence have been
-reserved; otherwise the supplement is omitted. This changes provider context,
+and retain the full-source input. Legacy audit supplements must fit the existing
+input budget after full source, complete dialogue and minimum panel evidence have
+been reserved; otherwise the supplement is omitted. This changes provider context,
 not persisted story fields, API contracts or the semantic soft-save policy.
+
+For service-selected source-owned audit inputs only, original source is displayed
+once in a canonical ordered section: the untouched global preface followed by
+every original page slice with its existing page identity. The duplicate full-story
+display and repeated original blocks beside compiled draft pages are omitted.
+Global and page source authority, raw whitespace and offsets remain bound to the
+saved original; compiled pages refer to these displayed blocks. The complete source,
+complete dialogue and minimum panel evidence are mandatory reservations. They
+must fit together within the existing prompt limit or the compiler fails closed;
+partial source display is never accepted. Source-owned draft page IDs must be
+unique and match the complete original context page set; missing, extra or duplicate
+draft pages fail before any provider request. Coverage catalogs quote the source
+representation actually displayed. Optional source-unit-review catalogs remain
+independent lossless semantic-review inputs with their existing bounds.
 
 For that complete original-page mapping, detail and audit judgments omit the
 generated beat ledger, its text plan and entry/exit/handoff constraints. The
@@ -449,10 +463,10 @@ original source, page identity and frame capacity, allowed scenes/entities,
 and actual compiled or repair-draft panels with their purpose/continuity remain.
 Service-derived internal ownership selects this mode; user text markers do not.
 The audit citation catalog contains only visible source references in this mode,
-never a hidden generated beat ledger. Omitting optional local excerpts for budget
-does not restore the generated beat ledger. Ambiguous mappings retain the legacy
-ledger path. Opt-in validated character-state transition ledgers and their saving
-workflow remain unchanged; this omission applies to generated story-beat context.
+never a hidden generated beat ledger. Source-owned audit source blocks are mandatory;
+optional detail or legacy audit excerpt omission does not restore the generated
+beat ledger. Ambiguous mappings retain the legacy ledger path. Opt-in validated
+character-state transition ledgers and their saving workflow remain unchanged; this omission applies to generated story-beat context.
 
 In this source-owned mode only, every provider error issue also supplies bounded
 internal grounding metadata. Original-page quotes and actual draft-field quotes
@@ -460,9 +474,9 @@ are distinct. Generated page purpose, continuity, panel notes, chapter/episode
 summaries and entity summaries cannot become original-source authority. Visible,
 typed scene continuity and its entity-state notes, plus validated character-state transitions,
 may ground their applicable continuity issues. Deterministic exceptions must match
-an actual service finding's code and page scope. Optional excerpt omission does
-not authorize quoting hidden source: authority quotes must remain in the displayed
-full source or other typed visible authority. This metadata is discarded before
+an actual service finding's code and page scope. Authority quotes must remain
+in the displayed canonical original source or other typed visible authority;
+hidden source never authorizes a quote. This metadata is discarded before
 the public audit result or persistence; omitted/false source ownership retains the
 legacy response schema and retry behavior.
 
