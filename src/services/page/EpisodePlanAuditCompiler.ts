@@ -87,7 +87,7 @@ export interface EpisodePlanAuditCoverageCheck {
   sourceQuote: string;
   status: 'present' | 'missing';
   outputEvidence: EpisodePlanAuditCoverageEvidence[];
-  issueCode: 'source_omission' | 'ongoing_action_dropped' | null;
+  issueCode: Exclude<EpisodePlanAuditIssueCode, 'dialogue_density'> | null;
   repairTarget: EpisodePlanAuditCoverageRepairTarget | null;
 }
 

@@ -26,6 +26,15 @@ export const episodePlanAuditIssueCodes = [
   'visible_entity_mismatch',
 ] as const;
 
+// Missing source facts may be restored by an existing grounded continuity or
+// content repair. Density alone does not establish a missing source fact.
+export const episodePlanAuditCoverageIssueCodes = [
+  'duplicate_dialogue', 'duplicate_visual_beat', 'timeline_discontinuity',
+  'dialogue_misplacement', 'knowledge_violation', 'page_handoff_break',
+  'unsupported_story_fact', 'source_omission', 'ongoing_action_dropped',
+  'visible_entity_mismatch',
+] as const;
+
 export const episodePlanAuditPageRepairFields = [
   'source_scene_ids',
   'page_purpose',
@@ -172,7 +181,7 @@ const episodePlanAuditCoverageCheckSchema = z
     output_evidence: z
       .array(episodePlanAuditCoverageEvidenceSchema)
       .max(EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK),
-    issue_code: z.enum(['source_omission', 'ongoing_action_dropped']).nullable(),
+    issue_code: z.enum(episodePlanAuditCoverageIssueCodes).nullable(),
     repair_target: episodePlanAuditCoverageRepairTargetSchema.nullable(),
   })
   .strict()

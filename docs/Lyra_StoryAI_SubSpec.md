@@ -85,6 +85,10 @@ unrepaired same-page draft quotes. Source-owned typed deterministic findings
 are displayed individually with the same target page sets as their validation
 catalog. Missing source-coverage checks link the identical issue code and a
 visible repair; page-source grounding and full-source coverage refs stay distinct.
+Missing checks may link an existing grounded content/continuity error directly
+using the same code; density-only findings are excluded. The legacy omission
+codes remain valid. Exact page, error severity, quote, known panel, and visible
+repair gates are unchanged. This is an internal provider-side contract.
 Source and continuity repairs check all
 conflicting visible fields together while preserving source-faithful fields.
 Deterministic fallback must use only entities

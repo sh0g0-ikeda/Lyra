@@ -18,6 +18,7 @@ import { ConfigurationError } from '../../domain/errors/index.js';
 import { describeAppLanguage } from '../../domain/types/language.js';
 import {
   episodePlanAuditIssueCodes,
+  episodePlanAuditCoverageIssueCodes,
   episodePlanAuditPageRepairFields,
   episodePlanAuditPanelRepairFields,
   episodePlanAuditSchema,
@@ -641,7 +642,8 @@ function buildSystemPrompt(
     'For cross-panel or cross-page redistribution, patch every affected source and destination dialogue array together, preserve true speakers and chronology, and preserve essential source information. Do not truncate excess lines or hide text via flags or visual fields.',
     'Return field-level repairs for each repairable error on its named pages, with changed_fields compatible with the issue code. Change only those fields; preserve page IDs, page numbers, panel orders, panel counts, and frame geometry.',
     'When repairing a source or continuity conflict, check situation_text, composition, background_note, panel_notes, and visible entity actions together; repair every conflicting visible field in the affected panels, and preserve source-faithful fields.',
-    'Each missing source_coverage check must link a same-page severity=error issue with the identical issue_code (source_omission or ongoing_action_dropped) and its actual visible panel repair; an error with a different code cannot satisfy that link.',
+    'Each missing source_coverage check must link both a same-page severity=error issue with the identical issue_code from allowed content/continuity categories (excluding dialogue_density) and the actual visible panel repair for that issue; an error with a different code cannot satisfy that link. Link the existing grounded defect rather than inventing a second omission issue for the same repair.',
+    'For page_handoff_break, align situation_text, composition.composition_prompt, background_note, and entities.custom_action to the same source-supported place and action; repair each contradictory value rather than leaving the old place in another visible field.',
     'Keep unchanged fields null in patch payloads; every changed field must carry its intended value. Use [] rather than null to clear dialogue, entities, or source_scene_ids. Do not use null for roles, sizes, composition, dialogue_in_panel, dialogue_mode, or page_dialogue_toggle.',
     'Do not return repairs for warnings or pages not named by an error. Set accepted=true only when no error remains; if a defect cannot be repaired safely within existing pages and source facts, report it instead of claiming success.',
     `Write issue messages and repair instructions in natural ${outputLanguage}.`,
@@ -1273,7 +1275,7 @@ function buildEpisodePlanAuditJsonSchema(
                       },
                     },
                   },
-                  issue_code: nullableEnum(['source_omission', 'ongoing_action_dropped']),
+                  issue_code: nullableEnum(episodePlanAuditCoverageIssueCodes),
                   repair_target: {
                     anyOf: [
                       {

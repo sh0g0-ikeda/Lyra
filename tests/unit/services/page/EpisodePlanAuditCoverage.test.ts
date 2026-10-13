@@ -13,6 +13,21 @@ import {
 const PAGE_ID = '11111111-1111-4111-8111-111111111111';
 
 describe('EpisodePlanAuditCoverage', () => {
+
+  it.each(['warning', '別ページ', '別code', '非可視修正'])('既存handoff修正へのmissingリンクでも%sの場合は拒否する', (mode) => {
+    const audit = buildMissingAudit();
+    audit.issues[0]!.code = 'page_handoff_break';
+    audit.sourceCoverage![0]!.checks[0]!.issueCode = 'page_handoff_break';
+    if (mode === 'warning') audit.issues[0]!.severity = 'warning';
+    if (mode === '別ページ') audit.issues[0]!.pageIds = ['22222222-2222-4222-8222-222222222222'];
+    if (mode === '別code') audit.issues[0]!.code = 'source_omission';
+    if (mode === '非可視修正') {
+      audit.panelRepairs![0]!.changedFields = ['panelRole'];
+      audit.panelRepairs![0]!.patch = { panelRole: 'action' };
+    }
+    expect(() => validateEpisodePlanAuditCoverage(audit, buildCatalog())).toThrow('not linked to an error and repair');
+  });
+
   it('同一ページの欠落事実をerrorとpanel修復へ結線する', () => {
     expect(() => validateEpisodePlanAuditCoverage(buildMissingAudit(), buildCatalog())).not.toThrow();
   });
