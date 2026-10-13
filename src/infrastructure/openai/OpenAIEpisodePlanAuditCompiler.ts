@@ -1,10 +1,4 @@
-import {
-  EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL,
-  EPISODE_PLAN_SOURCE_REVIEW_MAX_UNITS,
-  EPISODE_PLAN_SOURCE_REVIEW_MAX_EVIDENCE,
-  EPISODE_PLAN_SOURCE_REVIEW_MAX_COUNTER_EVIDENCE,
-} from '../../domain/constants/generation.js';
-import { z } from 'zod';
+import { EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL } from '../../domain/constants/generation.js';
 import type { OpenAIReasoningEffort } from './StructuredOpenAIResponse.js';
 import { STORY_SOURCE_POLICY } from './StoryEditorialPrompts.js';
 import {
@@ -18,32 +12,14 @@ import { ConfigurationError } from '../../domain/errors/index.js';
 import { describeAppLanguage } from '../../domain/types/language.js';
 import {
   episodePlanAuditIssueCodes,
-  episodePlanAuditCoverageIssueCodes,
   episodePlanAuditPageRepairFields,
   episodePlanAuditPanelRepairFields,
   episodePlanAuditSchema,
 } from '../../lib/validators/episodePlanAudit.schema.js';
-import {
-  EPISODE_PLAN_AUDIT_COVERAGE_MAX_CHECKS_PER_PAGE,
-  EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK,
-  EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
-  EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
-  EpisodePlanAuditCoverageError,
-  validateEpisodePlanAuditCoverage,
-  type EpisodePlanAuditQuoteCorrectionPlan,
-} from '../../services/page/EpisodePlanAuditCoverage.js';
-import {
-  EpisodePlanAuditGroundingError,
-  episodePlanAuditIssueGroundingsSchema,
-  episodePlanSourceUnitComparisonSchema,
-  validateEpisodePlanAuditIssueGrounding,
-  validateEpisodePlanAuditSourceUnitReview,
-} from './OpenAIEpisodePlanAuditGrounding.js';
 import type {
   CompiledEpisodePlanAudit,
   CompileEpisodePlanAuditInput,
   EpisodePlanAudit,
-  EpisodePlanAuditIssueCode,
   EpisodePlanAuditPageRepair,
   EpisodePlanAuditPageRepairField,
   EpisodePlanAuditPanelRepair,
@@ -70,21 +46,14 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
     if (allowedPageIds.length === 0) {
       throw new ConfigurationError('Episode plan audit requires at least one page ID');
     }
-    if (input.coverageCatalog === undefined) {
-      throw new ConfigurationError('OpenAI episode plan audit requires a coverage catalog');
-    }
 
     const sourceOwnedPageContext = input.sourceOwnedPageContext === true;
-    const sourceReviewCatalog = sourceOwnedPageContext ? input.coverageCatalog.sourceReview : undefined;
-    const trustedGroundingSourceRefs = sourceOwnedPageContext
-      ? collectTrustedGroundingSourceRefs(input)
-      : [];
     const baseRequestInput = [
       {
         role: 'system' as const,
         content: [{
           type: 'input_text' as const,
-          text: buildSystemPrompt(input.language, sourceOwnedPageContext, sourceReviewCatalog !== undefined, sourceReviewCatalog?.evidence !== undefined),
+          text: buildSystemPrompt(input.language, sourceOwnedPageContext),
         }],
       },
       {
@@ -92,170 +61,21 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
         content: [{ type: 'input_text' as const, text: input.compilerBrief }],
       },
     ];
-    let requestInput = baseRequestInput;
     let validated: AuditPayload | null = null;
-    let frozenSourceOwnedBody: SourceOwnedAuditPayload | null = null;
-    let frozenLinkMetadata: string | null = null;
-    let frozenQuoteCorrectionPlan: EpisodePlanAuditQuoteCorrectionPlan | null = null;
     for (let attempt = 1; attempt <= EPISODE_PLAN_AUDIT_COMPILER_MAX_ATTEMPTS; attempt += 1) {
-      let retryInstruction: string | null = null;
-      const coverageOnlyAttempt = frozenSourceOwnedBody !== null && frozenLinkMetadata !== null;
-      const quoteOnlyAttempt = frozenSourceOwnedBody !== null && frozenQuoteCorrectionPlan !== null;
       try {
-        const candidate = quoteOnlyAttempt
-          ? await this.requestQuoteCorrectionAudit(
-              requestInput,
-              frozenSourceOwnedBody,
-              frozenQuoteCorrectionPlan,
-              input.language,
-            )
-          : coverageOnlyAttempt
-          ? await this.requestCoverageOnlyAudit(
-              allowedPageIds,
-              requestInput,
-              frozenSourceOwnedBody,
-              frozenLinkMetadata,
-              input.language,
-            )
-          : await requestStructuredOpenAIResponse({
-              client: this.client,
-              model: this.model,
-              reasoningEffort: this.reasoningEffort,
-              maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
-              schemaName: 'episode_plan_audit',
-              jsonSchema: buildEpisodePlanAuditJsonSchema(
-                allowedPageIds,
-                sourceOwnedPageContext,
-                sourceReviewCatalog?.units.length,
-                sourceReviewCatalog?.evidence?.length,
-                trustedGroundingSourceRefs,
-              ),
-              responseSchema: sourceReviewCatalog !== undefined
-                ? sourceReviewAuditSchema
-                : sourceOwnedPageContext
-                  ? sourceOwnedAuditSchema
-                  : episodePlanAuditSchema,
-              errorLabel: 'OpenAI episode plan audit compiler',
-              input: requestInput,
-            });
-        const candidateAudit = mapAuditPayload(candidate);
-        if (sourceOwnedPageContext) {
-          try {
-            validateEpisodePlanAuditIssueGrounding({
-              audit: candidateAudit,
-              groundings: readSourceOwnedGroundings(candidate, sourceReviewCatalog !== undefined),
-              catalog: input.coverageCatalog.grounding,
-              ...(input.groundingAuthorities === undefined
-                ? {}
-                : { additionalAuthorities: input.groundingAuthorities }),
-            });
-            if (sourceReviewCatalog !== undefined) {
-              validateEpisodePlanAuditSourceUnitReview({
-                audit: candidateAudit,
-                review: readSourceUnitReview(candidate),
-                catalog: sourceReviewCatalog,
-                groundings: readSourceOwnedGroundings(candidate, true),
-                groundingCatalog: input.coverageCatalog.grounding,
-              });
-            }
-          } catch (error) {
-            if (!(error instanceof EpisodePlanAuditGroundingError)) {
-              throw error;
-            }
-            retryInstruction = `${error.retryInstruction} ${AUDIT_GROUNDING_POLICY}`;
-            frozenSourceOwnedBody = null;
-            frozenLinkMetadata = null;
-            frozenQuoteCorrectionPlan = null;
-            throw new StructuredOpenAIResponseError(
-              'OpenAI episode plan audit compiler returned invalid issue grounding',
-              'invalid_payload',
-              true,
-              null,
-            );
-          }
-        }
-        const repairCoverageViolations = findBlockingIssueRepairCoverageViolations(
-          candidateAudit,
-          readPatchOptionalValidatedStateIssueIndexes(
-            candidate,
-            sourceReviewCatalog !== undefined,
-            input.groundingAuthorities,
-          ),
-        );
-        if (repairCoverageViolations.length > 0) {
-          retryInstruction = buildRepairCoverageRetryInstruction(repairCoverageViolations);
-          frozenSourceOwnedBody = null;
-          frozenLinkMetadata = null;
-          frozenQuoteCorrectionPlan = null;
-          throw new StructuredOpenAIResponseError(
-            'OpenAI episode plan audit is missing an applicable field-level repair',
-            'invalid_payload',
-            true,
-            null,
-          );
-        }
-        const staleHandoffFields = findStaleHandoffRepairFields(candidate, input.visualSnapshot);
-        if (staleHandoffFields.length > 0) {
-          retryInstruction = buildStaleHandoffRetryInstruction(staleHandoffFields);
-          frozenSourceOwnedBody = null;
-          frozenLinkMetadata = null;
-          frozenQuoteCorrectionPlan = null;
-          throw new StructuredOpenAIResponseError(
-            'OpenAI episode plan audit left a stale handoff field',
-            'invalid_payload',
-            true,
-            null,
-          );
-        }
-        try {
-          validateEpisodePlanAuditCoverage(candidateAudit, input.coverageCatalog);
-        } catch (error) {
-          if (!(error instanceof ConfigurationError)) {
-            throw error;
-          }
-          const coverageError = error instanceof EpisodePlanAuditCoverageError ? error : null;
-          safeConsoleWarn('episode_plan_audit_coverage_invalid', {
-            attempt,
-            retryMode: quoteOnlyAttempt ? 'quote_only' : coverageOnlyAttempt ? 'coverage_only' : 'full',
-            reasonCode: coverageError?.reasonCode ?? 'unclassified',
-            violationCount: coverageError?.violationCount ?? 1,
-          });
-          retryInstruction = error instanceof EpisodePlanAuditCoverageError
-            ? error.retryInstruction
-            : 'Coverage correction for the retry: rebuild source_coverage from exact named refs and contiguous displayed quotes only.';
-          if (
-            sourceOwnedPageContext
-            && !coverageOnlyAttempt
-            && !quoteOnlyAttempt
-            && error instanceof EpisodePlanAuditCoverageError
-            && error.canFreezeBody
-          ) {
-            const sourceOwnedCandidate = readSourceOwnedPayload(
-              candidate,
-              sourceReviewCatalog !== undefined,
-            );
-            const linkMetadata = buildCoverageOnlyLinkMetadata(candidateAudit);
-            if (linkMetadata !== null && error.quoteCorrectionPlan !== null) {
-              frozenSourceOwnedBody = sourceOwnedCandidate;
-              frozenQuoteCorrectionPlan = error.quoteCorrectionPlan;
-              frozenLinkMetadata = null;
-            } else {
-              frozenSourceOwnedBody = linkMetadata === null ? null : sourceOwnedCandidate;
-              frozenLinkMetadata = linkMetadata;
-              frozenQuoteCorrectionPlan = null;
-            }
-          } else {
-            frozenSourceOwnedBody = null;
-            frozenLinkMetadata = null;
-            frozenQuoteCorrectionPlan = null;
-          }
-          throw new StructuredOpenAIResponseError(
-            'OpenAI episode plan audit compiler returned invalid source coverage',
-            'invalid_payload',
-            true,
-            null,
-          );
-        }
+        const candidate = await requestStructuredOpenAIResponse({
+          client: this.client,
+          model: this.model,
+          reasoningEffort: this.reasoningEffort,
+          maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
+          schemaName: 'episode_plan_audit',
+          jsonSchema: buildEpisodePlanAuditJsonSchema(allowedPageIds),
+          responseSchema: episodePlanAuditSchema,
+          errorLabel: 'OpenAI episode plan audit compiler',
+          input: baseRequestInput,
+        });
+        assertKnownAuditPageTargets(candidate, allowedPageIds);
         validated = candidate;
         break;
       } catch (error) {
@@ -268,18 +88,6 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
         }
 
         await input.beforeRetry?.();
-        if (retryInstruction !== null) {
-          requestInput = [
-            ...baseRequestInput,
-            {
-              role: 'user' as const,
-              content: [{
-                type: 'input_text' as const,
-                text: retryInstruction,
-              }],
-            },
-          ];
-        }
         safeConsoleWarn('episode_plan_audit_compiler_retry', {
           attempt,
           nextAttempt: attempt + 1,
@@ -301,285 +109,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
     };
   }
 
-  private async requestQuoteCorrectionAudit(
-    requestInput: Array<{
-      role: 'system' | 'user';
-      content: Array<{ type: 'input_text'; text: string }>;
-    }>,
-    frozen: SourceOwnedAuditPayload | null,
-    plan: EpisodePlanAuditQuoteCorrectionPlan | null,
-    language: CompileEpisodePlanAuditInput['language'],
-  ): Promise<SourceOwnedAuditPayload> {
-    if (frozen === null || plan === null || plan.slots.length === 0) {
-      throw new ConfigurationError('Quote correction audit retry requires a grounded frozen body');
-    }
-    const compilerBrief = requestInput[1];
-    if (compilerBrief === undefined) {
-      throw new ConfigurationError('Quote correction audit retry requires the unchanged compiler brief');
-    }
-    const correctionMessages = requestInput.slice(2);
-    const correction = await requestStructuredOpenAIResponse({
-      client: this.client,
-      model: this.model,
-      reasoningEffort: this.reasoningEffort,
-      maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
-      schemaName: 'episode_plan_audit_quote_correction',
-      jsonSchema: buildEpisodePlanAuditQuoteCorrectionJsonSchema(plan),
-      responseSchema: buildEpisodePlanAuditQuoteCorrectionResponseSchema(plan),
-      errorLabel: 'OpenAI episode plan audit quote correction',
-      input: [
-        {
-          role: 'system',
-          content: [{
-            type: 'input_text',
-            text: buildQuoteCorrectionSystemPrompt(language),
-          }],
-        },
-        compilerBrief,
-        ...correctionMessages,
-      ],
-    });
-    return applyQuoteCorrections(frozen, plan, correction);
-  }
-
-  private async requestCoverageOnlyAudit(
-    allowedPageIds: readonly string[],
-    requestInput: Array<{
-      role: 'system' | 'user';
-      content: Array<{ type: 'input_text'; text: string }>;
-    }>,
-    frozen: SourceOwnedAuditPayload | null,
-    frozenMetadata: string | null,
-    language: CompileEpisodePlanAuditInput['language'],
-  ): Promise<SourceOwnedAuditPayload> {
-    if (frozen === null || frozenMetadata === null) {
-      throw new ConfigurationError('Coverage-only audit retry requires a grounded frozen body');
-    }
-    const compilerBrief = requestInput[1];
-    if (compilerBrief === undefined) {
-      throw new ConfigurationError('Coverage-only audit retry requires the unchanged compiler brief');
-    }
-    const correctionMessages = requestInput.slice(2);
-    const coverage = await requestStructuredOpenAIResponse({
-      client: this.client,
-      model: this.model,
-      reasoningEffort: this.reasoningEffort,
-      maxOutputTokens: EPISODE_PLAN_AUDIT_COMPILER_MAX_TOKENS,
-      schemaName: 'episode_plan_audit_coverage',
-      jsonSchema: buildEpisodePlanAuditCoverageOnlyJsonSchema(allowedPageIds),
-      responseSchema: coverageOnlyAuditSchema,
-      errorLabel: 'OpenAI episode plan audit coverage correction',
-      input: [
-        {
-          role: 'system',
-          content: [{
-            type: 'input_text',
-            text: buildCoverageOnlySystemPrompt(language),
-          }],
-        },
-        compilerBrief,
-        {
-          role: 'user',
-          content: [{ type: 'input_text', text: frozenMetadata }],
-        },
-        ...correctionMessages,
-      ],
-    });
-    return {
-      ...frozen,
-      source_coverage: coverage.source_coverage,
-    };
-  }
 }
-
-const COVERAGE_ONLY_LINK_METADATA_MAX_CHARS = 12_000;
-const COVERAGE_VISIBLE_REPAIR_FIELDS: ReadonlySet<EpisodePlanAuditPanelRepairField> = new Set([
-  'situationText',
-  'composition',
-  'dialogue',
-  'sfxText',
-  'backgroundNote',
-  'panelNotes',
-  'entities',
-]);
-
-function buildQuoteCorrectionSystemPrompt(
-  language: CompileEpisodePlanAuditInput['language'],
-): string {
-  return [
-    'Return only the required quote correction keys in the strict JSON object.',
-    'Each cN key corresponds to diagnostic[N+1] in the bounded correction metadata.',
-    'Copy one exact contiguous 4 to 40 character quote from that diagnostic\'s already-known named source or output ref in the unchanged input.',
-    'Do not return page IDs, refs, statuses, links, issues, repairs, prose, or any prior invalid quote.',
-    `The application language is ${describeAppLanguage(language)}.`,
-  ].join(' ');
-}
-
-function buildEpisodePlanAuditQuoteCorrectionJsonSchema(
-  plan: EpisodePlanAuditQuoteCorrectionPlan,
-): Record<string, unknown> {
-  const required = plan.slots.map((slot) => slot.key);
-  return {
-    type: 'object',
-    additionalProperties: false,
-    required,
-    properties: Object.fromEntries(required.map((key) => [key, {
-      type: 'string',
-      minLength: 4,
-      maxLength: EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
-    }])),
-  };
-}
-
-function buildEpisodePlanAuditQuoteCorrectionResponseSchema(
-  plan: EpisodePlanAuditQuoteCorrectionPlan,
-): z.ZodType<Record<string, string>> {
-  const shape: Record<string, z.ZodString> = {};
-  for (const slot of plan.slots) {
-    shape[slot.key] = z.string().trim().min(4).max(EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS);
-  }
-  return z.object(shape).strict();
-}
-
-function applyQuoteCorrections(
-  frozen: SourceOwnedAuditPayload,
-  plan: EpisodePlanAuditQuoteCorrectionPlan,
-  correction: Record<string, string>,
-): SourceOwnedAuditPayload {
-  const corrected = structuredClone(frozen);
-  for (const slot of plan.slots) {
-    const page = corrected.source_coverage.find((candidate) => candidate.page_id === slot.pageId);
-    const check = page?.checks[slot.checkIndex];
-    const quote = correction[slot.key];
-    if (check === undefined || quote === undefined) {
-      throw new ConfigurationError('Quote correction no longer matches the frozen coverage slot');
-    }
-    if (slot.kind === 'source') {
-      if (slot.evidenceIndex !== null || check.source_ref !== slot.ref) {
-        throw new ConfigurationError('Quote correction source slot no longer matches the frozen ref');
-      }
-      check.source_quote = quote;
-      continue;
-    }
-    if (slot.evidenceIndex === null) {
-      throw new ConfigurationError('Quote correction output slot omitted its frozen evidence index');
-    }
-    const evidence = check.output_evidence[slot.evidenceIndex];
-    if (evidence === undefined || evidence.output_ref !== slot.ref) {
-      throw new ConfigurationError('Quote correction output slot no longer matches the frozen ref');
-    }
-    evidence.quote = quote;
-  }
-  return corrected;
-}
-
-function buildCoverageOnlySystemPrompt(
-  language: CompileEpisodePlanAuditInput['language'],
-): string {
-  return [
-    'Correct source_coverage citations and links only. Return source_coverage only in the required strict JSON object.',
-    'The full audit body, issues, and repairs are already validated and server-held. Do not regenerate, add, remove, or rewrite them.',
-    'Use the unchanged source and compiled draft below for exact contiguous quotes. Never treat planning metadata as visible depiction.',
-    'For status=missing, use only an issue_code/page_id and repair page_id/panel_order combination allowed by FROZEN AUDIT LINK METADATA. Do not invent an unlisted link.',
-    'For status=present, cite exact displayed output evidence and return no issue or repair link.',
-    `The application language is ${describeAppLanguage(language)}.`,
-  ].join(' ');
-}
-
-function buildCoverageOnlyLinkMetadata(audit: EpisodePlanAudit): string | null {
-  const repairPageIds = new Set([
-    ...(audit.pageRepairs ?? []).map((repair) => repair.pageId),
-    ...(audit.panelRepairs ?? []).map((repair) => repair.pageId),
-  ]);
-  const hasUnrepairedError = audit.issues.some((issue) =>
-    issue.severity === 'error'
-    && !issue.pageIds.some((pageId) => repairPageIds.has(pageId)),
-  );
-  if (hasUnrepairedError) {
-    return null;
-  }
-
-  const errorLinks = new Map<string, { code: string; pageId: string }>();
-  for (const issue of audit.issues) {
-    if (issue.severity !== 'error') continue;
-    for (const pageId of issue.pageIds) {
-      const key = `${issue.code}\u0000${pageId}`;
-      errorLinks.set(key, { code: issue.code, pageId });
-    }
-  }
-
-  const repairTargets = new Map<string, {
-    pageId: string;
-    panelOrder: number;
-    fields: Set<EpisodePlanAuditPanelRepairField>;
-  }>();
-  for (const repair of audit.panelRepairs ?? []) {
-    const visibleFields = repair.changedFields.filter((field) =>
-      COVERAGE_VISIBLE_REPAIR_FIELDS.has(field) && repairFieldAddsVisibleContent(repair, field),
-    );
-    if (visibleFields.length === 0) continue;
-    const key = `${repair.pageId}\u0000${repair.panelOrder}`;
-    const target = repairTargets.get(key) ?? {
-      pageId: repair.pageId,
-      panelOrder: repair.panelOrder,
-      fields: new Set<EpisodePlanAuditPanelRepairField>(),
-    };
-    visibleFields.forEach((field) => target.fields.add(field));
-    repairTargets.set(key, target);
-  }
-
-  const lines = [
-    '[FROZEN AUDIT LINK METADATA]',
-    'The server retains the validated body. These identifiers are the complete allowed link set; no issue prose, quotes, repair instructions, or patch values are included.',
-    ...[...errorLinks.values()].map((link, index) =>
-      `error_link[${index + 1}]: issue_code=${link.code} page_id=${JSON.stringify(link.pageId)}`,
-    ),
-    ...[...repairTargets.values()].map((target, index) =>
-      `repair_target[${index + 1}]: page_id=${JSON.stringify(target.pageId)} panel_order=${target.panelOrder} visible_fields=${JSON.stringify([...target.fields])}`,
-    ),
-    '[END FROZEN AUDIT LINK METADATA]',
-  ];
-  const metadata = lines.join('\n');
-  return metadata.length <= COVERAGE_ONLY_LINK_METADATA_MAX_CHARS ? metadata : null;
-}
-
-function repairFieldAddsVisibleContent(
-  repair: EpisodePlanAuditPanelRepair,
-  field: EpisodePlanAuditPanelRepairField,
-): boolean {
-  switch (field) {
-    case 'situationText':
-      return hasText(repair.patch.situationText);
-    case 'composition':
-      return repair.patch.composition !== undefined;
-    case 'dialogue':
-      return (repair.patch.dialogue?.length ?? 0) > 0;
-    case 'sfxText':
-      return hasText(repair.patch.sfxText);
-    case 'backgroundNote':
-      return hasText(repair.patch.backgroundNote);
-    case 'panelNotes':
-      return hasText(repair.patch.panelNotes);
-    case 'entities':
-      return (repair.patch.entities?.length ?? 0) > 0;
-    case 'panelRole':
-    case 'panelSize':
-    case 'dialogueInPanel':
-      return false;
-  }
-}
-
-function hasText(value: string | null | undefined): boolean {
-  return value !== null && value !== undefined && value.trim().length > 0;
-}
-
-const AUDIT_GROUNDING_POLICY = [
-  'For basis=deterministic, copy the typed finding code and exact target page_ids with source_evidence=[]. Do not broaden that deterministic grounding beyond the typed finding\'s target pages.',
-  'For issue_grounding use page_source for the PAGE-LOCAL ORIGINAL SOURCE, not source_coverage ref source.',
-  'For basis=source, cover every and only affected page with exact substrings of its named authority.',
-  'Every output_evidence.page_id must be one of that issue\'s page_ids. An earlier unchanged page may explain repetition or continuity, but it is context only and never output evidence for a later-only issue. Do not add an intact context page to issue page_ids or repairs merely to make grounding pass.',
-  'Copy output evidence exactly from the named same-page unrepaired draft field, never from repair patches; only source_omission or ongoing_action_dropped may omit output evidence.',
-].join(' ');
 
 const AUDIT_VISIBLE_SOURCE_POLICY = [
   'Preserve every required source fact and action in concrete visible or text fields. A generic label such as an explanation, entry, or decision is not a substitute for the causal fact or completed action required by the source.',
@@ -600,14 +130,12 @@ const AUDIT_DIALOGUE_POLICY = [
 function buildSystemPrompt(
   language: CompileEpisodePlanAuditInput['language'],
   sourceOwnedPageContext: boolean,
-  sourceUnitReview: boolean,
-  sourceUnitEvidence: boolean,
 ): string {
   const outputLanguage = describeAppLanguage(language);
   return [
     'Check whether each line belongs at that exact moment, whether the named speaker can know and say it, and whether the next line is a coherent response.',
     'Treat scene character-state notes such as costume, injury, hair, and expression as continuity facts until the source explicitly changes them.',
-    'Use severity=error for a concrete missing source fact, dropped ongoing action, or visible entity contradiction when a safe field-level repair can restore the source. These repairable facts must not be downgraded merely because the remaining draft can be saved.',
+    'Use severity=error for a concrete missing source fact, dropped ongoing action, visible entity contradiction, or deterministic defect. Return a field-level repair only when a safe, specific patch is clear; otherwise report the issue without inventing a patch.',
     'Use severity=warning only for optional improvements that do not correct a source fact, ongoing action, visible staging, continuity, or readability defect.',
     AUDIT_VISIBLE_SOURCE_POLICY,
     'Audit the complete episode across page boundaries as a manga continuity and readability editor.',
@@ -620,30 +148,14 @@ function buildSystemPrompt(
     ...(sourceOwnedPageContext ? [
       'The exact original page source is authoritative. Every compiled field, including purpose, continuity, panel notes, composition notes, and entity metadata, is draft output under review. Never describe generated draft text as an original-source requirement, and never change a source-faithful visible field merely to agree with conflicting generated metadata.',
       'Before easy dialogue or setup facts, audit explicit completion and end states, the authored functional meaning of props or displayed information, cause-action-result chains, and authored emotion or pose against actual visible panel fields.',
-      'Return one issue_grounding entry for every severity=error issue. Use basis=source with exact named authority and output-field quotes; source omissions may have no output quote. Use basis=deterministic only when the typed DETERMINISTIC FINDINGS section contains the same code and page IDs. issue_grounding is validation metadata and must not add or replace issues or repairs.',
-      AUDIT_GROUNDING_POLICY,
-    ] : []),
-    ...(sourceUnitReview ? [
-      sourceUnitEvidence
-        ? 'Review every clause of every SOURCE UNIT REVIEW entry. Return source_unit_review with exactly one comparison object per ordered uN. Each comparison has verdict, evidence field IDs, counter_evidence field IDs, and issue (the zero-based existing grounded error index, or null).'
-        : 'Review every clause of every SOURCE UNIT REVIEW entry. Return source_unit_review with exactly one item per ordered uN: null only when that whole unit has no issue, otherwise the zero-based index of an existing grounded error issue caused by that unit.',
-      ...(sourceUnitEvidence ? [
-        'supported means every authored fact/action/result in that unit is actually supported by the cited same-page panel fields. Cite one to four PANEL FIELD EVIDENCE integer IDs. A mention in generated purpose or continuity never proves visible completion.',
-        'conflict means the displayed draft contradicts any authored clause. Cite one or two counter_evidence IDs and link an existing grounded severity=error issue for that exact unit; missing means a required fact is absent and also links an existing grounded error. Return appropriate repairs through the existing repair fields when safe.',
-        'constraint is reserved for a source style/direction or negative/continuing restriction, with no detected violation. context is reserved for headings or non-depiction context only. Never classify an authored action, condition, emotion, explanation, completion, or final viewpoint as context merely because the draft omitted it. A unit containing both a heading and a required action must review the action.',
-        'Compare the positive evidence with any contrary notes in that page before choosing supported. A note that only prohibits entry before a prerequisite cannot justify prohibiting entry after the prerequisite has happened. Review each clause, including same-page endpoints, rather than only the easiest clause.',
-        'Use only the server-owned displayed panel field ID catalog. No invented IDs, no fields from another page for a page unit, and no positive or counter IDs for context. Successful ID validation is bookkeeping, not a substitute for the semantic comparison.',
-      ] : []),
-      'A unit boundary is only bookkeeping and may contain several facts. Separately verify an explanation exists and has its authored role or content; an approach or opening reaches any same-page completion required by the source; a continuing result has its explicit prerequisite; surprise or haste does not replace a separately authored joy or later reaction; and showing a target does not replace the required final viewpoint.',
-      'If draft notes prohibit, delay, or negate an action required by the original unit, report the conflict through an existing issue and repair. Draft purpose, continuity, notes, summaries, generated ledgers, and SCENES are not original-source authority for source_unit_review.',
     ] : []),
     'Check every explicitly authored source dialogue line against COMPLETE DIALOGUE for exact interior wording and the unambiguous speaker or thinker and dialogue type assigned by the source. Apply the same exact-wording check to explicitly assigned narration or caption/display text, which must keep type=narration and entity_id=null. Japanese brackets around a name, title, alias, or cited label are not dialogue unless the source assigns the text as an utterance, private thought, narration, or caption.',
     sourceOwnedPageContext
       ? '[CHAPTER], [CHAPTER ARC], [EPISODE STORY], [EPISODE ARC], page purpose, continuity, and generated summaries are planning context only and are not displayed dialogue, thought, narration, or caption. If compiled display text copies or paraphrases that context without an explicit display-text assignment in [COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP], report an error and use an existing dialogue field repair to remove it while preserving explicitly authored display text.'
       : '[CHAPTER], [CHAPTER ARC], [EPISODE STORY], [EPISODE ARC], outlines, ledgers, page purpose, continuity, and generated summaries are planning context only and are not displayed dialogue, thought, narration, or caption. If compiled display text copies or paraphrases that context without an explicit display-text assignment in [FULL STORY DRAFT - SOURCE DATA], report an error and use an existing dialogue field repair to remove it while preserving explicitly authored display text.',
     sourceOwnedPageContext
-      ? 'Planning sections and generated purpose/continuity never override original action, chronology, staging, or continuity. Audit every authored original-source action against actual panel fields; the bounded source_coverage samples at most two facts per page and never limits the body audit.'
-      : 'This displayed-text distinction does not weaken action, chronology, staging, or continuity facts from those sections. Audit every important source action in the body and return its supported issue and repair when needed; the bounded source_coverage sidecar samples at most two high-risk facts per page and does not limit the body audit.',
+      ? 'Planning sections and generated purpose/continuity never override original action, chronology, staging, or continuity. Audit every authored original-source action against actual panel fields.'
+      : 'This displayed-text distinction does not weaken action, chronology, staging, or continuity facts from those sections. Audit every important source action in the body.',
     'If an authored line is missing, shortened, paraphrased, merged, split, or assigned to a different known speaker or type, return an error and an existing dialogue field repair that restores the exact line and assignment. Never invent a speaker where the source is ambiguous.',
     sourceOwnedPageContext
       ? 'For each source action chain, compare its prerequisite, action, immediate result, and stated order with actual panel fields. A metadata mention does not prove that a step happened on the page.'
@@ -661,11 +173,10 @@ function buildSystemPrompt(
       ? 'Check each page-local source boundary and whether required information was left out early and dumped into late pages or final panels. Compare total text length, available frame area, silent-beat purpose, and neighboring pages; do not demand uniform density.'
       : 'Check page entry/exit/handoff and whether required information was left out early and dumped into late pages or final panels. Compare total text length, available frame area, silent-beat purpose, and neighboring pages; do not demand uniform density.',
     'Use dialogue_density with severity=error for every panel above the entry cap; this is deterministic, not optional. Within the cap, use error only for a concrete reading/story defect; use warning for a justified non-blocking improvement, not taste.',
-    'Every DETERMINISTIC FINDING is binding and needs a repair. Inspect all over-limit panels in TEXT DISTRIBUTION, not only an example panel from a grouped finding.',
+    'Every DETERMINISTIC FINDING is binding and must be reported. Inspect all over-limit panels in TEXT DISTRIBUTION, not only an example panel from a grouped finding.',
     'For cross-panel or cross-page redistribution, patch every affected source and destination dialogue array together, preserve true speakers and chronology, and preserve essential source information. Do not truncate excess lines or hide text via flags or visual fields.',
     'Return field-level repairs for each repairable error on its named pages, with changed_fields compatible with the issue code. Change only those fields; preserve page IDs, page numbers, panel orders, panel counts, and frame geometry.',
     'When repairing a source or continuity conflict, check situation_text, composition, background_note, panel_notes, and visible entity actions together; repair every conflicting visible field in the affected panels, and preserve source-faithful fields.',
-    'Each missing source_coverage check must link both a same-page severity=error issue with the identical issue_code from allowed content/continuity categories (excluding dialogue_density) and the actual visible panel repair for that issue; an error with a different code cannot satisfy that link. Link the existing grounded defect rather than inventing a second omission issue for the same repair.',
     'For page_handoff_break, align situation_text, composition.composition_prompt, background_note, and entities.custom_action to the same source-supported place and action; repair each contradictory value rather than leaving the old place in another visible field.',
     'Keep unchanged fields null in patch payloads; every changed field must carry its intended value. Use [] rather than null to clear dialogue, entities, or source_scene_ids. Do not use null for roles, sizes, composition, dialogue_in_panel, dialogue_mode, or page_dialogue_toggle.',
     'Do not return repairs for warnings or pages not named by an error. Set accepted=true only when no error remains; if a defect cannot be repaired safely within existing pages and source facts, report it instead of claiming success.',
@@ -674,82 +185,23 @@ function buildSystemPrompt(
 }
 
 type AuditPayload = ReturnType<typeof episodePlanAuditSchema.parse>;
-const sourceOwnedAuditSchema = episodePlanAuditSchema.extend({
-  issue_grounding: episodePlanAuditIssueGroundingsSchema,
-}).strict();
-const sourceReviewAuditSchema = sourceOwnedAuditSchema.extend({
-  source_unit_review: z.array(z.union([z.number().int().min(0).nullable(), episodePlanSourceUnitComparisonSchema]))
-    .max(EPISODE_PLAN_SOURCE_REVIEW_MAX_UNITS),
-}).strict();
-const coverageOnlyAuditSchema = episodePlanAuditSchema.pick({ source_coverage: true }).strict();
-type SourceOwnedAuditPayload = z.infer<typeof sourceOwnedAuditSchema>
-  | z.infer<typeof sourceReviewAuditSchema>;
-
-type EpisodePlanAuditRepairField = EpisodePlanAuditPageRepairField
-  | EpisodePlanAuditPanelRepairField;
-
-const VISUAL_CONTENT_REPAIR_FIELDS: readonly EpisodePlanAuditRepairField[] = [
-  'situationText',
-  'composition',
-  'dialogue',
-  'sfxText',
-  'backgroundNote',
-  'panelNotes',
-  'entities',
-];
-
-const COMPATIBLE_REPAIR_FIELDS_BY_ISSUE = {
-  duplicate_dialogue: new Set<EpisodePlanAuditRepairField>(['dialogue']),
-  dialogue_density: new Set<EpisodePlanAuditRepairField>(['dialogue']),
-  duplicate_visual_beat: new Set<EpisodePlanAuditRepairField>([
-    'panelRole',
-    'panelSize',
-    'situationText',
-    'composition',
-    'sfxText',
-    'backgroundNote',
-    'panelNotes',
-    'entities',
-  ]),
-  timeline_discontinuity: new Set<EpisodePlanAuditRepairField>([
-    'sourceSceneIds',
-    'pagePurpose',
-    'continuityNote',
-    'dialogueMode',
-    'pageDialogueToggle',
-    'panelRole',
-    ...VISUAL_CONTENT_REPAIR_FIELDS,
-  ]),
-  dialogue_misplacement: new Set<EpisodePlanAuditRepairField>(['dialogue']),
-  knowledge_violation: new Set<EpisodePlanAuditRepairField>(['dialogue']),
-  page_handoff_break: new Set<EpisodePlanAuditRepairField>([
-    'pagePurpose',
-    'continuityNote',
-    'dialogueMode',
-    'pageDialogueToggle',
-    'panelRole',
-    ...VISUAL_CONTENT_REPAIR_FIELDS,
-  ]),
-  unsupported_story_fact: new Set<EpisodePlanAuditRepairField>([
-    'sourceSceneIds',
-    'pagePurpose',
-    'continuityNote',
-    ...VISUAL_CONTENT_REPAIR_FIELDS,
-  ]),
-  source_omission: new Set<EpisodePlanAuditRepairField>(VISUAL_CONTENT_REPAIR_FIELDS),
-  ongoing_action_dropped: new Set<EpisodePlanAuditRepairField>(VISUAL_CONTENT_REPAIR_FIELDS),
-  visible_entity_mismatch: new Set<EpisodePlanAuditRepairField>([
-    'situationText',
-    'composition',
-    'backgroundNote',
-    'panelNotes',
-    'entities',
-  ]),
-} satisfies Readonly<Record<EpisodePlanAuditIssueCode, ReadonlySet<EpisodePlanAuditRepairField>>>;
-
-interface BlockingIssueRepairCoverageViolation {
-  issueIndex: number;
-  code: EpisodePlanAuditIssueCode;
+function assertKnownAuditPageTargets(
+  payload: AuditPayload,
+  allowedPageIds: readonly string[],
+): void {
+  const allowed = new Set(allowedPageIds);
+  const hasUnknownTarget = payload.issues.some((issue) =>
+    issue.page_ids.some((pageId) => !allowed.has(pageId)),
+  ) || payload.page_repairs.some((repair) => !allowed.has(repair.page_id))
+    || payload.panel_repairs.some((repair) => !allowed.has(repair.page_id));
+  if (hasUnknownTarget) {
+    throw new StructuredOpenAIResponseError(
+      'OpenAI episode plan audit compiler returned an unknown page target',
+      'invalid_payload',
+      true,
+      null,
+    );
+  }
 }
 
 function mapAuditPayload(payload: AuditPayload): EpisodePlanAudit {
@@ -764,189 +216,7 @@ function mapAuditPayload(payload: AuditPayload): EpisodePlanAudit {
     })),
     pageRepairs: payload.page_repairs.map(mapPageRepair),
     panelRepairs: payload.panel_repairs.map(mapPanelRepair),
-    sourceCoverage: payload.source_coverage.map((page) => ({
-      pageId: page.page_id,
-      checks: page.checks.map((check) => ({
-        sourceRef: check.source_ref,
-        sourceQuote: check.source_quote,
-        status: check.status,
-        outputEvidence: check.output_evidence.map((evidence) => ({
-          outputRef: evidence.output_ref,
-          quote: evidence.quote,
-        })),
-        issueCode: check.issue_code,
-        repairTarget: check.repair_target === null ? null : {
-          scope: check.repair_target.scope,
-          pageId: check.repair_target.page_id,
-          panelOrder: check.repair_target.panel_order,
-        },
-      })),
-    })),
   };
-}
-
-/**
- * The provider contract has no explicit issue-to-repair index. The strongest
- * safe server-side relation available is therefore a same-page repair with a
- * field category that can address the issue code. Content-level correctness is
- * still checked by the bounded second episode audit.
- */
-function findBlockingIssueRepairCoverageViolations(
-  audit: EpisodePlanAudit,
-  patchOptionalIssueIndexes: ReadonlySet<number>,
-): BlockingIssueRepairCoverageViolation[] {
-  const repairs = [
-    ...(audit.pageRepairs ?? []).map((repair) => ({
-      pageId: repair.pageId,
-      changedFields: repair.changedFields as readonly EpisodePlanAuditRepairField[],
-    })),
-    ...(audit.panelRepairs ?? []).map((repair) => ({
-      pageId: repair.pageId,
-      changedFields: repair.changedFields as readonly EpisodePlanAuditRepairField[],
-    })),
-  ];
-
-  return audit.issues.flatMap((issue, issueIndex) => {
-    if (issue.severity !== 'error' || patchOptionalIssueIndexes.has(issueIndex)) {
-      return [];
-    }
-    const compatibleFields = COMPATIBLE_REPAIR_FIELDS_BY_ISSUE[issue.code];
-    const hasApplicableRepair = repairs.some((repair) =>
-      issue.pageIds.includes(repair.pageId)
-      && repair.changedFields.some((field) => compatibleFields.has(field)),
-    );
-    return hasApplicableRepair ? [] : [{ issueIndex, code: issue.code }];
-  });
-}
-
-function readPatchOptionalValidatedStateIssueIndexes(
-  payload: AuditPayload | SourceOwnedAuditPayload,
-  sourceReview: boolean,
-  authorities: CompileEpisodePlanAuditInput['groundingAuthorities'],
-): ReadonlySet<number> {
-  const validatedStateRefs = new Set(
-    (authorities ?? [])
-      .filter((authority) => authority.kind === 'validated_state')
-      .map((authority) => authority.ref),
-  );
-  if (validatedStateRefs.size === 0 || !('issue_grounding' in payload)) {
-    return new Set();
-  }
-  return new Set(
-    readSourceOwnedGroundings(payload, sourceReview)
-      .filter((grounding) =>
-        grounding.basis === 'source'
-        && grounding.source_evidence.length > 0
-        && grounding.source_evidence.every((evidence) =>
-          validatedStateRefs.has(evidence.source_ref),
-        ),
-      )
-      .map((grounding) => grounding.issue_index),
-  );
-}
-
-function buildRepairCoverageRetryInstruction(
-  violations: readonly BlockingIssueRepairCoverageViolation[],
-): string {
-  const shown = violations.slice(0, 16);
-  return [
-    `Audit repair correction for the retry: invalid_error_count=${violations.length}; `
-      + `shown_error_count=${shown.length}; omitted_error_count=${violations.length - shown.length}.`,
-    `error_indices=[${shown.map((violation) => violation.issueIndex).join(',')}]`,
-    `issue_codes=[${shown.map((violation) => violation.code).join(',')}]`,
-    'Regenerate the complete audit. Every listed severity=error issue must have at least one same-page field-level repair whose changed_fields can correct that issue code. Do not add repairs for warnings or unrelated pages.',
-  ].join('\n');
-}
-
-type HandoffVisualField = 'situation_text' | 'composition' | 'background_note';
-
-interface StaleHandoffRepairField {
-  pageId: string;
-  panelOrder: number;
-  field: HandoffVisualField;
-}
-
-function findStaleHandoffRepairFields(
-  payload: AuditPayload,
-  snapshot: CompileEpisodePlanAuditInput['visualSnapshot'],
-): StaleHandoffRepairField[] {
-  if (snapshot === undefined) return [];
-  const handoffPages = new Set(payload.issues.flatMap((issue) =>
-    issue.severity === 'error' && issue.code === 'page_handoff_break' ? issue.page_ids : [],
-  ));
-  const violations = new Map<string, StaleHandoffRepairField>();
-  for (const repair of payload.panel_repairs) {
-    if (!handoffPages.has(repair.page_id)) continue;
-    const original = snapshot.panels.find((panel) =>
-      panel.pageId === repair.page_id && panel.panelOrder === repair.panel_order,
-    );
-    if (original === undefined) continue;
-    const changed = new Set(repair.changed_fields);
-    for (const editedField of HANDOFF_VISUAL_FIELDS) {
-      if (!changed.has(editedField)) continue;
-      const oldEditedValues = readOriginalVisualValues(original, editedField);
-      const newEditedValues = readPatchedVisualValues(repair, editedField);
-      for (const peerField of HANDOFF_VISUAL_FIELDS) {
-        if (peerField === editedField) continue;
-        for (const oldPeerValue of readOriginalVisualValues(original, peerField)) {
-          if (
-            !oldEditedValues.some((value) => value.includes(oldPeerValue))
-            || newEditedValues.some((value) => value.includes(oldPeerValue))
-          ) continue;
-          const resultingPeerValues = changed.has(peerField)
-            ? readPatchedVisualValues(repair, peerField)
-            : readOriginalVisualValues(original, peerField);
-          if (!resultingPeerValues.some((value) => value.includes(oldPeerValue))) continue;
-          const violation = { pageId: repair.page_id, panelOrder: repair.panel_order, field: peerField };
-          violations.set(`${violation.pageId}\0${violation.panelOrder}\0${violation.field}`, violation);
-        }
-      }
-    }
-  }
-  return [...violations.values()];
-}
-
-const HANDOFF_STALE_PEER_MIN_CHARS = 4;
-
-const HANDOFF_VISUAL_FIELDS: readonly HandoffVisualField[] = [
-  'situation_text', 'composition', 'background_note',
-];
-
-function normalizeHandoffVisualValue(value: string | null | undefined): string[] {
-  const normalized = value?.replace(/\s+/gu, ' ').trim() ?? '';
-  return normalized.length >= HANDOFF_STALE_PEER_MIN_CHARS ? [normalized] : [];
-}
-
-function readOriginalVisualValues(
-  panel: NonNullable<CompileEpisodePlanAuditInput['visualSnapshot']>['panels'][number],
-  field: HandoffVisualField,
-): readonly string[] {
-  if (field === 'situation_text') return panel.situationText;
-  if (field === 'composition') return panel.composition;
-  return panel.backgroundNote;
-}
-
-function readPatchedVisualValues(
-  repair: AuditPayload['panel_repairs'][number],
-  field: HandoffVisualField,
-): string[] {
-  if (field === 'situation_text') return normalizeHandoffVisualValue(repair.patch.situation_text);
-  if (field === 'background_note') return normalizeHandoffVisualValue(repair.patch.background_note);
-  return [
-    ...normalizeHandoffVisualValue(repair.patch.composition?.composition_prompt),
-    ...normalizeHandoffVisualValue(repair.patch.composition?.custom_note),
-  ];
-}
-
-function buildStaleHandoffRetryInstruction(violations: readonly StaleHandoffRepairField[]): string {
-  const shown = violations.slice(0, 16);
-  return [
-    `Audit handoff correction for the retry: stale_field_count=${violations.length}.`,
-    ...shown.map((item) =>
-      `page_id=${JSON.stringify(item.pageId)} panel_order=${item.panelOrder} stale_field=${item.field}`,
-    ),
-    'Regenerate the complete audit and remove each shared stale value from the named field repair.',
-  ].join('\n');
 }
 
 function mapPageRepair(
@@ -1231,130 +501,15 @@ const panelRepairPatchJsonSchema = {
   },
 } as const;
 
-function collectTrustedGroundingSourceRefs(input: CompileEpisodePlanAuditInput): string[] {
-  const refs = new Set<string>();
-  for (const page of input.coverageCatalog?.grounding?.pages ?? []) {
-    for (const authority of page.authorities) {
-      refs.add(authority.ref);
-    }
-  }
-  for (const authority of input.groundingAuthorities ?? []) {
-    refs.add(authority.ref);
-  }
-  return [...refs];
-}
-
-function buildSourceCoverageCheckJsonSchema(
-  pageIdJsonSchema: Record<string, unknown>,
-  sourceOwnedPageContext: boolean,
-): Record<string, unknown> {
-  const required = [
-    'source_ref',
-    'source_quote',
-    'status',
-    'output_evidence',
-    'issue_code',
-    'repair_target',
-  ];
-  const sourceRef = {
-    type: 'string',
-    minLength: 1,
-    maxLength: EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
-    ...(sourceOwnedPageContext ? { enum: ['source'] } : {}),
-  };
-  const sourceQuote = {
-    type: 'string',
-    minLength: 4,
-    maxLength: EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
-  };
-  const outputEvidenceItems = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['output_ref', 'quote'],
-    properties: {
-      output_ref: {
-        type: 'string',
-        minLength: 1,
-        maxLength: EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
-      },
-      quote: {
-        type: 'string',
-        minLength: 4,
-        maxLength: EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
-      },
-    },
-  };
-  return {
-    anyOf: [
-      {
-        type: 'object',
-        additionalProperties: false,
-        required,
-        properties: {
-          source_ref: sourceRef,
-          source_quote: sourceQuote,
-          status: { type: 'string', enum: ['present'] },
-          output_evidence: {
-            type: 'array',
-            minItems: 1,
-            maxItems: EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK,
-            items: outputEvidenceItems,
-          },
-          issue_code: { type: 'null' },
-          repair_target: { type: 'null' },
-        },
-      },
-      {
-        type: 'object',
-        additionalProperties: false,
-        required,
-        properties: {
-          source_ref: sourceRef,
-          source_quote: sourceQuote,
-          status: { type: 'string', enum: ['missing'] },
-          output_evidence: {
-            type: 'array',
-            maxItems: 0,
-            items: outputEvidenceItems,
-          },
-          issue_code: { type: 'string', enum: episodePlanAuditCoverageIssueCodes },
-          repair_target: {
-            type: 'object',
-            additionalProperties: false,
-            required: ['scope', 'page_id', 'panel_order'],
-            properties: {
-              scope: { type: 'string', enum: ['panel'] },
-              page_id: pageIdJsonSchema,
-              panel_order: { type: 'integer', minimum: 1, maximum: 1000 },
-            },
-          },
-        },
-      },
-    ],
-  };
-}
-
 function buildEpisodePlanAuditJsonSchema(
   allowedPageIds: readonly string[],
-  sourceOwnedPageContext = false,
-  sourceReviewUnitCount?: number,
-  sourceReviewFieldCount?: number,
-  trustedGroundingSourceRefs: readonly string[] = [],
 ): Record<string, unknown> {
   const pageIdJsonSchema = { type: 'string', enum: [...allowedPageIds] };
 
-  const schema: Record<string, unknown> = {
+  return {
     type: 'object',
     additionalProperties: false,
-    required: [
-      'accepted',
-      'issues',
-      'page_repairs',
-      'panel_repairs',
-      'source_coverage',
-      ...(sourceOwnedPageContext ? ['issue_grounding'] : []),
-      ...(sourceReviewUnitCount === undefined ? [] : ['source_unit_review']),
-    ],
+    required: ['accepted', 'issues', 'page_repairs', 'panel_repairs'],
     properties: {
       accepted: { type: 'boolean' },
       issues: {
@@ -1434,129 +589,6 @@ function buildEpisodePlanAuditJsonSchema(
           },
         },
       },
-      source_coverage: {
-        type: 'array',
-        minItems: allowedPageIds.length,
-        maxItems: allowedPageIds.length,
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['page_id', 'checks'],
-          properties: {
-            page_id: pageIdJsonSchema,
-            checks: {
-              type: 'array',
-              minItems: 1,
-              maxItems: EPISODE_PLAN_AUDIT_COVERAGE_MAX_CHECKS_PER_PAGE,
-              items: buildSourceCoverageCheckJsonSchema(pageIdJsonSchema, sourceOwnedPageContext),
-            },
-          },
-        },
-      },
-      ...(sourceOwnedPageContext ? {
-        issue_grounding: buildIssueGroundingJsonSchema(pageIdJsonSchema, trustedGroundingSourceRefs),
-      } : {}),
-      ...(sourceReviewUnitCount === undefined ? {} : {
-        source_unit_review: {
-          type: 'array',
-          minItems: sourceReviewUnitCount,
-          maxItems: sourceReviewUnitCount,
-          items: sourceReviewFieldCount === undefined ? {
-            anyOf: [
-              { type: 'integer', minimum: 0, maximum: STORY_AI_LIMITS.maxSkeletonPages * 4 - 1 },
-              { type: 'null' },
-            ],
-          } : {
-            type: 'object', additionalProperties: false,
-            required: ['verdict', 'evidence', 'counter_evidence', 'issue'],
-            properties: {
-              verdict: { type: 'string', enum: ['supported', 'constraint', 'context', 'missing', 'conflict'] },
-              evidence: { type: 'array', maxItems: EPISODE_PLAN_SOURCE_REVIEW_MAX_EVIDENCE, items: { type: 'integer', minimum: 0, maximum: Math.max(0, sourceReviewFieldCount - 1) } },
-              counter_evidence: { type: 'array', maxItems: EPISODE_PLAN_SOURCE_REVIEW_MAX_COUNTER_EVIDENCE, items: { type: 'integer', minimum: 0, maximum: Math.max(0, sourceReviewFieldCount - 1) } },
-              issue: { anyOf: [{ type: 'integer', minimum: 0, maximum: STORY_AI_LIMITS.maxSkeletonPages * 4 - 1 }, { type: 'null' }] },
-            },
-          },
-        },
-      }),
-    },
-  };
-  if (sourceOwnedPageContext && sourceReviewUnitCount !== undefined && sourceReviewFieldCount !== undefined) {
-    // Emit the comparison before the issue set and decision. Evidence IDs still
-    // require semantic review; their existence alone never proves entailment.
-    const order = ['source_unit_review', 'issues', 'issue_grounding', 'page_repairs', 'panel_repairs', 'source_coverage', 'accepted'];
-    const properties = schema.properties as Record<string, unknown>;
-    const orderedProperties: Record<string, unknown> = {};
-    for (const key of order) {
-      if (properties[key] === undefined) {
-        throw new ConfigurationError('Native source comparison schema is missing a required field');
-      }
-      orderedProperties[key] = properties[key];
-    }
-    schema.required = order;
-    schema.properties = orderedProperties;
-  }
-  return schema;
-}
-
-function buildEpisodePlanAuditCoverageOnlyJsonSchema(
-  allowedPageIds: readonly string[],
-): Record<string, unknown> {
-  const fullSchema = buildEpisodePlanAuditJsonSchema(allowedPageIds, true);
-  const properties = fullSchema.properties;
-  if (typeof properties !== 'object' || properties === null || Array.isArray(properties)) {
-    throw new ConfigurationError('Episode audit JSON schema is missing properties');
-  }
-  return {
-    type: 'object',
-    additionalProperties: false,
-    required: ['source_coverage'],
-    properties: {
-      source_coverage: (properties as Record<string, unknown>).source_coverage,
-    },
-  };
-}
-
-function buildIssueGroundingJsonSchema(
-  pageIdJsonSchema: Record<string, unknown>,
-  trustedSourceRefs: readonly string[],
-): Record<string, unknown> {
-  const sourceEvidence = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['page_id', 'source_ref', 'quote'],
-    properties: {
-      page_id: pageIdJsonSchema,
-      source_ref: { type: 'string', minLength: 1, maxLength: 24, enum: [...trustedSourceRefs] },
-      quote: { type: 'string', minLength: 4, maxLength: 40 },
-    },
-  };
-  const outputEvidence = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['page_id', 'output_ref', 'quote'],
-    properties: {
-      page_id: pageIdJsonSchema,
-      output_ref: { type: 'string', minLength: 1, maxLength: 24 },
-      quote: { type: 'string', minLength: 4, maxLength: 40 },
-    },
-  };
-  return {
-    type: 'array',
-    maxItems: STORY_AI_LIMITS.maxSkeletonPages * 4,
-    items: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['issue_index', 'basis', 'source_evidence', 'output_evidence'],
-      properties: {
-        issue_index: {
-          type: 'integer',
-          minimum: 0,
-          maximum: STORY_AI_LIMITS.maxSkeletonPages * 4 - 1,
-        },
-        basis: { type: 'string', enum: ['source', 'deterministic'] },
-        source_evidence: { type: 'array', maxItems: 8, items: sourceEvidence },
-        output_evidence: { type: 'array', maxItems: 8, items: outputEvidence },
-      },
     },
   };
 }
@@ -1567,26 +599,4 @@ function safeConsoleWarn(event: string, details: Record<string, unknown>): void 
   } catch {
     // Diagnostics must never replace the bounded compiler error or change retries.
   }
-}
-
-function readSourceOwnedPayload(
-  payload: AuditPayload | SourceOwnedAuditPayload,
-  sourceReview: boolean,
-): SourceOwnedAuditPayload {
-  return sourceReview
-    ? sourceReviewAuditSchema.parse(payload)
-    : sourceOwnedAuditSchema.parse(payload);
-}
-
-function readSourceOwnedGroundings(
-  payload: AuditPayload | SourceOwnedAuditPayload,
-  sourceReview: boolean,
-): z.infer<typeof episodePlanAuditIssueGroundingsSchema> {
-  return readSourceOwnedPayload(payload, sourceReview).issue_grounding;
-}
-
-function readSourceUnitReview(
-  payload: AuditPayload | SourceOwnedAuditPayload,
-): z.infer<typeof sourceReviewAuditSchema>['source_unit_review'] {
-  return sourceReviewAuditSchema.parse(payload).source_unit_review;
 }

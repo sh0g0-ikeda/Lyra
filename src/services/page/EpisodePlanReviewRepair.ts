@@ -35,7 +35,6 @@ export function applyEpisodePlanAuditRepairs(
       .filter((issue) => issue.severity === 'error')
       .flatMap((issue) => issue.pageIds),
   );
-  assertBlockingIssueRepairCoverage(input.audit);
   const appliedFields = new Set<string>();
 
   for (const repair of input.audit.pageRepairs ?? []) {
@@ -71,24 +70,6 @@ export function applyEpisodePlanAuditRepairs(
   }
 
   return repaired;
-}
-
-function assertBlockingIssueRepairCoverage(audit: EpisodePlanAudit): void {
-  const repairPageIds = new Set([
-    ...(audit.pageRepairs ?? []).map((repair) => repair.pageId),
-    ...(audit.panelRepairs ?? []).map((repair) => repair.pageId),
-  ]);
-
-  for (const issue of audit.issues) {
-    if (issue.severity !== 'error') {
-      continue;
-    }
-    if (!issue.pageIds.some((pageId) => repairPageIds.has(pageId))) {
-      throw new ConfigurationError(
-        'Episode continuity audit returned errors without a field-level repair',
-      );
-    }
-  }
 }
 
 function assertRepairPageAllowed(

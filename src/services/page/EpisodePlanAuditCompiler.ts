@@ -129,7 +129,7 @@ export interface EpisodePlanAuditGroundingCatalog {
 export type EpisodePlanAuditCoverageCatalogWithGrounding = EpisodePlanAuditCoverageCatalog & {
   /** Trusted service-built authorities. User text never selects or extends this catalog. */
   grounding?: EpisodePlanAuditGroundingCatalog;
-  /** Provider-only exact original-source review units; never persisted or returned publicly. */
+  /** Legacy internal exact-source review units; never persisted or returned publicly. */
   sourceReview?: EpisodePlanSourceReviewCatalog;
 };
 
@@ -138,7 +138,7 @@ export interface EpisodePlanAudit {
   issues: EpisodePlanAuditIssue[];
   pageRepairs?: EpisodePlanAuditPageRepair[];
   panelRepairs?: EpisodePlanAuditPanelRepair[];
-  /** Optional for legacy and fake compilers; the OpenAI compiler always returns it. */
+  /** Legacy or internal compiler compatibility; the normal OpenAI response omits this proof catalog. */
   sourceCoverage?: EpisodePlanAuditSourceCoverage[];
 }
 
@@ -146,11 +146,12 @@ export interface CompileEpisodePlanAuditInput {
   compilerBrief: string;
   language: AppLanguage;
   pageIds: string[];
+  /** Legacy/internal catalog retained for callers; the normal OpenAI compiler does not require it. */
   coverageCatalog?: EpisodePlanAuditCoverageCatalogWithGrounding;
   sourceOwnedPageContext?: boolean;
-  /** Additional visible, validated authority appended by the service (for example state transitions). */
+  /** Legacy/internal validated authorities retained for caller compatibility. */
   groundingAuthorities?: EpisodePlanAuditGroundingAuthority[];
-  /** Immutable service-built visual values used only to reject stale handoff repairs. */
+  /** Legacy/internal visual snapshot retained for caller compatibility. */
   visualSnapshot?: EpisodePlanAuditVisualSnapshot;
   beforeRetry?: () => Promise<void>;
 }

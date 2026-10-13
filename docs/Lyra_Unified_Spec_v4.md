@@ -412,18 +412,13 @@ omitted dialogue receives no generated fallback; existing manual-field preservat
 still applies. Server fallback must not turn this context into speech, thought, or
 narration. Explicitly authored display text in the full source
 and provider-supplied dialogue remain subject to the existing source-fidelity audit.
-The bounded coverage sidecar samples high-risk facts; it does not limit the full
-episode audit to those sampled facts. Legacy single-page fallback is unchanged.
+The audit reviews the full episode source. Legacy single-page fallback is unchanged.
 
 The episode auditor uses compact audit-specific instructions while retaining
 full-source fidelity, cross-page continuity, exact authored dialogue and speaker
-identity, visible state/action consistency, and the existing repair and coverage
-validation. Visual audit summaries do not repeat dialogue bodies: COMPLETE
-DIALOGUE remains the single complete ordered representation, and exact dialogue
-references and their server-side catalogs remain available for coverage and
-grounding. Panel-field evidence display groups its unchanged global integer IDs
-and field refs under one typed page header instead of repeating the page ID on
-every row; catalog order, page attribution and exact text remain unchanged.
+identity, and visible state/action consistency. Visual summaries do not repeat
+dialogue bodies: COMPLETE DIALOGUE remains the single complete ordered
+representation. Page ownership and direct panel-field references remain explicit.
 This does not compact or rewrite persisted authored text.
 Internal audit request metrics contain only request kind, elapsed time, bounded
 status categories, input/schema sizes and numeric provider token usage (including
@@ -453,138 +448,37 @@ complete dialogue and minimum panel evidence are mandatory reservations. They
 must fit together within the existing prompt limit or the compiler fails closed;
 partial source display is never accepted. Source-owned draft page IDs must be
 unique and match the complete original context page set; missing, extra or duplicate
-draft pages fail before any provider request. Coverage catalogs quote the source
-representation actually displayed. Optional source-unit-review catalogs remain
-independent lossless semantic-review inputs with their existing bounds.
+draft pages fail before any provider request. Any internal source catalog describes only the original source actually displayed;
+hidden text is not review input. Auxiliary proof catalogs are not requested by the
+normal provider audit.
 
 For that complete original-page mapping, detail and audit judgments omit the
 generated beat ledger, its text plan and entry/exit/handoff constraints. The
 original source, page identity and frame capacity, allowed scenes/entities,
 and actual compiled or repair-draft panels with their purpose/continuity remain.
 Service-derived internal ownership selects this mode; user text markers do not.
-The audit citation catalog contains only visible source references in this mode,
+The audit input contains only visible source references in this mode,
 never a hidden generated beat ledger. Source-owned audit source blocks are mandatory;
 optional detail or legacy audit excerpt omission does not restore the generated
 beat ledger. Ambiguous mappings retain the legacy ledger path. Opt-in validated
 character-state transition ledgers and their saving workflow remain unchanged; this omission applies to generated story-beat context.
 
-In this source-owned mode only, every provider error issue also supplies bounded
-internal grounding metadata. Original-page quotes and actual draft-field quotes
-are distinct. Generated page purpose, continuity, panel notes, chapter/episode
-summaries and entity summaries cannot become original-source authority. Visible,
-typed scene continuity and its entity-state notes, plus validated character-state transitions,
-may ground their applicable continuity issues. Deterministic exceptions must match
-an actual service finding's code and page scope. Authority quotes must remain
-in the displayed canonical original source or other typed visible authority;
-hidden source never authorizes a quote. This metadata is discarded before
-the public audit result or persistence; omitted/false source ownership retains the
-legacy response schema and retry behavior.
+The normal provider audit returns only accepted, issues, page_repairs and
+panel_repairs. It compares the actual draft to the complete original and validated
+state context, and supplies useful field-level repairs for content problems.
+Source coverage, issue-grounding proofs and per-source-unit comparison output are
+not required. Their bookkeeping and exact-quote errors must not cause a valid
+normal audit to fail or consume another provider request. The normal input does
+not request these auxiliary outputs or enumerate source-unit proof catalogs.
 
-For complete source ownership, an optional provider-only source-unit review
-contract enumerates lossless spans of typed original global preface and page
-source. Generated plans, purposes, notes, summaries and scene/state context never
-produce these units. Offsets bind each span to its exact visible source string;
-sentence boundaries organize review and do not claim to isolate every fact. All
-units and their displayed catalog are produced together. Enable the entire list
-only when it has at most 256 units, its additional display fits 8,000 characters,
-and full source, complete dialogue and minimum panel evidence remain reserved.
-Empty, ambiguous or oversized input retains the existing contract as a whole;
-partial unit review is never advertised as complete and does not reject long
-episodes.
-
-Native source-unit review additionally binds integer evidence IDs to actual
-same-page displayed panel fields, including short fields that cannot supply a
-four-character quote. Generated purpose and continuity never supply evidence.
-Reserve the complete field-ID display before optional visual excerpts, then bind
-IDs to the final displayed text. At most 1,024 fields, 40,000 field-display
-characters and a 16,000-character worst-case comparison response are permitted.
-Exceeding any bound falls back as a whole; no partial list is advertised.
-
-With this native catalog, source_unit_review has one comparison per unit:
-verdict (supported, constraint, context, missing or conflict), up to four positive
-field IDs, up to two counter-evidence IDs, and an existing grounded error index or
-null. Supported requires actual positive panel evidence; conflict requires
-counter-evidence; missing/conflict link a source-grounded error scoped to that
-unit. Context/constraint classify headings, directions or restrictions rather
-than requiring every unit to depict an action. These classifications are model
-judgments and can still be wrong; they are never accepted as semantic proof.
-Internally supplied legacy catalogs without a field catalog retain their existing
-integer/null vector. This neither requires all issues to be linked nor makes a
-repair mandatory. Patchless findings, validated-state ambiguity and second-audit
-semantic soft-save retain their existing handling. Comparison results stay frozen
-during quote-only correction and are discarded before public output/persistence.
-Every authored clause must be compared for functional meaning, same-page
-completion, explicit conditions, specified emotion and viewpoint, including
-conflicts with negative draft notes. Actual semantic review remains a separate
-acceptance gate. No additional call, model, token budget or save gate is added.
-
-An invalidly grounded body uses the existing remaining structured-response retry
-for a full audit. Only a valid grounded body and repair scope with an invalid
-coverage sidecar may freeze that body and request a strict coverage-only retry.
-Recombination revalidates grounding, scope and coverage, including missing-fact
-issue/repair links. The coverage-only response cannot change acceptance, issues,
-repairs or grounding. Cancellation checkpoints precede either retry.
-Coverage-only retries use a dedicated system instruction and at most 12,000
-characters of frozen issue-code/page/panel/visible-field linkage metadata, without
-echoing the prior audit's prose, evidence quotes or patch values. If this bounded
-metadata cannot fit, the existing remaining attempt is a full audit retry.
-When the complete coverage structure, page/ref scope, status and repair links
-are valid and every retained citation error is a known-reference exact-quote
-mismatch, the same remaining request may correct only those quote slots. This
-requires no omitted diagnostics and at most the existing eight diagnostics. A
-strict fixed-key object returns only the corresponding 4-40 character quotes;
-page/ref/status/check counts, links and the frozen audit body stay server-owned.
-Source-quote slots remain bound to the same visible, typed source authority. The
-joined result revalidates every grounding and coverage check against the same
-displayed catalog. Missing/extra slots, nonexact or hidden-tail quotes fail;
-unknown refs, structural/link errors and omitted diagnostics retain the existing
-retry branch. This does not add a request or relax model, token, cancellation,
-transport, semantic-review or persistence contracts. A finite content schema does
-not itself prove provider completion within the token budget.
-
-Coverage rejection records finite internal reason codes, violation counts,
-attempt, and retry mode; prose, citations, provider output and resource IDs never
-enter that diagnostic event. Diagnostic logging failures preserve the original
-compiler error and attempt bound. Structural coverage errors retain a full audit
-retry, while eligible citation failures retain their existing body-freezing rules.
-The known compiler invalid-source-coverage failure is presented as a retryable
-temporary generation failure, not as a request-input error. Public error codes
-and response schemas remain unchanged.
-Before freezing, repairs must cover their error pages and have valid, unique field
-targets under the existing repair contract. Each audit
-pass still has at most two logical structured requests, the existing 20k output
-limit and unchanged transport retries; this is not a two-HTTP-attempt guarantee.
-The source-owned provider acceptance condition is stronger, while semantic
-soft-save, the second audit pass and atomic persistence remain unchanged. Exact
-quotation establishes existence, not whether a proposed repair follows from the
-source, so actual saved-output acceptance remains a separate verification gate.
-Repair completeness is a freeze-eligibility condition only. A valid grounded
-audit may contain patchless semantic issues; validated-state ambiguity and the
-second audit's mixed patchable/residual findings retain their existing Service
-handling. When coverage needs retry but repair completeness is insufficient for
-freezing, the remaining request is a full audit.
-
-The OpenAI episode auditor returns a bounded source-coverage sidecar in the same
-structured response: one entry per page, at most two high-risk facts per entry,
-at most two actual panel-field citations per fact, and exact quotes of 4–40
-characters. Source and output references are checked against the current planning
-snapshot. Output citations use the whitespace-normalized actual field prefixes
-shown in the audit prompt; synthetic truncation markers are not citable evidence.
-The prompt and citation catalog are built together, while original story text and
-persisted dialogue remain unchanged. Literal ellipses in untruncated data remain
-part of that data.
-Each displayed visual field and complete dialogue line is labeled with its direct
-panel-field reference. Quoted visual literals exclude synthetic display markers;
-fields shorter than four characters remain actual content but are not citable.
-Citation retry feedback contains bounded positions and known references only
-(at most eight diagnostics and 4,000 characters), with omitted counts. It does not
-echo quotation text, unknown reference values, or the previous coverage response.
-Page purpose, continuity, and ledger metadata are not visual evidence.
-A reported missing fact must link to an error and an actual panel-field repair on
-the same page. Citation validity proves that quoted text exists, not semantic
-equivalence or exhaustive source coverage. Legacy/internal compiler ports may omit
-the sidecar. Provider retries, output-token limits, atomic saving, and the semantic
-soft-save policy remain unchanged; this does not add another provider call.
+Schema, bounded strings and arrays, known page/panel targets, unique repair fields
+and actual values for every changed field remain hard validation. Invalid typed
+payloads use the existing structured-output retry and cancellation checkpoint,
+at most two logical requests per audit pass with the existing output limit and
+transport policy. A semantic issue without a patch, or a repaired expression that
+mentions an old value in a negative explanation, is not a structural failure.
+Actual content contradictions remain review findings. Missing semantic repairs do
+not make unrelated valid repairs unusable.
 
 The combined draft is reviewed for cross-page repetition, dialogue placement,
 chronology, page handoffs, entity assignment, and editable visual fields before any
@@ -592,12 +486,17 @@ page or panel content is persisted. Review repairs are field-level patches: page
 panel identity, order, and panel count are immutable. Unknown identifiers or invalid
 patch targets are rejected. Semantic review uses at most two audit passes and applies
 each pass's validated field-level repairs once; it must not recursively audit or
-repair. The first audit is required. If the second audit remains unavailable after
+repair. The first audit is required. A clean first audit proceeds directly to the
+deterministic gate, including when a state-transition ledger is present; an
+unchanged draft is not audited a second time. If the second audit remains unavailable after
 its structured-output retry, the already repaired draft proceeds to the deterministic
 gate instead of being discarded. After bounded repair, schema, identifier, structure,
 and deterministic cross-page duplicate errors block persistence. Residual semantic-
-only findings are retained as safe telemetry and do not discard otherwise usable
-content. The plan uses each existing page's frame count as its story capacity and
+only findings, including patchless or mixed patchable/residual findings, are
+retained as safe telemetry and do not discard otherwise usable content. These
+termination rules apply equally with or without a validated state ledger. State
+references are still independently checked before saving and again under the
+atomic planning lock; cancellation, authorization and concurrency errors remain hard. The plan uses each existing page's frame count as its story capacity and
 carries scene character-state notes such as costume and injury through the global
 continuity brief.
 

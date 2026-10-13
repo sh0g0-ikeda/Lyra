@@ -67,32 +67,29 @@ are not useful image-model prompt content.
 
 ## 6. Quality gates and fallback
 
-Schema validity alone is not sufficient. Successful compiler output is checked for
-incorrectly empty assignments where the source requires a visible character,
-missing source facts or continuing actions, missing visual beats, generic repeated composition,
-speaker/dialogue mismatch, invalid page coverage, and frame/panel count mismatch.
-Repair is field-level where possible. An error must have a repair on one of its
-named pages with changed fields compatible with the error category; a repair on
-another page or an unrelated field does not satisfy this gate. Missing repairs
-trigger a complete-audit correction within the existing two-attempt compiler
-limit, with a cancellation checkpoint before retry. Warnings and validated-state
-findings that cannot be patched through this contract retain their read-only
-behavior. Page-only and panel-only repairs remain supported. Schema, identities,
-frame geometry, and atomic persistence are unchanged.
-Grounding instructions and full-audit retries explicitly require the typed
-deterministic finding with empty source evidence, or exact named original and
-unrepaired same-page draft quotes. Source-owned typed deterministic findings
-are displayed individually with the same target page sets as their validation
-catalog. Missing source-coverage checks link the identical issue code and a
-visible repair; page-source grounding and full-source coverage refs stay distinct.
-Missing checks may link an existing grounded content/continuity error directly
-using the same code; density-only findings are excluded. The legacy omission
-codes remain valid. Exact page, error severity, quote, known panel, and visible
-repair gates are unchanged. This is an internal provider-side contract.
-Source and continuity repairs check all
-conflicting visible fields together while preserving source-faithful fields.
-Deterministic fallback must use only entities
-supported by the story context and must not promote unrelated work entities or
+The normal episode audit returns accepted, issues, page_repairs and panel_repairs.
+It reviews original facts, continuing actions, dialogue/speaker placement, visible
+beats and cross-page continuity. Useful repairs remain field-level. Auxiliary
+source-coverage, grounding and per-unit proofs are not required in the response or
+requested in the normal prompt. A patchless semantic finding does not invalidate
+the typed result or another valid patch; an old expression quoted in a negative
+explanation is not by itself a malformed repair.
+
+Schema, bounded values, known targets, unique changed fields and matching patch
+values remain hard checks. Page/panel identities, frame counts and geometry cannot
+be changed by audit repairs. Invalid structured responses retain the existing
+bounded retry with cancellation checkpoints. The first audit is required; a clean
+first audit ends review without an identical second audit, even with a state ledger.
+After useful repairs, at most one further audit may run. If that second audit is
+unavailable, or semantic-only findings remain after bounded repair, the draft
+proceeds through the existing deterministic validation instead of being discarded.
+Actual invalid state references, deterministic duplicate errors, authorization,
+cancellation, concurrency and atomic saving remain hard controls. State IDs and
+reference readiness are independently revalidated before and under the save lock.
+
+Source and continuity repairs should reconcile conflicting visible fields while
+preserving source-faithful fields. Deterministic fallback uses only entities
+supported by the story context and does not promote unrelated work entities or
 repopulate explicit empty lists for character-free cutaways.
 
 Fallback use is recorded in server logs and job metadata, not exposed as technical
@@ -120,25 +117,16 @@ take.
 - requested page/panel count coverage
 - duplicate active-job prevention and terminal recovery
 
-Provider JSON constraints mirror the existing present/missing coverage contract:
-present checks require one or two exact visible citations with null repair links;
-missing checks require no output citations and a non-null same-code panel link.
-Typed grounding source references are restricted to trusted catalog authorities
-and explicitly supplied authorities; exact same-page quotations remain validated.
-
-Handoff repair validation uses a service-built snapshot of original situation,
-composition/custom-note, and background values. When a corrected field removes
-an exact whole peer value of at least four normalized characters, retaining that
-value in another field of the same panel triggers the existing bounded full-audit
-retry. Unrelated fields, short or partial values, other panels, and other issue
-categories are excluded. This internal snapshot is not persisted or exposed by
-HTTP contracts, and contains no authority beyond the schema-safe current draft.
-
 Source-owned audit prompts render original source once as an ordered canonical
 global-preface and page-source section. The raw original slices, page ownership,
 global chronology, exact source quotations, offsets and state authorities remain
 unchanged. Complete original source, dialogue and minimum panel evidence reserve
 their space before optional displays; insufficient capacity fails closed.
-Coverage references match the displayed source. Optional source-unit comparison
-catalogs remain separate and bounded. Legacy audit/detail prompts, client APIs,
-provider model, reasoning, retry limits, output limits and persistence are unchanged.
+Page ownership and original state authorities remain available without auxiliary
+proof-output requirements. Client APIs, detail prompts, provider model, reasoning,
+retry limits, output limits and atomic persistence are unchanged.
+
+Normal audit regression checks additionally cover four-field-only responses,
+patchless and mixed findings, clean state-aware review with one call, unavailable
+second audit with state context, invalid repair values/targets, and preservation
+of cancellation, conflict and atomic-save behavior.

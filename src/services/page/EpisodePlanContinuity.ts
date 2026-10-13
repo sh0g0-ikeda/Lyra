@@ -39,7 +39,6 @@ import type {
 } from './EpisodePlanAuditCoverage.js';
 import {
   buildEpisodePlanSourceReviewArtifacts,
-  buildEpisodePlanSourceReviewEvidenceArtifacts,
   type EpisodePlanSourceReviewArtifacts,
   type EpisodePlanSourceReviewSource,
 } from './EpisodePlanSourceReview.js';
@@ -713,9 +712,6 @@ export function buildEpisodePlanAuditArtifacts(input: {
     }
   }
   const deterministicIssues = detectDeterministicContinuityIssues(input.suggestion);
-  const sourceReviewUnitsCandidate = sourceOwnedPageContext
-    ? buildEpisodePlanSourceReviewForContext(input.context)
-    : null;
   const deterministicFindingLines = formatDeterministicAuditFindingLines(
     deterministicIssues,
     sourceOwnedPageContext,
@@ -765,7 +761,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
       ]),
     ]),
     '',
-    '[DETERMINISTIC FINDINGS THAT MUST BE REPAIRED]',
+    '[DETERMINISTIC FINDINGS]',
     ...deterministicFindingLines,
     '',
     '[AUDIT CONTRACT]',
@@ -775,28 +771,9 @@ export function buildEpisodePlanAuditArtifacts(input: {
     sourceOwnedPageContext
       ? 'Compare each PAGE-LOCAL ORIGINAL SOURCE block in the canonical source section above with the compiled page carrying the same page ID. That exact excerpt is the complete page ownership contract.'
       : 'When a PAGE-LOCAL ORIGINAL SOURCE block is present, compare that exact excerpt with the immediately following page. The generated ledger allocates page ownership but never shortens, replaces, or overrides explicit original source.',
-    ...(sourceOwnedPageContext ? [
-      'For issue_grounding, page_source means that page\'s exact original excerpt; global_source means the original preface before the first page heading; source_context means the displayed scene and entity-state source fields; validated_state means the separately displayed validated state-transition ledger. Compiled purpose, continuity, panel notes, entity metadata, and other draft fields are output evidence only and never original-source authority.',
-    ] : []),
-    'Return source_coverage for every page with one or two highest-risk source facts. Prioritize prerequisites, repeated actions such as again/retry, cause-action-result chains, and final closure actions.',
-    'If the source assigns a decision basis, completion boundary, negative or continuing constraint, final viewpoint, or concrete pose that is absent or contradicted in panel fields, reserve a check for it before sampling dialogue or an already-obvious present fact.',
-    sourceOwnedPageContext
-      ? 'source_ref=source ranges only over the displayed SOURCE DATA and COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP. Copy a contiguous literal from that range only.'
-      : 'source_ref=source ranges only over SOURCE DATA, including FULL STORY DRAFT. Copy a contiguous literal from that range only.',
-    ...(sourceOwnedPageContext
-      ? ['Never cite COMPILED EPISODE DRAFT, page purpose, or continuity metadata as a source.']
-      : ['source_ref=ledger ranges only over that page\'s GLOBAL EPISODE LEDGER row. Never cite COMPILED EPISODE DRAFT as a source.']),
-    'Copy each source_quote and output quote as one contiguous 4 to 40 character substring exactly as displayed under its named ref. Never summarize, paraphrase, translate, concatenate separated spans, or invent an ellipsis.',
-    'Positive source example: if source_ref=source contains "灯台の光が船を導く", quote "光が船を導く". Negative examples are "光は船の目印" and "灯台の光...導く".',
-    'Positive output example: if output_ref=p1.s contains "枝の先で地図の端を寄せる", quote "地図の端を寄せる". Negative examples are "枝の先で地図を寄せる" and "地図の端を...寄せる".',
-    sourceOwnedPageContext
-      ? 'Use output_ref=p{panel_order}.s/.b/.c/.x/.n/.e/.d{dialogue_index}: s=situation, b=background, c=composition, x=custom composition, n=notes, e=entities, and dN=the Nth COMPLETE DIALOGUE line. Page purpose, continuity, and other metadata are never output evidence.'
-      : 'Use output_ref=p{panel_order}.s/.b/.c/.x/.n/.e/.d{dialogue_index}: s=situation, b=background, c=composition, x=custom composition, n=notes, e=entities, and dN=the Nth COMPLETE DIALOGUE line. Page purpose, continuity, entry/exit, handoff, and ledger text are never output evidence.',
-    'A trailing … outside a closing JSON quote marks a shortened visual field and is not citable output text; quote only the literal inside the JSON string. Literal ... inside the JSON string remains actual field text.',
-    'A displayed field shorter than 4 characters remains actual panel content and is marked not citable. Do not pad it with brackets or punctuation, and do not report the fact missing merely because that field cannot supply a 4-character quote.',
-    'For status=present, cite one or two exact output quotes of 4 to 40 characters. For status=missing, cite no output and link an existing same-page error using its identical allowed content/continuity issue_code and an actual panel repair that restores the fact; dialogue_density alone is not a missing fact. Use source_omission or ongoing_action_dropped when those describe the defect, without duplicating an existing grounded defect merely to link coverage.',
+    'Check every source fact against visible compiled fields and COMPLETE DIALOGUE. Report concrete issues with target page IDs. Return a field-level repair only when a safe, specific patch is clear.',
     `Every panel must have at most ${EPISODE_PAGE_PLAN_MAX_DIALOGUE_LINES_PER_PANEL} dialogue entries. Correct avoidable late-page/final-panel congestion without deleting essential story information or destroying intentional silence.`,
-    'Every deterministic finding above is binding: return an error issue and a field-level repair for its target page.',
+    'Every deterministic finding above is binding: return an error issue for its target page and a field-level repair only when a safe, specific patch is clear.',
     'Target page_ids that must be recompiled. For repetition, target the later occurrence unless both pages must change.',
   ];
   // Reserve exact dialogue and source/ownership first. Visual excerpts may be
@@ -842,24 +819,13 @@ export function buildEpisodePlanAuditArtifacts(input: {
   const remainingAfterLocalizedSources = includeLocalizedSources
     ? baseRemaining - localizedSourceChars
     : baseRemaining;
-  // Reserve the whole field-ID display before allocating optional visual text.
-  // Rebind IDs to the final displayed excerpts below; never review hidden text.
-  const sourceReviewCandidate = sourceReviewUnitsCandidate === null ? null
-    : buildEpisodePlanSourceReviewEvidenceArtifacts(sourceReviewUnitsCandidate.catalog,
-        pages.map((page) => formatAuditPageArtifacts(page, 0, entityLabels, undefined, undefined)));
-  const includeSourceReview = sourceReviewCandidate !== null
-    && remainingAfterLocalizedSources - sourceReviewCandidate.display.length >= panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
-    && remainingAfterLocalizedSources - sourceReviewCandidate.display.length >= minimumPanelSummaryChars;
-  const remainingAfterSourceReview = includeSourceReview
-    ? remainingAfterLocalizedSources - sourceReviewCandidate.display.length
-    : remainingAfterLocalizedSources;
-  const remainingWithLocalizedLedgers = remainingAfterSourceReview - localizedLedgerChars;
+  const remainingWithLocalizedLedgers = remainingAfterLocalizedSources - localizedLedgerChars;
   const includeLocalizedLedgers = !sourceOwnedPageContext &&
     remainingWithLocalizedLedgers >= panelCount * MIN_COMPLETED_PANEL_SUMMARY_CHARS
     && remainingWithLocalizedLedgers >= minimumPanelSummaryChars;
   const remaining = includeLocalizedLedgers
     ? remainingWithLocalizedLedgers
-    : remainingAfterSourceReview;
+    : remainingAfterLocalizedSources;
   const optionalPanelChars = panelCount === 0
     ? 0
     : Math.floor((remaining - minimumPanelSummaryChars) / panelCount);
@@ -873,11 +839,7 @@ export function buildEpisodePlanAuditArtifacts(input: {
   const renderedPagesById = new Map(
     renderedPages.map((page) => [page.pageId, page] as const),
   );
-  const sourceReview = includeSourceReview
-    ? buildEpisodePlanSourceReviewEvidenceArtifacts(sourceReviewCandidate.catalog, renderedPages)
-    : null;
   const brief = [...before,
-    ...(sourceReview === null ? [] : ['', sourceReview.display]),
     '', '[COMPILED EPISODE DRAFT]',
     ...renderedPages.flatMap((page) => page.lines), ...after].join('\n');
   if (brief.length > AUDIT_BRIEF_MAX_CHARS) {
@@ -940,7 +902,6 @@ export function buildEpisodePlanAuditArtifacts(input: {
             pageIds: [...issue.pageIds],
           })),
         },
-        ...(sourceReview === null ? {} : { sourceReview: sourceReview.catalog }),
       } : {}),
     },
   };

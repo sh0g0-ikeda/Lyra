@@ -1303,32 +1303,12 @@ export class PageService implements PageServicePort {
     );
     logEpisodePlanAuditSummary(context.episodeId, 1, firstAudit);
     if (!hasBlockingEpisodePlanAuditIssues(firstAudit.issues)) {
-      if (stateLedger !== undefined) {
-        const secondAudit = await this.auditEpisodePlanWithContinuityV3(
-          context, plan, combined.suggestion, language, progressReporter, 2, 2, stateLedger,
-          sourceOwnedPageContext,
-        );
-        logEpisodePlanAuditSummary(context.episodeId, 2, secondAudit);
-        if (!secondAudit.accepted || hasBlockingEpisodePlanAuditIssues(secondAudit.issues)) {
-          throw new EpisodeStatePlanError(
-            'STATE_MAPPING_AMBIGUOUS',
-            'Episode state boundaries need review before the story plan can be saved',
-          );
-        }
-      }
       return combined;
     }
 
     if ((firstAudit.pageRepairs?.length ?? 0) + (firstAudit.panelRepairs?.length ?? 0) === 0) {
-      if (stateLedger !== undefined) {
-        throw new EpisodeStatePlanError(
-          'STATE_MAPPING_AMBIGUOUS',
-          'Episode state boundaries need review before the story plan can be saved',
-        );
-      }
-      throw new ConfigurationError(
-        'Episode continuity audit returned errors without a field-level repair',
-      );
+      this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
+      return combined;
     }
 
     await reportEpisodePlanProgress(progressReporter, {
@@ -1365,9 +1345,6 @@ export class PageService implements PageServicePort {
       if (!(error instanceof ConfigurationError)) {
         throw error;
       }
-      if (stateLedger !== undefined) {
-        throw error;
-      }
       this.assertDeterministicallyValidEpisodePlan(context, repairedCombined.suggestion);
       console.warn('episode_page_plan_continuity_v3_second_audit_unavailable', {
         episodeId: context.episodeId,
@@ -1382,13 +1359,6 @@ export class PageService implements PageServicePort {
     if (!hasBlockingEpisodePlanAuditIssues(finalAudit.issues)) {
       return repairedCombined;
     }
-    if (stateLedger !== undefined) {
-      throw new EpisodeStatePlanError(
-        'STATE_MAPPING_AMBIGUOUS',
-        'Episode state boundaries need review before the story plan can be saved',
-      );
-    }
-
     const reportedErrors = finalAudit.issues.filter(
       (issue) => issue.severity === 'error',
     );

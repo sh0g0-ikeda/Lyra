@@ -102,7 +102,8 @@ describe('EpisodePlanContinuity', () => {
     expect(artifacts.coverageCatalog.grounding?.pages.every(
       (page) => page.authorities.some((authority) => authority.ref === 'page_source'),
     )).toBe(true);
-    expect(artifacts.coverageCatalog.sourceReview?.units).toHaveLength(context.pages.length * 3);
+    expect(artifacts.coverageCatalog.sourceReview).toBeUndefined();
+    expect(brief).not.toContain('[SOURCE UNIT REVIEW - COMPLETE ORIGINAL SOURCE]');
     expect(brief.match(/\[COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP\]/gu)).toHaveLength(1);
     expect(brief.match(/\[PAGE-LOCAL ORIGINAL SOURCE\]/gu)).toHaveLength(16);
     expect(brief).not.toContain('[FULL STORY DRAFT - SOURCE DATA]');
@@ -110,8 +111,8 @@ describe('EpisodePlanContinuity', () => {
 
   it('source-owned監査のcanonical原文はglobal prefixと全page sliceをrawのまま連結できる', () => {
     // Source-owned audits reserve one canonical raw-source display: global prefix
-    // followed by every exact page slice. Eligible SOURCE UNIT REVIEW remains a
-    // separate, deliberately lossless semantic-review display.
+    // followed by every exact page slice. The normal audit brief has no second
+    // source-unit proof display.
     const context = buildContext();
     context.pages = context.pages.slice(0, 2);
     const exactGlobal = '  序文。\r\n';
@@ -228,9 +229,9 @@ describe('EpisodePlanContinuity', () => {
     expect(catalog.pages[0]?.outputs.length).toBeGreaterThan(0);
     expect(catalog.pages[0]?.outputs.every((output) => output.panelOrder !== null)).toBe(true);
     expect(catalog.pages[0]?.outputs.some((output) => output.ref.startsWith('page.'))).toBe(false);
-    expect(buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' })).toContain(
-      'dN=the Nth COMPLETE DIALOGUE line',
-    );
+    const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+    expect(brief).toContain('[COMPLETE DIALOGUE]');
+    expect(brief).not.toContain('source_coverage');
   });
 
   it('監査表示の空白正規化をvisual・dialogueとcoverage catalogで共有する', () => {
@@ -271,7 +272,7 @@ describe('EpisodePlanContinuity', () => {
     expect(artifacts.compilerBrief).toContain('p1.n="動作を 継続"');
     expect(artifacts.compilerBrief).toContain('p1.d1="もう一度 押す"');
     expect(artifacts.compilerBrief).toContain('narrator label below is the display alias for entity_id=null');
-    expect(artifacts.compilerBrief).toContain('Copy each source_quote and output quote');
+    expect(artifacts.compilerBrief).not.toContain('source_quote');
     expect(page?.outputs).toEqual(expect.arrayContaining([
       expect.objectContaining({ ref: 'p1.s', text: '再び 押す' }),
       expect.objectContaining({ ref: 'p1.b', text: '雨 の 港' }),
@@ -354,8 +355,8 @@ describe('EpisodePlanContinuity', () => {
     expect(panelLine).toContain('p3.s="扉を閉じる..."');
     expect(panelLine?.length).toBeLessThanOrEqual(702);
     expect(artifacts.compilerBrief).toContain('p3.d1="届いた" (not citable: fewer than 4 characters)');
-    expect(artifacts.compilerBrief).toContain('source_ref=source ranges only over SOURCE DATA');
-    expect(artifacts.compilerBrief).toContain('source_ref=ledger ranges only over that page');
+    expect(artifacts.compilerBrief).not.toContain('source_ref=');
+    expect(artifacts.compilerBrief).not.toContain('issue_grounding');
     expect(outputs).toEqual(expect.arrayContaining([
       expect.objectContaining({ ref: 'p3.s', text: '扉を閉じる...' }),
       expect.objectContaining({ ref: 'p3.d1', text: '届いた' }),
@@ -723,15 +724,8 @@ describe('EpisodePlanContinuity', () => {
     expect(sourceContext).not.toContain('[CHAPTER]');
     expect(sourceContext).not.toContain('[EPISODE STORY]');
     expect(sourceContext).not.toContain('旅の変化を描く');
-    expect(auditBefore.compilerBrief).toContain('[SOURCE UNIT REVIEW - COMPLETE ORIGINAL SOURCE]');
-    expect(auditBefore.coverageCatalog.sourceReview?.units).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        scope: 'page',
-        pageId: pageId(9),
-        sourceRef: 'page_source',
-        text: expect.stringContaining('小石を取り除き、もう一度押してから中へ入る'),
-      }),
-    ]));
+    expect(auditBefore.compilerBrief).not.toContain('[SOURCE UNIT REVIEW - COMPLETE ORIGINAL SOURCE]');
+    expect(auditBefore.coverageCatalog.sourceReview).toBeUndefined();
   });
 
   it('source-owned監査でも内部planが監査対象全ページを所有しない場合は拒否する', () => {
@@ -807,40 +801,27 @@ describe('EpisodePlanContinuity', () => {
     expect(buildEpisodePlanSourceReviewForContext(context)).toBeNull();
   });
 
-  it('unit review追加が予算に入らない境界でも既存page-local原文を先に保持する', () => {
+  it('通常監査briefはsource unit reviewを表示せずcanonical原文を保持する', () => {
     const context = buildContext();
     context.pages = context.pages.slice(0, 1);
-    context.episode.storyFullDraft = `1ページ目：${'短い事実。'.repeat(20)}`;
+    context.episode.storyFullDraft = `1ページ目：短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。短い事実。`;
     const plan = buildBeatPlan();
     plan.pages = plan.pages.slice(0, 1);
     const suggestion = buildVerboseSuggestion();
     suggestion.pages = suggestion.pages.slice(0, 1).map((page) => ({
       ...page,
-      panels: [{
-        ...page.panels[0]!,
-        dialogue: [{ entityId: null, text: '短い台詞', type: 'narration', position: 'top' }],
-      }],
+      panels: page.panels.slice(0, 1),
     }));
-    const baseline = buildEpisodePlanAuditArtifacts({
-      context, plan, suggestion, language: 'ja', sourceOwnedPageContext: true,
-    });
-    const reviewStart = baseline.compilerBrief.indexOf('[SOURCE UNIT REVIEW - COMPLETE ORIGINAL SOURCE]');
-    const reviewEnd = baseline.compilerBrief.indexOf('[END SOURCE UNIT REVIEW]')
-      + '[END SOURCE UNIT REVIEW]'.length;
-    expect(reviewStart).toBeGreaterThanOrEqual(0);
-    const reviewLength = reviewEnd - reviewStart;
-    const growth = MAX_CONTINUITY_BRIEF_CHARS - baseline.compilerBrief.length
-      + reviewLength - 50;
-    suggestion.pages[0]!.panels[0]!.dialogue![0]!.text += '長'.repeat(growth);
 
-    const constrained = buildEpisodePlanAuditArtifacts({
+    const artifacts = buildEpisodePlanAuditArtifacts({
       context, plan, suggestion, language: 'ja', sourceOwnedPageContext: true,
     });
-    expect(constrained.coverageCatalog.sourceReview).toBeUndefined();
-    expect(constrained.compilerBrief).toContain('[COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP]');
-    expect(constrained.compilerBrief).toContain('[PAGE-LOCAL ORIGINAL SOURCE] Page 1');
-    expect(constrained.compilerBrief).toContain(context.episode.storyFullDraft);
-    expect(constrained.compilerBrief).not.toContain('[FULL STORY DRAFT - SOURCE DATA]');
+    expect(artifacts.coverageCatalog.sourceReview).toBeUndefined();
+    expect(artifacts.compilerBrief).not.toContain('[SOURCE UNIT REVIEW - COMPLETE ORIGINAL SOURCE]');
+    expect(artifacts.compilerBrief).toContain('[COMPLETE ORIGINAL SOURCE WITH PAGE OWNERSHIP]');
+    expect(artifacts.compilerBrief).toContain('[PAGE-LOCAL ORIGINAL SOURCE] Page 1');
+    expect(artifacts.compilerBrief).toContain(context.episode.storyFullDraft);
+    expect(artifacts.compilerBrief).not.toContain('[FULL STORY DRAFT - SOURCE DATA]');
   });
 
   it('page見出し前の原文をtrimせずoriginal_global unitとauthorityへ保持する', () => {
@@ -857,12 +838,14 @@ describe('EpisodePlanContinuity', () => {
     const artifacts = buildEpisodePlanAuditArtifacts({
       context, plan, suggestion, language: 'ja', sourceOwnedPageContext: true,
     });
-    expect(artifacts.coverageCatalog.sourceReview?.units[0]).toMatchObject({
+    const sourceReview = buildEpisodePlanSourceReviewForContext(context);
+    expect(sourceReview?.catalog.units[0]).toMatchObject({
       scope: 'global', pageId: null, sourceRef: 'global_source', start: 0, text: '  序文。\r\n',
     });
-    expect(artifacts.coverageCatalog.sourceReview?.units[1]).toMatchObject({
+    expect(sourceReview?.catalog.units[1]).toMatchObject({
       scope: 'page', pageId: pageId(1), sourceRef: 'page_source', start: 0,
     });
+    expect(artifacts.coverageCatalog.sourceReview).toBeUndefined();
     expect(artifacts.coverageCatalog.grounding?.pages[0]?.authorities).toContainEqual({
       ref: 'global_source', text: '  序文。\r\n', kind: 'original_global',
     });
@@ -1061,7 +1044,7 @@ describe('EpisodePlanContinuity', () => {
     expect(compiledDraft).not.toContain('owner_page_id=');
   }, 20_000);
 
-  it('上限付近で主体属性と構図・演出メモの最小予約が入らない場合は監査を失敗させる', () => {
+  it('proof表示を除いた上限付近でも主体属性と構図・演出メモを安全上限内へ収める', () => {
     const entityId = '10000000-0000-4000-8000-000000000001';
     const context = buildContext();
     context.entities = [
@@ -1110,8 +1093,11 @@ describe('EpisodePlanContinuity', () => {
       }
     }
 
-    expect(() => buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' }))
-      .toThrow('Episode audit cannot fit complete dialogue within its safe input limit');
+    const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
+    expect(brief.length).toBeLessThanOrEqual(MAX_CONTINUITY_BRIEF_CHARS);
+    expect(brief).toContain('[COMPLETE DIALOGUE]');
+    expect(brief).toContain('ハンドルを一定速度で回し続ける');
+    expect(brief).not.toContain('source_coverage');
   }, 20_000);
 
   it('監査 brief は UUID ではなくキャラ名で登場人物と話者を識別できる', () => {
@@ -1239,14 +1225,13 @@ describe('EpisodePlanContinuity', () => {
     expect(brief).toContain('春香{role=primary,action=standing_firm,position=center}');
     expect(brief).toContain('p2.e=none');
     expect(brief).toContain('p2.d1="届いた。"');
-    // v19 design: the bounded two-fact sidecar samples actual omissions or
-    // contradictions before easy present dialogue, while the body still audits all facts.
     expect(brief).toContain(
-      'reserve a check for it before sampling dialogue or an already-obvious present fact',
+      'Check every source fact against visible compiled fields and COMPLETE DIALOGUE',
     );
+    expect(brief).not.toContain('source_coverage');
   });
 
-  it('決定論的に検出した重複を同じ監査で必ず修復する対象として渡す', () => {
+  it('決定論的に検出した重複を同じ監査のerror対象として渡す', () => {
     const context = buildContext();
     context.pages = context.pages.slice(0, 2);
     const plan = buildBeatPlan();
@@ -1272,7 +1257,7 @@ describe('EpisodePlanContinuity', () => {
 
     const brief = buildEpisodePlanAuditBrief({ context, plan, suggestion, language: 'ja' });
 
-    expect(brief).toContain('[DETERMINISTIC FINDINGS THAT MUST BE REPAIRED]');
+    expect(brief).toContain('[DETERMINISTIC FINDINGS]');
     expect(brief).toContain(`duplicate_dialogue | pages=${pageId(2)}`);
   });
 

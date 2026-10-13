@@ -2385,7 +2385,7 @@ describe('PageService', () => {
     expect(panelRepository.updatedPanels).toHaveLength(0);
   });
 
-  it('inline repair 有効時は監査が指定したfieldだけを直してdetail compilerを再実行しない', async () => {
+  it('inline repair 有効時は初回mixed patchless errorでも指定fieldだけを直して保存する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
     const panelRepository = new FakePanelRepository();
@@ -2401,6 +2401,13 @@ describe('PageService', () => {
             pageIds: ['page-2'],
             message: 'Page 2 rewinds the scene.',
             repairInstruction: 'Continue from page 1.',
+          },
+          {
+            code: 'unsupported_story_fact',
+            severity: 'error',
+            pageIds: ['page-3'],
+            message: 'Page 3 still requires semantic review.',
+            repairInstruction: 'Review page 3 without inventing a patch.',
           },
         ],
         panelRepairs: [
@@ -2795,7 +2802,7 @@ describe('PageService', () => {
     expect(panelRepository.updatedPanels).toHaveLength(0);
   });
 
-  it('inline repair 有効時は修復情報のないerrorを保存しない', async () => {
+  it('inline repair 有効時は修復情報のない意味的errorだけなら決定的検証後に保存する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
     const panelRepository = new FakePanelRepository();
@@ -2830,11 +2837,11 @@ describe('PageService', () => {
 
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
-    expect(result.compilerUsed).toBe(false);
-    expect(result.compilerError).toContain('field-level repair');
-    expect(pageRepository.updatedInputs).toHaveLength(0);
-    expect(panelRepository.updatedPanels).toHaveLength(0);
-    expect(assignmentService.updates).toHaveLength(0);
+    expect(result.compilerUsed).toBe(true);
+    expect(auditCompiler.inputs).toHaveLength(1);
+    expect(pageRepository.updatedInputs).toHaveLength(4);
+    expect(panelRepository.updatedPanels.length).toBeGreaterThan(0);
+    expect(assignmentService.updates.length).toBeGreaterThan(0);
   });
 
   it('continuity v3 は全ページ重複セリフを検知して該当 chunk だけ一度修復する', async () => {
@@ -3554,7 +3561,7 @@ describe('PageService', () => {
     expect(auditCompiler.inputs[0]?.compilerBrief).toContain(stateId);
     expect(pageCompiler.inputs[0]?.sourceOwnedPageContext).toBeUndefined();
     expect(auditCompiler.inputs[0]?.sourceOwnedPageContext).toBe(false);
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(auditCompiler.inputs.every((input) => input.groundingAuthorities?.some(
       (authority) => authority.ref === 'validated_state'
         && authority.kind === 'validated_state'
@@ -3585,31 +3592,34 @@ describe('PageService', () => {
     expect(beginCommitCount).toBe(2);
     expect(atomicCompleted).toBe(2);
     proposedStateTransitions = [];
-    auditCompiler.audits = [
-      { accepted: true, issues: [] },
-      { accepted: false, issues: [{
-        code: 'timeline_discontinuity', severity: 'error', pageIds: ['page-1'],
-        message: 'A stated injury has no state boundary', repairInstruction: 'Confirm the state boundary',
-      }] },
+    auditCompiler.errors = [
+      null,
+      new ConfigurationError('OpenAI episode plan audit compiler returned invalid JSON'),
     ];
-    await expect(service.autofillEpisodeFromStory(
+    auditCompiler.audits = [{
+      accepted: false,
+      issues: [{
+        code: 'timeline_discontinuity', severity: 'error', pageIds: ['page-1'],
+        message: 'Page 1 rewinds the scene', repairInstruction: 'Continue the scene',
+      }],
+      panelRepairs: [{
+        pageId: 'page-1',
+        panelOrder: 1,
+        changedFields: ['situationText'],
+        patch: { situationText: 'Page 1 now continues the scene.' },
+      }],
+    }];
+    const auditInputCountBeforeFallback = auditCompiler.inputs.length;
+    const fallbackResult = await service.autofillEpisodeFromStory(
       'user-1', 'episode-1', 'ja', undefined, null,
       { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
       { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
-    )).rejects.toMatchObject({ code: 'STATE_MAPPING_AMBIGUOUS' });
-    expect(beginCommitCount).toBe(2);
-    expect(transactionAssignments.updates).toHaveLength(2);
-    auditCompiler.audits = [{ accepted: false, issues: [{
-      code: 'timeline_discontinuity', severity: 'error', pageIds: ['page-1'],
-      message: 'A stated injury has no state boundary', repairInstruction: 'Confirm the state boundary',
-    }] }];
-    await expect(service.autofillEpisodeFromStory(
-      'user-1', 'episode-1', 'ja', undefined, null,
-      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
-      { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
-    )).rejects.toMatchObject({ code: 'STATE_MAPPING_AMBIGUOUS' });
-    expect(beginCommitCount).toBe(2);
-    expect(transactionAssignments.updates).toHaveLength(2);
+    );
+    expect(fallbackResult.stateTransitions).toEqual([]);
+    expect(auditCompiler.inputs).toHaveLength(auditInputCountBeforeFallback + 2);
+    expect(beginCommitCount).toBe(3);
+    expect(transactionAssignments.updates).toHaveLength(3);
+    expect(atomicCompleted).toBe(3);
   });
 
   it('自動状態反映はREADY状態を維持し未登録の負傷を視覚描写として原子的に保存する', async () => {

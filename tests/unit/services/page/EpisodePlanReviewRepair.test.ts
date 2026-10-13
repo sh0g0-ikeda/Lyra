@@ -170,7 +170,7 @@ describe('EpisodePlanReviewRepair', () => {
     ).toThrow(ConfigurationError);
   });
 
-  it('複数のerrorの一部にしかfield-level repairがない場合は拒否する', () => {
+  it('複数errorの一部だけにfield-level repairがある場合は有効なrepairだけ適用する', () => {
     const suggestion = buildSuggestion();
     const firstPage = suggestion.pages[0]!;
     suggestion.pages.push({
@@ -180,8 +180,7 @@ describe('EpisodePlanReviewRepair', () => {
       panels: firstPage.panels.map((panel) => ({ ...panel })),
     });
 
-    expect(() =>
-      applyEpisodePlanAuditRepairs({
+    const repaired = applyEpisodePlanAuditRepairs({
         suggestion,
         knownPanelOrdersByPageId: new Map([
           ['11111111-1111-4111-8111-111111111111', new Set([1])],
@@ -213,7 +212,9 @@ describe('EpisodePlanReviewRepair', () => {
             },
           ],
         }),
-      }),
-    ).toThrow('without a field-level repair');
+      });
+
+    expect(repaired.pages[0]?.panels[0]?.situationText).toBe('Page 1 now advances the story.');
+    expect(repaired.pages[1]?.panels[0]?.situationText).toBe('Old situation.');
   });
 });
