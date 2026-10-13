@@ -340,6 +340,7 @@ export function buildEpisodePlanAuditBrief(input: {
     remaining, panelCount, MAX_AUDIT_PANEL_SUMMARY_CHARS, MIN_COMPLETED_PANEL_SUMMARY_CHARS,
   );
   const brief = [...before, '', '[COMPILED EPISODE DRAFT]',
+    'Visual labels appear only when the saved draft has a value; an absent label means that field is absent. COMPLETE DIALOGUE is the full ordered dialogue reference, while d is only a compact preview.',
     ...pages.flatMap((page) => formatAuditPage(page, panelBudget, entityLabels)), ...after].join('\n');
   if (brief.length > AUDIT_BRIEF_MAX_CHARS) {
     throw new ConfigurationError('Episode audit cannot fit complete dialogue within its safe input limit');
@@ -744,6 +745,24 @@ function formatAuditPage(
     .sort((left, right) => left.order - right.order)
     .map((panel) => {
       const entityIds = (panel.entities ?? []).map((entity) => entity.entityId);
+      const entityActions = (panel.entities ?? []).flatMap((entity) => {
+        const customAction = entity.customAction?.replace(/\s+/gu, ' ').trim();
+        return customAction === undefined || customAction.length === 0
+          ? []
+          : [`${entityLabels.get(entity.entityId) ?? entity.entityId}:${customAction}`];
+      }).join(', ');
+      const visibleFields: Array<{ label: string; value: string }> = [
+        { label: 'situation_text', value: panel.situationText ?? '' },
+        { label: 'composition', value: panel.composition?.compositionPrompt ?? '' },
+        { label: 'custom_note', value: panel.composition?.customNote ?? '' },
+        { label: 'background_note', value: panel.backgroundNote ?? '' },
+        { label: 'panel_notes', value: panel.panelNotes ?? '' },
+        { label: 'sfx_text', value: panel.sfxText ?? '' },
+        { label: 'entity_actions', value: entityActions },
+      ].flatMap((field) => {
+        const value = field.value.replace(/\s+/gu, ' ').trim();
+        return value.length === 0 ? [] : [{ ...field, value }];
+      });
       const fixed = [
         `Panel ${panel.order}`,
         `role=${panel.panelRole ?? 'none'}`,
@@ -752,23 +771,48 @@ function formatAuditPage(
         `entities=${formatEntityLabels(
           entityIds,
           entityLabels,
-          Math.max(24, Math.floor(panelBudget * 0.2)),
+          Math.max(24, Math.floor(panelBudget * 0.14)),
         )}`,
       ].join('|');
-      const remaining = Math.max(48, panelBudget - fixed.length - 3);
-      const dialogueBudget = Math.max(16, Math.floor(remaining * 0.42));
-      const situationBudget = Math.max(16, Math.floor(remaining * 0.36));
-      const backgroundBudget = Math.max(
-        16,
-        remaining - dialogueBudget - situationBudget,
+      const indent = '  ';
+      const available = panelBudget - indent.length;
+      const fieldLabelChars = visibleFields.reduce((sum, field) => sum + field.label.length + 2, 0);
+      const minimumValueChars = visibleFields.reduce(
+        (sum, field) => sum + Math.min(4, field.value.length),
+        0,
       );
+      if (fixed.length + fieldLabelChars + minimumValueChars > available) {
+        throw new ConfigurationError('Episode audit cannot fit visible field excerpts within its safe input limit');
+      }
+      const extra = available - fixed.length - fieldLabelChars - minimumValueChars;
+      const hasDialoguePreview = (panel.dialogue?.length ?? 0) > 0;
+      const dialogueLabelChars = 3;
+      const includeDialoguePreview = hasDialoguePreview && extra >= dialogueLabelChars + 32;
+      const dialogueBudget = includeDialoguePreview
+        ? Math.max(32, Math.floor((extra - dialogueLabelChars) * 0.25))
+        : 0;
+      const fieldExtra = extra - (includeDialoguePreview ? dialogueLabelChars + dialogueBudget : 0);
+      const perFieldExtra = visibleFields.length === 0 ? 0 : Math.floor(fieldExtra / visibleFields.length);
+      let remainder = visibleFields.length === 0 ? 0 : fieldExtra % visibleFields.length;
+      const renderedFields = visibleFields.map((field) => {
+        const budget = Math.min(
+          field.value.length,
+          Math.min(4, field.value.length) + perFieldExtra + (remainder-- > 0 ? 1 : 0),
+        );
+        return `${field.label}=${truncatePromptText(field.value, budget)}`;
+      });
       const summary = [
         fixed,
-        `d=${formatDialogueForBrief(panel.dialogue ?? [], dialogueBudget, entityLabels)}`,
-        `s=${truncatePromptText(panel.situationText ?? 'none', situationBudget)}`,
-        `b=${truncatePromptText(panel.backgroundNote ?? 'none', backgroundBudget)}`,
+        ...renderedFields,
+        ...(includeDialoguePreview
+          ? [`d=${formatDialogueForBrief(panel.dialogue ?? [], dialogueBudget, entityLabels)}`]
+          : []),
       ].join('|');
-      return `  ${truncatePromptText(summary, panelBudget)}`;
+      const line = `${indent}${summary}`;
+      if (line.length > panelBudget) {
+        throw new ConfigurationError('Episode audit cannot fit visible field excerpts within its safe input limit');
+      }
+      return line;
     });
   return [header, ...panels];
 }

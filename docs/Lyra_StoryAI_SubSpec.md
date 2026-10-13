@@ -126,3 +126,11 @@ take.
 - dialogue speaker validation and narration behavior
 - requested page/panel count coverage
 - duplicate active-job prevention and terminal recovery
+
+The continuity audit brief includes bounded actual composition, custom notes,
+background, panel notes, effects, and entity custom actions. Complete source and
+dialogue remain reserved before visual compaction within the existing 150,000
+character ceiling. Handoff repairs align conflicting place/action fields together.
+Only nonempty saved visual fields are rendered. Each present field reserves a
+minimum excerpt before the optional dialogue preview; if all present fields
+cannot fit, the compiler fails closed instead of dropping a field at the tail.
