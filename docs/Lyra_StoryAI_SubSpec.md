@@ -95,7 +95,7 @@ empty entity assignments, missing visual beats, generic repeated composition,
 speaker/dialogue mismatch, invalid page coverage, and frame/panel count mismatch.
 Repair is field-level where possible. Blocking errors require at least one repair
 on a named page with changed fields compatible with the issue category. A repair
-on another page or an unrelated field does not satisfy this gate. Missing repairs
+on another page or an unrelated field does not satisfy this gate. A source or continuity repair inspects every visible field of its affected panel and changes all conflicting fields together, while preserving source-faithful fields. Missing repairs
 trigger complete-audit correction within the existing two-attempt compiler limit;
 cancellation is checked before retry. Warnings remain non-blocking, and page-only
 and panel-only repairs are supported. Identities, frame geometry, schema, and

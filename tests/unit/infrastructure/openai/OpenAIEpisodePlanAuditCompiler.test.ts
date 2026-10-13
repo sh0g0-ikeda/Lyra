@@ -240,6 +240,9 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(input[0]?.content[0]?.text).toContain('Use dialogue_density with severity=error');
     expect(input[0]?.content[0]?.text).toContain('Return field-level repairs');
     expect(input[0]?.content[0]?.text).toContain('every changed field must carry its intended value');
+    expect(input[0]?.content[0]?.text).toContain('For a source or continuity repair, inspect all visible fields of every affected panel');
+    expect(input[0]?.content[0]?.text).toContain('situation_text, composition, background_note, and entities');
+    expect(input[0]?.content[0]?.text).toContain('Do not rewrite source-faithful visible fields.');
     expect(result.compilerModel).toBe('gpt-5');
     expect(result.compilerPromptVersion).toBe('episode_plan_audit_v6');
     expect(input[0]?.content[0]?.text).toContain('The dialogue array is the exact reading and speaking order');
