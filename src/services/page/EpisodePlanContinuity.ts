@@ -637,7 +637,10 @@ export function buildEpisodePlanAuditArtifacts(input: {
   const sourceReviewUnitsCandidate = sourceOwnedPageContext
     ? buildEpisodePlanSourceReviewForContext(input.context)
     : null;
-  const deterministicFindingLines = formatDeterministicAuditFindingLines(deterministicIssues);
+  const deterministicFindingLines = formatDeterministicAuditFindingLines(
+    deterministicIssues,
+    sourceOwnedPageContext,
+  );
   const before = sourceOwnedPageContext ? [
     '[AUDIT PURPOSE]',
     'Audit the complete compiled episode before anything is saved.',
@@ -978,9 +981,16 @@ export function detectDeterministicContinuityIssues(
 
 function formatDeterministicAuditFindingLines(
   issues: readonly EpisodePlanAuditIssue[],
+  preserveExactFindings: boolean,
 ): string[] {
   if (issues.length === 0) {
     return ['(none)'];
+  }
+
+  if (preserveExactFindings) {
+    return issues.map((issue) =>
+      `${issue.code} | pages=${issue.pageIds.join(',')} | repair=${truncatePromptText(issue.repairInstruction, 300)}`,
+    );
   }
 
   const grouped = new Map<

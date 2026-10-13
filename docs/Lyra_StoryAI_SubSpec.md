@@ -79,6 +79,14 @@ limit, with a cancellation checkpoint before retry. Warnings and validated-state
 findings that cannot be patched through this contract retain their read-only
 behavior. Page-only and panel-only repairs remain supported. Schema, identities,
 frame geometry, and atomic persistence are unchanged.
+Grounding instructions and full-audit retries explicitly require the typed
+deterministic finding with empty source evidence, or exact named original and
+unrepaired same-page draft quotes. Source-owned typed deterministic findings
+are displayed individually with the same target page sets as their validation
+catalog. Missing source-coverage checks link the identical issue code and a
+visible repair; page-source grounding and full-source coverage refs stay distinct.
+Source and continuity repairs check all
+conflicting visible fields together while preserving source-faithful fields.
 Deterministic fallback must use only entities
 supported by the story context and must not promote unrelated work entities or
 repopulate explicit empty lists for character-free cutaways.

@@ -12,6 +12,78 @@ const PAGE_ID = '11111111-1111-4111-8111-111111111111';
 const SECOND_PAGE_ID = '22222222-2222-4222-8222-222222222222';
 
 describe('OpenAIEpisodePlanAuditCompiler', () => {
+
+  it('deterministic根拠に原文引用が混ざった場合は空のsource evidenceを明示して再試行する', async () => {
+    const first = buildGroundedSourceOwnedAuditPayload({ accepted: false });
+    (first.issues as Array<Record<string, unknown>>)[0]!.code = 'duplicate_visual_beat';
+    (first.issue_grounding as Array<Record<string, unknown>>)[0]!.basis = 'deterministic';
+    const second = structuredClone(first);
+    (second.issue_grounding as Array<Record<string, unknown>>)[0]!.source_evidence = [];
+    const base = buildGroundedCoverageCatalog();
+    const catalog = {
+      ...base,
+      grounding: {
+        ...base.grounding,
+        deterministicIssues: [{ code: 'duplicate_visual_beat' as const, pageIds: [PAGE_ID] }],
+      },
+    };
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return { body: { output_text: JSON.stringify(requests.length === 1 ? first : second) } };
+      },
+    } as unknown as OpenAIClient;
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[DETERMINISTIC FINDINGS] duplicate_visual_beat',
+      language: 'ja', pageIds: [PAGE_ID], coverageCatalog: catalog, sourceOwnedPageContext: true,
+    });
+    expect(result.audit.panelRepairs).toHaveLength(1);
+    expect(requests).toHaveLength(2);
+    const correction = JSON.stringify(requests[1]!.input);
+    expect(correction).toContain('source_evidence=[]');
+    expect(correction).toContain('typed finding');
+    expect(correction).toContain('page_source');
+    expect(correction).toContain('identical issue_code');
+  });
+
+  it('修正後の文を出力根拠に引用した場合は未修正の同じ欄からの引用を明示して再試行する', async () => {
+    const first = buildGroundedSourceOwnedAuditPayload({ accepted: false, outputQuote: '扉を開けて中へ入る' });
+    const second = buildGroundedSourceOwnedAuditPayload({ accepted: false });
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return { body: { output_text: JSON.stringify(requests.length === 1 ? first : second) } };
+      },
+    } as unknown as OpenAIClient;
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[PAGE-LOCAL ORIGINAL SOURCE] 扉を開けて中へ入る。',
+      language: 'ja', pageIds: [PAGE_ID], coverageCatalog: buildGroundedCoverageCatalog(), sourceOwnedPageContext: true,
+    });
+    expect(result.audit.panelRepairs).toHaveLength(1);
+    expect(requests).toHaveLength(2);
+    expect(JSON.stringify(requests[1]!.input)).toContain('unrepaired');
+    expect(JSON.stringify(requests[1]!.input)).toContain('never from repair patches');
+  });
+
+  it('場所や状態を修正する監査では矛盾する可視欄をまとめて直し原文に忠実な欄は維持するよう指示する', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return { body: { output_text: JSON.stringify(buildAcceptedAuditPayload([PAGE_ID])) } };
+      },
+    } as unknown as OpenAIClient;
+    await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[EPISODE DRAFT]', language: 'ja', pageIds: [PAGE_ID], coverageCatalog: buildCoverageCatalog([PAGE_ID]),
+    });
+    const instructions = JSON.stringify(requests[0]!.input);
+    expect(instructions).toContain('every conflicting visible field');
+    expect(instructions).toContain('composition');
+    expect(instructions).toContain('preserve source-faithful fields');
+  });
+
   it('ページ横断の重複と会話配置を strict JSON で監査する', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {

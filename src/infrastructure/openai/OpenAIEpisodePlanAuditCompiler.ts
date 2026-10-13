@@ -157,7 +157,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
             if (!(error instanceof EpisodePlanAuditGroundingError)) {
               throw error;
             }
-            retryInstruction = error.retryInstruction;
+            retryInstruction = `${error.retryInstruction} ${AUDIT_GROUNDING_POLICY}`;
             frozenSourceOwnedBody = null;
             frozenLinkMetadata = null;
             frozenQuoteCorrectionPlan = null;
@@ -555,6 +555,8 @@ function hasText(value: string | null | undefined): boolean {
   return value !== null && value !== undefined && value.trim().length > 0;
 }
 
+const AUDIT_GROUNDING_POLICY = 'For basis=deterministic, copy the typed finding code and exact target page_ids with source_evidence=[]. For issue_grounding use page_source for the PAGE-LOCAL ORIGINAL SOURCE, not source_coverage ref source. For basis=source, cover every and only affected page with exact substrings of its named authority. Copy output evidence exactly from the named same-page unrepaired draft field, never from repair patches; only source_omission or ongoing_action_dropped may omit output evidence.';
+
 const AUDIT_VISIBLE_SOURCE_POLICY = [
   'Preserve every required source fact and action in concrete visible or text fields. A generic label such as an explanation, entry, or decision is not a substitute for the causal fact or completed action required by the source.',
   'Keep every ongoing source action active through intercut panels until the source explicitly ends it or changes the state.',
@@ -595,6 +597,7 @@ function buildSystemPrompt(
       'The exact original page source is authoritative. Every compiled field, including purpose, continuity, panel notes, composition notes, and entity metadata, is draft output under review. Never describe generated draft text as an original-source requirement, and never change a source-faithful visible field merely to agree with conflicting generated metadata.',
       'Before easy dialogue or setup facts, audit explicit completion and end states, the authored functional meaning of props or displayed information, cause-action-result chains, and authored emotion or pose against actual visible panel fields.',
       'Return one issue_grounding entry for every severity=error issue. Use basis=source with exact named authority and output-field quotes; source omissions may have no output quote. Use basis=deterministic only when the typed DETERMINISTIC FINDINGS section contains the same code and page IDs. issue_grounding is validation metadata and must not add or replace issues or repairs.',
+      AUDIT_GROUNDING_POLICY,
     ] : []),
     ...(sourceUnitReview ? [
       sourceUnitEvidence
@@ -637,6 +640,8 @@ function buildSystemPrompt(
     'Every DETERMINISTIC FINDING is binding and needs a repair. Inspect all over-limit panels in TEXT DISTRIBUTION, not only an example panel from a grouped finding.',
     'For cross-panel or cross-page redistribution, patch every affected source and destination dialogue array together, preserve true speakers and chronology, and preserve essential source information. Do not truncate excess lines or hide text via flags or visual fields.',
     'Return field-level repairs for each repairable error on its named pages, with changed_fields compatible with the issue code. Change only those fields; preserve page IDs, page numbers, panel orders, panel counts, and frame geometry.',
+    'When repairing a source or continuity conflict, check situation_text, composition, background_note, panel_notes, and visible entity actions together; repair every conflicting visible field in the affected panels, and preserve source-faithful fields.',
+    'Each missing source_coverage check must link a same-page severity=error issue with the identical issue_code (source_omission or ongoing_action_dropped) and its actual visible panel repair; an error with a different code cannot satisfy that link.',
     'Keep unchanged fields null in patch payloads; every changed field must carry its intended value. Use [] rather than null to clear dialogue, entities, or source_scene_ids. Do not use null for roles, sizes, composition, dialogue_in_panel, dialogue_mode, or page_dialogue_toggle.',
     'Do not return repairs for warnings or pages not named by an error. Set accepted=true only when no error remains; if a defect cannot be repaired safely within existing pages and source facts, report it instead of claiming success.',
     `Write issue messages and repair instructions in natural ${outputLanguage}.`,

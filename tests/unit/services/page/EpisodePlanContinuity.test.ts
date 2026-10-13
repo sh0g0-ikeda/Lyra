@@ -1132,6 +1132,54 @@ describe('EpisodePlanContinuity', () => {
     expect(brief).toContain(`duplicate_dialogue | pages=${pageId(2)}`);
   });
 
+  it('source-owned監査は同じcodeの決定論findingをvalidatorと同じ個別page集合で表示する', () => {
+    const context = buildContext();
+    context.pages = context.pages.slice(0, 3);
+    context.episode.storyFullDraft = [
+      '1ページ目：最初の合図を確認する。',
+      '2ページ目：次の合図を確認する。',
+      '3ページ目：最後の合図を確認する。',
+    ].join('\n');
+    const plan = buildBeatPlan();
+    plan.pages = plan.pages.slice(0, 3);
+    const suggestion = buildVerboseSuggestion();
+    suggestion.pages = suggestion.pages.slice(0, 3).map((page) => ({
+      ...page,
+      panels: [{
+        order: 1,
+        situationText: `ページ${page.pageNumber}だけの状況。`,
+        dialogue: [{
+          entityId: null,
+          type: 'narration',
+          position: 'top',
+          text: '同じ長い確認台詞を繰り返す。',
+        }],
+      }],
+    }));
+
+    const artifacts = buildEpisodePlanAuditArtifacts({
+      context,
+      plan,
+      suggestion,
+      language: 'ja',
+      sourceOwnedPageContext: true,
+    });
+
+    const findingLines = artifacts.compilerBrief.split('\n')
+      .filter((line) => line.startsWith('duplicate_dialogue | pages='));
+    expect(findingLines).toEqual([
+      expect.stringContaining(`pages=${pageId(2)} |`),
+      expect.stringContaining(`pages=${pageId(3)} |`),
+    ]);
+    expect(findingLines.join('\n')).not.toContain(`${pageId(2)},${pageId(3)}`);
+    expect(artifacts.coverageCatalog.grounding?.deterministicIssues
+      .filter((issue) => issue.code === 'duplicate_dialogue'))
+      .toEqual([
+        expect.objectContaining({ pageIds: [pageId(2)] }),
+        expect.objectContaining({ pageIds: [pageId(3)] }),
+      ]);
+  });
+
   it('最大構成でも後続 chunk 用 brief を上限内に収めつつ既出ページを残す', () => {
     const context = buildContext();
     const plan = buildBeatPlan();
