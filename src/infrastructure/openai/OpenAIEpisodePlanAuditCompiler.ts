@@ -76,6 +76,9 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
 
     const sourceOwnedPageContext = input.sourceOwnedPageContext === true;
     const sourceReviewCatalog = sourceOwnedPageContext ? input.coverageCatalog.sourceReview : undefined;
+    const trustedGroundingSourceRefs = sourceOwnedPageContext
+      ? collectTrustedGroundingSourceRefs(input)
+      : [];
     const baseRequestInput = [
       {
         role: 'system' as const,
@@ -125,6 +128,7 @@ export class OpenAIEpisodePlanAuditCompiler implements EpisodePlanAuditCompilerP
                 sourceOwnedPageContext,
                 sourceReviewCatalog?.units.length,
                 sourceReviewCatalog?.evidence?.length,
+                trustedGroundingSourceRefs,
               ),
               responseSchema: sourceReviewCatalog !== undefined
                 ? sourceReviewAuditSchema
@@ -1117,11 +1121,115 @@ const panelRepairPatchJsonSchema = {
   },
 } as const;
 
+function collectTrustedGroundingSourceRefs(input: CompileEpisodePlanAuditInput): string[] {
+  const refs = new Set<string>();
+  for (const page of input.coverageCatalog?.grounding?.pages ?? []) {
+    for (const authority of page.authorities) {
+      refs.add(authority.ref);
+    }
+  }
+  for (const authority of input.groundingAuthorities ?? []) {
+    refs.add(authority.ref);
+  }
+  return [...refs];
+}
+
+function buildSourceCoverageCheckJsonSchema(
+  pageIdJsonSchema: Record<string, unknown>,
+  sourceOwnedPageContext: boolean,
+): Record<string, unknown> {
+  const required = [
+    'source_ref',
+    'source_quote',
+    'status',
+    'output_evidence',
+    'issue_code',
+    'repair_target',
+  ];
+  const sourceRef = {
+    type: 'string',
+    minLength: 1,
+    maxLength: EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
+    ...(sourceOwnedPageContext ? { enum: ['source'] } : {}),
+  };
+  const sourceQuote = {
+    type: 'string',
+    minLength: 4,
+    maxLength: EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
+  };
+  const outputEvidenceItems = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['output_ref', 'quote'],
+    properties: {
+      output_ref: {
+        type: 'string',
+        minLength: 1,
+        maxLength: EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
+      },
+      quote: {
+        type: 'string',
+        minLength: 4,
+        maxLength: EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
+      },
+    },
+  };
+  return {
+    anyOf: [
+      {
+        type: 'object',
+        additionalProperties: false,
+        required,
+        properties: {
+          source_ref: sourceRef,
+          source_quote: sourceQuote,
+          status: { type: 'string', enum: ['present'] },
+          output_evidence: {
+            type: 'array',
+            minItems: 1,
+            maxItems: EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK,
+            items: outputEvidenceItems,
+          },
+          issue_code: { type: 'null' },
+          repair_target: { type: 'null' },
+        },
+      },
+      {
+        type: 'object',
+        additionalProperties: false,
+        required,
+        properties: {
+          source_ref: sourceRef,
+          source_quote: sourceQuote,
+          status: { type: 'string', enum: ['missing'] },
+          output_evidence: {
+            type: 'array',
+            maxItems: 0,
+            items: outputEvidenceItems,
+          },
+          issue_code: { type: 'string', enum: episodePlanAuditCoverageIssueCodes },
+          repair_target: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['scope', 'page_id', 'panel_order'],
+            properties: {
+              scope: { type: 'string', enum: ['panel'] },
+              page_id: pageIdJsonSchema,
+              panel_order: { type: 'integer', minimum: 1, maximum: 1000 },
+            },
+          },
+        },
+      },
+    ],
+  };
+}
+
 function buildEpisodePlanAuditJsonSchema(
   allowedPageIds: readonly string[],
   sourceOwnedPageContext = false,
   sourceReviewUnitCount?: number,
   sourceReviewFieldCount?: number,
+  trustedGroundingSourceRefs: readonly string[] = [],
 ): Record<string, unknown> {
   const pageIdJsonSchema = { type: 'string', enum: [...allowedPageIds] };
 
@@ -1230,75 +1338,13 @@ function buildEpisodePlanAuditJsonSchema(
               type: 'array',
               minItems: 1,
               maxItems: EPISODE_PLAN_AUDIT_COVERAGE_MAX_CHECKS_PER_PAGE,
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                required: [
-                  'source_ref',
-                  'source_quote',
-                  'status',
-                  'output_evidence',
-                  'issue_code',
-                  'repair_target',
-                ],
-                properties: {
-                  source_ref: {
-                    type: 'string',
-                    minLength: 1,
-                    maxLength: EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
-                    ...(sourceOwnedPageContext ? { enum: ['source'] } : {}),
-                  },
-                  source_quote: {
-                    type: 'string',
-                    minLength: 4,
-                    maxLength: EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
-                  },
-                  status: { type: 'string', enum: ['present', 'missing'] },
-                  output_evidence: {
-                    type: 'array',
-                    maxItems: EPISODE_PLAN_AUDIT_COVERAGE_MAX_EVIDENCE_PER_CHECK,
-                    items: {
-                      type: 'object',
-                      additionalProperties: false,
-                      required: ['output_ref', 'quote'],
-                      properties: {
-                        output_ref: {
-                          type: 'string',
-                          minLength: 1,
-                          maxLength: EPISODE_PLAN_AUDIT_COVERAGE_REF_MAX_CHARS,
-                        },
-                        quote: {
-                          type: 'string',
-                          minLength: 4,
-                          maxLength: EPISODE_PLAN_AUDIT_COVERAGE_QUOTE_MAX_CHARS,
-                        },
-                      },
-                    },
-                  },
-                  issue_code: nullableEnum(episodePlanAuditCoverageIssueCodes),
-                  repair_target: {
-                    anyOf: [
-                      {
-                        type: 'object',
-                        additionalProperties: false,
-                        required: ['scope', 'page_id', 'panel_order'],
-                        properties: {
-                          scope: { type: 'string', enum: ['panel'] },
-                          page_id: pageIdJsonSchema,
-                          panel_order: { type: 'integer', minimum: 1, maximum: 1000 },
-                        },
-                      },
-                      { type: 'null' },
-                    ],
-                  },
-                },
-              },
+              items: buildSourceCoverageCheckJsonSchema(pageIdJsonSchema, sourceOwnedPageContext),
             },
           },
         },
       },
       ...(sourceOwnedPageContext ? {
-        issue_grounding: buildIssueGroundingJsonSchema(pageIdJsonSchema),
+        issue_grounding: buildIssueGroundingJsonSchema(pageIdJsonSchema, trustedGroundingSourceRefs),
       } : {}),
       ...(sourceReviewUnitCount === undefined ? {} : {
         source_unit_review: {
@@ -1360,14 +1406,17 @@ function buildEpisodePlanAuditCoverageOnlyJsonSchema(
   };
 }
 
-function buildIssueGroundingJsonSchema(pageIdJsonSchema: Record<string, unknown>): Record<string, unknown> {
+function buildIssueGroundingJsonSchema(
+  pageIdJsonSchema: Record<string, unknown>,
+  trustedSourceRefs: readonly string[],
+): Record<string, unknown> {
   const sourceEvidence = {
     type: 'object',
     additionalProperties: false,
     required: ['page_id', 'source_ref', 'quote'],
     properties: {
       page_id: pageIdJsonSchema,
-      source_ref: { type: 'string', minLength: 1, maxLength: 24 },
+      source_ref: { type: 'string', minLength: 1, maxLength: 24, enum: [...trustedSourceRefs] },
       quote: { type: 'string', minLength: 4, maxLength: 40 },
     },
   };

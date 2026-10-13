@@ -119,3 +119,9 @@ take.
 - dialogue speaker validation and narration behavior
 - requested page/panel count coverage
 - duplicate active-job prevention and terminal recovery
+
+Provider JSON constraints mirror the existing present/missing coverage contract:
+present checks require one or two exact visible citations with null repair links;
+missing checks require no output citations and a non-null same-code panel link.
+Typed grounding source references are restricted to trusted catalog authorities
+and explicitly supplied authorities; exact same-page quotations remain validated.

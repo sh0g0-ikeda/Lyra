@@ -38,7 +38,7 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const properties = readObject(readObject(readObject(requests[0]!.text).format).schema).properties;
     const coverage = readObject(readObject(properties).source_coverage);
     const checks = readObject(readObject(readObject(coverage.items).properties).checks);
-    const codes = JSON.stringify(readObject(readObject(readObject(checks.items).properties).issue_code));
+    const codes = JSON.stringify(readObject(readObject(readCoverageCheckBranch(checks, 'missing').properties).issue_code));
     expect(codes).toContain(code);
     expect(codes).not.toContain('dialogue_density');
   });
@@ -281,19 +281,34 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     const sourceCoverageProperties = readObject(sourceCoverageItems.properties);
     const coverageChecks = readObject(sourceCoverageProperties.checks);
     expect(coverageChecks.maxItems).toBe(2);
-    const coverageCheckItems = readObject(coverageChecks.items);
-    expect(readArray(coverageCheckItems.required)).toEqual(expect.arrayContaining([
-      'source_ref',
-      'source_quote',
-      'status',
-      'output_evidence',
-      'issue_code',
-      'repair_target',
+    const presentCheck = readCoverageCheckBranch(coverageChecks, 'present');
+    const missingCheck = readCoverageCheckBranch(coverageChecks, 'missing');
+    for (const branch of [presentCheck, missingCheck]) {
+      expect(readArray(branch.required)).toEqual(expect.arrayContaining([
+        'source_ref',
+        'source_quote',
+        'status',
+        'output_evidence',
+        'issue_code',
+        'repair_target',
+      ]));
+      expect(readObject(readObject(branch.properties).source_quote).maxLength).toBe(40);
+    }
+    const presentProperties = readObject(presentCheck.properties);
+    expect(readObject(presentProperties.output_evidence)).toMatchObject({ minItems: 1, maxItems: 2 });
+    expect(readObject(presentProperties.issue_code)).toEqual({ type: 'null' });
+    expect(readObject(presentProperties.repair_target)).toEqual({ type: 'null' });
+    const missingProperties = readObject(missingCheck.properties);
+    expect(readObject(missingProperties.output_evidence)).toMatchObject({ maxItems: 0 });
+    expect(readObject(missingProperties.issue_code).enum).toEqual(expect.arrayContaining([
+      'source_omission',
+      'ongoing_action_dropped',
+      'page_handoff_break',
+      'duplicate_dialogue',
     ]));
-    const coverageCheckProperties = readObject(coverageCheckItems.properties);
-    expect(readObject(coverageCheckProperties.source_quote).maxLength).toBe(40);
-    expect(readArray(readObject(coverageCheckProperties.issue_code).anyOf)).toHaveLength(2);
-    expect(readArray(readObject(coverageCheckProperties.repair_target).anyOf)).toHaveLength(2);
+    expect(readArray(readObject(missingProperties.issue_code).enum)).toHaveLength(10);
+    expect(readObject(missingProperties.issue_code).enum).not.toContain('dialogue_density');
+    expect(readObject(missingProperties.repair_target).type).toBe('object');
     const issues = readObject(rootProperties.issues);
     const issueItems = readObject(issues.items);
     const issueProperties = readObject(issueItems.properties);
@@ -1483,7 +1498,45 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     expect(readArray(retrySchema.required)).toEqual(['source_coverage']);
     const coverageSchema = readObject(readObject(retrySchema.properties).source_coverage);
     const checksSchema = readObject(readObject(readObject(coverageSchema.items).properties).checks);
-    expect(readObject(readObject(readObject(checksSchema.items).properties).source_ref).enum).toEqual(['source']);
+    for (const status of ['present', 'missing'] as const) {
+      expect(readObject(readObject(readCoverageCheckBranch(checksSchema, status).properties).source_ref).enum)
+        .toEqual(['source']);
+    }
+  });
+
+  it('issue groundingの未知source refはschemaで許可せず既存validatorでも再試行する', async () => {
+    const first = buildGroundedSourceOwnedAuditPayload({ accepted: false });
+    const firstGrounding = first.issue_grounding as Array<{
+      source_evidence: Array<Record<string, unknown>>;
+    }>;
+    firstGrounding[0]!.source_evidence[0]!.source_ref = 'unknown_source';
+    const second = buildGroundedSourceOwnedAuditPayload({ accepted: false });
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, request: Record<string, unknown>) => {
+        requests.push(request);
+        return {
+          body: { status: 'completed', output_text: JSON.stringify(requests.length === 1 ? first : second) },
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: '[PAGE-LOCAL ORIGINAL SOURCE]\n原作では扉を開けて中へ入る。',
+      language: 'ja',
+      pageIds: [PAGE_ID],
+      coverageCatalog: buildGroundedCoverageCatalog(),
+      sourceOwnedPageContext: true,
+    });
+
+    expect(requests).toHaveLength(2);
+    const schema = readObject(readObject(readObject(requests[0]?.text).format).schema);
+    const grounding = readObject(readObject(schema.properties).issue_grounding);
+    const sourceEvidence = readObject(readObject(readObject(grounding.items).properties).source_evidence);
+    const sourceRef = readObject(readObject(readObject(sourceEvidence.items).properties).source_ref);
+    expect(sourceRef.enum).toEqual(['page_source']);
+    expect(sourceRef.enum).not.toContain('unknown_source');
+    expect(result.audit.accepted).toBe(false);
   });
 
   it('同一page coverage重複はgrounded bodyを凍結せずfull監査を再試行する', async () => {
@@ -1628,13 +1681,13 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
     payload.source_unit_review = [null];
     const coverageCatalog = buildGroundedCoverageCatalog();
     coverageCatalog.sourceReview = buildSingleSourceReviewCatalog();
-    let requestCount = 0;
+    const requests: Record<string, unknown>[] = [];
     const client = {
-      postJson: async () => {
-        requestCount += 1;
+      postJson: async (_path: string, request: Record<string, unknown>) => {
+        requests.push(request);
         return {
           body: { status: 'completed', output_text: JSON.stringify(payload) },
-          requestId: `req-state-no-repair-${requestCount}`,
+          requestId: `req-state-no-repair-${requests.length}`,
         };
       },
     } as unknown as OpenAIClient;
@@ -1648,6 +1701,10 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
         ref: 'validated_state',
         text: 'entity_id=coco | state_id=raincoat',
         kind: 'validated_state',
+      }, {
+        ref: 'validated_state',
+        text: 'entity_id=coco | state_id=raincoat',
+        kind: 'validated_state',
       }],
       sourceOwnedPageContext: true,
     });
@@ -1657,7 +1714,13 @@ describe('OpenAIEpisodePlanAuditCompiler', () => {
       expect.objectContaining({ code: 'timeline_discontinuity' }),
     ]);
     expect(result.audit.panelRepairs).toEqual([]);
-    expect(requestCount).toBe(1);
+    expect(requests).toHaveLength(1);
+    const schema = readObject(readObject(readObject(requests[0]?.text).format).schema);
+    const grounding = readObject(readObject(schema.properties).issue_grounding);
+    const groundingProperties = readObject(readObject(grounding.items).properties);
+    const sourceEvidence = readObject(groundingProperties.source_evidence);
+    const sourceRef = readObject(readObject(readObject(sourceEvidence.items).properties).source_ref);
+    expect(sourceRef.enum).toEqual(['page_source', 'validated_state']);
   });
 
   it('source unit vector欠落時はbodyを凍結せず同じfull監査schemaで再試行する', async () => {
@@ -2087,6 +2150,23 @@ function readArray(value: unknown): unknown[] {
   return value;
 }
 
+function readCoverageCheckBranch(
+  checksSchema: Record<string, unknown>,
+  status: 'present' | 'missing',
+): Record<string, unknown> {
+  const branches = readArray(readObject(checksSchema.items).anyOf).map(readObject);
+  const branch = branches.find((candidate) => {
+    const properties = readObject(candidate.properties);
+    return readObject(properties.status).enum === undefined
+      ? false
+      : readArray(readObject(properties.status).enum).includes(status);
+  });
+  if (branch === undefined) {
+    throw new Error(`Expected ${status} coverage check branch`);
+  }
+  return branch;
+}
+
 
 describe('OpenAIEpisodePlanAuditCompiler source-field comparisons', () => {
   function evidenceFixture() {
@@ -2126,7 +2206,10 @@ describe('OpenAIEpisodePlanAuditCompiler source-field comparisons', () => {
     const schema = readObject(readObject(readObject(requests[0]?.text).format).schema);
     const coverage = readObject(readObject(schema.properties).source_coverage);
     const checks = readObject(readObject(readObject(coverage.items).properties).checks);
-    expect(readObject(readObject(readObject(checks.items).properties).source_ref).enum).toEqual(['source']);
+    for (const status of ['present', 'missing'] as const) {
+      expect(readObject(readObject(readCoverageCheckBranch(checks, status).properties).source_ref).enum)
+        .toEqual(['source']);
+    }
   });
   it('native根拠付きcatalogは全nullを拒否し同頁field比較だけで再試行する', async () => {
     const fixture = evidenceFixture();
