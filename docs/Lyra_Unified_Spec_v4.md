@@ -483,6 +483,11 @@ not required. Their bookkeeping and exact-quote errors must not cause a valid
 normal audit to fail or consume another provider request. The normal input does
 not request these auxiliary outputs or enumerate source-unit proof catalogs.
 
+The detail provider schema mirrors UUID constraints for page, scene, assignment
+entity, dialogue speaker, and source-placement page IDs. Nullable state/speaker IDs
+use JSON null for absent references; names and string sentinel labels are never IDs.
+Server context/ownership checks still independently reject unknown or foreign UUIDs.
+
 Schema, bounded strings and arrays, known page/panel targets, unique repair fields
 and actual values for every changed field remain hard validation. Invalid typed
 payloads use the existing structured-output retry and cancellation checkpoint,

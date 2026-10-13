@@ -416,6 +416,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
   it('state_idを既存UUIDまたはdefault用nullに限定してproviderへ要求する', async () => {
     const requests: Array<Record<string, unknown>> = [];
     let responseStateId: string | null = '33333333-3333-4333-8333-333333333333';
+    let responseDialogueEntityId: string | null = '22222222-2222-4222-8222-222222222222';
     let requestCount = 0;
     const client = {
       postJson: async (_path: string, payload: Record<string, unknown>) => {
@@ -429,6 +430,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
                 page_number: 1,
                 panels: [{
                   order: 1,
+                  dialogue: [{ entity_id: responseDialogueEntityId, text: '確認する。', type: 'speech', position: 'top' }],
                   entities: [{
                     entity_id: '22222222-2222-4222-8222-222222222222',
                     role: 'primary',
@@ -456,6 +458,7 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
         suggestion: { pages: [{ panels: [{ entities: [{ stateId: responseStateId }] }] }] },
       });
     responseStateId = null;
+    responseDialogueEntityId = null;
     await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
       .resolves.toMatchObject({
         suggestion: { pages: [{ panels: [{ entities: [{ stateId: null }] }] }] },
@@ -494,17 +497,37 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
       { type: 'string', format: 'uuid' },
       { type: 'null' },
     ]);
+    const pageProperties = schema.properties.pages.items.properties as unknown as {
+      page_id: unknown;
+      source_scene_ids: { items: unknown };
+      panels: { items: { properties: { entities: { items: { properties: { entity_id: unknown } } }; dialogue: { anyOf: Array<{ items: { properties: { entity_id: unknown } } }> } } } };
+    };
+    expect(pageProperties.page_id).toEqual({ type: 'string', format: 'uuid' });
+    expect(pageProperties.source_scene_ids.items).toEqual({ type: 'string', format: 'uuid' });
+    expect(pageProperties.panels.items.properties.entities.items.properties.entity_id)
+      .toEqual({ type: 'string', format: 'uuid' });
+    expect(pageProperties.panels.items.properties.dialogue.anyOf[0]?.items.properties.entity_id)
+      .toEqual({ anyOf: [{ type: 'string', format: 'uuid' }, { type: 'null' }] });
     const systemPrompt = (requests[0]?.input as Array<{ content: Array<{ text: string }> }>)[0]
       ?.content[0]?.text ?? '';
     expect(systemPrompt).toContain(
       'state_id must be an existing state UUID or JSON null for the default state; never use strings such as default or none',
     );
+    expect(systemPrompt).toContain('Identifier fields must copy only supplied UUIDs; use JSON null for an ambiguous dialogue speaker');
 
     responseStateId = 'default';
     requestCount = 0;
     await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
       .rejects.toMatchObject({ reason: 'invalid_payload' });
     expect(requestCount).toBe(2);
+    responseStateId = null;
+    for (const invalidDialogueEntityId of ['奏', 'null']) {
+      responseDialogueEntityId = invalidDialogueEntityId;
+      requestCount = 0;
+      await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+        .rejects.toMatchObject({ reason: 'invalid_payload' });
+      expect(requestCount).toBe(2);
+    }
   });
 
   it('provider schemaの文字列上限とpanel orderは保存時Zod契約に一致する', async () => {
@@ -766,13 +789,15 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     const request = requests[0]!;
     const input = request.input as Array<{ content: Array<{ text: string }> }>;
     const schema = (request.text as {
-      format: { schema: { required: string[]; properties: Record<string, unknown> } };
+      format: { schema: { required: string[]; properties: { source_requirement_placements: { items: { properties: { page_id: unknown } } } } } };
     }).format.schema;
     expect(input[0]?.content[0]?.text).toContain('allocate every PAGE requirement');
     expect(input[0]?.content[0]?.text).toContain('derived draft metadata');
     expect(schema.required).toContain('source_requirement_placements');
     expect(Object.keys(schema.properties)[0]).toBe('source_requirement_placements');
     expect(schema.required[0]).toBe('source_requirement_placements');
+    expect(schema.properties.source_requirement_placements.items.properties.page_id)
+      .toEqual({ type: 'string', format: 'uuid' });
   });
 
   it('同一pageのafter関係がpanel順序と逆転する場合は拒否し同一panelは許可する', async () => {
