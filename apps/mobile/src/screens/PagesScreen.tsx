@@ -389,17 +389,6 @@ const toFrameUpdateInput = (draft: FrameDraft): PanelFrameUpdateInput => ({
   reading_order: Math.min(1000, Math.max(1, integer(draft.reading_order, 1)))
 });
 
-const frameRecordToUpdateInput = (frame: PanelFrameRecord): PanelFrameUpdateInput => ({
-  id: frame.id,
-  panel_id: frame.panel_id,
-  vertices: frame.vertices,
-  border_style: frame.border_style,
-  border_width: frame.border_width,
-  border_color: frame.border_color,
-  z_index: frame.z_index,
-  reading_order: frame.reading_order,
-});
-
 const clampPreviewCoordinate = (value: number): number => Math.min(1, Math.max(0, value));
 
 const formatCoordinate = (value: number): string => {
@@ -1136,7 +1125,7 @@ export function PagesScreen(): React.JSX.Element {
     : JSON.stringify([sessionKey, organizationId, selectedPage.id]);
   const frameDraftRevision = JSON.stringify(frameDrafts.map(toFrameUpdateInput));
   const serverFrameRevision = JSON.stringify(
-    (framesQuery.data?.frames ?? []).map(frameRecordToUpdateInput)
+    (framesQuery.data?.frames ?? []).map(toFrameDraft).map(toFrameUpdateInput)
   );
   const frameValuesDiffer =
     lastSyncedFrameRevision !== null && frameDraftRevision !== lastSyncedFrameRevision;

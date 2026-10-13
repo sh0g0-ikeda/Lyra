@@ -310,6 +310,33 @@ describe('実際のPagesScreenの工程構成', () => {
     expect(generatePageSkeleton).toHaveBeenCalledOnce();
   });
 
+  it('legacyの3頂点と範囲外座標はhydrate後の正規形をbaselineにして再保存しない', async () => {
+    const legacyFrame: PanelFrameRecord = {
+      ...frames[0]!,
+      vertices: [{ x: -1, y: 0 }, { x: 2, y: 0 }, { x: 1, y: 2 }],
+    };
+    queryData.frames = { frames: [legacyFrame] };
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    expect(dirtyRegistration.mock.lastCall?.[0]).toMatchObject({ dirty: false });
+
+    queryData.frames = { frames: [{ ...legacyFrame }] };
+    await act(async () => {
+      root!.update(<PagesScreen />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(dirtyRegistration.mock.lastCall?.[0]).toMatchObject({ dirty: false });
+
+    await act(async () => {
+      root!.root.findByProps({ testID: 'page-story-autofill-primary' }).props.onPress();
+      await Promise.resolve();
+    });
+    const confirm = confirmAction.mock.lastCall?.[0] as { onConfirm: () => void };
+    await act(async () => { confirm.onConfirm(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    expect(replaceFrames).not.toHaveBeenCalled();
+    expect(generatePageSkeleton).toHaveBeenCalledOnce();
+  });
+
   it('枠編集を一度保存してskeleton完了後にautofillを受付し枠を再保存しない', async () => {
     await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
     const readingOrder = root!.root.findAllByType('field').find((node) => node.props.label === '読み順')!;
