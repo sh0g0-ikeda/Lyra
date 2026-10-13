@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { replacePanelFramesBodySchema } from '../../../src/lib/validators/panelFrame.schema.js';
 import {
   framesResponseSchema,
   frameTemplateResponseSchema,
@@ -22,6 +23,23 @@ const validFrame = {
 };
 
 describe('Panel frame response contract', () => {
+  it('GET専用page_idはPUTで拒否し編集可能な枠フィールドだけを受理する', () => {
+    const responseFrame = panelFrameSchema.parse({
+      ...validFrame,
+      vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }],
+    });
+    const rejected = replacePanelFramesBodySchema.safeParse({ frames: [responseFrame] });
+    expect(rejected.success).toBe(false);
+    if (!rejected.success) {
+      expect(rejected.error.issues).toEqual([
+        expect.objectContaining({ code: 'unrecognized_keys', keys: ['page_id'], path: ['frames', 0] }),
+      ]);
+    }
+    const { id, panel_id, vertices, border_style, border_width, border_color, z_index, reading_order } = responseFrame;
+    const updateFrame = { id, panel_id, vertices, border_style, border_width, border_color, z_index, reading_order };
+    expect(replacePanelFramesBodySchema.parse({ frames: [updateFrame] })).toEqual({ frames: [updateFrame] });
+  });
+
   it('現行frameと一覧・テンプレートwrapperを受理する', () => {
     expect(panelFrameSchema.safeParse(validFrame).success).toBe(true);
     expect(framesResponseSchema.safeParse({ frames: [validFrame] }).success).toBe(true);

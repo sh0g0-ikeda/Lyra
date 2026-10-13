@@ -14,8 +14,9 @@ let screenSelection = { organizationId: null as string | null, workId: 'work', c
 let workspaceSelection = { selectedWorkId: 'work', selectedEpisodeId: 'episode' };
 let activeDesignJobId: string | null = null;
 let skeletonCapability: { preserve_generated_images: boolean } | undefined;
-const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl, confirmAction, generatePageSkeleton, autofillStory, updateSelection, invalidateQueries } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn(), openUrl: vi.fn().mockResolvedValue(undefined), confirmAction: vi.fn(), generatePageSkeleton: vi.fn(), autofillStory: vi.fn(), updateSelection: vi.fn(), invalidateQueries: vi.fn().mockResolvedValue(undefined) }));
-const api = { updatePage: action, updatePanel: action, generatePage: action, generatePageSkeleton, autofillEpisodePagesFromStory: autofillStory };
+let currentSessionKey = 'user';
+const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl, confirmAction, generatePageSkeleton, autofillStory, replaceFrames, updateSelection, invalidateQueries } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn(), openUrl: vi.fn().mockResolvedValue(undefined), confirmAction: vi.fn(), generatePageSkeleton: vi.fn(), autofillStory: vi.fn(), replaceFrames: vi.fn(), updateSelection: vi.fn(), invalidateQueries: vi.fn().mockResolvedValue(undefined) }));
+const api = { updatePage: action, updatePanel: action, generatePage: action, generatePageSkeleton, autofillEpisodePagesFromStory: autofillStory, replaceFrames };
 let root: ReactTestRenderer | undefined;
 vi.mock('@react-navigation/native', () => ({ useNavigation: () => ({ navigate: action }), useIsFocused: () => true }));
 vi.mock('react-native', () => ({ Keyboard: { dismiss: vi.fn() }, Linking: { openURL: openUrl }, Modal: 'modal', Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
@@ -33,7 +34,7 @@ vi.mock('@tanstack/react-query', () => ({
     return { mutate: (...args: unknown[]) => { void run(...args).catch(() => undefined); }, mutateAsync: run, isPending: false, error, reset: () => setError(null) };
   }
 }));
-vi.mock('@/state/appState', () => ({ useAppState: () => ({ api, hasCapability: () => true, language: 'ja', logout: action, selection: screenSelection, session: { capabilities: { generation_quotes: true } }, sessionKey: 'user', tokens: null, trackJob: action, updateSelection }) }));
+vi.mock('@/state/appState', () => ({ useAppState: () => ({ api, hasCapability: () => true, language: 'ja', logout: action, selection: screenSelection, session: { capabilities: { generation_quotes: true } }, sessionKey: currentSessionKey, tokens: null, trackJob: action, updateSelection }) }));
 vi.mock('@/state/dirtyState', () => ({ useDirtyEditorRegistration: dirtyRegistration, useDirtyState: () => ({ resolveDirtyEditors: vi.fn().mockResolvedValue(true), hasDirtyEditors: false }) }));
 vi.mock('@/state/mangaWorkflow', () => ({ useMangaWorkflow: () => ({ activeStep: 'pages' }) }));
 vi.mock('@/hooks/usePageGenerationQuote', () => ({ usePageGenerationQuote: () => ({ state: { phase: 'closed', visible: false, target: null, quote: null }, controller: { open: quoteOpen, close: vi.fn(), accept: vi.fn(), reconcile: vi.fn(), canAccept: () => false } }) }));
@@ -42,6 +43,7 @@ vi.mock('@/lib/confirmationPresentation', () => ({ useConfirmationPresentation: 
 vi.mock('@/hooks/useActiveResourceJobId', () => ({ useActiveResourceJobId: () => activeDesignJobId }));
 vi.mock('@/hooks/usePanelInsertion', () => ({ usePanelInsertion: () => ({ blocker: null, operationActive: false, notice: null, insertAfter: vi.fn(), reload: vi.fn() }) }));
 vi.mock('@/hooks/useResetOnScopeChange', () => ({ useResetOnScopeChange: vi.fn() }));
+vi.mock('@/constants/mobileFeatureVisibility', () => ({ pageLayoutEditingUiEnabled: true }));
 vi.mock('@/lib/confirm', () => ({ confirmAction, confirmDestructiveAction: confirmAction }));
 vi.mock('@/lib/confirmStoryStateAutofill', () => ({
   confirmStoryStateAutofill: (input: { onConfirm: (options: undefined) => void }) => confirmAction({ onConfirm: () => input.onConfirm(undefined) })
@@ -80,15 +82,16 @@ vi.mock('@/components/StoryGenerationControls', () => ({ StoryGenerationControls
 vi.mock('@/components/WorkspaceHierarchyNavigator', () => ({ WorkspaceHierarchyNavigator: (props: Record<string, unknown>) => React.createElement('WorkspaceHierarchyNavigator', props) }));
 
 beforeEach(() => {
-  action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); confirmAction.mockReset(); generatePageSkeleton.mockReset(); autofillStory.mockReset(); updateSelection.mockReset(); invalidateQueries.mockReset();
+  action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); confirmAction.mockReset(); generatePageSkeleton.mockReset(); autofillStory.mockReset(); replaceFrames.mockReset(); updateSelection.mockReset(); invalidateQueries.mockReset();
   screenSelection = { organizationId: null, workId: 'work', chapterId: 'chapter', episodeId: 'episode', pageId: 'page', entityId: null };
   workspaceSelection = { selectedWorkId: 'work', selectedEpisodeId: 'episode' };
   activeDesignJobId = null;
+  currentSessionKey = 'user';
   updateSelection.mockImplementation(async (next: { pageId?: string | null }) => {
     screenSelection = { ...screenSelection, ...next };
     return true;
   });
-  openUrl.mockResolvedValue(undefined); generatePageSkeleton.mockResolvedValue({ job_id: 'skeleton-job', queued: true, story_plan_applied: false }); autofillStory.mockResolvedValue({ job_id: 'autofill-job', queued: true });
+  openUrl.mockResolvedValue(undefined); generatePageSkeleton.mockResolvedValue({ job_id: 'skeleton-job', queued: true, story_plan_applied: false }); autofillStory.mockResolvedValue({ job_id: 'autofill-job', queued: true }); replaceFrames.mockResolvedValue({ frames });
   invalidateQueries.mockResolvedValue(undefined);
   moreEntities=false; page.layout_config={}; queryData.pages={pages:[{pages:[page]}],pageParams:[null]}; queryData.panels={panels}; queryData.frames={frames}; queryData.entities.pages=[{entities:[]}]; panels[0].entities=[]; panels[0].dialogue=[];
   skeletonCapability = { preserve_generated_images: true };
@@ -281,6 +284,152 @@ describe('実際のPagesScreenの工程構成', () => {
     const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'skeleton-job');
     await act(async () => { await job?.props.onCompleted(); });
     expect(autofillStory).toHaveBeenCalledExactlyOnceWith('episode', 'ja', null, undefined);
+  });
+
+  it('自動入力後の枠再取得は未保存編集と誤認せず次の自動入力前に再保存しない', async () => {
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    queryData.frames = {
+      frames: [{ ...frames[0]!, id: 'server-refreshed-frame', reading_order: 2 }],
+    };
+
+    await act(async () => {
+      root!.update(<PagesScreen />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(dirtyRegistration.mock.lastCall?.[0]).toMatchObject({ dirty: false });
+
+    await act(async () => {
+      root!.root.findAllByType('button').find((node) => node.props.testID === 'page-story-autofill-primary')!.props.onPress();
+      await Promise.resolve();
+    });
+    const confirm = confirmAction.mock.lastCall?.[0] as { onConfirm: () => void };
+    await act(async () => { confirm.onConfirm(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    expect(replaceFrames).not.toHaveBeenCalled();
+    expect(generatePageSkeleton).toHaveBeenCalledOnce();
+  });
+
+  it('枠編集を一度保存してskeleton完了後にautofillを受付し枠を再保存しない', async () => {
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    const readingOrder = root!.root.findAllByType('field').find((node) => node.props.label === '読み順')!;
+    await act(async () => { readingOrder.props.onChangeText('2'); });
+
+    await act(async () => {
+      root!.root.findByProps({ testID: 'page-story-autofill-primary' }).props.onPress();
+      await Promise.resolve();
+    });
+    const confirm = confirmAction.mock.lastCall?.[0] as { onConfirm: () => void };
+    await act(async () => { confirm.onConfirm(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    expect(replaceFrames).toHaveBeenCalledOnce();
+    expect(generatePageSkeleton).toHaveBeenCalledOnce();
+    const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'skeleton-job');
+    await act(async () => { await job?.props.onCompleted(); });
+    expect(autofillStory).toHaveBeenCalledOnce();
+    expect(replaceFrames).toHaveBeenCalledOnce();
+  });
+
+  it('枠保存が失敗した自動入力は送信せず入力を保持し同じ操作の再試行成功後に受付する', async () => {
+    replaceFrames.mockRejectedValueOnce(new Error('frame validation rejected'));
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    const readingOrder = (): ReactTestRenderer['root'] =>
+      root!.root.findAllByType('field').find((node) => node.props.label === '読み順')!;
+    await act(async () => { readingOrder().props.onChangeText('2'); });
+    const pressPrimary = async (): Promise<void> => {
+      await act(async () => {
+        root!.root.findByProps({ testID: 'page-story-autofill-primary' }).props.onPress();
+        await Promise.resolve();
+      });
+      const confirm = confirmAction.mock.lastCall?.[0] as { onConfirm: () => void };
+      await act(async () => { confirm.onConfirm(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    };
+
+    await pressPrimary();
+    expect(replaceFrames).toHaveBeenCalledOnce();
+    expect(generatePageSkeleton).not.toHaveBeenCalled();
+    expect(autofillStory).not.toHaveBeenCalled();
+    expect(readingOrder().props.value).toBe('2');
+    expect(root!.root.findAllByType('PageErrorRecoveryNotice')).toHaveLength(1);
+
+    await pressPrimary();
+    expect(replaceFrames).toHaveBeenCalledTimes(2);
+    expect(generatePageSkeleton).toHaveBeenCalledOnce();
+    expect(root!.root.findAllByType('PageErrorRecoveryNotice')).toHaveLength(0);
+    const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'skeleton-job');
+    await act(async () => { await job?.props.onCompleted(); });
+    expect(autofillStory).toHaveBeenCalledOnce();
+  });
+
+  it('自動入力前のdraft保存中にscopeが変わった場合は旧scopeへ枠を送らない', async () => {
+    let releasePageSave: ((value: PageRecord) => void) | undefined;
+    action.mockImplementation(() => new Promise<PageRecord>((resolve) => { releasePageSave = resolve; }));
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    const style = root!.root.findAllByType('field').find((node) => node.props.label === '参考にしたい作品・画風')!;
+    const readingOrder = root!.root.findAllByType('field').find((node) => node.props.label === '読み順')!;
+    await act(async () => {
+      style.props.onChangeText('保存待機中の入力');
+      readingOrder.props.onChangeText('2');
+    });
+
+    await act(async () => {
+      root!.root.findAllByType('button').find((node) => node.props.testID === 'page-story-autofill-primary')!.props.onPress();
+      await Promise.resolve();
+    });
+    const confirm = confirmAction.mock.lastCall?.[0] as { onConfirm: () => void };
+    await act(async () => { confirm.onConfirm(); await Promise.resolve(); });
+    expect(action).toHaveBeenCalled();
+
+    currentSessionKey = 'other-user';
+    await act(async () => { root!.update(<PagesScreen />); await Promise.resolve(); });
+    await act(async () => {
+      releasePageSave?.(page);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(replaceFrames).not.toHaveBeenCalled();
+    expect(generatePageSkeleton).not.toHaveBeenCalled();
+  });
+
+  it('ページ切替後に新ページの枠がhydrateされる前は旧ページの枠を保存しない', async () => {
+    const nextPage: PageRecord = { ...page, id: 'next-page', page_number: 2 };
+    queryData.pages = { pages: [{ pages: [page, nextPage] }], pageParams: [null] };
+    screenSelection = { ...screenSelection, pageId: nextPage.id };
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+
+    const frameSave = root!.root.findByProps({ testID: 'frame-save' });
+    expect(frameSave.props.disabled).toBe(true);
+    expect(() => frameSave.props.onPress()).toThrow();
+
+    expect(replaceFrames).not.toHaveBeenCalled();
+  });
+
+  it('枠保存の応答待ちに追加編集した場合は新しい入力を保持してdirtyを解消しない', async () => {
+    let releaseFrameSave: ((value: { frames: PanelFrameRecord[] }) => void) | undefined;
+    replaceFrames.mockImplementationOnce(() =>
+      new Promise<{ frames: PanelFrameRecord[] }>((resolve) => { releaseFrameSave = resolve; })
+    );
+    await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
+    const readingOrder = (): ReactTestRenderer['root'] =>
+      root!.root.findAllByType('field').find((node) => node.props.label === '読み順')!;
+    await act(async () => { readingOrder().props.onChangeText('2'); });
+
+    await act(async () => {
+      root!.root.findByProps({ testID: 'frame-save' }).props.onPress();
+      await Promise.resolve();
+    });
+    await act(async () => { readingOrder().props.onChangeText('3'); });
+    await act(async () => {
+      releaseFrameSave?.({ frames: [{ ...frames[0]!, reading_order: 2 }] });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(replaceFrames).toHaveBeenCalledOnce();
+    expect(replaceFrames.mock.calls[0]?.[1]).toEqual({
+      frames: [expect.objectContaining({ id: 'frame', reading_order: 2 })],
+    });
+    expect(readingOrder().props.value).toBe('3');
+    expect(dirtyRegistration.mock.lastCall?.[0]).toMatchObject({ dirty: true });
   });
 
   it('画像保持capabilityを確認できない旧serverでは既存ページを上書きしない', async () => {

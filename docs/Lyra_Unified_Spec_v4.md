@@ -1009,6 +1009,13 @@ and reject older known revisions. Panel assignment failure after metadata succes
 rebases only the successful data and prevents generation. Frame edits must be
 saved before page generation; layout replacement and deletion preserve drafts
 until a successful, explicitly requested operation.
+Mobile frame updates use a dedicated write DTO containing only the strict route
+fields. The read-only page_id returned by GET is never echoed into PUT. Local
+frame dirtiness is measured against the last hydrated draft baseline, so a server
+refresh alone does not trigger a save before story autofill. Explicit saves capture
+the page, session, workspace and frame values at submission; later edits remain
+local, and completion invalidates the saved page rather than the current selection.
+A frame save failure prevents downstream design/autofill requests.
 Frame records have no server revision field in the current API. The browser
 checks the observed baseline at submission and refetches without adopting a late
 response if that baseline changes. This client check does not add server-side

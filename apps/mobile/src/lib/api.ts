@@ -185,6 +185,20 @@ type StoryCollaborationRequest = StoryCollaborationInput & { language: UiLanguag
 
 export type AiContentReportKind = 'generated_image' | 'story_proposal';
 export type OrganizationSafetyReportTargetKind = 'workspace_content' | 'member';
+export type PanelFrameUpdateInput = Omit<PanelFrameRecord, 'id' | 'page_id'> & {
+  id?: string;
+};
+
+const panelFrameUpdateInput = (frame: PanelFrameUpdateInput): PanelFrameUpdateInput => ({
+  ...(frame.id === undefined ? {} : { id: frame.id }),
+  panel_id: frame.panel_id,
+  vertices: frame.vertices,
+  border_style: frame.border_style,
+  border_width: frame.border_width,
+  border_color: frame.border_color,
+  z_index: frame.z_index,
+  reading_order: frame.reading_order,
+});
 
 export interface AiContentReportReceipt {
   report_id: string;
@@ -1427,12 +1441,12 @@ export class LyraMobileApiClient {
 
   public replaceFrames(
     pageId: string,
-    body: { frames: PanelFrameRecord[] },
+    body: { frames: PanelFrameUpdateInput[] },
     organizationId?: string | null
   ): Promise<{ frames: PanelFrameRecord[] }> {
     return this.request(`/api/pages/${pageId}/frames${organizationQuery(organizationId)}`, framesResponseSchema, {
       method: 'PUT',
-      body
+      body: { frames: body.frames.map(panelFrameUpdateInput) }
     });
   }
 

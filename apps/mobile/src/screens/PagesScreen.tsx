@@ -105,7 +105,7 @@ import {
 import { t } from '@/lib/i18n';
 import { editorMessage } from '@/lib/editorUiMessages';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
-import { ApiError } from '@/lib/api';
+import { ApiError, type PanelFrameUpdateInput } from '@/lib/api';
 import {
   flattenUniqueRecords,
   MOBILE_LIST_PAGE_SIZE,
@@ -164,6 +164,15 @@ interface FrameDraft {
   border_color: string;
   z_index: string;
   reading_order: string;
+}
+
+interface FrameSaveRequest {
+  frames: PanelFrameUpdateInput[];
+  organizationId: string | null;
+  pageId: string;
+  revision: string;
+  scope: string;
+  sessionKey: string;
 }
 
 const nullable = (value: string): string | null => {
@@ -366,9 +375,8 @@ const toFrameDraft = (frame: PanelFrameRecord): FrameDraft => {
   };
 };
 
-const toFrameRecord = (draft: FrameDraft): PanelFrameRecord => ({
+const toFrameUpdateInput = (draft: FrameDraft): PanelFrameUpdateInput => ({
   id: draft.id,
-  page_id: draft.page_id,
   panel_id: draft.panel_id,
   vertices: draft.vertices.slice(0, 4).map((vertex) => ({
     x: clampPreviewCoordinate(numeric(vertex.x, 0)),
@@ -379,6 +387,17 @@ const toFrameRecord = (draft: FrameDraft): PanelFrameRecord => ({
   border_color: isHexColorText(draft.border_color) ? draft.border_color.trim() : '#000000',
   z_index: Math.min(1000, Math.max(0, integer(draft.z_index, 1))),
   reading_order: Math.min(1000, Math.max(1, integer(draft.reading_order, 1)))
+});
+
+const frameRecordToUpdateInput = (frame: PanelFrameRecord): PanelFrameUpdateInput => ({
+  id: frame.id,
+  panel_id: frame.panel_id,
+  vertices: frame.vertices,
+  border_style: frame.border_style,
+  border_width: frame.border_width,
+  border_color: frame.border_color,
+  z_index: frame.z_index,
+  reading_order: frame.reading_order,
 });
 
 const clampPreviewCoordinate = (value: number): number => Math.min(1, Math.max(0, value));
@@ -732,8 +751,8 @@ export function PagesScreen(): React.JSX.Element {
     useState<string | null>(null);
   const [lastSyncedPageId, setLastSyncedPageId] = useState<string | null>(null);
   const [lastSyncedPanelId, setLastSyncedPanelId] = useState<string | null>(null);
-  const [lastSyncedFramePageId, setLastSyncedFramePageId] =
-    useState<string | null>(null);
+  const [lastSyncedFrameScope, setLastSyncedFrameScope] = useState<string | null>(null);
+  const [lastSyncedFrameRevision, setLastSyncedFrameRevision] = useState<string | null>(null);
   const exportAttemptRef = useRef<EpisodeExportAttempt | null>(null);
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
@@ -1112,14 +1131,36 @@ export function PagesScreen(): React.JSX.Element {
       (assignment.action === 'custom' && (assignment.custom_action ?? '').trim().length === 0) ||
       ((assignment.state_id ?? '').trim().length > 0 && !isUuidText(assignment.state_id ?? ''))
     );
+  const frameDraftScope = selectedPage === null
+    ? null
+    : JSON.stringify([sessionKey, organizationId, selectedPage.id]);
+  const frameDraftRevision = JSON.stringify(frameDrafts.map(toFrameUpdateInput));
+  const serverFrameRevision = JSON.stringify(
+    (framesQuery.data?.frames ?? []).map(frameRecordToUpdateInput)
+  );
   const frameValuesDiffer =
-    JSON.stringify(frameDrafts.map(toFrameRecord)) !== JSON.stringify((framesQuery.data?.frames ?? []));
+    lastSyncedFrameRevision !== null && frameDraftRevision !== lastSyncedFrameRevision;
   const framesDirty = editorDraftHasUnsavedChanges({
     hasServerSnapshot: framesQuery.data !== undefined,
-    lastResourceId: lastSyncedFramePageId,
-    resourceId: selectedPage?.id ?? null,
+    lastResourceId: lastSyncedFrameScope,
+    resourceId: frameDraftScope,
     valuesDiffer: frameValuesDiffer
   });
+  const frameDraftSaveReady =
+    selectedPage !== null &&
+    frameDraftScope !== null &&
+    lastSyncedFrameScope === frameDraftScope &&
+    frameDrafts.every((frame) => frame.page_id === selectedPage.id);
+  const latestFrameDraft = useRef({
+    revision: frameDraftRevision,
+    scope: frameDraftScope,
+  });
+  useLayoutEffect(() => {
+    latestFrameDraft.current = {
+      revision: frameDraftRevision,
+      scope: frameDraftScope,
+    };
+  }, [frameDraftRevision, frameDraftScope]);
 
   const discardPageDraft = useCallback((): void => {
     const styleReference = readStyleReference(selectedPage?.layout_config ?? {});
@@ -1149,12 +1190,14 @@ export function PagesScreen(): React.JSX.Element {
   const discardFrameDraft = useCallback((): void => {
     const drafts = (framesQuery.data?.frames ?? []).map(toFrameDraft);
     setFrameDrafts(drafts);
+    setLastSyncedFrameScope(frameDraftScope);
+    setLastSyncedFrameRevision(serverFrameRevision);
     setFrameId((current) =>
       current !== null && drafts.some((frame) => frame.id === current)
         ? current
         : drafts[0]?.id ?? null
     );
-  }, [framesQuery.data?.frames]);
+  }, [frameDraftScope, framesQuery.data?.frames, serverFrameRevision]);
 
   const discardAllPageDrafts = useCallback((): void => {
     discardPageDraft();
@@ -1209,22 +1252,22 @@ export function PagesScreen(): React.JSX.Element {
   }, [lastSyncedPanelId, panelDirty, selectedPanel]);
 
   useEffect(() => {
-    const nextPageId = selectedPage?.id ?? null;
     if (
       !shouldHydrateEditorDraft({
         hasServerSnapshot: framesQuery.data !== undefined,
         hasUnsavedChanges: framesDirty,
-        lastResourceId: lastSyncedFramePageId,
-        resourceId: nextPageId
+        lastResourceId: lastSyncedFrameScope,
+        resourceId: frameDraftScope
       })
     ) {
       return;
     }
-    setLastSyncedFramePageId(nextPageId);
+    setLastSyncedFrameScope(frameDraftScope);
+    setLastSyncedFrameRevision(serverFrameRevision);
     const drafts = (framesQuery.data?.frames ?? []).map(toFrameDraft);
     setFrameDrafts(drafts);
     setFrameId((current) => (current !== null && drafts.some((frame) => frame.id === current) ? current : drafts[0]?.id ?? null));
-  }, [framesDirty, framesQuery.data, lastSyncedFramePageId, selectedPage?.id]);
+  }, [frameDraftScope, framesDirty, framesQuery.data, lastSyncedFrameScope, serverFrameRevision]);
 
   const invalidatePageReadiness = async (): Promise<void> => {
     await queryClient.invalidateQueries({
@@ -1331,7 +1374,8 @@ export function PagesScreen(): React.JSX.Element {
     onSuccess: async () => {
       setLastSyncedPageId(null);
       setLastSyncedPanelId(null);
-      setLastSyncedFramePageId(null);
+      setLastSyncedFrameScope(null);
+      setLastSyncedFrameRevision(null);
       setPageStale(false);
       await Promise.all([
         invalidatePages(),
@@ -1537,12 +1581,66 @@ export function PagesScreen(): React.JSX.Element {
     );
   };
 
+  const createFrameSaveRequest = useCallback((): FrameSaveRequest => {
+    if (
+      selectedPage === null ||
+      frameDraftScope === null ||
+      lastSyncedFrameScope !== frameDraftScope ||
+      frameDrafts.some((frame) => frame.page_id !== selectedPage.id)
+    ) {
+      throw new Error(t(language, "generated.screens.PagesScreen.select.a.page.first.390bc86e"));
+    }
+    const frames = frameDrafts.map(toFrameUpdateInput);
+    return {
+      frames,
+      organizationId,
+      pageId: selectedPage.id,
+      revision: JSON.stringify(frames),
+      scope: frameDraftScope,
+      sessionKey,
+    };
+  }, [frameDraftScope, frameDrafts, language, lastSyncedFrameScope, organizationId, selectedPage, sessionKey]);
+
   const replaceFramesMutation = useMutation({
-    mutationFn: () => api.replaceFrames(selectedPage?.id ?? '', { frames: frameDrafts.map(toFrameRecord) }, organizationId),
-    onSuccess: invalidateFrames
+    mutationFn: (request: FrameSaveRequest) => {
+      if (latestFrameDraft.current.scope !== request.scope) {
+        throw new Error(t(language, 'shared.error.workspacePermission'));
+      }
+      return api.replaceFrames(
+        request.pageId,
+        { frames: request.frames },
+        request.organizationId
+      );
+    },
+    onSuccess: async (_result, request) => {
+      if (
+        latestFrameDraft.current.scope === request.scope &&
+        latestFrameDraft.current.revision === request.revision
+      ) {
+        setLastSyncedFrameScope(request.scope);
+        setLastSyncedFrameRevision(request.revision);
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: framesQueryKey(
+            request.sessionKey,
+            request.pageId,
+            request.organizationId
+          )
+        }),
+        queryClient.invalidateQueries({
+          queryKey: pageGenerationReadinessQueryKey(
+            request.sessionKey,
+            request.pageId,
+            request.organizationId
+          )
+        })
+      ]);
+    }
   });
 
   const saveAllPageDrafts = useCallback(async (): Promise<void> => {
+    const pendingFrameSave = framesDirty ? createFrameSaveRequest() : null;
     if (pageDirty) {
       if (selectedPage === null) {
         throw new Error(t(language, "generated.screens.PagesScreen.select.a.page.to.save.c7125ffd"));
@@ -1562,14 +1660,18 @@ export function PagesScreen(): React.JSX.Element {
         await updatePanelMutation.mutateAsync();
       }
     }
-    if (framesDirty) {
+    if (pendingFrameSave !== null) {
       if (selectedPage === null || frameDraftsInvalid) {
         throw new Error(t(language, "generated.screens.PagesScreen.check.the.frame.values.666cb307"));
       }
-      await replaceFramesMutation.mutateAsync();
+      if (latestFrameDraft.current.scope !== pendingFrameSave.scope) {
+        throw new Error(t(language, 'shared.error.workspacePermission'));
+      }
+      await replaceFramesMutation.mutateAsync(pendingFrameSave);
     }
   }, [
     createPanelMutation,
+    createFrameSaveRequest,
     frameDraftsInvalid,
     framesDirty,
     language,
@@ -1585,7 +1687,7 @@ export function PagesScreen(): React.JSX.Element {
 
   const pageEditorRevision = JSON.stringify({
     pageId: selectedPage?.id ?? null,
-    frameDrafts: frameDrafts.map(toFrameRecord),
+    frameDrafts: frameDrafts.map(toFrameUpdateInput),
     page: {
       continuityNote,
       pagePurpose,
@@ -1985,7 +2087,8 @@ export function PagesScreen(): React.JSX.Element {
   const reloadAfterPageStale = async (): Promise<void> => {
     setLastSyncedPageId(null);
     setLastSyncedPanelId(null);
-    setLastSyncedFramePageId(null);
+    setLastSyncedFrameScope(null);
+    setLastSyncedFrameRevision(null);
     await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
     setPageStale(false);
   };
@@ -2748,7 +2851,7 @@ export function PagesScreen(): React.JSX.Element {
               />
             ) : null}
             {frameDraftsInvalid ? <Notice message={t(language, "generated.screens.PagesScreen.frames.require.four.vertices.coordinates.25a49784")} tone="warning" /> : null}
-            <PrimaryButton disabled={!canEdit || selectedPage === null || frameDrafts.length === 0 || frameDraftsInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : frameDrafts.length === 0 ? t(language, "generated.screens.PagesScreen.no.frames.b75c13aa") : frameDraftsInvalid ? t(language, "generated.screens.PagesScreen.check.frame.values.adb62959") : undefined} label={t(language, 'save')} loading={replaceFramesMutation.isPending} onPress={() => replaceFramesMutation.mutate()} variant="secondary" />
+            <PrimaryButton disabled={!canEdit || selectedPage === null || frameDrafts.length === 0 || frameDraftsInvalid || !frameDraftSaveReady} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : frameDrafts.length === 0 ? t(language, "generated.screens.PagesScreen.no.frames.b75c13aa") : frameDraftsInvalid ? t(language, "generated.screens.PagesScreen.check.frame.values.adb62959") : undefined} label={t(language, 'save')} loading={replaceFramesMutation.isPending} onPress={() => replaceFramesMutation.mutate(createFrameSaveRequest())} testID="frame-save" variant="secondary" />
           </>
         )}
       </Section>
