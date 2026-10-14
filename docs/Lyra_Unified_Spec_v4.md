@@ -903,9 +903,11 @@ controls use the existing native store catalog, verified receipt workflow,
 restore operation and official Apple/Google subscription-management URLs.
 Plans and credit packs are shown separately. Missing or disabled server catalog
 configuration displays disabled purchase actions and a reason; it never grants
-credits or redirects to a different environment. The staging Android package is
-separate from the production package and needs its own store testing configuration
-before a real native checkout can be accepted.
+credits or redirects to a different environment. The staging Android package and
+iOS bundle identifier are separate from production, so both test apps can coexist
+with the published apps. Internal iOS builds target registered physical devices.
+Staging needs its own store testing configuration before a real native checkout
+can be accepted.
 Tutorial content follows the same persisted language without resetting progress.
 The Page editor places one story-autofill action immediately before its page list.
 When there are no pages, it first creates the skeleton without applying the story,

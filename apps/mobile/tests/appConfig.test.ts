@@ -119,9 +119,9 @@ describe('Expo app config', () => {
     });
   });
 
-  // Staging is an independently installable Android app. Its backend and OAuth
+  // Staging is independently installable alongside production on both platforms. Its backend and OAuth
   // identifiers arrive only from explicitly supplied EAS environment values.
-  it('stagingでは独立package・scheme・callbackとstaging App Linkを出力する', () => {
+  it('stagingでは独立package・bundle ID・scheme・callbackとstaging App Linkを出力する', () => {
     process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
     process.env.EXPO_PUBLIC_APP_VARIANT = 'staging';
     process.env.EXPO_PUBLIC_APP_LINK_HOST = 'staging.lyra-editor.test';
@@ -134,6 +134,7 @@ describe('Expo app config', () => {
     expect(createExpoConfig({ config: baseConfig })).toMatchObject({
       name: 'Lyra Mobile Staging',
       scheme: 'lyra-mobile-staging',
+      ios: { bundleIdentifier: 'com.lyra.mobile.staging' },
       android: {
         package: 'com.lyra.mobile.staging',
         intentFilters: [
