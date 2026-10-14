@@ -19,7 +19,7 @@ const CLAIM_SECONDS = 120;
 export class PostgresWorkDeletionRepository implements WorkDeletionRepository {
   private readonly database:DatabaseClient & TransactionRunner;
   public constructor(database:DatabaseClient & TransactionRunner, profile:'canonical'|'legacy_2debe_v1'|'production44_expanded_pg18_v1'='canonical') {
-    const adapt=(client:DatabaseClient):DatabaseClient=>({query:(sql,values)=>client.query(profile==='canonical'?sql:sql.replace(/\bepisode_export_jobs\b/gu,'export_jobs'),values)});
+    const adapt=(client:DatabaseClient):DatabaseClient=>({query:(sql,values)=>client.query(profile==='legacy_2debe_v1'?sql.replace(/\bepisode_export_jobs\b/gu,'export_jobs'):sql,values)});
     this.database={...adapt(database),transaction:work=>database.transaction(client=>work(adapt(client)))};
   }
   public async request(userId: string, workId: string, organizationId: string | null): Promise<WorkDeletionRecord> {

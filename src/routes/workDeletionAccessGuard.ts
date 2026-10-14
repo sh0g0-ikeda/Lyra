@@ -17,7 +17,7 @@ export function createWorkDeletionAccessGuard(database:DatabaseClient&Transactio
   if(seen.has(c)){await next();return;}seen.add(c);
   const segments=c.req.path.replace(/^\/api\/(web\/)?/u,'').split('/');
   const canonicalTable=RESOURCE_TABLES[segments[0]??''];
-  const table=canonicalTable==='episode_export_jobs'&&profile!=='canonical'?'export_jobs':canonicalTable;const id=segments[1];
+  const table=canonicalTable==='episode_export_jobs'&&profile==='legacy_2debe_v1'?'export_jobs':canonicalTable;const id=segments[1];
   if(table===undefined||id===undefined||!UUID.test(id)||(table==='works'&&c.req.method==='DELETE')){await next();return;}
   const user=c.get('user');const organizationId=parseOptionalOrganizationId(c);
   const externalWrite=c.req.method==='POST'&&(
