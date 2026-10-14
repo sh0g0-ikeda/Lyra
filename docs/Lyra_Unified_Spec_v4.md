@@ -851,8 +851,9 @@ these are separate activation blockers, not permissions to weaken constraints.
 
 The production44_expanded_pg18_v1 persistence profile retains the original
 physical page metadata and applies only the pinned forward files 040, 041, 042,
-043, 044, 045, 047 and 048 to the exact observed 44-file lineage. The resulting
-52-file history and all physical catalog definitions must match checkpoint 8.
+043, 044, 045, 047, 048, 049 and 050 to the exact observed 44-file lineage. The
+resulting 54-file history and all physical catalog definitions must match
+checkpoint 10.
 File 046 is excluded. No table/column rename, removal, data rewrite or automatic
 legacy admission is part of this expansion. The explicit
 scripts/expandProduction44Schema.ts command verifies a known checkpoint,
