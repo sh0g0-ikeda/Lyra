@@ -89,9 +89,11 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
 class FakePlanner implements PageGenerationPlannerPort {
   public calls = 0;
   public output = 'planner-output';
+  public inputs: PageGenerationPlanInput[] = [];
 
-  public async buildPlan(_input: PageGenerationPlanInput): Promise<string> {
+  public async buildPlan(input: PageGenerationPlanInput): Promise<string> {
     this.calls += 1;
+    this.inputs.push(input);
     return this.output;
   }
 }
@@ -630,6 +632,83 @@ describe('PageGenerationWorkerService', () => {
     expect(renderer.calls[0]?.prompt).toBe('page-prompt-compiled');
   });
 
+  it('compiler が named style lock を省略した場合は planner と provider の最終 prompt に一度だけ復元する', async () => {
+    const requiredStyleLock = 'Named style reference constraint: "AKIRA". Exact required style block.';
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.claimedJob = buildJob({
+      generationMode: 'thinking',
+      params: {
+        ...buildJob().params,
+        generation_mode: 'thinking',
+        requires_planner: true,
+      },
+    });
+    const promptBuilder = new FakePromptBuilder();
+    promptBuilder.builtPrompt = {
+      ...promptBuilder.builtPrompt,
+      draftPrompt: `page-prompt-draft\n\n${requiredStyleLock}`,
+      compilerBrief: `[TASK]\npage compiler brief\n\n[GLOBAL STYLE]\n${requiredStyleLock}\n\n[REFERENCE IMAGE ROLES]\nNo image reference is attached.`,
+    };
+    const promptCompiler = new FakePromptCompiler();
+    promptCompiler.compiledPromptText = 'page-prompt-compiled without named style';
+    const planner = new FakePlanner();
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      promptBuilder,
+      promptCompiler,
+      new FakeInputImageBuilder(),
+      planner,
+      renderer,
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    await service.processJob('job-1');
+
+    const providerPrompt = renderer.calls[0]?.prompt ?? '';
+    expect(promptCompiler.calls).toBe(1);
+    expect(planner.calls).toBe(1);
+    expect(renderer.calls).toHaveLength(1);
+    expect(providerPrompt).toBe(`page-prompt-compiled without named style\n\n${requiredStyleLock}`);
+    expect(providerPrompt.split(requiredStyleLock).length - 1).toBe(1);
+    expect(planner.inputs[0]?.prompt).toBe(providerPrompt);
+    expect(executionRepository.completionInput?.promptMetadata.compiledPrompt).toBe(providerPrompt);
+    expect(executionRepository.completionInput?.promptMetadata).not.toHaveProperty('requiredStyleLock');
+  });
+
+  it('compiler が完全な named style lock を保持した場合は provider prompt に重複させない', async () => {
+    const requiredStyleLock = 'Named style reference constraint: "AKIRA". Exact required style block.';
+    const executionRepository = new FakeExecutionRepository();
+    const promptBuilder = new FakePromptBuilder();
+    promptBuilder.builtPrompt = {
+      ...promptBuilder.builtPrompt,
+      draftPrompt: `page-prompt-draft\n\n${requiredStyleLock}`,
+      compilerBrief: `[TASK]\npage compiler brief\n\n[GLOBAL STYLE]\n${requiredStyleLock}\n\n[REFERENCE IMAGE ROLES]\nNo image reference is attached.`,
+    };
+    const promptCompiler = new FakePromptCompiler();
+    promptCompiler.compiledPromptText = `page-prompt-compiled\n\n${requiredStyleLock}`;
+    const renderer = new FakeRenderer();
+    const service = new PageGenerationWorkerService(
+      executionRepository,
+      promptBuilder,
+      promptCompiler,
+      new FakeInputImageBuilder(),
+      new FakePlanner(),
+      renderer,
+      new FakeStorage(),
+      new FakeCreditService(),
+    );
+
+    await service.processJob('job-1');
+
+    const providerPrompt = renderer.calls[0]?.prompt ?? '';
+    expect(promptCompiler.calls).toBe(1);
+    expect(renderer.calls).toHaveLength(1);
+    expect(providerPrompt).toBe(`page-prompt-compiled\n\n${requiredStyleLock}`);
+    expect(providerPrompt.split(requiredStyleLock).length - 1).toBe(1);
+  });
+
   it('planner 出力が長すぎる場合は短くして render に渡す', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.claimedJob = buildJob({
@@ -857,13 +936,20 @@ describe('PageGenerationWorkerService', () => {
 
   it('compiler の設定系失敗時は draft prompt に fallback する', async () => {
     const executionRepository = new FakeExecutionRepository();
+    const requiredStyleLock = 'Named style reference constraint: "AKIRA". Exact required style block.';
+    const promptBuilder = new FakePromptBuilder();
+    promptBuilder.builtPrompt = {
+      ...promptBuilder.builtPrompt,
+      draftPrompt: `page-prompt-draft\n\n${requiredStyleLock}`,
+      compilerBrief: `[TASK]\npage compiler brief\n\n[GLOBAL STYLE]\n${requiredStyleLock}\n\n[REFERENCE IMAGE ROLES]\nNo image reference is attached.`,
+    };
     const promptCompiler = new FakePromptCompiler();
     promptCompiler.shouldFail = true;
     promptCompiler.failWithConfigurationError = true;
     const renderer = new FakeRenderer();
     const service = new PageGenerationWorkerService(
       executionRepository,
-      new FakePromptBuilder(),
+      promptBuilder,
       promptCompiler,
       new FakeInputImageBuilder(),
       new FakePlanner(),
@@ -874,9 +960,10 @@ describe('PageGenerationWorkerService', () => {
 
     await service.processJob('job-1');
 
-    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft');
+    expect(renderer.calls[0]?.prompt).toBe(`page-prompt-draft\n\n${requiredStyleLock}`);
+    expect((renderer.calls[0]?.prompt ?? '').split(requiredStyleLock).length - 1).toBe(1);
     expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
-      compiledPrompt: 'page-prompt-draft',
+      compiledPrompt: `page-prompt-draft\n\n${requiredStyleLock}`,
       compiledPromptUsed: false,
       promptCompilerProvider: 'none',
       compilerModel: null,
@@ -953,13 +1040,21 @@ describe('PageGenerationWorkerService', () => {
 
   it('required visual lock がある場合は prompt compiler を呼ばず draft prompt を使う', async () => {
     const executionRepository = new FakeExecutionRepository();
+    const requiredStyleLock = 'Named style reference constraint: "AKIRA". Exact required style block.';
     const promptBuilder = new FakePromptBuilder();
     promptBuilder.builtPrompt = {
       workId: 'work-1',
-      draftPrompt: 'page-prompt-draft with Aki and Rin on the rooftop in a wide front shot',
+      draftPrompt: `page-prompt-draft with Aki and Rin on the rooftop in a wide front shot\n\n${requiredStyleLock}`,
       compilerBrief: [
         '[TASK]',
         'page compiler brief',
+        '',
+        '[GLOBAL STYLE]',
+        requiredStyleLock,
+        '',
+        '[REFERENCE IMAGE ROLES]',
+        'No image reference is attached.',
+        '',
         '[PANEL INSTRUCTIONS]',
         '- Visual lock: Visual lock for panel 1: subjects=Aki|Rin; shot=wide; angle=front; background cue="school rooftop at night".',
       ].join('\n'),
@@ -982,9 +1077,12 @@ describe('PageGenerationWorkerService', () => {
     await service.processJob('job-1');
 
     expect(promptCompiler.calls).toBe(0);
-    expect(renderer.calls[0]?.prompt).toBe('page-prompt-draft with Aki and Rin on the rooftop in a wide front shot');
+    expect(renderer.calls[0]?.prompt).toBe(
+      `page-prompt-draft with Aki and Rin on the rooftop in a wide front shot\n\n${requiredStyleLock}`,
+    );
+    expect((renderer.calls[0]?.prompt ?? '').split(requiredStyleLock).length - 1).toBe(1);
     expect(executionRepository.completionInput?.promptMetadata).toMatchObject({
-      compiledPrompt: 'page-prompt-draft with Aki and Rin on the rooftop in a wide front shot',
+      compiledPrompt: `page-prompt-draft with Aki and Rin on the rooftop in a wide front shot\n\n${requiredStyleLock}`,
       compiledPromptUsed: false,
       promptCompilerProvider: 'none',
       compilerModel: null,

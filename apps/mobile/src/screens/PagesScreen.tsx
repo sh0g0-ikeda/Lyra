@@ -72,7 +72,9 @@ import { canDisplayMobileImage, imageAccessNotice } from '@/domain/imageAccess';
 import { canUseMobilePageImage, mobilePageExportCandidates } from '@/domain/mobilePageImageAccess';
 import { buildEpisodeExportPayload } from '@/domain/pageExport';
 import { createSafeLayoutTemplatePayload, selectExcessPanels } from '@/domain/pageSafety';
-import { initialPageAndPanel, selectPageForEpisode } from '@/domain/pageSelection';
+import { adjacentPage, initialPageAndPanel, selectPageForEpisode } from '@/domain/pageSelection';
+import { usePagePanelSelection } from '@/hooks/usePagePanelSelection';
+import { PageSwipeNavigator } from '@/components/PageSwipeNavigator';
 import {
   buildFullPageImageSources,
   buildPageThumbnailImageSources
@@ -698,7 +700,6 @@ export function PagesScreen(): React.JSX.Element {
   const [panelId, setPanelId] = useState<string | null>(null);
   const initialSelectionScopeRef = useRef<string | null>(null);
   const currentInitialSelectionScopeRef = useRef<string | null>(null);
-  const pendingInitialPanelPageRef = useRef<string | null>(null);
   const [panelRole, setPanelRole] = useState<PanelRecord['panel_role']>('action');
   const [panelSize, setPanelSize] = useState<PanelRecord['panel_size']>('standard');
   const [situationText, setSituationText] = useState('');
@@ -750,6 +751,8 @@ export function PagesScreen(): React.JSX.Element {
   const pageWorkflowScope = JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, selection.pageId]);
   const latestPageWorkflowScope = useRef(pageWorkflowScope);
   const pageQuoteIntent = useRef(0);
+  const [pageNavigationLookup, setPageNavigationLookup] = useState<{ scope: string; loading: boolean; error: boolean } | null>(null);
+  const pageNavigationIntent = useRef(0);
   const [nextPageLookup, setNextPageLookup] = useState<{ scope: string; error: boolean; loading: boolean } | null>(null);
   useLayoutEffect(() => {
     latestPageWorkflowScope.current = pageWorkflowScope;
@@ -817,7 +820,6 @@ export function PagesScreen(): React.JSX.Element {
     if (selection.pageId !== null) {
       if (selectedPage === null) return;
       initialSelectionScopeRef.current = initialPageSelectionScope;
-      pendingInitialPanelPageRef.current = selectedPage.id;
       setPanelId(null);
       return;
     }
@@ -825,12 +827,11 @@ export function PagesScreen(): React.JSX.Element {
     const target = initialPageAndPanel(pages, []);
     if (target.pageId === null) return;
     initialSelectionScopeRef.current = initialPageSelectionScope;
-    pendingInitialPanelPageRef.current = target.pageId;
     setPanelId(null);
     const scope = initialPageSelectionScope;
     void updateSelection({ pageId: target.pageId }).then((changed) => {
-      if (!changed || currentInitialSelectionScopeRef.current !== scope) {
-        if (pendingInitialPanelPageRef.current === target.pageId) pendingInitialPanelPageRef.current = null;
+      if (!changed && currentInitialSelectionScopeRef.current === scope) {
+        initialSelectionScopeRef.current = null;
       }
     });
   }, [activeEpisodeId, initialPageSelectionScope, pages, pagesQuery.isSuccess, selectedPage, selection.pageId, updateSelection]);
@@ -1025,12 +1026,14 @@ export function PagesScreen(): React.JSX.Element {
     () => panelsQuery.data?.panels.find((panel) => panel.id === panelId) ?? null,
     [panelId, panelsQuery.data?.panels]
   );
-  useEffect(() => {
-    if (pendingInitialPanelPageRef.current !== selectedPage?.id || !panelsQuery.isSuccess) return;
-    const target = initialPageAndPanel([selectedPage], panelsQuery.data?.panels ?? []);
-    pendingInitialPanelPageRef.current = null;
-    setPanelId(target.panelId);
-  }, [panelsQuery.data?.panels, panelsQuery.isSuccess, selectedPage]);
+  usePagePanelSelection({
+    page: selectedPage,
+    selectionScope: initialPageSelectionScope,
+    panels: panelsQuery.data?.panels,
+    panelsLoaded: panelsQuery.isSuccess,
+    panelsFetching: panelsQuery.isFetching,
+    onSelect: setPanelId,
+  });
 
   const selectedFrame = useMemo(
     () => frameDrafts.find((frame) => frame.id === frameId) ?? null,
@@ -2035,13 +2038,36 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const switchPage = (pageId: string): void => {
-    void updateSelection({ pageId }).then((changed) => {
-      if (changed) {
-        setPanelId(null);
+  const switchPage = useCallback((pageId: string): void => {
+    // The page-scoped hook initializes after authoritative data, including cache hits.
+    void updateSelection({ pageId });
+  }, [updateSelection]);
+  const { hasNextPage: hasMorePages, fetchNextPage: fetchMorePages } = pagesQuery;
+  const movePage = useCallback((direction: -1 | 1): void => {
+    if (selectedPage === null || activeEpisodeId === null || (pageNavigationLookup?.scope === pageWorkflowScope && pageNavigationLookup.loading)) return;
+    const target = adjacentPage(pages, selectedPage.id, direction);
+    if (target !== null) { switchPage(target.id); return; }
+    const selectedIsLoaded = pages.some((page) => page.id === selectedPage.id);
+    if (selectedIsLoaded && (direction === -1 || !hasMorePages)) return;
+    const scope = pageWorkflowScope;
+    const selectedId = selectedPage.id;
+    const episodeId = activeEpisodeId;
+    const intent = ++pageNavigationIntent.current;
+    setPageNavigationLookup({ scope, loading: true, error: false });
+    const candidates = selectedIsLoaded
+      ? fetchMorePages({ throwOnError: true }).then((result) => flattenUniqueRecords(result.data?.pages.map((page) => page.pages) ?? []))
+      : api.getPages(episodeId, organizationId).then((result) => result.pages);
+    void candidates.then((records) => {
+      if (latestPageWorkflowScope.current !== scope || pageNavigationIntent.current !== intent) return;
+      const next = adjacentPage(records.filter((page) => page.episode_id === episodeId), selectedId, direction);
+      setPageNavigationLookup({ scope, loading: false, error: false });
+      if (next !== null) switchPage(next.id);
+    }).catch(() => {
+      if (latestPageWorkflowScope.current === scope && pageNavigationIntent.current === intent) {
+        setPageNavigationLookup({ scope, loading: false, error: true });
       }
     });
-  };
+  }, [selectedPage, activeEpisodeId, pageNavigationLookup, pageWorkflowScope, pages, switchPage, hasMorePages, fetchMorePages, api, organizationId]);
 
   const previewPage = (pageId: string): void => {
     const page = pages.find((candidate) => candidate.id === pageId);
@@ -2550,6 +2576,14 @@ export function PagesScreen(): React.JSX.Element {
       />
 
       <Section collapsible persistKey="pages:list" title={editorMessage(language, 'pageList')} subtitle={editorMessage(language, 'pageListHelp')}>
+        {selectedPage === null ? null : <PageSwipeNavigator
+          currentPageNumber={selectedPage.page_number} language={language} onMove={movePage}
+          canPrevious={adjacentPage(pages, selectedPage.id, -1) !== null || !pages.some((page) => page.id === selectedPage.id)}
+          canNext={adjacentPage(pages, selectedPage.id, 1) !== null || pagesQuery.hasNextPage || !pages.some((page) => page.id === selectedPage.id)}
+          loading={pageNavigationLookup?.scope === pageWorkflowScope && pageNavigationLookup.loading}
+        />}
+        {pageNavigationLookup?.scope === pageWorkflowScope && pageNavigationLookup.error
+          ? <Notice tone="warning" message={t(language, 'navigation.pageLoadFailed')} /> : null}
         <PageThumbnailPicker
           emptyLabel={t(language, 'emptyPages')}
           hasNextPage={pagesQuery.hasNextPage}
@@ -2586,7 +2620,6 @@ export function PagesScreen(): React.JSX.Element {
             await invalidatePageDesignResources();
             if (currentInitialSelectionScopeRef.current !== completionScope) return;
             initialSelectionScopeRef.current = null;
-            pendingInitialPanelPageRef.current = null;
             setPanelId(null);
             const cleared = await updateSelection({ pageId: null }, { skipDirtyCheck: true });
             if (!cleared || currentInitialSelectionScopeRef.current !== completionScope) {

@@ -54,6 +54,7 @@ vi.mock('@/components/WorkspaceContextPicker', () => ({
 vi.mock('@/screens/StoryScreen', () => ({
   StoryScreen: ({ onOpenCharacters }: { onOpenCharacters: () => void }) => React.createElement('story', { onOpenCharacters })
 }));
+vi.mock('@/components/MangaReader', () => ({ MangaReader: () => React.createElement('manga-reader') }));
 vi.mock('@/screens/CharactersScreen', () => ({
   CharactersScreen: (props: Record<string, unknown>) => {
     React.useEffect(() => {
@@ -177,12 +178,13 @@ describe('漫画制作ナビゲーション', () => {
     expect(hiddenStory?.props.importantForAccessibility).toBe('no-hide-descendants');
   });
 
-  it('漫画内キャラクターとアセットは同時に同じdirty editorを登録しない', async () => {
+  it('編集内のキャラクターと漫画閲覧は同時にdirty editorを登録しない', async () => {
     episode.story_full_draft = '本文';
     await render(); await resume();
     expect(activeCharacterEditors).toBe(1);
     await render(false);
-    expect(activeCharacterEditors).toBe(1);
+    expect(activeCharacterEditors).toBe(0);
+    expect(root?.root.findAllByType('manga-reader')).toHaveLength(1);
     await render(true);
     expect(activeCharacterEditors).toBe(1);
     expect(maxCharacterEditors).toBe(1);

@@ -95,10 +95,10 @@ describe('MainTabs dirty-state guard', () => {
     resolveDirtyEditors.mockReset();
   });
 
-  it('閲覧権限がある場合は漫画・アセット・マイページ・ガイドの4タブを表示する', async () => {
+  it('閲覧権限がある場合は編集・アセット・マイページ・ガイドの4タブを表示する', async () => {
     await act(async () => { create(<MainTabs />); });
     expect(screenProps.map((screen) => screen.name)).toEqual(['Story', 'Characters', 'Account', 'Guide']);
-    expect(screenProps.map((screen) => screen.options.title)).toEqual(['漫画', 'アセット', 'マイページ', 'ガイド']);
+    expect(screenProps.map((screen) => screen.options.title)).toEqual(['編集', 'アセット', 'マイページ', 'ガイド']);
     expect(navigatorProps?.screenOptions?.tabBarStyle).toMatchObject({ height: 106, paddingBottom: 43 });
   });
 
@@ -173,10 +173,10 @@ describe('MainTabs dirty-state guard', () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(resolveDirtyEditors).not.toHaveBeenCalled();
   });
-  it('英語ではManga・Assets・My Page・Guideを表示する', async () => {
+  it('英語ではEdit・Assets・My Page・Guideを表示する', async () => {
     language = 'en';
     await act(async () => { create(<MainTabs />); });
-    expect(screenProps.map((screen) => screen.options.title)).toEqual(['Manga', 'Assets', 'My Page', 'Guide']);
+    expect(screenProps.map((screen) => screen.options.title)).toEqual(['Edit', 'Assets', 'My Page', 'Guide']);
   });
 
   it('連続タップ後に未保存確認が完了した場合は最後のタブ要求だけを適用する', async () => {

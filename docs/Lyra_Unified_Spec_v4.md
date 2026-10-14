@@ -121,6 +121,19 @@ Balloon create, update, and automatic replacement share the Page row lock and
 recheck the complete ordered Panel-ID snapshot plus order-reference bounds before
 writing, so they cannot recreate a stale reference during a structure command.
 
+Mobile Assets is a read-only manga library: works lead to chapter headings and a
+flat episode list whose titles are the saved episode titles. Chapter ordinals and
+work-wide episode ordinals are derived from the current chapter/episode order,
+including insertion and reorder, without changing identifiers or persisted order.
+The reader keeps its selection separate from editing, provides horizontal
+right-to-left paging and vertical reading with the current page preserved, and
+allows adjacent episodes across chapter boundaries. Incomplete chapter or page
+queries are reported rather than silently renumbered or truncated. Images use
+view-authorized short-lived HTTPS CDN URLs only; reading never invokes export or
+forwards API credentials to the CDN. A failed image can refresh its page URL once
+automatically per authenticated scope and image revision, then requires an
+explicit read retry. Unavailable or ungenerated pages remain visible placeholders.
+
 Images are stored by opaque S3 keys. User input is not interpolated into storage
 paths. Database responses may contain stable image metadata, while production image
 delivery uses authenticated export or short-lived CloudFront signed URLs.
@@ -576,6 +589,12 @@ zero-credit and atomic-save boundaries. Mobile uses automatic state application
 without an opt-in/overwrite checkbox or missing-state creation instructions when
 capability is advertised. Other job retry flows are unchanged.
 
+Mobile page editing provides a dedicated horizontal swipe surface and accessible
+previous/next controls. Switching pages initializes the new page's first saved
+panel only after page-scoped data is available; a refetched empty cache is not an
+authoritative empty page. Vertical scrolling, text entry, cancelled gestures,
+multi-touch and pagination boundaries do not change the page.
+
 Mobile page management initially selects the first page and its first panel after
 the current episode's data becomes available. A newly completed story-autofill run
 also selects that initial editable panel. Routine query refreshes must not reset
@@ -613,6 +632,16 @@ Legacy note-only state assignments resolving to the same base reference image
 share one billable image, prompt label, snapshot reference, and attachment.
 Distinct confirmed variant images remain separate. Authorization and freshness
 checks apply to every original assignment before this canonicalization.
+
+Named page style references retain their bounded title, compiled interpretation,
+rendering anchors and user notes. Visual style takes priority over generic
+rendering defaults while character identity/reference mapping, authored story
+and dialogue, panel order/count/layout, camera and composition remain fixed.
+After prompt compilation, the worker deterministically restores the complete
+named style section from the existing immutable compiler brief if omitted and
+keeps an exact section only once. Direct draft and fallback paths retain their
+existing style section; this does not add a provider call, audit, quote field or
+new persisted contract.
 
 ## 7. Credits and billing
 

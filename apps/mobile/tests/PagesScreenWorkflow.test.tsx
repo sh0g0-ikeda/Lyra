@@ -19,7 +19,7 @@ const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl, confirmAct
 const api = { updatePage: action, updatePanel: action, generatePage: action, generatePageSkeleton, autofillEpisodePagesFromStory: autofillStory, replaceFrames };
 let root: ReactTestRenderer | undefined;
 vi.mock('@react-navigation/native', () => ({ useNavigation: () => ({ navigate: action }), useIsFocused: () => true }));
-vi.mock('react-native', () => ({ Keyboard: { dismiss: vi.fn() }, Linking: { openURL: openUrl }, Modal: 'modal', Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
+vi.mock('react-native', () => ({ PanResponder: { create: () => ({ panHandlers: {} }) }, Keyboard: { dismiss: vi.fn() }, Linking: { openURL: openUrl }, Modal: 'modal', Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
 vi.mock('expo-image', () => ({ Image: { prefetch: vi.fn().mockResolvedValue(true) } }));
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries, setQueryData: vi.fn() }),
