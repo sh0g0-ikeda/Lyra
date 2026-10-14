@@ -64,6 +64,10 @@
       "supportsTablet": true,
       "bundleIdentifier": "jp.lyra.mobile",
       "infoPlist": {
+        "CFBundleLocalizations": [
+          "ja",
+          "en"
+        ],
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。",
         "NSPhotoLibraryAddUsageDescription": "作成した画像を端末の写真ライブラリへ保存します。"

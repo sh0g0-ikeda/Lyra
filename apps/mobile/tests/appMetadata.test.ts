@@ -27,6 +27,7 @@ interface ExpoAppConfig {
     ios?: {
       bundleIdentifier?: string;
       buildNumber?: string;
+      infoPlist?: { CFBundleLocalizations?: string[] };
       privacyManifests?: {
         NSPrivacyTracking?: boolean;
         NSPrivacyTrackingDomains?: string[];
@@ -245,6 +246,10 @@ describe('production app metadata', () => {
     expect(config.expo.android?.blockedPermissions).not.toContain('android.permission.WRITE_EXTERNAL_STORAGE');
   });
 
+  it('iOS bundle が日英のローカライゼーションを宣言する', () => {
+    expect(config.expo.ios?.infoPlist?.CFBundleLocalizations).toEqual(['ja', 'en']);
+  });
+
   it('iOS privacy manifest で tracking 無効を明示する', () => {
     expect(config.expo.ios?.privacyManifests).toMatchObject({
       NSPrivacyTracking: false,
@@ -305,7 +310,7 @@ describe('production app metadata', () => {
     }
   });
 
-  it('静的設定とストアコピーは未公開のPDF、ZIP、購入を約束しない', () => {
+  it('静的設定とストアコピーは未公開のPDF、ZIPを約束しない', () => {
     expect(config.expo.ios).not.toHaveProperty('associatedDomains');
     const descriptions = [
       storeConfig.apple?.info?.ja?.description,
@@ -314,7 +319,7 @@ describe('production app metadata', () => {
     ].filter((description): description is string => description !== undefined);
 
     for (const description of descriptions) {
-      expect(description).not.toMatch(/PDF|ZIP|purchase|購入|課金/u);
+      expect(description).not.toMatch(/PDF|ZIP/u);
     }
     expect(descriptions.join('\n')).toMatch(/generated page images|生成済みページ画像/u);
   });

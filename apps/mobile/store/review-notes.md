@@ -3,16 +3,17 @@
 ## Product scope
 
 Lyra Mobile is a manga creation editor. Users organize stories, characters,
-pages, panels, dialogue, and user-selected reference images. AI operations are
-always user initiated. Generated results can be reviewed and edited before
-confirmation.
+pages, panels, dialogue, and user-selected reference images in personal or
+organization workspaces.
 
 ## Accounts and deletion
 
-The app uses Amazon Cognito. Account deletion starts in Account > Delete
-account. The preflight screen shows personal data, sole-owner organizations,
-active personal subscriptions, and confirmed personal assets. A user who is
-the only owner of an organization must transfer ownership first.
+The app uses Amazon Cognito. To delete an account, open My Page (Account) >
+Delete account. The app requires Cognito reauthentication, then shows a
+preflight summary of the deletion effects, including personal data,
+sole-owner organizations, active personal subscriptions, and confirmed
+personal assets. A user who is the only owner of an organization must transfer
+ownership first. The user must enter DELETE to start deletion.
 
 ## Billing
 
@@ -32,22 +33,13 @@ A browser return URL is never accepted as proof of payment.
 
 ## User-generated content
 
-Users can create text and select their own images. Story content is user
-directed; the age-rating answers must reflect the submitted app and current
-store questionnaire. Illegal content, exploitation, infringement,
-and security abuse are prohibited by the terms. AI operations show the data
-recipient and request consent before sending story settings or images to
-OpenAI. StoryAI proposals and generated-image previews include an in-app
-"Report AI-generated content" action. The authenticated Lyra API records a
-receipt containing only a fixed category, reason, opaque account ID, and opaque
-content record ID; no story text, prompt, image, token, or email is attached.
-Organization members can also report inappropriate workspace content or a member
-from Organization management. Those reports require active membership and contain
-only the organization ID, reporter's opaque account ID, a fixed target category,
-and a receipt ID. An authorized safety operator uses the reporter account to follow
-up and identify the exact target without putting content into the initial report.
-The app requires affirmative acceptance of the current Terms and
-Privacy Policy before any authenticated editing or upload feature is available.
+Users can create story text and select their own reference images. Before an
+AI generation sends entered story settings or a selected character image, the
+confirmation message identifies OpenAI as the AI-processing recipient and asks
+the user to continue. Generated image previews and StoryAI proposals include a
+Report AI-generated content action; the user confirms before the report is
+submitted. The app links to its Terms and Privacy Policy from the account
+experience.
 
 ## Privacy
 
@@ -56,6 +48,3 @@ Privacy Policy before any authenticated editing or upload feature is available.
 - Terms: https://app.lyra-editor.com/terms.html
 - Support: https://app.lyra-editor.com/support.html
 - Contact: lyra.japan.official@gmail.com
-
-Do not place reviewer credentials in this file. Add them only through the
-store's protected review-credential fields.
