@@ -320,7 +320,7 @@ export function resolveWorkerDependencies(
     ?? (env.S3_BUCKET_IMAGES !== undefined && importClient !== null ? new QuotedImportWorkerService(
       db,
       new S3EntityReferenceUploadStorage(createPageImageStorageClient(env.AWS_REGION), {
-        bucketName: env.S3_BUCKET_IMAGES, cdnBaseUrl: env.IMAGES_CDN_BASE_URL,
+        bucketName: env.S3_BUCKET_IMAGES, cdnBaseUrl: resolveS3ImageStorageCdnBaseUrl(),
         uploadUrlTtlSeconds: ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS,
       }),
       new OpenAIEntityImportAnalyzer(importClient),
