@@ -109,8 +109,8 @@ function ReaderPageImage({ height, language, organizationId, page, sessionKey, w
   );
 }
 
-function ReaderButton({ label, onPress, disabled = false, large = false, fill = false }: { label: string; onPress: () => void; disabled?: boolean; large?: boolean; fill?: boolean }): React.JSX.Element {
-  return <Pressable accessibilityLabel={label} accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, large ? styles.largeButton : null, fill ? styles.fillButton : null, disabled ? styles.disabledButton : null]}><Text style={[styles.buttonText, large ? styles.largeButtonText : null]}>{label}</Text></Pressable>;
+function ReaderButton({ label, onPress, disabled = false, large = false, fill = false, primary = false }: { label: string; onPress: () => void; disabled?: boolean; large?: boolean; fill?: boolean; primary?: boolean }): React.JSX.Element {
+  return <Pressable accessibilityLabel={label} accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.button, large ? styles.largeButton : null, fill ? styles.fillButton : null, primary ? styles.primaryButton : null, disabled ? styles.disabledButton : null]}><Text style={[styles.buttonText, large ? styles.largeButtonText : null, primary ? styles.primaryButtonText : null]}>{label}</Text></Pressable>;
 }
 
 function chapterHeading(language: UiLanguage, number: number, title: string | null): string {
@@ -195,16 +195,6 @@ function MangaEpisodeReader({ episode, onClose, onOpenEpisode, readingOrder }: M
     list?.scrollToOffset({ animated: false, offset: Math.max(0, index) * extent });
   }, [mode, viewport.height, viewport.width]);
 
-  const movePage = useCallback((direction: 'next' | 'previous'): void => {
-    const nextIndex = activeIndex + (direction === 'next' ? 1 : -1);
-    const candidate = pages[nextIndex];
-    if (candidate === undefined) return;
-    activeIndexRef.current = nextIndex;
-    setFocusedPageId(candidate.id);
-    const list = mode === 'rtl' ? horizontalListRef.current : verticalListRef.current;
-    list?.scrollToIndex({ index: nextIndex, animated: true });
-  }, [activeIndex, mode, pages]);
-
   const renderPage = useCallback(({ item }: { item: PageRecord }): React.JSX.Element => (
     <View style={{ height: viewport.height, width: viewport.width }}>
       <ReaderPageImage
@@ -223,9 +213,11 @@ function MangaEpisodeReader({ episode, onClose, onOpenEpisode, readingOrder }: M
       <StatusBar backgroundColor={colors.canvas} barStyle="light-content" />
       <View style={styles.readerShell}>
       <View style={styles.readerHeader}>
-        <ReaderButton label={readerMessage(language, 'close')} onPress={onClose} />
+        <View style={styles.readerControls}>
+          <ReaderButton large primary label={readerMessage(language, 'close')} onPress={onClose} />
+          <ReaderButton large label={mode === 'rtl' ? readerMessage(language, 'vertical') : readerMessage(language, 'horizontalRtl')} onPress={() => setMode((current) => current === 'rtl' ? 'vertical' : 'rtl')} />
+        </View>
         <Text accessibilityRole="header" style={styles.readerTitle}>{readerMessage(language, 'workTotalEpisode', { number: episode.displayOrdinal })}</Text>
-        <ReaderButton large label={mode === 'rtl' ? readerMessage(language, 'vertical') : readerMessage(language, 'horizontalRtl')} onPress={() => setMode((current) => current === 'rtl' ? 'vertical' : 'rtl')} />
       </View>
       <Text style={styles.chapterTitle}>{chapterHeading(language, episode.chapterOrdinal, episode.chapterTitle)}</Text>
       <Text style={styles.episodeTitle}>{episode.episode.title?.trim() || readerMessage(language, 'episodeFallback')}</Text>
@@ -265,7 +257,7 @@ function MangaEpisodeReader({ episode, onClose, onOpenEpisode, readingOrder }: M
         />
         )}
       </View>
-      {mode === 'rtl' ? <View style={styles.pageActions}><ReaderButton disabled={activeIndex <= 0} label={readerMessage(language, 'previousPage')} onPress={() => movePage('previous')} /><ReaderButton disabled={activeIndex >= pages.length - 1} label={readerMessage(language, 'nextPage')} onPress={() => movePage('next')} /></View> : null}
+      {mode === 'rtl' ? <Text style={styles.swipeHint}>{readerMessage(language, 'swipeHint')}</Text> : null}
       {pagesQuery.isFetchingNextPage ? <Text style={styles.loadingText}>{readerMessage(language, 'loadingMorePages')}</Text> : null}
       {pagesQuery.isFetchNextPageError ? (
         <View style={styles.inlineError}>
@@ -326,7 +318,7 @@ export function MangaReader(): React.JSX.Element {
   if (selectedEpisode !== null) return <MangaEpisodeReader key={selectedEpisode.episodeId} episode={selectedEpisode} onClose={() => setSelectedEpisodeId(null)} onOpenEpisode={setSelectedEpisodeId} readingOrder={readingOrder} />;
   if (selectedWork !== null) return (
     <Screen chrome="language" title={selectedWork.title} testID="manga-reader-episodes">
-      <ReaderButton label={readerMessage(language, 'close')} onPress={() => setSelectedWorkId(null)} />
+      <ReaderButton large primary label={readerMessage(language, 'close')} onPress={() => setSelectedWorkId(null)} />
       {chaptersQuery.isPending ? <ActivityIndicator color={colors.primary} /> : null}
       {chaptersQuery.isError ? <ReaderButton label={readerMessage(language, 'retry')} onPress={() => { void chaptersQuery.refetch(); }} /> : null}
       {episodeQueriesPending ? <Text style={styles.loadingText}>{readerMessage(language, 'loadingEpisodes')}</Text> : null}
@@ -358,10 +350,13 @@ export function MangaReader(): React.JSX.Element {
 const styles = StyleSheet.create({
   button: { backgroundColor: colors.surface, borderColor: colors.controlBorder, borderRadius: radius.sm, borderWidth: 1, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
   buttonText: { ...textStyles.caption, color: colors.inkStrong, fontWeight: '700' },
-  largeButton: { minHeight: 52, minWidth: 110, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  largeButton: { minHeight: 52, minWidth: 110, maxWidth: '100%', alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   largeButtonText: { ...textStyles.body, fontSize: 16, lineHeight: 22, fontWeight: '700', textAlign: 'center' },
   fillButton: { flex: 1, minWidth: 0 },
+  primaryButton: { backgroundColor: colors.primary, borderColor: colors.primary },
+  primaryButtonText: { color: colors.primaryText },
+  swipeHint: { ...textStyles.caption, color: colors.muted, textAlign: 'center' },
   chapter: { gap: spacing.xs, marginBottom: spacing.lg }, chapterTitle: { ...textStyles.sectionTitle, color: colors.inkStrong },
   disabledButton: { opacity: 0.4 }, empty: { ...textStyles.body, color: colors.muted }, episodeCard: { backgroundColor: colors.surface, borderColor: colors.controlBorder, borderRadius: radius.md, borderWidth: 1, gap: spacing.xs, padding: spacing.md },
-  episodeName: { ...textStyles.body, color: colors.inkStrong, fontWeight: '700' }, episodeOrdinal: { ...textStyles.caption, color: colors.primary }, episodeTitle: { ...textStyles.sectionTitle, color: colors.inkStrong }, horizontalPages: { flex: 1 }, inlineError: { alignItems: 'center', gap: spacing.xs }, loadingText: { ...textStyles.caption, color: colors.muted, textAlign: 'center' }, pageActions: { flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' }, pageImage: { backgroundColor: colors.canvas }, pageImageFrame: { alignItems: 'center', justifyContent: 'center' }, placeholder: { alignItems: 'center', borderColor: colors.controlBorder, borderRadius: radius.md, borderWidth: 1, flex: 1, gap: spacing.sm, justifyContent: 'center', padding: spacing.md }, placeholderText: { ...textStyles.body, color: colors.muted, textAlign: 'center' }, read: { ...textStyles.caption, color: colors.primary, fontWeight: '700' }, readerHeader: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, justifyContent: 'space-between' }, readerSafeArea: { backgroundColor: colors.canvas, flex: 1 }, readerShell: { flex: 1, gap: spacing.xs, padding: spacing.sm }, readerTitle: { ...textStyles.caption, flexShrink: 1, color: colors.primary, fontWeight: '700' }, readerViewport: { flex: 1, minHeight: 1, minWidth: 1, overflow: 'hidden' }, refreshing: { position: 'absolute', right: spacing.sm, top: spacing.sm }, verticalPages: { flex: 1 }, workCard: { backgroundColor: colors.surface, borderColor: colors.controlBorder, borderRadius: radius.md, borderWidth: 1, marginBottom: spacing.sm, padding: spacing.md }, workTitle: { ...textStyles.sectionTitle, color: colors.inkStrong },
+  episodeName: { ...textStyles.body, color: colors.inkStrong, fontWeight: '700' }, episodeOrdinal: { ...textStyles.caption, color: colors.primary }, episodeTitle: { ...textStyles.sectionTitle, color: colors.inkStrong }, horizontalPages: { flex: 1 }, inlineError: { alignItems: 'center', gap: spacing.xs }, loadingText: { ...textStyles.caption, color: colors.muted, textAlign: 'center' }, pageActions: { flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' }, pageImage: { backgroundColor: colors.canvas }, pageImageFrame: { alignItems: 'center', justifyContent: 'center' }, placeholder: { alignItems: 'center', borderColor: colors.controlBorder, borderRadius: radius.md, borderWidth: 1, flex: 1, gap: spacing.sm, justifyContent: 'center', padding: spacing.md }, placeholderText: { ...textStyles.body, color: colors.muted, textAlign: 'center' }, read: { ...textStyles.caption, color: colors.primary, fontWeight: '700' }, readerHeader: { gap: spacing.xs }, readerControls: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'space-between' }, readerSafeArea: { backgroundColor: colors.canvas, flex: 1 }, readerShell: { flex: 1, gap: spacing.xs, padding: spacing.sm }, readerTitle: { ...textStyles.caption, flexShrink: 1, color: colors.primary, fontWeight: '700' }, readerViewport: { flex: 1, minHeight: 1, minWidth: 1, overflow: 'hidden' }, refreshing: { position: 'absolute', right: spacing.sm, top: spacing.sm }, verticalPages: { flex: 1 }, workCard: { backgroundColor: colors.surface, borderColor: colors.controlBorder, borderRadius: radius.md, borderWidth: 1, marginBottom: spacing.sm, padding: spacing.md }, workTitle: { ...textStyles.sectionTitle, color: colors.inkStrong },
 });

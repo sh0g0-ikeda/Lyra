@@ -90,7 +90,10 @@ function openWork(renderer: ReturnType<typeof create>): void {
 }
 
 function openFirstEpisode(renderer: ReturnType<typeof create>): void {
-  act(() => { renderer.root.findByProps({ accessibilityLabel: '作品通算1話 始まり' }).props.onPress(); });
+  const episode = renderer.root.findAllByProps({ accessibilityRole: 'button' }).find((node) =>
+    typeof node.props.accessibilityLabel === 'string' && node.props.accessibilityLabel.endsWith(' 始まり'));
+  if (episode === undefined) throw new Error('対象の話が見つかりません');
+  act(() => { episode.props.onPress(); });
 }
 
 describe('MangaReader', () => {
@@ -118,16 +121,17 @@ describe('MangaReader', () => {
     const text = () => renderer!.root.findAllByType('text').flatMap((node) => node.children).join(' ');
     expect(text()).toContain('1章 脱獄');
     expect(text()).toContain('2章 完結');
-    expect(text()).toContain('作品通算1話');
+    expect(text()).toContain('1話');
+    expect(text()).not.toContain('通算');
     expect(text()).toContain('始まり');
-    act(() => { renderer!.root.findByProps({ accessibilityLabel: '作品通算1話 始まり' }).props.onPress(); });
+    act(() => { renderer!.root.findByProps({ accessibilityLabel: '1話 始まり' }).props.onPress(); });
     expect(renderer!.root.findByProps({ testID: 'manga-episode-reader-shell' })).toBeDefined();
     expect(text()).toContain('1章 脱獄');
     expect(text()).toContain('このページはまだ生成されていません。');
     act(() => { renderer!.root.findByProps({ accessibilityLabel: '縦読み' }).props.onPress(); });
     expect(renderer!.root.findAllByType('list').some((node) => node.props.initialScrollIndex === 0)).toBe(true);
     act(() => { renderer!.root.findByProps({ accessibilityLabel: '次話' }).props.onPress(); });
-    expect(text()).toContain('作品通算2話');
+    expect(text()).toContain('2話');
     act(() => { renderer!.root.findByProps({ accessibilityLabel: '閉じる' }).props.onPress(); });
     expect(renderer!.root.findByProps({ testID: 'manga-reader-episodes' })).toBeDefined();
   });
@@ -143,6 +147,9 @@ describe('MangaReader', () => {
     expect(renderer!.root.findAllByType('screen')).toHaveLength(0);
     act(() => { renderer!.root.findByProps({ testID: 'manga-reader-viewport' }).props.onLayout({ nativeEvent: { layout: { width: 390, height: 600 } } }); });
     const rtlList = renderer!.root.findAllByType('list').find((node) => node.props.horizontal === true);
+    expect(renderedText(renderer!)).toContain('左右にスワイプで移動');
+    expect(renderer!.root.findAllByProps({ accessibilityLabel: '前のページ' })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ accessibilityLabel: '次のページ' })).toHaveLength(0);
     expect(rtlList?.props.inverted).toBe(true);
     expect(rtlList?.props.pagingEnabled).toBe(true);
     expect(rtlList?.props.getItemLayout(null, 1)).toEqual({ index: 1, length: 390, offset: 390 });
@@ -152,6 +159,7 @@ describe('MangaReader', () => {
     scrollToIndex.mockClear();
     act(() => { renderer!.root.findByProps({ accessibilityLabel: '縦読み' }).props.onPress(); });
     const verticalList = renderer!.root.findAllByType('list').find((node) => node.props.horizontal !== true);
+    expect(renderedText(renderer!)).not.toContain('左右にスワイプで移動');
     expect(verticalList?.props.initialScrollIndex).toBe(1);
     expect(verticalList?.props.getItemLayout(null, 1)).toEqual({ index: 1, length: 600, offset: 600 });
     expect(scrollToIndex).toHaveBeenCalledWith({ index: 1, animated: false });
@@ -168,7 +176,7 @@ describe('MangaReader', () => {
     act(() => { renderer = create(<MangaReader />); });
     openWork(renderer!);
 
-    expect(renderedText(renderer!)).not.toContain('作品通算1話');
+    expect(renderedText(renderer!)).not.toContain('1話');
     expect(renderedText(renderer!)).toContain('話一覧を読み込めません。');
     act(() => { renderer!.root.findByProps({ accessibilityLabel: '話一覧を再試行' }).props.onPress(); });
     expect(retryEpisode).toHaveBeenCalledTimes(1);
