@@ -127,7 +127,10 @@ work-wide episode ordinals are derived from the current chapter/episode order,
 including insertion and reorder, without changing identifiers or persisted order.
 The reader keeps its selection separate from editing, provides horizontal
 right-to-left paging and vertical reading with the current page preserved, and
-allows adjacent episodes across chapter boundaries. Incomplete chapter or page
+allows adjacent episodes across chapter boundaries. Horizontal page navigation
+uses swipes with a localized hint below the page; close has a large gold action
+separate from the reading-mode control. Episode labels use simple numbers while
+retaining the work-wide dynamic ordering. Incomplete chapter or page
 queries are reported rather than silently renumbered or truncated. Images use
 view-authorized short-lived HTTPS CDN URLs only; reading never invokes export or
 forwards API credentials to the CDN. A failed image can refresh its page URL once
@@ -896,7 +899,9 @@ render as a successful empty list. Query scope and dirty-navigation guards remai
 in force, and persisted-selection hydration cannot overwrite a selection accepted
 in the current session. Selected library works use gold fill with dark text.
 The library and authentication screens expose the persisted Japanese/English
-switch and pass its language to Cognito Managed Login; logged-in Assets,
+switch and pass its language to Cognito Managed Login. Both the entry splash and
+sign-in card contain the complete logo using its natural aspect ratio; display
+changes preserve the splash timing and login workflow. Logged-in Assets,
 Account and Guide omit the header credit badge. Billing
 retains total, monthly and purchased credit balances with explicit labels; plan
 controls use the existing native store catalog, verified receipt workflow,
