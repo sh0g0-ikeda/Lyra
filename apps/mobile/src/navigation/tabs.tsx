@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { BookOpenText, CircleHelp, Settings, UsersRound, type LucideIcon } from 'lucide-react-native';
+import { BookOpenText, CircleHelp, PenLine, Settings, type LucideIcon } from 'lucide-react-native';
 
 import { colors } from '@/constants/theme';
 import { t } from '@/lib/i18n';
@@ -77,8 +77,8 @@ export function MainTabs(): React.JSX.Element {
     >
       {canViewWork ? (
         <>
-          <Tab.Screen component={MangaScreen} name="Story" options={{ title: t(language, 'navigation.manga'), tabBarButtonTestID: 'tab-manga', tabBarIcon: ({ color }) => tabIcon(BookOpenText, color) }} />
-          <Tab.Screen component={AssetsScreen} name="Characters" options={{ title: t(language, 'navigation.assets'), tabBarButtonTestID: 'tab-assets', tabBarIcon: ({ color }) => tabIcon(UsersRound, color) }} />
+          <Tab.Screen component={MangaScreen} name="Story" options={{ title: t(language, 'navigation.manga'), tabBarButtonTestID: 'tab-manga', tabBarIcon: ({ color }) => tabIcon(PenLine, color) }} />
+          <Tab.Screen component={AssetsScreen} name="Characters" options={{ title: t(language, 'navigation.assets'), tabBarButtonTestID: 'tab-assets', tabBarIcon: ({ color }) => tabIcon(BookOpenText, color) }} />
         </>
       ) : null}
       <Tab.Screen component={AccountScreen} name="Account" options={{ title: t(language, 'navigation.myPage'), tabBarButtonTestID: 'tab-account', tabBarIcon: ({ color }) => tabIcon(Settings, color) }} />

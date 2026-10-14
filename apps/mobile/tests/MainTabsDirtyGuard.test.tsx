@@ -59,6 +59,7 @@ vi.mock('lucide-react-native', () => ({
   BookOpenText: (): React.JSX.Element => React.createElement('icon'),
   CircleHelp: (): React.JSX.Element => React.createElement('icon'),
   Images: (): React.JSX.Element => React.createElement('icon'),
+  PenLine: (): React.JSX.Element => React.createElement('icon'),
   Settings: (): React.JSX.Element => React.createElement('icon'),
   UsersRound: (): React.JSX.Element => React.createElement('icon')
 }));
