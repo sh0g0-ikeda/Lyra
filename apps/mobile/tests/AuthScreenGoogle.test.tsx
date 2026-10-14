@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url);
 require.extensions['.jpg'] = (module) => { module.exports = 1; };
 vi.mock('react-native', () => ({
   Animated: { Value: class {}, timing: () => ({ start: (done: () => void) => done() }), Image: 'animated-image', View: 'animated-view' },
-  Image: 'image', Linking: { openURL: vi.fn() }, Platform: mocks.platform, Pressable: 'pressable', StatusBar: 'status-bar', StyleSheet: { create: (style: unknown) => style }, Text: 'text', View: 'view'
+  Image: Object.assign((props: Record<string, unknown>) => React.createElement('image', props), { resolveAssetSource: () => ({ width: 1458, height: 709 }) }), Linking: { openURL: vi.fn() }, Platform: mocks.platform, Pressable: 'pressable', StatusBar: 'status-bar', StyleSheet: { create: (style: unknown) => style }, Text: 'text', View: 'view'
 }));
 vi.mock('@/components/Screen', () => ({ Screen: ({ children, ...props }: { children: React.ReactNode; chrome?: string }) => React.createElement('screen', props, children) }));
 vi.mock('@/components/Notice', () => ({ Notice: ({ message }: { message: string }) => React.createElement('notice', null, message) }));
@@ -44,6 +44,17 @@ describe('AuthScreen Google capability gate', () => {
     expect(renderer.root.findByType('screen').props.chrome).toBe('language');
   });
 
+  it('初期splashとログイン画面でロゴ全体を同じ自然比率で表示する', async () => {
+    await act(async () => { renderer = create(<AuthScreen />); });
+    const splash = renderer.root.findByType('animated-image');
+    expect(splash.props.resizeMode).toBe('contain');
+    expect(splash.props.style[0]).toMatchObject({ aspectRatio: 1458 / 709, height: undefined, width: '100%' });
+
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    const hero = renderer.root.findByType('image');
+    expect(hero.props.resizeMode).toBe('contain');
+    expect(hero.props.style).toMatchObject({ aspectRatio: 1458 / 709, height: undefined, width: '100%' });
+  });
   it('Google disabledでも既存メールログインを保持する', async () => {
     await render();
     expect(renderer.root.findAllByProps({ testID: 'auth-google-button' })).toHaveLength(0);
