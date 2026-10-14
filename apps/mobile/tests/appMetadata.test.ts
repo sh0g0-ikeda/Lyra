@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 interface ExpoAppConfig {
   expo: {
+    version?: string;
     icon?: string;
     userInterfaceStyle?: string;
     splash?: unknown;
@@ -24,6 +25,7 @@ interface ExpoAppConfig {
     runtimeVersion?: { policy?: string };
     updates?: { fallbackToCacheTimeout?: number; url?: string };
     ios?: {
+      bundleIdentifier?: string;
       buildNumber?: string;
       privacyManifests?: {
         NSPrivacyTracking?: boolean;
@@ -32,6 +34,7 @@ interface ExpoAppConfig {
       };
     };
     android?: {
+      package?: string;
       versionCode?: number;
       blockedPermissions?: string[];
       adaptiveIcon?: { foregroundImage?: string; backgroundColor?: string };
@@ -56,7 +59,7 @@ const easConfig = JSON.parse(
     android?: { buildType?: string };
     ios?: { simulator?: boolean };
   }>;
-  submit?: { production?: { android?: { track?: string }; ios?: object } };
+  submit?: { production?: { android?: { track?: string }; ios?: { ascAppId?: string; metadataPath?: string } } };
 };
 const storeConfig = JSON.parse(
   readFileSync(resolve(mobileRoot, 'store.config.json'), 'utf8'),
@@ -114,6 +117,9 @@ describe('production app metadata', () => {
   });
 
   it('runtime version と安全な OTA fallback policy を固定する', () => {
+    expect(config.expo.version).toBe('1.0.8');
+    expect(config.expo.ios?.bundleIdentifier).toBe('jp.lyra.mobile');
+    expect(config.expo.android?.package).toBe('com.lyra.mobile');
     expect(config.expo.runtimeVersion?.policy).toBe('appVersion');
     expect(config.expo.updates?.fallbackToCacheTimeout).toBe(0);
     expect(config.expo.updates?.url).toMatch(/^https:\/\/u\.expo\.dev\//);
@@ -276,6 +282,7 @@ describe('production app metadata', () => {
       expect(storeConfig.apple?.info?.[language]?.keywords?.length).toBeGreaterThan(2);
     }
     expect(easConfig.submit?.production?.ios).toMatchObject({
+      ascAppId: '6797564060',
       metadataPath: './store.config.json',
     });
   });

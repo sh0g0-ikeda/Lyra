@@ -29,7 +29,7 @@ const originalEnvironment = {
 const baseConfig = {
   name: 'Lyra Mobile',
   ios: {
-    bundleIdentifier: 'com.lyra.mobile',
+    bundleIdentifier: 'jp.lyra.mobile',
     associatedDomains: ['applinks:app.lyra-editor.com'],
   },
   android: {
@@ -197,6 +197,16 @@ describe('Expo app config', () => {
     expect(() => createExpoConfig({ config: baseConfig })).toThrow(
       'EXPO_PUBLIC_APP_LINK_HOST must be app.lyra-editor.com for production',
     );
+  });
+
+  it('productionは登録済みiOS bundle IDとAndroid packageを維持する', () => {
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'production';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'app.lyra-editor.com';
+
+    expect(createExpoConfig({ config: baseConfig })).toMatchObject({
+      ios: { bundleIdentifier: 'jp.lyra.mobile' },
+      android: { package: 'com.lyra.mobile' },
+    });
   });
 
   it.each([
