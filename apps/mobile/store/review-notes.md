@@ -16,20 +16,25 @@ the only owner of an organization must transfer ownership first.
 
 ## Billing
 
-This submitted version is consumption-only: it does not display a purchase,
-checkout, plan-change, invoice-link, or billing-portal action. Users may use an
-existing entitlement and credit balance. When personal digital plans or credit
-packs are submitted in a later version, they will use the platform store and
-will be enabled only after the matching store products and server verification
-are ready. A user with an existing platform subscription can open Apple's or
-Google Play's official subscription-management settings; this is not a purchase
-or external checkout action. Organization and enterprise billing remains managed
-outside the mobile app, and a browser return URL is never treated as proof of payment.
+Personal users can purchase eligible subscriptions and credit packs through
+Apple In-App Purchase on iOS and Google Play Billing on Android. The app displays
+only products returned by the Lyra server for the current platform. The final
+price and subscription terms are shown by the platform store before purchase.
+Lyra verifies each purchase or restore with the platform on its server before
+updating the account's entitlement or credit balance. Repeating receipt
+verification does not grant the same purchase twice.
+
+Existing platform subscriptions can open the official Apple or Google Play
+subscription-management settings. Account deletion does not cancel a store
+subscription; the deletion flow explains how to manage it before proceeding.
+Organization and enterprise billing remains managed outside the mobile app.
+A browser return URL is never accepted as proof of payment.
 
 ## User-generated content
 
-Users can create text and select their own images. The app is rated 17+ because
-story content is user directed. Illegal content, exploitation, infringement,
+Users can create text and select their own images. Story content is user
+directed; the age-rating answers must reflect the submitted app and current
+store questionnaire. Illegal content, exploitation, infringement,
 and security abuse are prohibited by the terms. AI operations show the data
 recipient and request consent before sending story settings or images to
 OpenAI. StoryAI proposals and generated-image previews include an in-app
