@@ -10,9 +10,9 @@ import type { DatabaseClient, TransactionRunner } from '../src/lib/db.js';
 import type { Env } from '../src/lib/env.js';
 import { checkDeploymentDataInvariants } from './checkDeploymentDataInvariants.js';
 
-import { WORK_DELETION_RUNTIME_MIGRATIONS, readRuntimeSchemaCatalogInTransaction } from '../src/lib/runtimeSchemaAttestation.js';
-import { describeProduction44ExpansionCheckpoint } from '../src/lib/production44ExpandedRuntimeSchemaAttestation.js';
-import { PRODUCTION44_EXPANSION_MIGRATIONS } from '../src/lib/production44ExpandedRuntimeSchemaDescriptor.js';
+import { GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, WORK_DELETION_RUNTIME_MIGRATIONS, attestRuntimeSchema } from '../src/lib/runtimeSchemaAttestation.js';
+
+
 import type { RepositorySchemaProfile } from '../src/repositories/RepositorySchemaProfile.js';
 
 export interface ReleaseCompatibilityCheckInput {
@@ -59,8 +59,10 @@ export async function checkReleaseCompatibility(
     // Spec §11 C0: an operator label is not attestation. All physical catalog
     // parts and immutable history must match in this same read-only snapshot.
     if (schemaProfile === 'production44_expanded_pg18_v1') {
-      const catalog = await readRuntimeSchemaCatalogInTransaction(client, { includeFunctionBodies: true, includeLegacyAttributes: true });
-      if (describeProduction44ExpansionCheckpoint(catalog) !== PRODUCTION44_EXPANSION_MIGRATIONS.length) {
+      try {
+        const runtime = await attestRuntimeSchema({ transaction: work => work(client) });
+        if (runtime.repositoryProfile !== schemaProfile) throw new Error('Unexpected runtime profile');
+      } catch {
         return buildReport(input.profile, 1, null, [{ category: 'database', code: 'SCHEMA_UNSUPPORTED', count: 1 }]);
       }
     } else {
@@ -158,8 +160,8 @@ export function runtimeFromEnv(environment: Env): ReleaseCompatibilityRuntime {
 
 async function expectedMigrationFilenames(migrationsDir: string): Promise<string[]> {
   const filenames = (await readdir(migrationsDir)).filter((filename) => /^\d{3}_.+\.sql$/u.test(filename)).sort();
-  if (filenames.length !== WORK_DELETION_RUNTIME_MIGRATIONS.length
-    || filenames.some((filename, index) => filename !== WORK_DELETION_RUNTIME_MIGRATIONS[index])) {
+  const supported = [WORK_DELETION_RUNTIME_MIGRATIONS, GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS];
+  if (!supported.some(expected => filenames.length === expected.length && filenames.every((filename, index) => filename === expected[index]))) {
     throw new Error('Current release migration files are unavailable');
   }
   return filenames;

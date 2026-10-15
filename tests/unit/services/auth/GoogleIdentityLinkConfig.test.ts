@@ -34,5 +34,10 @@ describe('Google identity config', () => {
     it('iOSの専用clientと審査済み設定が揃う場合に有効化を受け付ける', () => {
         expect(resolveGoogleIdentityLinkConfig({ ...config, GOOGLE_IOS_ENABLED: true, GOOGLE_IOS_POLICY_REVIEWED: true, GOOGLE_IOS_COGNITO_CLIENT_ID: 'ios-client', COGNITO_ALLOWED_CLIENT_IDS: ' cognito-client, ios-client ' })?.clientId).toBe('google-client');
     });
+    it('source回復は既定OFFでありONには永続identity secretを要求する', () => {
+        expect(resolveGoogleIdentityLinkConfig(config)?.sourceRecoveryEnabled).toBe(false);
+        expect(() => resolveGoogleIdentityLinkConfig({ ...config, GOOGLE_LINK_SOURCE_RECOVERY_ENABLED: true })).toThrow();
+        expect(resolveGoogleIdentityLinkConfig({ ...config, GOOGLE_LINK_SOURCE_RECOVERY_ENABLED: true, ACCOUNT_DELETION_IDENTITY_HASH_SECRET: 's'.repeat(32) })?.sourceRecoveryEnabled).toBe(true);
+    });
     it('accepts exact reviewed HTTPS configuration', () => expect(resolveGoogleIdentityLinkConfig(config)?.clientId).toBe('google-client'));
 });

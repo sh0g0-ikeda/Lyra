@@ -248,6 +248,7 @@ const envSchema = z.object({
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
   GOOGLE_SIGN_IN_ENABLED: z.string().optional().transform((value) => value === 'true'),
   GOOGLE_IDENTITY_LINK_ENABLED: z.string().optional().transform((value) => value === 'true'),
+  GOOGLE_LINK_SOURCE_RECOVERY_ENABLED: z.string().optional().transform((value) => value === 'true'),
   GOOGLE_IOS_ENABLED: z.string().optional().transform((value) => value === 'true'),
   GOOGLE_IOS_POLICY_REVIEWED: z.string().optional().transform((value) => value === 'true'),
   GOOGLE_IOS_COGNITO_CLIENT_ID: z.string().min(1).optional(),

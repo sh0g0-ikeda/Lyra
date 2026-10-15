@@ -3,6 +3,7 @@ import type { DatabaseClient, TransactionRunner } from '../../lib/db.js';
 import { PostgresUserRepository } from '../../repositories/UserRepository.js';
 import { PostgresCreditRepository } from '../../repositories/CreditRepository.js';
 import { PostgresAccountDeletionRepository } from '../../repositories/AccountDeletionRepository.js';
+import { assertAuthSubjectCanProvision } from '../../repositories/RetiredAuthSubjectRepository.js';
 import { bindTransaction } from '../../repositories/TransactionBoundDatabase.js';
 import {
   CANONICAL_REPOSITORY_SCHEMA_PROFILE,
@@ -18,11 +19,19 @@ export class TransactionalUserProvisioningService implements UserProvisioningPor
     private readonly database: DatabaseClient & TransactionRunner,
     private readonly identityHashSecret?: string,
     private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+    private readonly retirementFencing = false,
   ) {}
 
   public async provisionFromSupabaseClaims(claims: SupabaseJwtClaims): Promise<ProvisionedUser> {
     return this.database.transaction(async (client) => {
       const transaction = bindTransaction(client);
+      if (this.retirementFencing) {
+        await assertAuthSubjectCanProvision(
+          transaction,
+          claims.sub,
+          this.identityHashSecret,
+        );
+      }
       const guard = this.identityHashSecret === undefined && this.schemaProfile === 'canonical'
         ? undefined
         : new AccountDeletionIdentityGuard(

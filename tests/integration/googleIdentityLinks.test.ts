@@ -12,7 +12,7 @@ const dbDescribe = process.env.APP_ENV === 'test' && process.env.DATABASE_URL ? 
 dbDescribe('Google identity link durable challenges', () => {
     let admin: Pool, pool: Pool, database: DatabaseClient & TransactionRunner, repo: PostgresGoogleIdentityLinkRepository;
     const schema = `google_identity_links_${process.pid}_${Date.now()}`;
-    beforeAll(async () => { admin = new Pool({ connectionString: process.env.DATABASE_URL }); await admin.query(`CREATE SCHEMA ${schema}`); pool = new Pool({ connectionString: process.env.DATABASE_URL, options: `-c search_path=${schema},public`, max: 12 }); database = testDatabase(pool); repo = new PostgresGoogleIdentityLinkRepository(database); await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database)); }, 120000);
+    beforeAll(async () => { admin = new Pool({ connectionString: process.env.DATABASE_URL }); await admin.query(`CREATE SCHEMA ${schema}`); pool = new Pool({ connectionString: process.env.DATABASE_URL, options: `-c search_path=${schema},public`, max: 12 }); database = testDatabase(pool); repo = new PostgresGoogleIdentityLinkRepository(database, 'identity-fence-test-secret-32-characters'); await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database)); }, 120000);
     afterAll(async () => { if (pool)
         await pool.end(); if (admin) {
         await admin.query(`DROP SCHEMA ${schema} CASCADE`);
@@ -41,6 +41,64 @@ dbDescribe('Google identity link durable challenges', () => {
         await repo.completeReconciliation(f.id, '2'.repeat(64));
         expect(remoteCalls).toBe(1);
         expect((await repo.findForUser(f.id, f.userId))?.status).toBe('linked');
+    });
+    it('確定拒否だけを新しい同一所有者challengeに引き継ぎ旧callbackを拒否する', async () => {
+        const f = await repo.create(await fixture()); const hash = '4'.repeat(64);
+        await repo.claimState(f.stateHash); await repo.reserveIdentity(f.id, hash);
+        await repo.rejectLink(f.id, hash);
+        const next = await repo.create({ ...f, id: randomUUID(), requestKey: randomUUID(), stateHash: '5'.repeat(64) });
+        await repo.claimState(next.stateHash); await repo.reserveIdentity(next.id, hash);
+        let oldCalls = 0;
+        await expect(repo.performLink(f.id, hash, async () => { oldCalls++; })).rejects.toThrow();
+        let calls = 0; await repo.performLink(next.id, hash, async () => { calls++; });
+        expect(oldCalls).toBe(0); expect(calls).toBe(1);
+        expect((await repo.findForUser(next.id, next.userId))?.status).toBe('linked');
+    });
+    it('外部呼び出し後のDB失敗でもattemptedが残り新challengeへの引継ぎを拒否する', async () => {
+        const f = await repo.create(await fixture()); const hash = '6'.repeat(64);
+        await repo.claimState(f.stateHash); await repo.reserveIdentity(f.id, hash);
+        await expect(repo.performLink(f.id, hash, async () => { throw new Error('unknown result'); })).rejects.toThrow();
+        expect((await pool.query('SELECT operation_phase FROM oauth_identity_links WHERE challenge_id=$1',[f.id])).rows[0].operation_phase).toBe('attempted');
+        await repo.finish(f.id, 'recovery_required', 'RECOVERY_REQUIRED');
+        const next = await repo.create({ ...f, id: randomUUID(), requestKey: randomUUID(), stateHash: '7'.repeat(64) });
+        await repo.claimState(next.stateHash);
+        await expect(repo.reserveIdentity(next.id, hash)).rejects.toThrow();
+    });
+    it('source fence後に退会が始まった場合は認証削除を実行しない', async () => {
+        const f = await repo.create(await fixture()); const hash = '8'.repeat(64); const source = randomUUID();
+        await repo.claimState(f.stateHash); await repo.reserveIdentity(f.id, hash);
+        await repo.prepareSourceRetirement(f.id, hash, source);
+        await pool.query('UPDATE users SET account_deletion_started_at=NOW() WHERE id=$1',[f.userId]);
+        let calls = 0;
+        await expect(repo.performSourceRetirement(f.id, hash, source, async () => { calls++; })).rejects.toThrow();
+        expect(calls).toBe(0);
+        expect((await pool.query('SELECT count(*)::int n FROM retired_auth_subjects WHERE destination_user_id=$1',[f.userId])).rows[0].n).toBe(1);
+    });
+    it('source fence後に期限切れ予約が引き継がれた場合は旧callbackの認証削除を拒否する', async () => {
+        const f = await repo.create(await fixture()); const hash = '9'.repeat(64); const source = randomUUID();
+        await repo.claimState(f.stateHash); await repo.reserveIdentity(f.id, hash);
+        await repo.prepareSourceRetirement(f.id, hash, source);
+        await pool.query("UPDATE oauth_link_challenges SET created_at=NOW()-INTERVAL '11 minutes',expires_at=NOW()-INTERVAL '1 minute' WHERE id=$1",[f.id]);
+        const next = await repo.create({ ...f, id: randomUUID(), requestKey: randomUUID(), stateHash: 'a'.repeat(64) });
+        await repo.claimState(next.stateHash); await repo.reserveIdentity(next.id, hash);
+        let calls = 0;
+        await expect(repo.performSourceRetirement(f.id, hash, source, async () => { calls++; })).rejects.toThrow();
+        expect(calls).toBe(0);
+        await repo.performSourceRetirement(next.id, hash, source, async () => { calls++; });
+        expect(calls).toBe(1);
+    });
+    it('旧APIが追加列を指定しない場合は安全側のattemptedとして保存する', async () => {
+        const f = await repo.create(await fixture());
+        await pool.query("INSERT INTO oauth_identity_links(provider,provider_subject_hash,user_id,challenge_id,status) VALUES('Google',$1,$2,$3,'recovery_required')",['b'.repeat(64),f.userId,f.id]);
+        expect((await pool.query('SELECT operation_phase FROM oauth_identity_links WHERE challenge_id=$1',[f.id])).rows[0].operation_phase).toBe('attempted');
+    });
+    it('消費済みcallbackは有効期間内だけ固定戻り先のreceiptとして読める', async () => {
+        const f = await repo.create(await fixture());
+        expect(await repo.findConsumedState(f.stateHash)).toBeNull();
+        await repo.claimState(f.stateHash);
+        expect((await repo.findConsumedState(f.stateHash))?.id).toBe(f.id);
+        await pool.query("UPDATE oauth_link_challenges SET created_at=NOW()-INTERVAL '11 minutes',expires_at=NOW()-INTERVAL '1 minute' WHERE id=$1",[f.id]);
+        expect(await repo.findConsumedState(f.stateHash)).toBeNull();
     });
     it('pending expiry cleanup is bounded and owner lookup never returns another account', async () => { const f = await fixture(); f.createdAt = new Date(Date.now() - 700000); f.expiresAt = new Date(f.createdAt.getTime() + GOOGLE_LINK_TTL_MS); await repo.create(f); expect(await repo.findForUser(f.id, randomUUID())).toBeNull(); expect(await repo.claimState(f.stateHash)).toBeNull(); expect(await repo.expirePending(1)).toBe(1); expect(await repo.findForUser(f.id, f.userId)).toMatchObject({ status: 'expired', exchangeMaterial: null }); expect(await throwingRejectionOf(repo.expirePending(10000))).toThrow(); });
     it('a lost reservation acknowledgement cannot downgrade durable intent to terminal failure', async () => {

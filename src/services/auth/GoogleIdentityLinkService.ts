@@ -10,6 +10,7 @@ export interface GoogleLinkConfig {
     webReturnUri: string;
     nativeReturnUri: string;
     encryptionSecret: string;
+    sourceRecoveryEnabled?: boolean;
 }
 export interface NativeCognitoIdentity {
     subject: string;
@@ -18,7 +19,15 @@ export interface NativeCognitoIdentity {
     status: string;
     googleSubjects: string[];
 }
+export interface GoogleCognitoProfile {
+    username: string;
+    subject: string;
+    email: string;
+    googleSubject: string;
+}
 export interface GoogleIdentityLinkGateway {
+    getGoogleProfile(googleSubject: string): Promise<GoogleCognitoProfile | null>;
+    deleteGoogleProfile(profile: GoogleCognitoProfile): Promise<void>;
     getNativeIdentity(username: string): Promise<NativeCognitoIdentity>;
     exchangeCode(input: {
         code: string;
@@ -113,10 +122,17 @@ export class GoogleIdentityLinkService implements GoogleIdentityLinkServicePort 
         const config = this.config();
         if (!/^[A-Za-z0-9_-]{43,128}$/u.test(input.state))
             return null;
-        const row = await this.dependencies.repository.claimState(googleLinkHash(input.state, config.encryptionSecret, 'state'));
-        if (row === null)
-            return null;
+        const stateHash = googleLinkHash(input.state, config.encryptionSecret, 'state');
+        const row = await this.dependencies.repository.claimState(stateHash);
+        if (row === null) {
+            // A consumed callback is only a return capability. Status still needs
+            // the authenticated owner; never replay the OAuth code or mutation.
+            const consumed = await this.dependencies.repository.findConsumedState(stateHash);
+            return consumed === null || consumed.expiresAt <= this.now() ? null : this.returnUri(consumed, config);
+        }
         let reserved = false;
+        let linkAttemptStarted = false;
+        let reservedHash: string | null = null;
         try {
             if (input.error !== undefined) {
                 await this.dependencies.repository.finish(row.id, 'cancelled');
@@ -137,6 +153,23 @@ export class GoogleIdentityLinkService implements GoogleIdentityLinkServicePort 
             const subjectHash = googleLinkHash(google.subject, config.encryptionSecret, 'provider-subject');
             await this.dependencies.repository.reserveIdentity(row.id, subjectHash);
             reserved = true;
+            reservedHash = subjectHash;
+            if (native.googleSubjects.includes(google.subject)) {
+                await this.dependencies.repository.completeReconciliation(row.id, subjectHash);
+                return this.returnUri(row, config);
+            }
+            const source = await this.dependencies.gateway.getGoogleProfile(google.subject);
+            if (source !== null) {
+                if (config.sourceRecoveryEnabled !== true || source.subject === row.nativeSubject
+                    || source.googleSubject !== google.subject || normalizeEmail(source.email) !== normalizeEmail(google.email))
+                    throw new AppError('IDENTITY_LINK_CONFLICT', 'Google identity requires account recovery', 409);
+                // Commit the source-subject fence before retiring its unused
+                // authentication profile. Native assets and identity never move.
+                await this.dependencies.repository.prepareSourceRetirement(row.id, subjectHash, source.subject);
+                await this.dependencies.repository.performSourceRetirement(row.id, subjectHash, source.subject,
+                    async () => this.dependencies.gateway.deleteGoogleProfile(source));
+            }
+            linkAttemptStarted = true;
             await this.dependencies.repository.performLink(row.id, subjectHash, async () => {
                 // Revalidate destination immediately before the call, while the user
                 // deletion gate is locked by the repository.
@@ -146,6 +179,10 @@ export class GoogleIdentityLinkService implements GoogleIdentityLinkServicePort 
         }
         catch (error) {
             try {
+                if (reserved && reservedHash !== null && (!linkAttemptStarted || (error instanceof AppError && error.code === 'GOOGLE_LINK_REJECTED'))) {
+                    await this.dependencies.repository.rejectLink(row.id, reservedHash);
+                    return this.returnUri(row, config);
+                }
                 await this.dependencies.repository.finish(row.id, reserved ? 'recovery_required' : 'failed', reserved ? 'RECOVERY_REQUIRED' : error instanceof AppError && error.statusCode === 409 ? 'LINK_CONFLICT' : 'GOOGLE_LINK_FAILED');
             }
             catch { /* Durable intent, when present, remains available to reconciliation. */ }
