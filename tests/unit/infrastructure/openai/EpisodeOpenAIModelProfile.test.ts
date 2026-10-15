@@ -12,6 +12,7 @@ describe('EpisodeOpenAIModelProfile', () => {
       beat: { model: 'gpt-5', reasoningEffort: undefined },
       detail: { model: 'gpt-5', reasoningEffort: undefined },
       audit: { model: 'gpt-5', reasoningEffort: undefined },
+      state: { model: 'gpt-5', reasoningEffort: undefined },
     });
   });
 
@@ -22,13 +23,23 @@ describe('EpisodeOpenAIModelProfile', () => {
       beat: { model: 'gpt-5.6-terra', reasoningEffort: 'medium' },
       detail: { model: 'gpt-5.6-luna', reasoningEffort: 'medium' },
       audit: { model: 'gpt-5.6-terra', reasoningEffort: 'medium' },
+      state: { model: 'gpt-5', reasoningEffort: undefined },
+    });
+  });
+
+  it('balanced_v2の場合に検証済みの工程別モデルと推論を返して旧構成を維持する', () => {
+    expect(resolveEpisodeOpenAIModelProfile('balanced_v2')).toEqual({
+      beat: { model: 'gpt-5.6-terra', reasoningEffort: 'medium' },
+      detail: { model: 'gpt-6-luna', reasoningEffort: 'low' },
+      audit: { model: 'gpt-6.1-sol', reasoningEffort: 'low' },
+      state: { model: 'gpt-6.1-sol', reasoningEffort: 'low' },
     });
   });
 
   it('profile registry は bare gpt-5.6 を含めない', () => {
     const configuredModels = EPISODE_OPENAI_TEXT_PROFILE_KEYS.flatMap((key) => {
       const profile = resolveEpisodeOpenAIModelProfile(key);
-      return [profile.beat.model, profile.detail.model, profile.audit.model];
+      return [profile.beat.model, profile.detail.model, profile.audit.model, profile.state.model];
     });
 
     expect(configuredModels).not.toContain('gpt-5.6');
@@ -42,6 +53,7 @@ describe('EpisodeOpenAIModelProfile', () => {
       expect(Object.isFrozen(profile.beat)).toBe(true);
       expect(Object.isFrozen(profile.detail)).toBe(true);
       expect(Object.isFrozen(profile.audit)).toBe(true);
+      expect(Object.isFrozen(profile.state)).toBe(true);
     }
   });
 });

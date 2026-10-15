@@ -8,6 +8,26 @@ const STATE = '22222222-2222-4222-8222-222222222222';
 const PANEL = '33333333-3333-4333-8333-333333333333';
 
 describe('OpenAIEpisodeStateTransitionCompiler', () => {
+  it('新しい状態抽出モデルの場合にlow推論と既存schemaを一回の要求で送る', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return { body: { output_text: JSON.stringify({
+          plan_version: 'episode_state_plan_v1', state_transitions: [], unresolved_state_transitions: [],
+        }) }, requestId: 'req-v2-state' };
+      },
+    } as unknown as OpenAIClient;
+    const result = await new OpenAIEpisodeStateTransitionCompiler(client, 'gpt-6.1-sol', 'low')
+      .compileStateTransitions({ context: context(), language: 'ja' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      model: 'gpt-6.1-sol', reasoning: { effort: 'low' }, max_output_tokens: 12_000,
+      text: { format: { name: 'episode_state_transition_plan', strict: true } },
+    });
+    expect(result.compilerModel).toBe('gpt-6.1-sol');
+  });
+
   it('strict schemaで状態遷移を検証してdomain planへ変換し、S3 keyを送らない', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
@@ -30,6 +50,9 @@ describe('OpenAIEpisodeStateTransitionCompiler', () => {
 
     expect(result.plan.transitions).toEqual([{ entityId: ENTITY, stateId: STATE, startsAtPanelId: PANEL, sourceSceneId: null, sourceField: 'middle', sourceQuote: '腕を負傷した' }]);
     expect(result.compilerPromptVersion).toBe('episode_state_transition_v3');
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.model).toBe('gpt-5');
+    expect(requests[0]!.reasoning).toBeUndefined();
     const request = requests[0]!;
     const input = request.input as Array<{ content: Array<{ text: string }> }>;
     const userBrief = input[1]!.content[0]!.text;

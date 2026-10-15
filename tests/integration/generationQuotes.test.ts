@@ -293,6 +293,36 @@ describePostgres('atomic generation quotes', () => {
     expect(await (stopped.instance.receipt(stopped.userId,stoppedQuote.quote.id))).toMatchObject({jobStatus:'failed',chargedCredits:1,refundedCredits:1});
   });
 
+  it('受諾済みimport quoteのprovider modelを固定し未知モデルでは解析前に返金する', async () => {
+    const current=await importFixture();const currentIssued=await current.instance.issue(current.userId,current.request);
+    const currentAccepted=await current.instance.accept(current.userId,currentIssued.quote.id,currentIssued.quoteToken,randomUUID());
+    const currentModels:string[]=[];
+    const currentWorker=new QuotedImportWorkerService(database,current.storage,{analyze:async(input)=>{currentModels.push(input.model!);return {suggestedFields:{category:'weapon'},promptSupplement:'A sword'};}});
+    expect(await currentWorker.processJob(currentAccepted.quote.acceptedJobId!)).toMatchObject({jobStatus:'completed'});
+    expect(currentModels).toEqual(['gpt-5.4-mini']);
+
+    const legacy=await importFixture();const legacyIssued=await legacy.instance.issue(legacy.userId,legacy.request);
+    const legacyAccepted=await legacy.instance.accept(legacy.userId,legacyIssued.quote.id,legacyIssued.quoteToken,randomUUID());
+    const legacyJobId=legacyAccepted.quote.acceptedJobId!;
+    await pool.query(`UPDATE generation_quotes SET plan=jsonb_set(plan,'{providerModelId}','"gpt-4o"'::jsonb) WHERE id=$1`,[legacyIssued.quote.id]);
+    await pool.query(`UPDATE generation_jobs SET params=jsonb_set(params,'{provider_model_id}','"gpt-4o"'::jsonb) WHERE id=$1`,[legacyJobId]);
+    const models:string[]=[];
+    const legacyWorker=new QuotedImportWorkerService(database,legacy.storage,{analyze:async(input)=>{models.push(input.model!);return {suggestedFields:{category:'weapon'},promptSupplement:'A sword'};}});
+    expect(await legacyWorker.processJob(legacyJobId)).toMatchObject({jobStatus:'completed'});
+    expect(models).toEqual(['gpt-4o']);
+
+    const unsupported=await importFixture();const unsupportedIssued=await unsupported.instance.issue(unsupported.userId,unsupported.request);
+    const unsupportedAccepted=await unsupported.instance.accept(unsupported.userId,unsupportedIssued.quote.id,unsupportedIssued.quoteToken,randomUUID());
+    const unsupportedJobId=unsupportedAccepted.quote.acceptedJobId!;
+    await pool.query(`UPDATE generation_quotes SET plan=jsonb_set(plan,'{providerModelId}','"gpt-5.4"'::jsonb) WHERE id=$1`,[unsupportedIssued.quote.id]);
+    await pool.query(`UPDATE generation_jobs SET params=jsonb_set(params,'{provider_model_id}','"gpt-5.4"'::jsonb) WHERE id=$1`,[unsupportedJobId]);
+    let calls=0;
+    const unsupportedWorker=new QuotedImportWorkerService(database,unsupported.storage,{analyze:async()=>{calls++;return {suggestedFields:{category:'weapon'},promptSupplement:'Must not run'};}});
+    expect(await unsupportedWorker.processJob(unsupportedJobId)).toMatchObject({jobStatus:'failed'});
+    expect(calls).toBe(0);
+    expect(await unsupported.instance.receipt(unsupported.userId,unsupportedIssued.quote.id)).toMatchObject({chargedCredits:1,refundedCredits:1});
+  });
+
   it('import画像の見積後変更は課金前に拒否し受付後変更はprovider前に失敗返金する', async () => {
     const f=await importFixture();const issued=await f.instance.issue(f.userId,f.request);
     const load=f.storage.loadUploadedImage;

@@ -2,7 +2,10 @@ import { z } from 'zod';
 import {
   ENTITY_IMPORT_ANALYSIS_MAX_TOKENS,
   ENTITY_IMPORT_ANALYSIS_MODEL,
+  isEntityImportAnalysisModel,
+  type EntityImportAnalysisModel,
 } from '../../domain/constants/entityReference.js';
+import { ConfigurationError } from '../../domain/errors/index.js';
 import type { EntityType } from '../../domain/types/entity.js';
 import { OpenAIClient } from './OpenAIClient.js';
 import { requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
@@ -10,6 +13,8 @@ import { requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
 export interface AnalyzeEntityImportInput {
   entityType: EntityType;
   dataUrl: string;
+  /** A quoted job may pin the legacy GPT-4o provider route. */
+  model?: EntityImportAnalysisModel;
 }
 
 export interface EntityImportAnalyzerPort {
@@ -276,23 +281,25 @@ const entityImportAnalysisResponseBaseSchema = z
   .strict();
 
 export class OpenAIEntityImportAnalyzer implements EntityImportAnalyzerPort {
-  public constructor(
-    private readonly client: OpenAIClient,
-    private readonly model = ENTITY_IMPORT_ANALYSIS_MODEL,
-  ) {}
+  public constructor(private readonly client: OpenAIClient) {}
 
   public async analyze(input: AnalyzeEntityImportInput): Promise<{
     suggestedFields: Record<string, unknown>;
     promptSupplement: string;
   }> {
+    const model = input.model ?? ENTITY_IMPORT_ANALYSIS_MODEL;
+    if (!isEntityImportAnalysisModel(model)) {
+      throw new ConfigurationError('Entity import analysis model is unsupported');
+    }
     const response = await requestStructuredOpenAIResponse({
       client: this.client,
-      model: this.model,
+      model,
       maxOutputTokens: ENTITY_IMPORT_ANALYSIS_MAX_TOKENS,
       schemaName: 'entity_import_analysis',
       jsonSchema: buildEntityImportAnalysisJsonSchema(input.entityType),
       responseSchema: buildEntityImportAnalysisResponseSchema(input.entityType),
       errorLabel: 'OpenAI entity import analyzer',
+      reasoningEffort: model === ENTITY_IMPORT_ANALYSIS_MODEL ? 'none' : undefined,
       input: [
         {
           role: 'user',

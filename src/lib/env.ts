@@ -69,7 +69,7 @@ const envSchema = z.object({
   REFERENCE_CANDIDATE_TOKEN_SECRET: z.string().min(32).optional(),
   LOCAL_FILE_STORAGE_DIR: z.string().min(1).optional(),
   LOCAL_ASSET_BASE_URL: z.string().url().optional(),
-  OPENAI_EPISODE_TEXT_PROFILE: z.enum(['legacy', 'balanced_v1']).default('legacy'),
+  OPENAI_EPISODE_TEXT_PROFILE: z.enum(['legacy', 'balanced_v1', 'balanced_v2']).default('legacy'),
   OPENAI_API_KEY: z.string().min(1).optional(),
   OPENAI_IMAGE_MODEL: z.string().min(1).default('gpt-image-2'),
   GENERATION_QUOTES_ENABLED: z.string().optional().transform((value) => value === 'true'),

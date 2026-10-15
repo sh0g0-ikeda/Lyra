@@ -47,6 +47,7 @@ describe('OpenAIEntityImportAnalyzer', () => {
       promptSupplement: 'anime heroine',
     });
     expect(requests[0]).toMatchObject({
+      model: 'gpt-5.4-mini',
       max_output_tokens: 700,
       text: {
         format: {
@@ -56,6 +57,28 @@ describe('OpenAIEntityImportAnalyzer', () => {
         },
       },
     });
+    expect(requests[0]).toMatchObject({ reasoning: { effort: 'none' } });
+  });
+
+  it('受諾済みGPT-4o quoteの指定時はreasoningなしでそのモデルを維持する', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const client = new OpenAIClient({
+      apiKey: 'test', baseUrl: 'https://api.openai.test/v1', timeoutMs: 1000,
+      fetchFn: async (_url, init) => {
+        requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ output_text: JSON.stringify({ field_suggestions: [], prompt_supplement: 'round brass compass' }) }), {
+          status: 200, headers: { 'x-request-id': 'req-legacy', 'Content-Type': 'application/json' },
+        });
+      }, maxRetries: 1,
+    });
+
+    await new OpenAIEntityImportAnalyzer(client).analyze({
+      entityType: 'object', dataUrl: 'data:image/png;base64,YWJj', model: 'gpt-4o',
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ model: 'gpt-4o', max_output_tokens: 700 });
+    expect(requests[0]).not.toHaveProperty('reasoning');
   });
 
   it('nonhuman の enum 項目を provider schema で正規値に限定する', async () => {
