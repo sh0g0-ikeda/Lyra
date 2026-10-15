@@ -8,11 +8,12 @@ describe('page image download feedback contract', () => {
     const source = readFileSync(
       resolve(process.cwd(), 'src/screens/PagesScreen.tsx'),
       'utf8'
-    );
+    ).replaceAll('\r\n', '\n');
 
     expect(source).toContain('setPageImageDownloadSuccess(false)');
     expect(source).toContain('onSuccess: () => {\n      setPageImageDownloadSuccess(true);');
     expect(source).toContain("t(language, 'shared.fileTransfer.saved')");
     expect(source).toContain('tone="success"');
   });
+
 });

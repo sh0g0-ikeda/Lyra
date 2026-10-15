@@ -1,7 +1,7 @@
 {
   "configVersion": 0,
   "apple": {
-    "copyright": "2026 Edge of Vision",
+    "copyright": "2026 Shogo Ikeda",
     "advisory": {
       "alcoholTobaccoOrDrugUseOrReferences": "INFREQUENT_OR_MILD",
       "contests": "NONE",
@@ -23,40 +23,48 @@
     },
     "info": {
       "ja": {
-        "title": "Lyra Mobile",
-        "subtitle": "物語から漫画制作までを一つに",
-        "description": "Lyra Mobile は、物語、登場人物、章・話・シーン、ページ構成、コマ、セリフを一つの流れで整理し、AI を使った漫画制作を支援する編集アプリです。Web 版 Lyra と同じワークスペースを利用し、個人作品と法人作品を明確に分けて管理できます。生成前の入力確認、参照画像の選択、ジョブ進捗、生成済みページ画像の保存まで、スマートフォンから制作工程を進められます。AI の提案は確定前に確認・編集でき、意図しない変更や削除には確認画面を表示します。",
+        "title": "Lyra - AI漫画制作・生成エディタ",
+        "subtitle": "物語・キャラ設定・コマ割り・セリフ編集",
+        "description": "Lyra（ライラ）は、物語・キャラクター設定・コマ割り・セリフ編集から画像生成までを一つの流れで扱うAI漫画制作アプリです。\n\n【物語を漫画の設計へ】\n作品、章・話、シーンを整理し、ストーリーをページとコマの構成につなげられます。\n\n【キャラクターとコマを編集】\n登場人物の設定や参照画像を管理。コマ内容、背景、構図、セリフを自分の意図に合わせて調整できます。\n\n【AIの提案を確認して生成】\nAIによる設定案やページ構成案は確認・編集できます。内容を整えてから画像生成へ進み、ジョブの進捗を確認できます。\n\n【Webと制作をつなぐ】\nWeb版Lyraと同じワークスペースを使い、スマートフォンから制作を続けられます。個人作品と法人作品を分けて管理できます。\n\n【制作したページ画像を保存】\n生成した漫画ページを確認し、画像を端末に保存できます。\n\nご利用にはアカウント登録が必要です。一部の機能にはクレジットや有料プランが必要です。AI生成には時間がかかる場合があり、出力は確認・編集してご利用ください。アップロードする素材や生成物の利用に必要な権利をご確認ください。\n\n利用規約（Apple標準EULA）:\nhttps://www.apple.com/legal/internet-services/itunes/dev/stdeula/\n\nLyra利用規約:\nhttps://app.lyra-editor.com/terms.html\n\nプライバシーポリシー:\nhttps://app.lyra-editor.com/privacy.html",
         "keywords": [
-          "漫画",
+          "ライラ",
           "マンガ",
-          "物語",
-          "AI",
-          "キャラクター",
+          "コミック",
           "ネーム",
-          "コマ割り"
+          "創作",
+          "作画",
+          "画像",
+          "下書き",
+          "イラスト",
+          "プロット"
         ],
-        "promoText": "あなたの頭の中にある物語を、Lyra で漫画に。",
-        "marketingUrl": "https://app.lyra-editor.com/",
-        "supportUrl": "https://app.lyra-editor.com/support.html",
+        "promoText": "アイデアを、漫画の設計へ。ストーリー・キャラ設定・コマ割り・セリフを整理し、AIの提案を編集して画像生成へ。Webと同じワークスペースで制作を続けられます。",
+        "marketingUrl": "https://lyra-japan-manga.com/",
+        "supportUrl": "https://lyra-japan-manga.com/support",
         "privacyPolicyUrl": "https://app.lyra-editor.com/privacy.html",
         "privacyChoicesUrl": "https://app.lyra-editor.com/account-deletion.html"
       },
       "en-US": {
-        "title": "Lyra Mobile",
-        "subtitle": "From story planning to manga",
-        "description": "Lyra Mobile is a focused manga creation editor for organizing stories, characters, chapters, episodes, scenes, pages, panels, and dialogue in one workflow. It connects to the same workspace as Lyra on the web and keeps personal and organization work clearly separated. Review inputs before generation, choose character references, follow job progress, refine page layouts, and save generated page images from your phone. AI suggestions remain editable and destructive changes require explicit confirmation.",
+        "title": "Lyra: AI Manga Creator",
+        "subtitle": "Stories, Characters & Panels",
+        "description": "Lyra is an AI manga creator and editor that brings story planning, character settings, panel layouts, dialogue, and image generation into one workflow.\n\nTURN STORIES INTO PAGE PLANS\nOrganize works, chapters, episodes, and scenes. Develop your story into pages and panels.\n\nEDIT CHARACTERS, PANELS, AND DIALOGUE\nManage character settings and reference images. Adjust panel content, backgrounds, composition, and dialogue to match your creative intent.\n\nREVIEW AI SUGGESTIONS BEFORE GENERATING\nReview and edit AI-assisted settings and page outlines. Refine the details before image generation and follow job progress.\n\nCONTINUE YOUR WORK ACROSS WEB AND MOBILE\nUse the same Lyra workspace on mobile and the web. Keep personal projects and organization projects separate.\n\nSAVE YOUR MANGA PAGE IMAGES\nReview generated manga pages and save page images to your device.\n\nAn account is required. Some features require credits or a paid plan. AI generation may take time; review and edit outputs before use. Make sure you have the rights needed for uploaded materials and your use of generated content.\n\nTerms of Use (Apple Standard EULA):\nhttps://www.apple.com/legal/internet-services/itunes/dev/stdeula/\n\nLyra Terms:\nhttps://app.lyra-editor.com/terms.html\n\nPrivacy Policy:\nhttps://app.lyra-editor.com/privacy.html",
         "keywords": [
-          "manga",
-          "comics",
-          "story",
-          "AI",
-          "character",
+          "comic",
           "storyboard",
-          "panels"
+          "dialogue",
+          "art",
+          "illustration",
+          "writer",
+          "editor",
+          "page",
+          "scene",
+          "chapter",
+          "episode",
+          "image"
         ],
-        "promoText": "Turn the story in your head into manga with Lyra.",
-        "marketingUrl": "https://app.lyra-editor.com/",
-        "supportUrl": "https://app.lyra-editor.com/support-en.html",
+        "promoText": "Plan stories, characters, panels, and dialogue. Review AI suggestions before generating images, then continue your manga project across the web and mobile.",
+        "marketingUrl": "https://lyra-japan-manga.com/en",
+        "supportUrl": "https://lyra-japan-manga.com/en/support",
         "privacyPolicyUrl": "https://app.lyra-editor.com/privacy-en.html",
         "privacyChoicesUrl": "https://app.lyra-editor.com/account-deletion-en.html"
       }

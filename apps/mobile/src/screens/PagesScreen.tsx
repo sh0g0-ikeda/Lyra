@@ -123,6 +123,7 @@ import {
   isLegacyPageGenerationCapabilityUnavailable,
   runPageGenerationWithLegacyFallback
 } from '@/lib/pageGenerationCompatibility';
+import { requestStoreReviewAfterSuccessfulPageImageSave } from '@/lib/storeReview';
 import { userErrorMessage } from '@/lib/userMessages';
 import type { MobileTabParamList } from '@/navigation/tabs';
 import { useAppState } from '@/state/appState';
@@ -1817,6 +1818,7 @@ export function PagesScreen(): React.JSX.Element {
     },
     onSuccess: () => {
       setPageImageDownloadSuccess(true);
+      void requestStoreReviewAfterSuccessfulPageImageSave();
     }
   });
 

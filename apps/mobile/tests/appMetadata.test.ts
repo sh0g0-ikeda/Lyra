@@ -222,16 +222,16 @@ describe('production app metadata', () => {
     expect(storeConfig.apple?.copyright).toMatch(/^2026 /);
     expect(storeConfig.apple?.advisory?.ageRatingOverride).toBe('SEVENTEEN_PLUS');
     expect(storeConfig.apple?.info?.ja).toMatchObject({
-      title: 'Lyra Mobile',
+      title: 'Lyra - AI漫画制作・生成エディタ',
       privacyPolicyUrl: 'https://app.lyra-editor.com/privacy.html',
       privacyChoicesUrl: 'https://app.lyra-editor.com/account-deletion.html',
-      supportUrl: 'https://app.lyra-editor.com/support.html',
+      supportUrl: 'https://lyra-japan-manga.com/support',
     });
     expect(storeConfig.apple?.info?.['en-US']).toMatchObject({
-      title: 'Lyra Mobile',
+      title: 'Lyra: AI Manga Creator',
       privacyPolicyUrl: 'https://app.lyra-editor.com/privacy-en.html',
       privacyChoicesUrl: 'https://app.lyra-editor.com/account-deletion-en.html',
-      supportUrl: 'https://app.lyra-editor.com/support-en.html',
+      supportUrl: 'https://lyra-japan-manga.com/en/support',
     });
     for (const language of ['ja', 'en-US']) {
       expect(storeConfig.apple?.info?.[language]?.description?.length).toBeGreaterThan(100);
@@ -271,7 +271,7 @@ describe('production app metadata', () => {
     for (const description of descriptions) {
       expect(description).not.toMatch(/PDF|ZIP|purchase|購入|課金/u);
     }
-    expect(descriptions.join('\n')).toMatch(/generated page images|生成済みページ画像/u);
+    expect(descriptions.join('\n')).toMatch(/save page images|ページ画像を保存/iu);
   });
 
   it('日英の法務ページと専用削除申請ページをbundleへ含める', () => {
