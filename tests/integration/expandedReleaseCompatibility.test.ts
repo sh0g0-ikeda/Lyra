@@ -5,6 +5,7 @@ import {afterAll,beforeAll,describe,expect,it} from 'vitest';
 import type {DatabaseClient,TransactionRunner} from '../../src/lib/db.js';
 import type {ReleaseCompatibilityRuntime} from '../../src/domain/release/ReleaseCompatibilityPolicy.js';
 import {runPendingMigrations,runProduction44Expansion} from '../../src/lib/migrations.js';
+import {GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS} from '../../src/lib/runtimeSchemaAttestation.js';
 import {checkReleaseCompatibility} from '../../scripts/checkReleaseCompatibility.js';
 import {withPostgresTestMigrationLock} from './postgresTestMigrationLock.js';
 const url=process.env.DATABASE_URL;
@@ -45,7 +46,7 @@ for(const profile of ['canonical','production44_expanded_pg18_v1'] as const){
       expect(initialReport).toMatchObject({ok:true,journalPresent:false,remoteStoragePolicyVerified:false,violations:[]});
       expect(initialReport.checkedCount).toBeGreaterThan(10);
       expect(postCheckMigrationCount).toBe(initialMigrationCount);
-      expect(initialMigrationCount).toBe(profile==='canonical'?50:54);
+      expect(initialMigrationCount).toBe(profile==='canonical'?GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS.length:54);
       expect(initialStatements.every(sql=>/^\s*(SELECT|WITH|SET)\b/u.test(sql))).toBe(true);
       expect(initialStatements).toEqual(expect.arrayContaining([expect.stringContaining('REPEATABLE READ, READ ONLY')]));
     });

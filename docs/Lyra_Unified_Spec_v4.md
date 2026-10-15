@@ -92,6 +92,21 @@ failure cannot discard a previously attempted start's request key or permit a ne
 start while that result is unknown. Recovery status failures, including cold
 returns, retain the existing challenge and never claim that no request was sent.
 
+Google linking recovery design (2026-10-15): preserve the destination Lyra user,
+subject, works and credits. A fresh native proof plus the dedicated verified
+Google challenge remain mandatory; email equality alone never authorizes a link.
+Normalize the Google provider prefix in the pre-signup collision guard. Recover
+only an independently verified, unowned external Google authentication profile;
+never delete or merge a source with a Lyra user, deletion tombstone, or another
+owner. Persist and serialize recovery intent, reconcile ambiguous provider results
+by reads, and let a consumed callback return to its fixed status destination
+without replaying OAuth exchange or provider mutations. Keep mobile contracts and
+frontend unchanged. Implement service/repository/provider regression tests before
+behavior changes, including account preservation, stale reservations, concurrent
+callbacks, rejected ownership, provider uncertainty and lowercase Google names.
+This work branches from deployed 69785dc instead of main to preserve submitted
+release fixes; unrelated changes in the primary checkout remain untouched.
+
 Account-deletion POST additionally requires a signature-verified Cognito identity
 for the same authenticated subject with auth_time within 300 seconds (at most
 60 seconds of future clock skew). Token refresh is not recent authentication.

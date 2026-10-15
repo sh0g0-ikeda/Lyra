@@ -14,7 +14,7 @@ export interface NativeEmailLookup {
 /** Compose this guard before an existing trigger. It must never transfer an email
  * alias, auto-confirm a collision, or create a second federated account. */
 export async function guardGooglePreSignUp<T extends PreSignUpEvent>(event: T, lookup: NativeEmailLookup): Promise<T> {
-    if (event.triggerSource !== 'PreSignUp_ExternalProvider' || !/^Google_/u.test(event.userName))
+    if (event.triggerSource !== 'PreSignUp_ExternalProvider' || !/^Google_/iu.test(event.userName))
         return event;
     const email = event.request.userAttributes.email;
     if (typeof email !== 'string' || email.length > 320 || !email.includes('@'))

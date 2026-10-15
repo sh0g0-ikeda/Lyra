@@ -10,6 +10,8 @@ export interface GoogleAuthEnvironment {
     AUTH_PROVIDER: string;
     GOOGLE_SIGN_IN_ENABLED: boolean;
     GOOGLE_IDENTITY_LINK_ENABLED: boolean;
+    GOOGLE_LINK_SOURCE_RECOVERY_ENABLED?: boolean;
+    ACCOUNT_DELETION_IDENTITY_HASH_SECRET?: string;
     GOOGLE_COGNITO_IDP_CLIENT_ID?: string;
     GOOGLE_LINK_CLIENT_ID?: string;
     GOOGLE_LINK_CLIENT_SECRET?: string;
@@ -36,6 +38,8 @@ export function resolveGoogleIdentityLinkConfig(env: GoogleAuthEnvironment): Goo
     if (!env.AWS_REGION || env.AUTH_PROVIDER !== 'cognito' || !env.COGNITO_USER_POOL_ID || !env.GOOGLE_COGNITO_IDP_CLIENT_ID || !env.GOOGLE_LINK_CLIENT_ID || !env.GOOGLE_LINK_CLIENT_SECRET
         || !env.GOOGLE_LINK_REDIRECT_URI || !env.GOOGLE_LINK_WEB_RETURN_URI || !env.GOOGLE_LINK_MOBILE_RETURN_URI || !env.GOOGLE_LINK_ENCRYPTION_SECRET || env.GOOGLE_LINK_ENCRYPTION_SECRET.length < 32)
         throw new ConfigurationError('Google identity linking configuration is incomplete');
+    if (env.GOOGLE_LINK_SOURCE_RECOVERY_ENABLED && (!env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET || env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET.length < 32))
+        throw new ConfigurationError('Google source recovery requires a stable identity fence secret');
     const nativeReturnUri = env.GOOGLE_LINK_MOBILE_RETURN_URI;
     const productionReturn = 'lyra-mobile://auth/identity-link';
     const stagingReturn = 'lyra-mobile-staging://auth/identity-link';
@@ -50,7 +54,7 @@ export function resolveGoogleIdentityLinkConfig(env: GoogleAuthEnvironment): Goo
         throw new ConfigurationError('Google identity linking Web return path is invalid');
     if ([env.GOOGLE_COGNITO_IDP_CLIENT_ID, env.COGNITO_CLIENT_ID, ...(env.COGNITO_ALLOWED_CLIENT_IDS ?? '').split(',')].includes(env.GOOGLE_LINK_CLIENT_ID))
         throw new ConfigurationError('Google identity linking requires a dedicated OAuth client');
-    return { clientId: env.GOOGLE_LINK_CLIENT_ID, redirectUri: redirect.toString(), webReturnUri: webReturn.toString(), nativeReturnUri, encryptionSecret: env.GOOGLE_LINK_ENCRYPTION_SECRET };
+    return { clientId: env.GOOGLE_LINK_CLIENT_ID, redirectUri: redirect.toString(), webReturnUri: webReturn.toString(), nativeReturnUri, encryptionSecret: env.GOOGLE_LINK_ENCRYPTION_SECRET, sourceRecoveryEnabled: env.GOOGLE_LINK_SOURCE_RECOVERY_ENABLED === true };
 }
 function secureUrl(value: string): URL {
     const url = new URL(value);

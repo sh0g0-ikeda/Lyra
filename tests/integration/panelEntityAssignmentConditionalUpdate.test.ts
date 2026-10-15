@@ -46,7 +46,7 @@ describePostgres('panel entity assignment conditional update', () => {
     ));
     expect(applied).toContain('046_bridge_production_schema_lineage.sql');
     expect(applied).toContain('047_add_state_reference_copy_attempts.sql');
-    expect(applied.at(-1)).toBe('050_add_work_deletion.sql');
+    expect(applied.at(-1)).toBe('051_add_google_link_recovery.sql');
   }, 120_000);
 
   afterAll(async () => {
