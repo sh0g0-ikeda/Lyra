@@ -300,6 +300,19 @@ acceptance, and its validated result replaces draft fields only after a separate
 apply confirmation. Version 1.0.8 must not receive an OTA update requiring the
 new native image conversion module.
 
+The October 2026 model migration is limited to provider routing and reasoning
+settings. The rollbackable balanced_v2 episode profile retains GPT-5.6 Terra with
+medium reasoning for beat planning, uses GPT-6.1 Sol with low reasoning for state
+extraction and the existing single audit, and GPT-6 Luna with low reasoning for detail.
+The same synthetic 16-page fixture took 158 seconds for a Sol beat request versus
+39 seconds for a Terra beat request, so the proposed beat-model change is withheld. Legacy and balanced_v1 retain their prior routing.
+Image import analysis uses GPT-5.4 Mini without reasoning; already accepted GPT-4o
+analysis quotes retain that exact provider model. Output schemas, source/state
+ownership validation, bounded retries, atomic saves, credit prices, image rendering
+and client contracts remain unchanged. Verification covers exact request routing,
+old accepted-quote execution, 16-page state continuity and existing failure/refund
+paths before rollout. This change branches from the submitted mobile release HEAD
+to preserve its fixes that are not yet on main.
 Story-to-page autofill plans beat ownership across the complete episode before
 expanding the existing pages. The normal path first requests the full-episode beat
 plan once. Beat and outline response schemas use the episode page limit (32), not the per-page panel limit (8); every existing page must remain covered exactly once. Only a confirmed beat structured-output capacity failure activates the

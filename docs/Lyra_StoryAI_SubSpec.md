@@ -16,8 +16,21 @@ page skeleton generation, episode improvement writing, planning, and auditing us
 Page-level downstream compilers use their own policies:
 
 - page skeleton story client: `gpt-5.4-mini`
-- episode page plan compiler: `gpt-5`
-- one-page autofill compiler: `gpt-4o-2024-08-06`
+- episode model registry: `src/infrastructure/openai/EpisodeOpenAIModelProfile.ts`
+  - `legacy`: GPT-5, with reasoning omitted
+  - `balanced_v1`: beat/audit GPT-5.6 Terra medium, detail GPT-5.6 Luna medium,
+    state extraction GPT-5 with reasoning omitted
+  - `balanced_v2`: beat GPT-5.6 Terra medium, audit/state extraction GPT-6.1 Sol low,
+    detail GPT-6 Luna low
+- one-page autofill compiler: `gpt-4o-2024-08-06` (unchanged)
+- image import analysis: `gpt-5.4-mini` with reasoning `none`; already accepted
+  `gpt-4o` analysis jobs execute with their quoted model and omit reasoning
+
+Model routing does not add provider calls or semantic audits. Normal episode
+autofill still performs one semantic audit, and provider responses retain the
+existing strict schemas, retry bounds, state references and atomic save rules.
+Story collaboration, improvement, skeleton and image-prompt models are unchanged.
+Final image generation remains GPT Image 2 medium; credit prices do not change.
 
 ## 3. Input contract
 

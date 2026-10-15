@@ -25,7 +25,7 @@ describe('generation quote policy', () => {
     expect(() => validateQuoteSelection({ operation: 'page_generate', quality: 'high' }, 'gpt-image-2')).toThrow();
     expect(() => validateQuoteSelection({ operation: 'page_generate' }, 'different-runtime-model')).toThrow();
     expect(validateQuoteSelection({ operation: 'entity_import_analysis' }, 'gpt-image-2')).toEqual({
-      imageModel: null, providerModelId: 'gpt-4o', quality: null, renderStyle: null,
+      imageModel: null, providerModelId: 'gpt-5.4-mini', quality: null, renderStyle: null,
     });
   });
 });

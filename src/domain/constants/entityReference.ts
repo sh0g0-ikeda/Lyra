@@ -7,7 +7,16 @@ export const ENTITY_REFERENCE_GENERATION = {
   CANDIDATE_COUNT: 1,
 } as const;
 
-export const ENTITY_IMPORT_ANALYSIS_MODEL = 'gpt-4o';
+export const ENTITY_IMPORT_ANALYSIS_MODEL = 'gpt-5.4-mini';
+export const ENTITY_IMPORT_ANALYSIS_SUPPORTED_MODELS = [
+  'gpt-4o',
+  ENTITY_IMPORT_ANALYSIS_MODEL,
+] as const;
+export type EntityImportAnalysisModel = (typeof ENTITY_IMPORT_ANALYSIS_SUPPORTED_MODELS)[number];
+
+export function isEntityImportAnalysisModel(model: string): model is EntityImportAnalysisModel {
+  return ENTITY_IMPORT_ANALYSIS_SUPPORTED_MODELS.some((candidate) => candidate === model);
+}
 export const ENTITY_REFERENCE_PROMPT_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
 export const ENTITY_REFERENCE_PROMPT_COMPILER_MAX_TOKENS = 600;
 export const ENTITY_REFERENCE_PROMPT_COMPILER_VERSION = 'entity_ref_v2';
