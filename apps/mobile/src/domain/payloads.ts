@@ -155,6 +155,7 @@ export type ImportEntityImagePayload =
 
 export interface GeneratePageSkeletonPayload {
   overwrite_existing?: boolean;
+  preserve_generated_images?: boolean;
   apply_story_plan?: boolean;
   language?: 'ja' | 'en';
 }

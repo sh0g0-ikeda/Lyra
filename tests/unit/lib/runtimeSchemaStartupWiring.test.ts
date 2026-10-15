@@ -43,7 +43,8 @@ describe('runtime schema attestation startup wiring', () => {
     const source=read('src/index.ts');
     expect(source).toContain('await createCancelledGenerationSettlementRecoveryRuntime(db, runtime.repositoryProfile)');
     expect(source).toContain('await startCancelledGenerationSettlementRecoveryMaintenance(cancelledRecovery)');
-    expect(source).toContain('stopCancelledRecovery(), stopTerminalRecovery(), stopPush(), stopAccountDeletion(), stopExports(), httpClosed,');
+    expect(source).toContain('startWorkDeletionRecovery(createWorkDeletionRuntime(env,db,fencedStateReferenceRuntime,runtime.repositoryProfile))');
+    expect(source).toContain('stopCancelledRecovery(), stopTerminalRecovery(), stopPush(), stopAccountDeletion(), stopWorkDeletion(), stopExports(), httpClosed,');
     expect(source).toContain("process.once('SIGTERM'");
   });
 
@@ -80,7 +81,9 @@ describe('runtime schema attestation startup wiring', () => {
     // entrypoints supply the attested value; subordinate helpers receive it.
     expect(app.match(/env\.LYRA_PERSISTENCE_PROFILE/gu)).toHaveLength(1);
     expect(worker.match(/env\.LYRA_PERSISTENCE_PROFILE/gu)).toHaveLength(1);
-    expect(app).toContain('dependencies.attestedRuntime?.repositoryProfile ?? env.LYRA_PERSISTENCE_PROFILE');
+    expect(app).toContain('const persistenceProfile = dependencies.attestedRuntime?.repositoryProfile ?? env.LYRA_PERSISTENCE_PROFILE;');
+    expect(app).toContain('createWorkDeletionAccessGuard(db, persistenceProfile)');
+    expect(app).toContain('createWorkDeletionRuntime(env,db,fencedStateReferenceRuntime,persistenceProfile).service');
     expect(worker).toContain('attestedRuntime?.repositoryProfile ?? env.LYRA_PERSISTENCE_PROFILE');
     expect(worker).toContain('start: (runtime) => resolveWorkerDependencies(overrides, runtime)');
     expect(worker).toContain('resolvePageGenerationInputImageBuilder(persistenceProfile)');

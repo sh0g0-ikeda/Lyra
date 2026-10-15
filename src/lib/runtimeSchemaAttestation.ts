@@ -2,6 +2,7 @@ import { ConfigurationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from './db.js';
 import { PRODUCTION44_EXPANSION_MIGRATIONS } from './production44ExpandedRuntimeSchemaDescriptor.js';
 import { describeProduction44ExpansionCheckpoint } from './production44ExpandedRuntimeSchemaAttestation.js';
+import { WORK_DELETION_SCHEMA } from './workDeletionSchemaDescriptor.js';
 import { STRIPE_RECOVERY_SCHEMA } from './stripeRecoverySchemaDescriptor.js';
 
 export const CANONICAL_RUNTIME_MIGRATIONS = [
@@ -56,6 +57,7 @@ export const CANONICAL_RUNTIME_MIGRATIONS = [
 ] as const;
 
 export const SECURITY_RUNTIME_MIGRATIONS = [...CANONICAL_RUNTIME_MIGRATIONS, '049_add_stripe_credit_recovery.sql'] as const;
+export const WORK_DELETION_RUNTIME_MIGRATIONS = [...SECURITY_RUNTIME_MIGRATIONS, '050_add_work_deletion.sql'] as const;
 
 export interface RuntimeSchemaCatalog {
   migrationFilenames: string[];
@@ -222,7 +224,8 @@ export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSch
     return { kind: 'empty_fresh', failures: [] };
   }
 
-  const hasRecoveryGuard = sameStrings(catalog.migrationFilenames, SECURITY_RUNTIME_MIGRATIONS);
+  const hasWorkDeletionGuard = sameStrings(catalog.migrationFilenames, WORK_DELETION_RUNTIME_MIGRATIONS);
+  const hasRecoveryGuard = hasWorkDeletionGuard || sameStrings(catalog.migrationFilenames, SECURITY_RUNTIME_MIGRATIONS);
   const hasRevisionGuard = hasRecoveryGuard || sameStrings(catalog.migrationFilenames, CANONICAL_RUNTIME_MIGRATIONS);
   const historyKind = hasRevisionGuard || sameStrings(catalog.migrationFilenames, CANONICAL_047_MIGRATIONS)
     ? 'canonical_fresh_v1'
@@ -260,6 +263,27 @@ export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSch
     }
   } else if (catalog.relations.some(item => item.name.startsWith('stripe_payment_') || item.name === 'stripe_unresolved_payment_adjustments')) {
     failures.push('UNRECORDED_RECOVERY_SCHEMA');
+  }
+  if (hasWorkDeletionGuard) {
+    const serverVersionNum = runtimeSchemaPostgresVersions.get(catalog) ?? 0;
+    for (const part of ['relations', 'columns', 'constraints', 'indexes', 'triggers', 'functions'] as const) {
+      const expectedRows = part === 'constraints' && serverVersionNum < POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM
+        ? WORK_DELETION_SCHEMA.constraints.filter(row => row.type !== 'n') : WORK_DELETION_SCHEMA[part];
+      for (const expected of expectedRows) {
+        const actualRows = catalog[part] ?? [];
+        const actual = actualRows.find(row => {
+          const record = row as unknown as Record<string, unknown>;
+          const identity = expected as unknown as Record<string, unknown>;
+          return record.name === identity.name && (identity.relation === undefined || record.relation === identity.relation);
+        });
+        if (actual === undefined || !Object.entries(expected).every(([key, value]) => JSON.stringify((actual as unknown as Record<string, unknown>)[key]) === JSON.stringify(value))) {
+          failures.push(`WORK_DELETION_${part.toUpperCase()}:${'relation' in expected ? expected.relation + '.' : ''}${expected.name}`);
+        }
+      }
+    }
+  } else if (catalog.relations.some(row => row.name.startsWith('work_deletion_') || row.name === 'work_storage_operations')
+    || catalog.columns.some(row => row.relation === 'works' && row.name === 'deletion_started_at')) {
+    failures.push('UNRECORDED_WORK_DELETION_SCHEMA');
   }
   const revisionTriggers = catalog.triggers.filter(trigger => trigger.name === 'entity_states_monotonic_revision');
   const revisionFunctions = catalog.functions?.filter(fn => fn.name === 'lyra_advance_entity_state_revision') ?? [];
@@ -486,11 +510,11 @@ export interface AttestedCanonicalRuntime {
 export type AttestedRuntime = Readonly<{
   descriptor: 'canonical_fresh_v1';
   repositoryProfile: 'canonical';
-  capabilities: Readonly<{ entityStateMonotonicRevision: boolean; stripeCreditRecovery?: boolean }>;
+  capabilities: Readonly<{ entityStateMonotonicRevision: boolean; stripeCreditRecovery?: boolean; workDeletion?: boolean }>;
 } | {
   descriptor: 'production44_expanded_pg18_v1';
   repositoryProfile: 'production44_expanded_pg18_v1';
-  capabilities: Readonly<{ entityStateMonotonicRevision: true; stripeCreditRecovery?: boolean }>;
+  capabilities: Readonly<{ entityStateMonotonicRevision: true; stripeCreditRecovery?: boolean; workDeletion?: boolean }>;
 }>;
 
 const verifiedRuntimeProofs = new WeakSet<object>();
@@ -500,8 +524,8 @@ function runtimeProof(catalog: RuntimeSchemaCatalog): AttestedRuntime | null {
   const canonical = describeRuntimeSchema(catalog).kind === 'canonical_fresh_v1';
   if (!canonical && describeProduction44ExpansionCheckpoint(catalog) !== PRODUCTION44_EXPANSION_MIGRATIONS.length) return null;
   const proof: AttestedRuntime = canonical
-    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql'), stripeCreditRecovery: catalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql') }) })
-    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true, stripeCreditRecovery: true }) });
+    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql'), stripeCreditRecovery: catalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql'), workDeletion: catalog.migrationFilenames.includes('050_add_work_deletion.sql') }) })
+    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true, stripeCreditRecovery: true, workDeletion: true }) });
   verifiedRuntimeProofs.add(proof);
   return proof;
 }

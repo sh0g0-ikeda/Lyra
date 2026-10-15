@@ -17,7 +17,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock('react-native', () => ({ Platform: mocks.platform, Text: 'text', Linking: { getInitialURL: mocks.initialUrl, addEventListener: () => ({ remove: vi.fn() }) } }));
 vi.mock('expo-crypto', () => ({ randomUUID: mocks.randomUUID }));
 vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: mocks.openBrowser }));
-vi.mock('@/lib/auth', () => ({ reauthenticateWithCognito: mocks.reauthenticate }));
+vi.mock('@/lib/auth', () => ({
+  AuthError: class extends Error {
+    constructor(message: string, public fatal = false, public code: 'ACCOUNT_LINK_REQUIRED' | null = null) { super(message); this.name = 'AuthError'; }
+  },
+  reauthenticateNativeWithCognito: mocks.reauthenticate
+}));
 vi.mock('@/lib/config', () => ({ config: mocks.config }));
 vi.mock('@/lib/api', () => ({ ApiError: class extends Error { constructor(message: string, public status: number, public code: string) { super(message); } }, LyraMobileApiClient: class { constructor(token: () => string) { mocks.currentToken = token; } getCurrentSession = mocks.fresh.getCurrentSession; startGoogleIdentityLink = mocks.fresh.startGoogleIdentityLink; getGoogleIdentityLinkStatus = mocks.fresh.getGoogleIdentityLinkStatus; } }));
 vi.mock('@/lib/confirm', () => ({ confirmAction: mocks.confirm }));
@@ -62,6 +67,20 @@ describe('GoogleIdentityLinkPanel', () => {
     expect(mocks.setTokens).not.toHaveBeenCalled();
     act(() => renderer.unmount());
   });
+  it('cold-returnのstatus失敗は既存challengeを保持し準備未送信とは表示しない', async () => {
+    mocks.initialUrl.mockResolvedValue(`lyra-mobile://auth/identity-link?challenge_id=${id}`);
+    mocks.api.getGoogleIdentityLinkStatus.mockRejectedValueOnce(new ApiError('safe', 409, 'ACCOUNT_LINK_REQUIRED'));
+    await render(); await press('google-link-check');
+    const tree = JSON.stringify(renderer.toJSON());
+    expect(tree).toContain('link request exists');
+    expect(tree).not.toContain('before any Google link request was sent');
+    expect(tree).not.toContain('No Google link request was sent');
+    expect(renderer.root.findByProps({ testID: 'google-link-check' })).toBeDefined();
+    expect(mocks.reauthenticate).not.toHaveBeenCalled();
+    expect(mocks.fresh.startGoogleIdentityLink).not.toHaveBeenCalled();
+    expect(mocks.setTokens).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
   it('検証APKが公開アプリ用cold-returnを受け取った場合に照会せず元sessionを保つ', async () => {
     mocks.config.cognitoRedirectUri = 'lyra-mobile-staging://auth/mobile/callback';
     mocks.initialUrl.mockResolvedValue('lyra-mobile://auth/identity-link?challenge_id=' + id);
@@ -94,6 +113,85 @@ describe('GoogleIdentityLinkPanel', () => {
     expect(mocks.reauthenticate).toHaveBeenCalledOnce();
     expect(mocks.fresh.startGoogleIdentityLink.mock.calls[0]?.[0]).toEqual(mocks.fresh.startGoogleIdentityLink.mock.calls[1]?.[0]);
     expect(mocks.setTokens).not.toHaveBeenCalled(); act(() => renderer.unmount());
+  });
+  it('不明POSTの同一key再試行中にcapability取得が失敗してもfresh flowへ置換しない', async () => {
+    mocks.fresh.startGoogleIdentityLink.mockRejectedValueOnce(new Error('timeout'));
+    await render(); await begin();
+    expect(renderer.root.findByProps({ testID: 'google-link-retry-start' })).toBeDefined();
+    mocks.api.getGoogleAuthCapabilities.mockRejectedValueOnce(new Error('offline'));
+    await press('google-link-retry-start');
+    const unavailableTree = JSON.stringify(renderer.toJSON());
+    expect(unavailableTree).toContain('availability could not be checked');
+    expect(unavailableTree).not.toContain('before any Google link request was sent');
+    expect(renderer.root.findByProps({ testID: 'google-link-retry-start' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'google-link-start' })).toHaveLength(0);
+    expect(mocks.reauthenticate).toHaveBeenCalledOnce();
+    expect(mocks.randomUUID).toHaveBeenCalledOnce();
+    expect(mocks.fresh.startGoogleIdentityLink).toHaveBeenCalledOnce();
+    await press('google-link-retry-start');
+    expect(mocks.reauthenticate).toHaveBeenCalledOnce();
+    expect(mocks.randomUUID).toHaveBeenCalledOnce();
+    expect(mocks.fresh.startGoogleIdentityLink.mock.calls.map(([body]) => body.request_key)).toEqual([
+      'bb1a66da-a1a1-4b4a-8a8a-6b906a785493',
+      'bb1a66da-a1a1-4b4a-8a8a-6b906a785493'
+    ]);
+    expect(mocks.setTokens).not.toHaveBeenCalled(); act(() => renderer.unmount());
+  });
+  it('初回capability取得失敗は送信有無を断定せず利用可否の再確認を案内する', async () => {
+    mocks.api.getGoogleAuthCapabilities.mockRejectedValueOnce(new Error('offline'));
+    await render(); await begin();
+    const tree = JSON.stringify(renderer.toJSON());
+    expect(tree).toContain('availability could not be checked');
+    expect(tree).not.toContain('before any Google link request was sent');
+    expect(mocks.reauthenticate).not.toHaveBeenCalled();
+    expect(mocks.fresh.startGoogleIdentityLink).not.toHaveBeenCalled();
+    expect(mocks.setTokens).not.toHaveBeenCalled(); act(() => renderer.unmount());
+  });
+  it.each(['reauthenticate', 'session'] as const)('連携POST前の%s失敗は未送信と表示し結果不明にしない', async (failure) => {
+    if (failure === 'reauthenticate') mocks.reauthenticate.mockRejectedValueOnce(new Error('offline'));
+    else mocks.fresh.getCurrentSession.mockRejectedValueOnce(new Error('offline'));
+    await render(); await begin();
+    const tree = JSON.stringify(renderer.toJSON());
+    expect(tree).toContain('before any Google link request was sent');
+    expect(tree).not.toContain('link result could not be confirmed');
+    expect(mocks.fresh.startGoogleIdentityLink).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByProps({ testID: 'google-link-retry-start' })).toHaveLength(0);
+    expect(mocks.setTokens).not.toHaveBeenCalled(); act(() => renderer.unmount());
+  });
+  it('ACCOUNT_LINK_REQUIREDは既存native認証の案内に変換しPOST未送信を保つ', async () => {
+    const { AuthError } = await import('@/lib/auth');
+    mocks.reauthenticate.mockRejectedValueOnce(new AuthError('ACCOUNT_LINK_REQUIRED', false, 'ACCOUNT_LINK_REQUIRED'));
+    await render(); await begin();
+    const tree = JSON.stringify(renderer.toJSON());
+    expect(tree).toContain('existing Lyra email and password');
+    expect(tree).toContain('No Google link request was sent');
+    expect(mocks.fresh.startGoogleIdentityLink).not.toHaveBeenCalled();
+    expect(mocks.setTokens).not.toHaveBeenCalled(); act(() => renderer.unmount());
+  });
+  it('receipt後のstatus失敗は既存challengeの確認導線を保持し新規POST retryを出さない', async () => {
+    mocks.fresh.getGoogleIdentityLinkStatus.mockRejectedValueOnce(new Error('offline'));
+    await render(); await begin();
+    const tree = JSON.stringify(renderer.toJSON());
+    expect(tree).toContain('link request exists');
+    expect(renderer.root.findByProps({ testID: 'google-link-check' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'google-link-retry-start' })).toHaveLength(0);
+    expect(mocks.fresh.startGoogleIdentityLink).toHaveBeenCalledOnce();
+    expect(mocks.setTokens).not.toHaveBeenCalled(); act(() => renderer.unmount());
+  });
+  it('新規開始前のcapability取得失敗は古いflowを未送信判定へ流用しない', async () => {
+    mocks.fresh.getGoogleIdentityLinkStatus.mockResolvedValueOnce({ challenge_id: id, status: 'failed', expires_at: expires, requires_reauthentication: false });
+    await render(); await begin();
+    expect(renderer.root.findByProps({ testID: 'google-link-start' })).toBeDefined();
+    mocks.api.getGoogleAuthCapabilities.mockRejectedValueOnce(new Error('offline'));
+    await press('google-link-start');
+    await act(async () => { mocks.confirm.mock.calls.at(-1)?.[0].onConfirm(); });
+    const tree = JSON.stringify(renderer.toJSON());
+    expect(tree).toContain('availability could not be checked');
+    expect(tree).not.toContain('before any Google link request was sent');
+    expect(tree).not.toContain('link result could not be confirmed');
+    expect(mocks.fresh.startGoogleIdentityLink).toHaveBeenCalledOnce();
+    expect(mocks.randomUUID).toHaveBeenCalledOnce();
+    act(() => renderer.unmount());
   });
   it('RECENT_AUTH_REQUIREDは明示的な再認証導線を出し自動でkeyやsessionを置換しない', async () => {
     mocks.fresh.startGoogleIdentityLink.mockRejectedValueOnce(new ApiError('safe code', 401, 'RECENT_AUTH_REQUIRED'));

@@ -48,7 +48,16 @@ function setup(jobs: GenerationJob[], denyOrganization = false) {
     }),
   };
   const requireMembership = vi.fn().mockImplementation(async () => { if (denyOrganization) throw new ForbiddenError(); });
-  const app = createJobRoutes({ jobService: service, authMiddleware: auth, rateLimitMiddleware: async (_c, next) => next(), organizationService: { requireMembership } as never });
+  const app = createJobRoutes({
+    jobService: service,
+    episodeStoryAutofillService: {
+      enqueueEpisodeStoryAutofill: async () => { throw new Error('Not used'); },
+      retryEpisodeStoryAutofill: async () => { throw new Error('Not used'); },
+    },
+    authMiddleware: auth,
+    rateLimitMiddleware: async (_c, next) => next(),
+    organizationService: { requireMembership } as never,
+  });
   app.onError((error, c) => c.json({ error: error instanceof AppError ? error.code : 'INTERNAL_ERROR' }, error instanceof AppError ? error.statusCode : 500));
   return { app, service, requireMembership };
 }

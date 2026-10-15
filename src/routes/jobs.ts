@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   generationJobHistoryResponseSchema,
   generationJobResponseSchema,
+  pageJobAcceptedResponseSchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { NotFoundError, ValidationError } from '../domain/errors/index.js';
 import {
@@ -21,6 +22,7 @@ import {
   createStateReferenceCandidateToken,
 } from '../services/entity/ReferenceCandidateToken.js';
 import type { JobServicePort } from '../services/job/JobService.js';
+import type { EpisodeStoryAutofillServicePort } from '../services/story/EpisodeStoryAutofillService.js';
 import type { AppEnv } from '../types/app.js';
 import {
   parseOptionalOrganizationId,
@@ -81,6 +83,7 @@ export interface JobRouteDependencies extends OrganizationRouteDependencies {
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   jobService: JobServicePort;
+  episodeStoryAutofillService: EpisodeStoryAutofillServicePort;
 }
 
 export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv> {
@@ -157,6 +160,22 @@ export function createJobRoutes(dependencies: JobRouteDependencies): Hono<AppEnv
 
     const payload = await toJobResponse(job);
     return c.json(assertMobileResponseContract(generationJobResponseSchema, payload));
+  });
+
+  app.post('/jobs/:id/retry', async (c) => {
+    const user = c.get('user');
+    const jobId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const sourceJob = await dependencies.jobService.getJob(user.id, jobId, organizationId);
+    const result = await dependencies.episodeStoryAutofillService.retryEpisodeStoryAutofill(
+      user.id,
+      sourceJob,
+    );
+    return c.json(
+      assertMobileResponseContract(pageJobAcceptedResponseSchema, { job_id: result.jobId }),
+      202,
+    );
   });
 
 

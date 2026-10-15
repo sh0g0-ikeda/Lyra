@@ -72,8 +72,9 @@ function Probe({
 }
 
 describe('DirtyStateProvider', () => {
-  it('非blocking editorはbackground保存対象に残し画面遷移確認だけ省略する', async () => {
+  it('nonblocking editorも離脱時は確認なしで破棄する', async () => {
     const save = vi.fn().mockResolvedValue(undefined);
+    const discard = vi.fn();
     let value: ProbeValue | null = null;
 
     await act(async () => {
@@ -82,10 +83,11 @@ describe('DirtyStateProvider', () => {
           <Probe
             blocksNavigation={false}
             dirty
-            discard={vi.fn()}
+            discard={discard}
             onValue={(nextValue) => {
               value = nextValue;
             }}
+            revision="revision-a"
             save={save}
           />
         </DirtyStateProvider>
@@ -96,13 +98,15 @@ describe('DirtyStateProvider', () => {
     expect(value?.hasNavigationBlockingEditors).toBe(false);
     await expect(value?.resolve()).resolves.toBe(true);
     expect(save).not.toHaveBeenCalled();
+    expect(discard).toHaveBeenCalledOnce();
     await expect(value?.saveWithoutPrompt()).resolves.toBe(true);
-    expect(save).toHaveBeenCalledOnce();
+    expect(save).not.toHaveBeenCalled();
   });
 
-  it('保存成功後に同じrevisionでcallbackが更新されても再登録しない', async () => {
+  it('silent discard後に同じrevisionでcallbackが更新されても再登録しない', async () => {
     const firstSave = vi.fn().mockResolvedValue(undefined);
     const secondSave = vi.fn().mockResolvedValue(undefined);
+    const discard = vi.fn();
     let value: ProbeValue | null = null;
     let renderer: ReactTestRenderer | null = null;
     const onValue = (nextValue: ProbeValue): void => {
@@ -114,7 +118,7 @@ describe('DirtyStateProvider', () => {
         <DirtyStateProvider>
           <Probe
             dirty
-            discard={vi.fn()}
+            discard={discard}
             onValue={onValue}
             revision="revision-a"
             save={firstSave}
@@ -124,17 +128,14 @@ describe('DirtyStateProvider', () => {
     });
 
     const firstResolution = value?.resolve();
-    await act(async () => {
-      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
-      await firstResolution;
-    });
+    await expect(firstResolution).resolves.toBe(true);
 
     await act(async () => {
       renderer?.update(
         <DirtyStateProvider>
           <Probe
             dirty
-            discard={vi.fn()}
+            discard={discard}
             onValue={onValue}
             revision="revision-a"
             save={secondSave}
@@ -145,11 +146,12 @@ describe('DirtyStateProvider', () => {
 
     expect(value?.hasDirtyEditors).toBe(false);
     await expect(value?.resolve()).resolves.toBe(true);
-    expect(firstSave).toHaveBeenCalledOnce();
+    expect(discard).toHaveBeenCalledOnce();
+    expect(firstSave).not.toHaveBeenCalled();
     expect(secondSave).not.toHaveBeenCalled();
   });
 
-  it('破棄成功後に同じrevisionでcallbackが更新されても再登録しない', async () => {
+  it('silent discard後に同じrevisionでcallbackが更新されても再登録しない', async () => {
     const firstDiscard = vi.fn();
     const secondDiscard = vi.fn();
     let value: ProbeValue | null = null;
@@ -173,10 +175,7 @@ describe('DirtyStateProvider', () => {
     });
 
     const firstResolution = value?.resolve();
-    await act(async () => {
-      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('discard');
-      await firstResolution;
-    });
+    await expect(firstResolution).resolves.toBe(true);
 
     await act(async () => {
       renderer?.update(
@@ -226,10 +225,7 @@ describe('DirtyStateProvider', () => {
     await act(async () => {
       renderer = create(renderProbe(true));
     });
-    const pending = value?.resolve();
-    act(() => {
-      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
-    });
+    const pending = value?.saveWithoutPrompt();
     await vi.waitFor(() => {
       expect(save).toHaveBeenCalledOnce();
     });
@@ -275,10 +271,7 @@ describe('DirtyStateProvider', () => {
     await act(async () => {
       renderer = create(renderProbe('revision-a'));
     });
-    const firstResolution = value?.resolve();
-    act(() => {
-      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
-    });
+    const firstResolution = value?.saveWithoutPrompt();
     await vi.waitFor(() => {
       expect(save).toHaveBeenCalledOnce();
     });
@@ -292,17 +285,7 @@ describe('DirtyStateProvider', () => {
     });
 
     expect(value?.hasDirtyEditors).toBe(true);
-    let secondResolution: Promise<boolean> | undefined;
-    await act(async () => {
-      secondResolution = value?.resolve();
-    });
-    expect(
-      renderer?.root.findByType('dirty-resolution-dialog').props.visible
-    ).toBe(true);
-    act(() => {
-      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('cancel');
-    });
-    await expect(secondResolution).resolves.toBe(false);
+    await expect(value?.resolve()).resolves.toBe(true);
   });
 
   it('background保存中の新しい編集もdirty登録に残す', async () => {
@@ -346,9 +329,7 @@ describe('DirtyStateProvider', () => {
     });
 
     expect(value?.hasDirtyEditors).toBe(true);
-    expect(
-      renderer?.root.findByType('dirty-resolution-dialog').props.visible
-    ).toBe(false);
+    expect(renderer?.root.findAllByType('dirty-resolution-dialog')).toHaveLength(0);
   });
 
   it('保存成功直後の再離脱では確認を繰り返さない', async () => {
@@ -365,24 +346,22 @@ describe('DirtyStateProvider', () => {
             onValue={(nextValue) => {
               value = nextValue;
             }}
+            revision="revision-a"
             save={save}
           />
         </DirtyStateProvider>
       );
     });
 
-    const firstResolution = value?.resolve();
+    const firstResolution = value?.saveWithoutPrompt();
     await act(async () => {
-      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
-      await firstResolution;
+      await expect(firstResolution).resolves.toBe(true);
     });
 
     expect(value?.hasDirtyEditors).toBe(false);
     await expect(value?.resolve()).resolves.toBe(true);
     expect(save).toHaveBeenCalledTimes(1);
-    expect(
-      renderer?.root.findByType('dirty-resolution-dialog').props.visible
-    ).toBe(false);
+    expect(renderer?.root.findAllByType('dirty-resolution-dialog')).toHaveLength(0);
   });
 
   it('破棄直後の再離脱では確認を繰り返さない', async () => {
@@ -399,6 +378,7 @@ describe('DirtyStateProvider', () => {
             onValue={(nextValue) => {
               value = nextValue;
             }}
+            revision="revision-a"
             save={vi.fn().mockResolvedValue(undefined)}
           />
         </DirtyStateProvider>
@@ -407,19 +387,17 @@ describe('DirtyStateProvider', () => {
 
     const firstResolution = value?.resolve();
     await act(async () => {
-      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('discard');
-      await firstResolution;
+      await expect(firstResolution).resolves.toBe(true);
     });
 
     expect(value?.hasDirtyEditors).toBe(false);
     await expect(value?.resolve()).resolves.toBe(true);
     expect(discard).toHaveBeenCalledTimes(1);
-    expect(
-      renderer?.root.findByType('dirty-resolution-dialog').props.visible
-    ).toBe(false);
+    expect(renderer?.root.findAllByType('dirty-resolution-dialog')).toHaveLength(0);
   });
 
-  it('dirty editorを登録し保存成功後に離脱を許可する', async () => {
+  // Navigation intentionally discards the captured revision: a later revision must remain registered.
+  it('離脱時は確認せずdirty editorを破棄して許可する', async () => {
     const save = vi.fn().mockResolvedValue(undefined);
     const discard = vi.fn();
     let value: ProbeValue | null = null;
@@ -441,26 +419,23 @@ describe('DirtyStateProvider', () => {
     });
 
     expect(value?.hasDirtyEditors).toBe(true);
-    const pending = value?.resolve();
-    await act(async () => {
-      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
-    });
-    await expect(pending).resolves.toBe(true);
-    expect(save).toHaveBeenCalledTimes(1);
-    expect(discard).not.toHaveBeenCalled();
+    await expect(value?.resolve()).resolves.toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    expect(discard).toHaveBeenCalledTimes(1);
+    expect(renderer?.root.findAllByType("dirty-resolution-dialog")).toHaveLength(0);
   });
 
-  it('同時の離脱要求で解決ダイアログと保存を重複させない', async () => {
+  it('同時の離脱要求では破棄を重複させず保存を開始しない', async () => {
     const save = vi.fn().mockResolvedValue(undefined);
+    const discard = vi.fn();
     let value: ProbeValue | null = null;
-    let renderer: ReactTestRenderer | null = null;
 
     await act(async () => {
-      renderer = create(
+      create(
         <DirtyStateProvider>
           <Probe
             dirty
-            discard={vi.fn()}
+            discard={discard}
             onValue={(nextValue) => {
               value = nextValue;
             }}
@@ -472,16 +447,10 @@ describe('DirtyStateProvider', () => {
 
     const first = value?.resolve();
     const second = value?.resolve();
-    expect(
-      renderer?.root.findAllByType('dirty-resolution-dialog')
-    ).toHaveLength(1);
-
-    await act(async () => {
-      renderer?.root.findByType('dirty-resolution-dialog').props.onSelect('save');
-    });
     await expect(first).resolves.toBe(true);
     await expect(second).resolves.toBe(true);
-    expect(save).toHaveBeenCalledTimes(1);
+    expect(discard).toHaveBeenCalledOnce();
+    expect(save).not.toHaveBeenCalled();
   });
 
   it('background保存は解決ダイアログを開かずdirty editorを保存する', async () => {
@@ -506,12 +475,10 @@ describe('DirtyStateProvider', () => {
 
     await expect(value?.saveWithoutPrompt()).resolves.toBe(true);
     expect(save).toHaveBeenCalledTimes(1);
-    expect(
-      renderer?.root.findByType('dirty-resolution-dialog').props.visible
-    ).toBe(false);
+    expect(renderer?.root.findAllByType('dirty-resolution-dialog')).toHaveLength(0);
   });
 
-  it('Providerが破棄された場合は待機中の離脱要求をキャンセルとして解放する', async () => {
+  it('Providerが破棄されても開始済みのsilent discardは離脱を許可する', async () => {
     let value: ProbeValue | null = null;
     let renderer: ReactTestRenderer | null = null;
 
@@ -535,20 +502,16 @@ describe('DirtyStateProvider', () => {
       renderer?.unmount();
     });
 
-    await expect(pending).resolves.toBe(false);
+    await expect(pending).resolves.toBe(true);
   });
-  it('別ページの有料操作では非blocking draftも明示確認しキャンセルで保存しない', async () => {
+  it('別ページの有料操作ではnonblocking draftも確認なしで破棄する', async () => {
     let value: ProbeValue | null = null; let renderer: ReactTestRenderer;
     const save = vi.fn().mockResolvedValue(undefined); const discard = vi.fn();
     await act(async () => { renderer = create(<DirtyStateProvider><Probe dirty blocksNavigation={false} discard={discard} save={save} onValue={(next) => { value = next; }} /></DirtyStateProvider>); });
-    let result: Promise<boolean> | undefined;
-    await act(async () => { result = value?.resolveAll(); });
-    expect(renderer!.root.findByType('dirty-resolution-dialog').props.visible).toBe(true);
-    await act(async () => renderer!.root.findByType('dirty-resolution-dialog').props.onSelect('cancel'));
-    await expect(result).resolves.toBe(false); expect(save).not.toHaveBeenCalled(); expect(discard).not.toHaveBeenCalled();
-    await act(async () => { result = value?.resolveAll(); });
-    await act(async () => renderer!.root.findByType('dirty-resolution-dialog').props.onSelect('save'));
-    await expect(result).resolves.toBe(true); expect(save).toHaveBeenCalledOnce();
+    await expect(value?.resolveAll()).resolves.toBe(true);
+    expect(renderer!.root.findAllByType('dirty-resolution-dialog')).toHaveLength(0);
+    expect(save).not.toHaveBeenCalled();
+    expect(discard).toHaveBeenCalledOnce();
     await act(async () => renderer!.unmount());
   });
 

@@ -1,7 +1,7 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 
-import type { AuthTokens } from '@/domain/types';
+import type { AuthTokens, UiLanguage } from '@/domain/types';
 import { config } from '@/lib/config';
 import { createSingleFlight } from '@/lib/singleFlight';
 import { clearAuthTokens, saveAuthTokens } from '@/lib/storage';
@@ -120,17 +120,34 @@ const refreshAuthTokensOnce = async (tokens: AuthTokens): Promise<AuthTokens> =>
 
 export const refreshAuthTokens = createSingleFlight(refreshAuthTokensOnce);
 
-interface CognitoSignInOptions { identityProvider?: 'Google'; }
+interface CognitoSignInOptions {
+  identityProvider?: 'Google';
+  language?: UiLanguage;
+}
 
-const authorizeWithCognito = async (options: CognitoSignInOptions & { reauthenticate?: boolean } = {}): Promise<AuthTokens> => {
+interface CognitoAuthorizationOptions extends CognitoSignInOptions {
+  reauthenticate?: boolean;
+  nativeIdentityProvider?: 'COGNITO';
+}
+
+const authorizeWithCognito = async (options: CognitoAuthorizationOptions = {}): Promise<AuthTokens> => {
+  const extraParams = {
+    ...(options.reauthenticate ? { max_age: '0' } : {}),
+    ...(options.nativeIdentityProvider === 'COGNITO'
+      ? { identity_provider: 'COGNITO' }
+      : options.identityProvider === 'Google'
+        ? { identity_provider: 'Google' }
+        : {}),
+    ...(options.language === undefined ? {} : { lang: options.language })
+  };
   const request = new AuthSession.AuthRequest({
     clientId: config.cognitoClientId,
     redirectUri: config.cognitoRedirectUri,
     responseType: AuthSession.ResponseType.Code,
     scopes: config.cognitoScopes,
     usePKCE: true,
-    ...(options.reauthenticate ? { prompt: AuthSession.Prompt.Login, extraParams: { max_age: '0' } }
-      : options.identityProvider === 'Google' ? { extraParams: { identity_provider: 'Google' } } : {})
+    ...(options.reauthenticate ? { prompt: AuthSession.Prompt.Login } : {}),
+    ...(Object.keys(extraParams).length === 0 ? {} : { extraParams })
   });
 
   const discovery: AuthSession.DiscoveryDocument = {
@@ -160,8 +177,14 @@ export const signInWithCognito = async (options: CognitoSignInOptions = {}): Pro
   return tokens;
 };
 
-// Linking proves recent native ownership without replacing the active session.
-export const reauthenticateWithCognito = (): Promise<AuthTokens> => authorizeWithCognito({ reauthenticate: true });
+// Existing callers need provider-neutral fresh proof. These short-lived tokens
+// never replace the active persisted session.
+export const reauthenticateWithCognito = (): Promise<AuthTokens> =>
+  authorizeWithCognito({ reauthenticate: true });
+
+// Google linking alone must prove ownership through the native Cognito provider.
+export const reauthenticateNativeWithCognito = (): Promise<AuthTokens> =>
+  authorizeWithCognito({ reauthenticate: true, nativeIdentityProvider: 'COGNITO' });
 
 export const signOutFromCognito = async (): Promise<void> => {
   await clearAuthTokens();

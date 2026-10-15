@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 interface ExpoAppConfig {
   expo: {
+    version?: string;
     icon?: string;
     userInterfaceStyle?: string;
     splash?: unknown;
@@ -24,7 +25,9 @@ interface ExpoAppConfig {
     runtimeVersion?: { policy?: string };
     updates?: { fallbackToCacheTimeout?: number; url?: string };
     ios?: {
+      bundleIdentifier?: string;
       buildNumber?: string;
+      infoPlist?: { CFBundleLocalizations?: string[] };
       privacyManifests?: {
         NSPrivacyTracking?: boolean;
         NSPrivacyTrackingDomains?: string[];
@@ -32,6 +35,7 @@ interface ExpoAppConfig {
       };
     };
     android?: {
+      package?: string;
       versionCode?: number;
       blockedPermissions?: string[];
       adaptiveIcon?: { foregroundImage?: string; backgroundColor?: string };
@@ -56,7 +60,7 @@ const easConfig = JSON.parse(
     android?: { buildType?: string };
     ios?: { simulator?: boolean };
   }>;
-  submit?: { production?: { android?: { track?: string }; ios?: object } };
+  submit?: { production?: { android?: { track?: string }; ios?: { ascAppId?: string; metadataPath?: string } } };
 };
 const storeConfig = JSON.parse(
   readFileSync(resolve(mobileRoot, 'store.config.json'), 'utf8'),
@@ -114,6 +118,9 @@ describe('production app metadata', () => {
   });
 
   it('runtime version と安全な OTA fallback policy を固定する', () => {
+    expect(config.expo.version).toBe('1.0.9');
+    expect(config.expo.ios?.bundleIdentifier).toBe('jp.lyra.mobile');
+    expect(config.expo.android?.package).toBe('com.lyra.mobile');
     expect(config.expo.runtimeVersion?.policy).toBe('appVersion');
     expect(config.expo.updates?.fallbackToCacheTimeout).toBe(0);
     expect(config.expo.updates?.url).toMatch(/^https:\/\/u\.expo\.dev\//);
@@ -183,7 +190,7 @@ describe('production app metadata', () => {
     }
   });
 
-  it('未使用のcamera、microphone、overlay、push、legacy storage権限を最終Manifestから除外する', () => {
+  it('不要な読取等の権限を除外し、画像保存に必要な旧Android書込権限を許可する', () => {
     const imagePickerPlugin = config.expo.plugins?.find(
       (plugin): plugin is [
         string,
@@ -204,12 +211,16 @@ describe('production app metadata', () => {
         'android.permission.POST_NOTIFICATIONS',
         'android.permission.READ_APP_BADGE',
         'android.permission.READ_EXTERNAL_STORAGE',
+        'android.permission.READ_MEDIA_AUDIO',
+        'android.permission.READ_MEDIA_IMAGES',
+        'android.permission.READ_MEDIA_VIDEO',
+        'android.permission.READ_MEDIA_VISUAL_USER_SELECTED',
+        'android.permission.ACCESS_MEDIA_LOCATION',
         'android.permission.RECORD_AUDIO',
         'android.permission.RECEIVE_BOOT_COMPLETED',
         'android.permission.SYSTEM_ALERT_WINDOW',
         'android.permission.VIBRATE',
         'android.permission.WAKE_LOCK',
-        'android.permission.WRITE_EXTERNAL_STORAGE',
         'com.anddoes.launcher.permission.UPDATE_COUNT',
         'com.google.android.c2dm.permission.RECEIVE',
         'com.htc.launcher.permission.READ_SETTINGS',
@@ -228,6 +239,20 @@ describe('production app metadata', () => {
         'me.everything.badger.permission.BADGE_COUNT_WRITE',
       ]),
     );
+  });
+
+  it('直接画像保存は写真だけの権限とiOS追加保存の説明を設定する', () => {
+    const mediaLibraryPlugin = config.expo.plugins?.find((plugin) => Array.isArray(plugin) && plugin[0] === 'expo-media-library');
+    expect(mediaLibraryPlugin).toEqual(['expo-media-library', expect.objectContaining({
+      savePhotosPermission: expect.any(String),
+      granularPermissions: ['photo'],
+      isAccessMediaLocationEnabled: false,
+    })]);
+    expect(config.expo.android?.blockedPermissions).not.toContain('android.permission.WRITE_EXTERNAL_STORAGE');
+  });
+
+  it('iOS bundle が日英のローカライゼーションを宣言する', () => {
+    expect(config.expo.ios?.infoPlist?.CFBundleLocalizations).toEqual(['ja', 'en']);
   });
 
   it('iOS privacy manifest で tracking 無効を明示する', () => {
@@ -267,6 +292,7 @@ describe('production app metadata', () => {
       expect(storeConfig.apple?.info?.[language]?.keywords?.length).toBeGreaterThan(2);
     }
     expect(easConfig.submit?.production?.ios).toMatchObject({
+      ascAppId: '6797564060',
       metadataPath: './store.config.json',
     });
   });
@@ -289,7 +315,7 @@ describe('production app metadata', () => {
     }
   });
 
-  it('静的設定とストアコピーは未公開のPDF、ZIP、購入を約束しない', () => {
+  it('静的設定とストアコピーは未公開のPDF、ZIPを約束しない', () => {
     expect(config.expo.ios).not.toHaveProperty('associatedDomains');
     const descriptions = [
       storeConfig.apple?.info?.ja?.description,
@@ -298,7 +324,7 @@ describe('production app metadata', () => {
     ].filter((description): description is string => description !== undefined);
 
     for (const description of descriptions) {
-      expect(description).not.toMatch(/PDF|ZIP|purchase|購入|課金/u);
+      expect(description).not.toMatch(/PDF|ZIP/u);
     }
     expect(descriptions.join('\n')).toMatch(/generated page images|生成済みページ画像/u);
   });

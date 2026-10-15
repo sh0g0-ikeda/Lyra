@@ -61,13 +61,13 @@ describe('mobile configuration validation', () => {
     expect(config.webEditorUrl).toBe('https://app.lyra-editor.com/');
   });
 
-  it('store billing flagは未設定ならfalseとして読み込む', async () => {
+  it('store billing flagが未設定の場合に旧アプリ同様の商品選択を有効にする', async () => {
     vi.stubEnv('EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED', '');
     vi.resetModules();
 
     const { config } = await import('@/lib/config');
 
-    expect(config.mobileStoreBillingEnabled).toBe(false);
+    expect(config.mobileStoreBillingEnabled).toBe(true);
   });
 
   it('store billing flagはtrueだけを有効として読み込む', async () => {
@@ -77,6 +77,13 @@ describe('mobile configuration validation', () => {
     const { config } = await import('@/lib/config');
 
     expect(config.mobileStoreBillingEnabled).toBe(true);
+  });
+
+  it('store billing flagが明示falseの場合に購入を無効にする', async () => {
+    vi.stubEnv('EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED', 'false');
+    vi.resetModules();
+    const { config } = await import('@/lib/config');
+    expect(config.mobileStoreBillingEnabled).toBe(false);
   });
 
   it('account deletion flagは未設定ならfalseとして読み込む', async () => {

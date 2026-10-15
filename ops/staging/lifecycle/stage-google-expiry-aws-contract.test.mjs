@@ -34,6 +34,19 @@ test('Google公開済みでexpiryが未設定またはOFFならfail closedにな
   }
 });
 test('exact group tags/output/targetだけを受理する',()=>{const x=assessGoogleExpiryAwsInventory(fixture());assert.equal(x.configured,true);assert.equal(x.schedule.state,'DISABLED');for(const mutate of [f=>f.groupTags.Tags.pop(),f=>{f.schedule.Target.RetryPolicy.MaximumRetryAttempts=1;},f=>{f.schedule.Target.EcsParameters.TaskDefinitionArn=taskDefinitionArn.replace(':1',':01');}]){const bad=fixture();mutate(bad);assert.throws(()=>assessGoogleExpiryAwsInventory(bad));}});
+test('Schedulerの終了日時は欠如またはロールバック用の旧固定値だけを受理する',()=>{
+  const withoutEndDate=fixture();
+  delete withoutEndDate.schedule.EndDate;
+  assert.equal(assessGoogleExpiryAwsInventory(withoutEndDate).configured,true);
+
+  assert.equal(assessGoogleExpiryAwsInventory(fixture()).configured,true);
+
+  for(const endDate of [null,new Date('2026-10-11T00:00:00.000Z'),new Date('invalid')]){
+    const unexpected=fixture();
+    unexpected.schedule.EndDate=endDate;
+    assert.throws(()=>assessGoogleExpiryAwsInventory(unexpected),/GOOGLE_EXPIRY_SCHEDULE_INVALID/u);
+  }
+});
 test('one-off RunTaskはexact stage networkとdeterministic tokenに固定する',()=>{const x=assessGoogleExpiryAwsInventory(fixture());const a=buildGoogleExpiryRunTaskRequest(x.configuration,'2026-10-09T14:11:00.000Z');const b=buildGoogleExpiryRunTaskRequest(x.configuration,'2026-10-09T14:11:00.000Z');assert.deepEqual(a,b);assert.equal(a.startedBy,'lyra-stage-google-expiry-v1');assert.deepEqual(a.networkConfiguration.awsvpcConfiguration.subnets,['subnet-aa','subnet-cc']);});
 test('記録したtaskだけをrunning/completedとして分類する',()=>{const task={taskArn:`arn:aws:ecs:ap-northeast-1:452284481392:task/${stage}-cluster/${'a'.repeat(32)}`,clusterArn:`arn:aws:ecs:ap-northeast-1:452284481392:cluster/${stage}-cluster`,taskDefinitionArn,startedBy:'lyra-stage-google-expiry-v1',group:`family:${stage}-google-link-expiry`,lastStatus:'RUNNING'};const record=buildGoogleExpiryTaskRecord(task,'2026-10-09T14:11:00.000Z',taskDefinitionArn);const running=fixture();running.taskRecord=record;running.task=task;running.activeTasks=[task];assert.equal(assessGoogleExpiryAwsInventory(running).cleanupTask.status,'running');const done=fixture();done.taskRecord=record;done.task={...task,lastStatus:'STOPPED',desiredStatus:'STOPPED',stopCode:'EssentialContainerExited',stoppedAt:'2026-10-09T14:12:00.000Z',containers:[{name:'google-link-expiry',exitCode:0}]};assert.equal(assessGoogleExpiryAwsInventory(done).cleanupTask.status,'completed');});
 test('停止済みtaskがECS履歴から消えてもsealed completionとrecordで再開できる',()=>{

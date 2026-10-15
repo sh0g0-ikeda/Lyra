@@ -26,14 +26,41 @@ describe('人工r58の再試行前後を正確なrawで再生する',()=>{
   const result=await new OpenAIPageEpisodePlanCompiler(client(raw)).compilePlan({compilerBrief:SOURCE,language:'ja',sourceOwnedPageContext:true,sourceRequirements:corrected()});
   expect(result.suggestion.pages.map(p=>p.panels.length)).toEqual([4,4,4]);
  });
- it('p9入口停止はplacement受理後もgrounded source omissionとして現auditでblockingのまま保持する',async()=>{
+ it('p9入口停止はplacement受理後もtyped source omissionとして現auditでblockingのまま保持する',async()=>{
   const pageId=pages[2]!.pageId;
   const output=(JSON.parse(RAW_OUTPUTS[1]!) as {pages:Array<{page_number:number;panels:Array<{order:number;situation_text:string}>}>}).pages.find(p=>p.page_number===9)!.panels.find(p=>p.order===4)!.situation_text;
   expect(output).toContain('入口の外にとどまっている');
   const terminal=corrected().requirements.find(r=>r.requirementId==='p9-u8-r13')!;
   expect(terminal).toMatchObject({kind:'event',requiredByEnd:true,events:['灯台へ入るまでをこのページで描く']});
   const source=terminal.events[0]!;const repair='扉を開けた後、ココが敷居を越えて灯台の中へ入る。';
-  const payload={accepted:false,issues:[{code:'source_omission',severity:'error',page_ids:[pageId],message:'入る完了境界が欠落',repair_instruction:repair}],page_repairs:[],panel_repairs:[{page_id:pageId,panel_order:4,changed_fields:['situation_text'],patch:{panel_role:null,panel_size:null,situation_text:repair,composition:null,dialogue_in_panel:null,dialogue:null,sfx_text:null,background_note:null,panel_notes:null,entities:null}}],source_coverage:[{page_id:pageId,checks:[{source_ref:'source',source_quote:source,status:'missing',output_evidence:[],issue_code:'source_omission',repair_target:{scope:'panel',page_id:pageId,panel_order:4}}]}],issue_grounding:[{issue_index:0,basis:'source',source_evidence:[{page_id:pageId,source_ref:'page_source',quote:source}],output_evidence:[{page_id:pageId,output_ref:'p4.s',quote:'入口の外にとどまっている'}]}]};
+  const payload={
+   accepted:false,
+   issues:[{
+    code:'source_omission',
+    severity:'error',
+    page_ids:[pageId],
+    message:'入る完了境界が欠落',
+    repair_instruction:repair,
+   }],
+   page_repairs:[],
+   panel_repairs:[{
+    page_id:pageId,
+    panel_order:4,
+    changed_fields:['situation_text'],
+    patch:{
+     panel_role:null,
+     panel_size:null,
+     situation_text:repair,
+     composition:null,
+     dialogue_in_panel:null,
+     dialogue:null,
+     sfx_text:null,
+     background_note:null,
+     panel_notes:null,
+     entities:null,
+    },
+   }],
+  };
   const result=await new OpenAIEpisodePlanAuditCompiler(client(JSON.stringify(payload))).auditPlan({compilerBrief:SOURCE+'\n[p4.s] '+output,language:'ja',pageIds:[pageId],sourceOwnedPageContext:true,coverageCatalog:{pages:[{pageId,sources:[{ref:'source',text:source}],outputs:[{ref:'p4.s',text:output,panelOrder:4}]}],grounding:{pages:[{pageId,authorities:[{ref:'page_source',text:source,kind:'original_page'}],outputs:[{ref:'p4.s',text:output,panelOrder:4}]}],deterministicIssues:[]}}});
   expect(result.audit.accepted).toBe(false);expect(hasBlockingEpisodePlanAuditIssues(result.audit.issues)).toBe(true);
   expect(result.audit.panelRepairs?.[0]?.patch.situationText).toBe(repair);

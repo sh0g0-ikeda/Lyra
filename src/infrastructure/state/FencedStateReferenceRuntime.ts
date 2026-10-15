@@ -1,3 +1,4 @@
+import type { WorkStateReferenceErasurePort } from '../../services/work/WorkDeletionService.js';
 import { S3Client, type S3ClientConfig } from '@aws-sdk/client-s3';
 import { fromTemporaryCredentials } from '@aws-sdk/credential-providers';
 import { ConfigurationError } from '../../domain/errors/index.js';
@@ -29,7 +30,7 @@ export interface FencedStateReferenceStoragePorts {
   imageCreator: FencedStateReferenceImageCreatePort;
   recovery: FencedStateReferenceRecoveryPort;
 }
-export type FencedStateReferenceRuntime = FencedStateReferenceConfirmationPort & PersonalStateReferenceFencingPort;
+export type FencedStateReferenceRuntime = FencedStateReferenceConfirmationPort & PersonalStateReferenceFencingPort & Partial<WorkStateReferenceErasurePort>;
 export interface FencedStateReferenceRuntimeOverrides {
   repository?: FencedStateReferenceRepository;
   /** Trusted process-local DI only. Never populated from HTTP request data. */

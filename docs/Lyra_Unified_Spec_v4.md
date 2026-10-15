@@ -79,6 +79,18 @@ Mobile identity-link returns use a fixed environment-specific scheme:
 `lyra-mobile://auth/identity-link` for production and
 `lyra-mobile-staging://auth/identity-link` for isolated staging. A client
 cannot choose the return URL, and a browser return never proves linking success.
+Mobile Google-link reauthentication requests the native `COGNITO` provider with
+PKCE, `prompt=login` and `max_age=0`; it does not persist or replace the active
+session. Staging challenge cleanup follows the explicit schedule-enabled switch,
+without a fixed calendar end while enabled; callback expiry rejection remains
+independent. Google-aware final cleanup is required before enabling teardown.
+This provider restriction belongs only to the Google-link wrapper;
+shared account-deletion reauthentication remains provider-neutral so Google-only
+accounts can obtain fresh proof. Native account verification failures before the start POST are distinct
+from an unknown start result and from a failed status read. Capability read
+failure cannot discard a previously attempted start's request key or permit a new
+start while that result is unknown. Recovery status failures, including cold
+returns, retain the existing challenge and never claim that no request was sent.
 
 Account-deletion POST additionally requires a signature-verified Cognito identity
 for the same authenticated subject with auth_time within 300 seconds (at most
@@ -108,6 +120,22 @@ Balloon, prompt, job, queue, worker, and credit contracts remain unchanged.
 Balloon create, update, and automatic replacement share the Page row lock and
 recheck the complete ordered Panel-ID snapshot plus order-reference bounds before
 writing, so they cannot recreate a stale reference during a structure command.
+
+Mobile Assets is a read-only manga library: works lead to chapter headings and a
+flat episode list whose titles are the saved episode titles. Chapter ordinals and
+work-wide episode ordinals are derived from the current chapter/episode order,
+including insertion and reorder, without changing identifiers or persisted order.
+The reader keeps its selection separate from editing, provides horizontal
+right-to-left paging and vertical reading with the current page preserved, and
+allows adjacent episodes across chapter boundaries. Horizontal page navigation
+uses swipes with a localized hint below the page; close has a large gold action
+separate from the reading-mode control. Episode labels use simple numbers while
+retaining the work-wide dynamic ordering. Incomplete chapter or page
+queries are reported rather than silently renumbered or truncated. Images use
+view-authorized short-lived HTTPS CDN URLs only; reading never invokes export or
+forwards API credentials to the CDN. A failed image can refresh its page URL once
+automatically per authenticated scope and image revision, then requires an
+explicit read retry. Unavailable or ungenerated pages remain visible placeholders.
 
 Images are stored by opaque S3 keys. User input is not interpolated into storage
 paths. Database responses may contain stable image metadata, while production image
@@ -200,6 +228,38 @@ to an anonymized user anchor. Store and Stripe events received after deletion
 starts are deduplicated as provider records but cannot restore personal credits or
 plan entitlements.
 
+### Permanent work deletion (2026-10-12)
+
+Permanent work deletion is separate from account deletion. DELETE /api/works/:id
+requires personal ownership or active organization edit-work permission and an
+explicit Mobile confirmation that the work, chapters, episodes and owned images
+will be erased. Admission defaults OFF through WORK_DELETION_ENABLED. Existing
+receipts, mutation guards and recovery remain active when admission is disabled.
+The API returns a durable 202 receipt, or 200 for a completed repeated request;
+scoped GET /api/work-deletions and /api/work-deletions/:id recover its status.
+An uncertain network response never causes an automatic second DELETE.
+
+Migration 050 adds the work deletion journal, exact owned asset manifest and
+synchronous storage-operation journal. All current runtimes require its physically
+attested schema before serving, including while new deletion admission is OFF.
+Deletion locks the work, rejects active generation/export or unresolved external
+writes, snapshots authorized resources and freezes further admissions/edits.
+Pending works are hidden from normal lists and detail/image URL issuance. The
+bounded recovery runner erases exact owned S3 keys, all versions and delete
+markers; state-copy v2 requires verified work-scoped fencing with the current
+request token. Unknown legacy writes block completion rather than becoming safe
+through elapsed time. Only verified cleanup permits the final graph cascade. Ownership is established
+from the frozen work graph and retained attributable resource history, including
+images confirmed by former organization editors. A key whose historical resource
+and ownership evidence have both been lost cannot be attributed to this work;
+the deletion operation does not erase unrelated or unproven bucket objects. Known
+unresolved ownership or writes remain blocked for reconciliation. Completion
+scrubs raw work/image content from retained journals while preserving minimal
+receipt, fencing and billing evidence. Billing ledgers, receipts, balances, user
+accounts and unrelated works remain.
+The versioned staging bucket needs DeleteObjectVersion on its objects and
+ListBucketVersions/GetBucketVersioning on the bucket; production scope is excluded.
+
 ## 6. Generation jobs
 
 Long-running page, entity, page-skeleton, and story-autofill work is represented by
@@ -216,11 +276,47 @@ Generation and regeneration both create a new result from the current saved inpu
 A previous generated page image is not an implicit image reference. Confirmed entity
 reference images are explicit character-consistency inputs.
 
+Mobile state-preview availability follows the persisted primary character image,
+not the reference-set image count. A matching Mobile-compatible confirmed primary
+image is sufficient even when one or two images leave the set `partial`. Missing
+or unmatched primaries and unconfirmed candidates remain unavailable; capability,
+authorization, saved-input revision, active-job, and explicit quote acceptance
+checks still apply.
+
+Mobile import validates local file access, actual image bytes, and the existing
+5 MiB bound before preparing a network upload. JPEG, PNG, and WebP keep their
+original bytes. Starting with native/runtime version 1.0.9, recognized HEIC/HEIF
+photos are converted once on the device into a JPEG cache copy (quality 0.9,
+without resizing). The original photo is never changed or deleted. Both source
+and converted files must contain between 1 byte and 5 MiB; the converted JPEG signature
+and actual size are revalidated before upload. Unsupported containers and failed
+conversion remain local failures before upload, quote acceptance, or charging.
+Cancelled or stale preparation results cannot start an upload; only generated
+cache copies are cleaned up. Local selection, format, size, conversion, and file
+access failures are distinct from loading a submitted analysis job. The server
+still verifies actual bytes, MIME, size, and storage identity using the existing
+JPEG/PNG/WebP upload contract. Analysis starts only after explicit quote
+acceptance, and its validated result replaces draft fields only after a separate
+apply confirmation. Version 1.0.8 must not receive an OTA update requiring the
+new native image conversion module.
+
 Story-to-page autofill plans beat ownership across the complete episode before
-expanding the existing pages. Detail compilation uses adaptive, consecutive page
+expanding the existing pages. The normal path first requests the full-episode beat
+plan once. Beat and outline response schemas use the episode page limit (32), not the per-page panel limit (8); every existing page must remain covered exactly once. Only a confirmed beat structured-output capacity failure activates the
+existing compact outline and segmented ledger fallback; page count or an estimated
+pack count alone must not add those provider calls. Other failures retain their
+existing bounded retry/error handling and do not activate capacity fallback. Detail compilation uses adaptive, consecutive page
 packs sized by estimated structured-output cost; it must not use a fixed three-page
 split. A page is never split between packs, and a pack may contain the full episode
 when it fits the safe output budget.
+
+Detail provider text and panel-order limits match their receiving Zod bounds. Only
+blank optional text fields already admitting null are normalized to null; meaningful
+text is not truncated. Required dialogue, UUIDs, reference ownership, known targets
+and array bounds retain their existing validation and finite retry limits.
+State ledgers and detail provider schemas represent the default state as JSON null,
+never a label in a UUID field. The provider state-ID schema accepts UUID or null;
+unknown UUIDs still fail the existing authorized-reference validation.
 
 For a complete original-page mapping without character-state opt-in, bounded
 original-source requirement extraction replaces the existing beat-plan pack calls.
@@ -352,153 +448,113 @@ omitted dialogue receives no generated fallback; existing manual-field preservat
 still applies. Server fallback must not turn this context into speech, thought, or
 narration. Explicitly authored display text in the full source
 and provider-supplied dialogue remain subject to the existing source-fidelity audit.
-The bounded coverage sidecar samples high-risk facts; it does not limit the full
-episode audit to those sampled facts. Legacy single-page fallback is unchanged.
+The audit reviews the full episode source. Legacy single-page fallback is unchanged.
+
+The episode auditor uses compact audit-specific instructions while retaining
+full-source fidelity, cross-page continuity, exact authored dialogue and speaker
+identity, and visible state/action consistency. Visual summaries do not repeat
+dialogue bodies: COMPLETE DIALOGUE remains the single complete ordered
+representation. Page ownership and direct panel-field references remain explicit.
+This does not compact or rewrite persisted authored text.
+Internal audit request metrics contain only request kind, elapsed time, bounded
+status categories, input/schema sizes and numeric provider token usage (including
+reasoning and cache usage). Missing or invalid counters remain null. Source text,
+provider output, identifiers and credentials are excluded; metrics failures do
+not change response validation, retries or persistence. Models, reasoning settings,
+token limits and the existing bounded retry policy remain unchanged.
 
 When line-start page headings in the original full story map completely,
 uniquely and in increasing order to existing page numbers, segmented beat,
-detail and audit inputs may also include the matching untouched contiguous
+detail and legacy audit inputs may also include the matching untouched contiguous
 original page excerpts. Generated ledgers allocate pages; they must not restrict
 the original facts to a compressed summary or reverse an explicit completion
 boundary. Ambiguous or incomplete headings omit this optional local supplement
-and retain the full-source input. Audit supplements must fit the existing input
-budget after full source, complete dialogue and minimum panel evidence have been
-reserved; otherwise the supplement is omitted. This changes provider context,
+and retain the full-source input. Legacy audit supplements must fit the existing
+input budget after full source, complete dialogue and minimum panel evidence have
+been reserved; otherwise the supplement is omitted. This changes provider context,
 not persisted story fields, API contracts or the semantic soft-save policy.
+
+For service-selected source-owned audit inputs only, original source is displayed
+once in a canonical ordered section: the untouched global preface followed by
+every original page slice with its existing page identity. The duplicate full-story
+display and repeated original blocks beside compiled draft pages are omitted.
+Global and page source authority, raw whitespace and offsets remain bound to the
+saved original; compiled pages refer to these displayed blocks. The complete source,
+complete dialogue and minimum panel evidence are mandatory reservations. They
+must fit together within the existing prompt limit or the compiler fails closed;
+partial source display is never accepted. Source-owned draft page IDs must be
+unique and match the complete original context page set; missing, extra or duplicate
+draft pages fail before any provider request. Any internal source catalog describes only the original source actually displayed;
+hidden text is not review input. Auxiliary proof catalogs are not requested by the
+normal provider audit.
 
 For that complete original-page mapping, detail and audit judgments omit the
 generated beat ledger, its text plan and entry/exit/handoff constraints. The
 original source, page identity and frame capacity, allowed scenes/entities,
 and actual compiled or repair-draft panels with their purpose/continuity remain.
 Service-derived internal ownership selects this mode; user text markers do not.
-The audit citation catalog contains only visible source references in this mode,
-never a hidden generated beat ledger. Omitting optional local excerpts for budget
-does not restore the generated beat ledger. Ambiguous mappings retain the legacy
-ledger path. Opt-in validated character-state transition ledgers and their saving
-workflow remain unchanged; this omission applies to generated story-beat context.
+The audit input contains only visible source references in this mode,
+never a hidden generated beat ledger. Source-owned audit source blocks are mandatory;
+optional detail or legacy audit excerpt omission does not restore the generated
+beat ledger. Ambiguous mappings retain the legacy ledger path. Opt-in validated
+character-state transition ledgers and their saving workflow remain unchanged; this omission applies to generated story-beat context.
 
-In this source-owned mode only, every provider error issue also supplies bounded
-internal grounding metadata. Original-page quotes and actual draft-field quotes
-are distinct. Generated page purpose, continuity, panel notes, chapter/episode
-summaries and entity summaries cannot become original-source authority. Visible,
-typed scene continuity and its entity-state notes, plus validated character-state transitions,
-may ground their applicable continuity issues. Deterministic exceptions must match
-an actual service finding's code and page scope. Optional excerpt omission does
-not authorize quoting hidden source: authority quotes must remain in the displayed
-full source or other typed visible authority. This metadata is discarded before
-the public audit result or persistence; omitted/false source ownership retains the
-legacy response schema and retry behavior.
+The normal provider audit returns only accepted, issues, page_repairs and
+panel_repairs. It compares the actual draft to the complete original and validated
+state context, and supplies useful field-level repairs for content problems.
+Source coverage, issue-grounding proofs and per-source-unit comparison output are
+not required. Their bookkeeping and exact-quote errors must not cause a valid
+normal audit to fail or consume another provider request. The normal input does
+not request these auxiliary outputs or enumerate source-unit proof catalogs.
 
-For complete source ownership, an optional provider-only source-unit review
-contract enumerates lossless spans of typed original global preface and page
-source. Generated plans, purposes, notes, summaries and scene/state context never
-produce these units. Offsets bind each span to its exact visible source string;
-sentence boundaries organize review and do not claim to isolate every fact. All
-units and their displayed catalog are produced together. Enable the entire list
-only when it has at most 256 units, its additional display fits 8,000 characters,
-and full source, complete dialogue and minimum panel evidence remain reserved.
-Empty, ambiguous or oversized input retains the existing contract as a whole;
-partial unit review is never advertised as complete and does not reject long
-episodes.
+The detail provider schema mirrors UUID constraints for page, scene, assignment
+entity, dialogue speaker, and source-placement page IDs. Nullable state/speaker IDs
+use JSON null for absent references; names and string sentinel labels are never IDs.
+Server context/ownership checks still independently reject unknown or foreign UUIDs.
+The audit repair provider schema uses the same UUID/null constraints for scene, entity, speaker and state references, while page
+targets remain enumerated from the known draft. Arbitrary gallery keys remain strings.
 
-Native source-unit review additionally binds integer evidence IDs to actual
-same-page displayed panel fields, including short fields that cannot supply a
-four-character quote. Generated purpose and continuity never supply evidence.
-Reserve the complete field-ID display before optional visual excerpts, then bind
-IDs to the final displayed text. At most 1,024 fields, 40,000 field-display
-characters and a 16,000-character worst-case comparison response are permitted.
-Exceeding any bound falls back as a whole; no partial list is advertised.
-
-With this native catalog, source_unit_review has one comparison per unit:
-verdict (supported, constraint, context, missing or conflict), up to four positive
-field IDs, up to two counter-evidence IDs, and an existing grounded error index or
-null. Supported requires actual positive panel evidence; conflict requires
-counter-evidence; missing/conflict link a source-grounded error scoped to that
-unit. Context/constraint classify headings, directions or restrictions rather
-than requiring every unit to depict an action. These classifications are model
-judgments and can still be wrong; they are never accepted as semantic proof.
-Internally supplied legacy catalogs without a field catalog retain their existing
-integer/null vector. This neither requires all issues to be linked nor makes a
-repair mandatory. Patchless findings, validated-state ambiguity and second-audit
-semantic soft-save retain their existing handling. Comparison results stay frozen
-during quote-only correction and are discarded before public output/persistence.
-Every authored clause must be compared for functional meaning, same-page
-completion, explicit conditions, specified emotion and viewpoint, including
-conflicts with negative draft notes. Actual semantic review remains a separate
-acceptance gate. No additional call, model, token budget or save gate is added.
-
-An invalidly grounded body uses the existing remaining structured-response retry
-for a full audit. Only a valid grounded body and repair scope with an invalid
-coverage sidecar may freeze that body and request a strict coverage-only retry.
-Recombination revalidates grounding, scope and coverage, including missing-fact
-issue/repair links. The coverage-only response cannot change acceptance, issues,
-repairs or grounding. Cancellation checkpoints precede either retry.
-Coverage-only retries use a dedicated system instruction and at most 12,000
-characters of frozen issue-code/page/panel/visible-field linkage metadata, without
-echoing the prior audit's prose, evidence quotes or patch values. If this bounded
-metadata cannot fit, the existing remaining attempt is a full audit retry.
-When the complete coverage structure, page/ref scope, status and repair links
-are valid and every retained citation error is a known-reference exact-quote
-mismatch, the same remaining request may correct only those quote slots. This
-requires no omitted diagnostics and at most the existing eight diagnostics. A
-strict fixed-key object returns only the corresponding 4-40 character quotes;
-page/ref/status/check counts, links and the frozen audit body stay server-owned.
-Source-quote slots remain bound to the same visible, typed source authority. The
-joined result revalidates every grounding and coverage check against the same
-displayed catalog. Missing/extra slots, nonexact or hidden-tail quotes fail;
-unknown refs, structural/link errors and omitted diagnostics retain the existing
-retry branch. This does not add a request or relax model, token, cancellation,
-transport, semantic-review or persistence contracts. A finite content schema does
-not itself prove provider completion within the token budget.
-Before freezing, repairs must cover their error pages and have valid, unique field
-targets under the existing repair contract. Each audit
-pass still has at most two logical structured requests, the existing 20k output
-limit and unchanged transport retries; this is not a two-HTTP-attempt guarantee.
-The source-owned provider acceptance condition is stronger, while semantic
-soft-save, the second audit pass and atomic persistence remain unchanged. Exact
-quotation establishes existence, not whether a proposed repair follows from the
-source, so actual saved-output acceptance remains a separate verification gate.
-Repair completeness is a freeze-eligibility condition only. A valid grounded
-audit may contain patchless semantic issues; validated-state ambiguity and the
-second audit's mixed patchable/residual findings retain their existing Service
-handling. When coverage needs retry but repair completeness is insufficient for
-freezing, the remaining request is a full audit.
-
-The OpenAI episode auditor returns a bounded source-coverage sidecar in the same
-structured response: one entry per page, at most two high-risk facts per entry,
-at most two actual panel-field citations per fact, and exact quotes of 4–40
-characters. Source and output references are checked against the current planning
-snapshot. Output citations use the whitespace-normalized actual field prefixes
-shown in the audit prompt; synthetic truncation markers are not citable evidence.
-The prompt and citation catalog are built together, while original story text and
-persisted dialogue remain unchanged. Literal ellipses in untruncated data remain
-part of that data.
-Each displayed visual field and complete dialogue line is labeled with its direct
-panel-field reference. Quoted visual literals exclude synthetic display markers;
-fields shorter than four characters remain actual content but are not citable.
-Citation retry feedback contains bounded positions and known references only
-(at most eight diagnostics and 4,000 characters), with omitted counts. It does not
-echo quotation text, unknown reference values, or the previous coverage response.
-Page purpose, continuity, and ledger metadata are not visual evidence.
-A reported missing fact must link to an error and an actual panel-field repair on
-the same page. Citation validity proves that quoted text exists, not semantic
-equivalence or exhaustive source coverage. Legacy/internal compiler ports may omit
-the sidecar. Provider retries, output-token limits, atomic saving, and the semantic
-soft-save policy remain unchanged; this does not add another provider call.
+Schema, bounded strings and arrays, known page/panel targets, unique repair fields
+and actual values for every changed field remain hard validation. Invalid typed
+payloads use the existing structured-output retry and cancellation checkpoint,
+at most two logical requests per audit pass with the existing output limit and
+transport policy. A semantic issue without a patch, or a repaired expression that
+mentions an old value in a negative explanation, is not a structural failure.
+Actual content contradictions remain review findings. Missing semantic repairs do
+not make unrelated valid repairs unusable.
 
 The combined draft is reviewed for cross-page repetition, dialogue placement,
 chronology, page handoffs, entity assignment, and editable visual fields before any
 page or panel content is persisted. Review repairs are field-level patches: page and
 panel identity, order, and panel count are immutable. Unknown identifiers or invalid
-patch targets are rejected. Semantic review uses at most two audit passes and applies
-each pass's validated field-level repairs once; it must not recursively audit or
-repair. The first audit is required. If the second audit remains unavailable after
-its structured-output retry, the already repaired draft proceeds to the deterministic
-gate instead of being discarded. After bounded repair, schema, identifier, structure,
-and deterministic cross-page duplicate errors block persistence. Residual semantic-
-only findings are retained as safe telemetry and do not discard otherwise usable
-content. The plan uses each existing page's frame count as its story capacity and
-carries scene character-state notes such as costume and injury through the global
+patch targets are rejected. Each autofill performs one semantic audit. The existing
+structured-output retry remains bounded within that audit. The inline path applies
+its validated field-level repairs once. If those optional patches contain an
+unknown target, unavailable/foreign state or entity, or introduce a deterministic
+contradiction, the inline path rejects the entire patch batch and validates the
+original draft locally. Only an independently valid original draft may continue;
+invalid original content, cancellation, unexpected failures, and locked-context
+ownership/state/fingerprint checks still block saving. This fallback makes no
+additional provider call. The legacy non-inline path recompiles each affected
+chunk once. Both paths then proceed to local deterministic validation and
+must not submit the repaired draft for another semantic audit. After bounded repair,
+schema, identifier, structure, and deterministic cross-page duplicate errors block
+persistence. Residual semantic-only findings, including patchless or mixed
+patchable/residual findings, do not discard otherwise usable content. These
+termination rules apply equally with or without a validated state ledger. State
+references are still independently checked before saving and again under the atomic
+planning lock; cancellation, authorization and concurrency errors remain hard.
+
+Automatic state planning with visual fallback requires a bounded, nonblank source
+quote and a source field or scene ID that identifies real non-null saved source.
+Literal containment is provenance metadata in this mode, so a paraphrased or
+translated quote does not reject an otherwise valid plan. Entity, panel and state
+ownership, READY references, and transition ordering remain hard validation. Legacy
+strict state validation continues to require exact source-quote containment.
+Generated assignments may use a registered READY state owned by the assigned entity
+even when it is not preassigned to a scene; unknown, foreign-entity and unready states
+remain invalid. The plan uses each existing page's frame count as its story capacity
+and carries scene character-state notes such as costume and injury through the global
 continuity brief.
 
 Episode autofill supports cooperative cancellation while queued or before the
@@ -507,6 +563,55 @@ and the complete generated plan is written in one PostgreSQL transaction. The
 transaction locks the authorized episode planning graph, rechecks the input
 fingerprint, and applies page, panel, and entity assignment changes together so a
 concurrent edit is not silently overwritten and a partial plan cannot be exposed.
+Queued autofill carries its claimed job attempt into that transaction for every
+repository schema profile. The commit marker, applying progress, page/panel writes,
+job completion and notification outbox use the same transaction-scoped connection.
+External job-control or progress callbacks must not run while the planning graph
+is locked: work-deletion guards on those writes would otherwise conflict with the
+caller's own work lock. Attempt, actor, organization, episode and cancellation
+checks precede the commit gate; a conflict or failed save rolls the whole gate back.
+
+State-aware episode autofill resolves original-source transitions to confirmed,
+authorized entity-state IDs before the same atomic save. The existing V1,
+continuity V3 and inline-repair gates must all be enabled. The additional
+`EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED` flag defaults to false; deployment
+configuration may enable it without changing older request/response contracts.
+An omitted request option uses that configured default. Optional
+`state_autofill_enabled:true` enables automatic source-backed state application and false explicitly
+disables it. This boolean cannot be combined with the existing V1 version/policy
+options. New default or boolean-enabled requests update state assignments across
+the episode when the user explicitly runs story autofill. Registered, ready states
+continue until another registered state or an explicit return to the base state.
+Source-backed changes without a usable registered state use the current authorized
+character reference and editable visual instructions; they neither create state
+records/images nor require the user to create a missing state. A cosmetic overlay
+does not clear a continuing registered state. Exact source grounding, known entity
+and panel IDs, state ownership, reference readiness and the atomic input fingerprint
+remain mandatory. Invalid or stale references are never written as assignments.
+Older explicit V1 policies and an explicit OFF retain their request contracts;
+`preserve_existing` still protects NULL and non-NULL assignments. The intent/origin
+stays internal and is excluded from strict older-client job responses.
+
+Authenticated `POST /api/jobs/:id/retry` accepts only a failed, retryable episode
+story-autofill job. Personal ownership or organization `edit_work` scope is checked
+before replay. It preserves language and original state intent/policy, captures
+current authorized story inputs, and reuses existing admission, cancellation,
+zero-credit and atomic-save boundaries. Mobile uses automatic state application
+without an opt-in/overwrite checkbox or missing-state creation instructions when
+capability is advertised. Other job retry flows are unchanged.
+
+Mobile page editing provides a dedicated horizontal swipe surface and accessible
+previous/next controls. Switching pages initializes the new page's first saved
+panel only after page-scoped data is available; a refetched empty cache is not an
+authoritative empty page. Vertical scrolling, text entry, cancelled gestures,
+multi-touch and pagination boundaries do not change the page.
+
+Mobile page management initially selects the first page and its first panel after
+the current episode's data becomes available. A newly completed story-autofill run
+also selects that initial editable panel. Routine query refreshes must not reset
+the user's subsequent selection, and stale responses from another scope must not
+select a page or panel in the current episode. Empty/loading lists remain distinct
+from authoritative loaded data; no phantom panel or implicit write is created.
 
 Cancellation request metadata is paired, cancellation and commit start are mutually
 exclusive, and a cancelled job carries ordered request, cancellation, and completion
@@ -538,6 +643,16 @@ Legacy note-only state assignments resolving to the same base reference image
 share one billable image, prompt label, snapshot reference, and attachment.
 Distinct confirmed variant images remain separate. Authorization and freshness
 checks apply to every original assignment before this canonicalization.
+
+Named page style references retain their bounded title, compiled interpretation,
+rendering anchors and user notes. Visual style takes priority over generic
+rendering defaults while character identity/reference mapping, authored story
+and dialogue, panel order/count/layout, camera and composition remain fixed.
+After prompt compilation, the worker deterministically restores the complete
+named style section from the existing immutable compiler brief if omitted and
+keeps an exact section only once. Direct draft and fallback paths retain their
+existing style section; this does not add a provider call, audit, quote field or
+new persisted contract.
 
 ## 7. Credits and billing
 
@@ -744,8 +859,9 @@ these are separate activation blockers, not permissions to weaken constraints.
 
 The production44_expanded_pg18_v1 persistence profile retains the original
 physical page metadata and applies only the pinned forward files 040, 041, 042,
-043, 044, 045, 047 and 048 to the exact observed 44-file lineage. The resulting
-52-file history and all physical catalog definitions must match checkpoint 8.
+043, 044, 045, 047, 048, 049 and 050 to the exact observed 44-file lineage. The
+resulting 54-file history and all physical catalog definitions must match
+checkpoint 10.
 File 046 is excluded. No table/column rename, removal, data rewrite or automatic
 legacy admission is part of this expansion. The explicit
 scripts/expandProduction44Schema.ts command verifies a known checkpoint,
@@ -756,8 +872,10 @@ Automatic runtime migration does not select or execute this expansion.
 Runtime admission issues one frozen, internally verified proof before API
 listeners, providers, recovery timers or queue consumption. The same profile is
 propagated through page, entity, scene, story, quote/import and job factories.
-The unexpanded44 profile is not an admitted runtime. Canonical047 can still boot;
-048-dependent state capabilities require an explicit capability check. Migration
+The unexpanded44 profile is not an admitted runtime. Historical canonical047/048
+catalogs remain classifiable evidence; the current binary requires the physically
+attested 049 recovery and 050 work-deletion capabilities before startup.
+048-dependent state capabilities also require an explicit capability check. Migration
 048 advances legacy entity-state write revisions monotonically without replacing
 the existing named/reference fields, preserving candidate confirmation CAS.
 
@@ -779,6 +897,51 @@ Google, quote and Web-only-delivery capabilities remain gated until their own
 external and device checks pass. Detailed requirements, compatibility evidence and
 remaining gates are recorded in the documents below, not inferred from test totals.
 
+The compact Mobile creation shell retains Story, Characters and Pages and the
+existing manual-save/dirty-navigation contracts. Embedded editors omit the credit
+badge and redundant library header; the main tab navigator owns the bottom safe
+area. Character-image wording is presentation only: reference-set API fields and
+persisted image bindings retain their existing names and authorization.
+The Mobile library opens the existing authorized work-create dialog in one tap;
+ordinary hierarchy browsing never opens it. Pending/error hierarchy data must not
+render as a successful empty list. Query scope and dirty-navigation guards remain
+in force, and persisted-selection hydration cannot overwrite a selection accepted
+in the current session. Selected library works use gold fill with dark text.
+The library and authentication screens expose the persisted Japanese/English
+switch and pass its language to Cognito Managed Login. Both the entry splash and
+sign-in card contain the complete logo using its natural aspect ratio; display
+changes preserve the splash timing and login workflow. Logged-in Assets,
+Account and Guide omit the header credit badge. Billing
+retains total, monthly and purchased credit balances with explicit labels; plan
+controls use the existing native store catalog, verified receipt workflow,
+restore operation and official Apple/Google subscription-management URLs.
+Plans and credit packs are shown separately. Missing or disabled server catalog
+configuration displays disabled purchase actions and a reason; it never grants
+credits or redirects to a different environment. The staging Android package and
+iOS bundle identifier are separate from production, so both test apps can coexist
+with the published apps. Internal iOS builds target registered physical devices.
+Staging needs its own store testing configuration before a real native checkout
+can be accepted.
+Tutorial content follows the same persisted language without resetting progress.
+The Page editor places one story-autofill action immediately before its page list.
+When there are no pages, it first creates the skeleton without applying the story,
+then queues autofill only after completion for the same live episode/scope. A scope
+change or unmount stops the automatic continuation; existing pages allow explicit
+resume through the same action. Repeating autofill with existing pages reruns both
+the page skeleton and story autofill. The authenticated
+GET /api/story/page-skeleton-capabilities advertises preserve_generated_images;
+the additive skeleton flag defaults false for old clients. The new Mobile sends
+preserve_generated_images=true with overwrite_existing=true only after capability
+verification and explicit overwrite confirmation. The server retains page IDs,
+images and balloons, replaces panel/frame layout, and floors the page count at the
+existing maximum page number. Active page/autofill jobs or an incomplete plan
+reject the transaction. A server without the capability cannot overwrite through
+the new Mobile action. Existing overwrite confirmation, saved-input
+validation, quote acceptance, active-job exclusion and outcome reconciliation stay
+in force. Hidden job-history content remains mounted so completion polling and
+recovery do not depend on expansion. Page confirmation precedes image saving;
+image preview retains its separate expansion, save and report operations.
+
 The optional state-copy v2 protocol uses a durable non-cascading journal,
 conditional image writes, retained ordinary markers and exact-version erasure.
 Admission defaults OFF; recovery, read authorization and retention remain active
@@ -786,7 +949,12 @@ for existing v2 attempts when configured. Legacy unknown outcomes are never
 converted to completed evidence. Personal finalization requires verified fencing
 and original source cleanup before journal scrubbing; organization assets remain
 under organization authorization. Actual storage policy/retention acceptance is
-required before enablement. See the local design and audit follow-up below.
+required before enablement. State-preview activation also enables v2 admission;
+preview rollback closes new generation while retaining v2 admission, attestation
+and roles for already-admitted candidates. Copy admission may close only after
+proving no eligible historical candidates or installing a fail-closed guard; an
+unconfirmed completed candidate without a journal must not fall back to v1.
+See the local design and audit follow-up below.
 
 New unsaved person forms show the six editable basic defaults selected by the
 frontend design; existing blanks, imported suggestions, aliases and hidden fields
@@ -832,6 +1000,13 @@ and reject older known revisions. Panel assignment failure after metadata succes
 rebases only the successful data and prevents generation. Frame edits must be
 saved before page generation; layout replacement and deletion preserve drafts
 until a successful, explicitly requested operation.
+Mobile frame updates use a dedicated write DTO containing only the strict route
+fields. The read-only page_id returned by GET is never echoed into PUT. Local
+frame dirtiness is measured against the last hydrated draft baseline, so a server
+refresh alone does not trigger a save before story autofill. Explicit saves capture
+the page, session, workspace and frame values at submission; later edits remain
+local, and completion invalidates the saved page rather than the current selection.
+A frame save failure prevents downstream design/autofill requests.
 Frame records have no server revision field in the current API. The browser
 checks the observed baseline at submission and refetches without adopting a late
 response if that baseline changes. This client check does not add server-side

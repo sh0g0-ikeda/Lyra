@@ -50,6 +50,8 @@ export type ResolveEpisodeStateAssignmentsInput = ResolveEpisodeStateAssignments
   | {
       policy: Extract<StateAssignmentPolicy, 'preserve_existing'>;
       existingAssignmentsByPanelId: ReadonlyMap<string, readonly PanelEntityAssignment[]>;
+      /** Allows a validated state plan to fill only an unassigned base state. */
+      allowUnassignedStateFill?: boolean;
     }
   | {
       policy: Extract<StateAssignmentPolicy, 'overwrite_existing'>;
@@ -129,6 +131,7 @@ export function resolveEpisodeStateAssignments(
         panel.panelId,
         assignments,
         input.existingAssignmentsByPanelId.get(panel.panelId) ?? [],
+        input.allowUnassignedStateFill === true,
       );
     }
     resolvedByPanel.set(panel.panelId, { panelId: panel.panelId, assignments });
@@ -147,16 +150,21 @@ function validateExistingAssignments(
   panelId: string,
   resolved: readonly PanelEntityAssignment[],
   existing: readonly PanelEntityAssignment[],
+  allowUnassignedStateFill: boolean,
 ): void {
   const resolvedByEntity = new Map(resolved.map((assignment) => [assignment.entityId, assignment.stateId] as const));
   for (const assignment of existing) {
     const plannedState = resolvedByEntity.get(assignment.entityId);
-    if (plannedState === undefined || plannedState !== assignment.stateId) {
-      throw new EpisodeStatePlanError(
-        'STATE_ASSIGNMENT_CONFLICT',
-        `Existing assignment conflicts with the episode state plan at panel ${panelId}`,
-      );
+    if (plannedState === assignment.stateId) {
+      continue;
     }
+    if (allowUnassignedStateFill && assignment.stateId === null && plannedState !== undefined) {
+      continue;
+    }
+    throw new EpisodeStatePlanError(
+      'STATE_ASSIGNMENT_CONFLICT',
+      `Existing assignment conflicts with the episode state plan at panel ${panelId}`,
+    );
   }
 }
 

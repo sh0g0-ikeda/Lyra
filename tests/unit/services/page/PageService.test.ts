@@ -303,6 +303,7 @@ class FakeEpisodePagePlanCompiler implements EpisodePagePlanCompilerPort {
 class ChunkAwareEpisodePagePlanCompiler implements EpisodePagePlanCompilerPort {
   public inputs: CompileEpisodePagePlanInput[] = [];
   public failOnCall: number | null = null;
+  public sourceSceneIds: string[] = ['scene-1'];
 
   public async compilePlan(input: CompileEpisodePagePlanInput): Promise<CompiledEpisodePagePlan> {
     this.inputs.push(input);
@@ -316,7 +317,7 @@ class ChunkAwareEpisodePagePlanCompiler implements EpisodePagePlanCompilerPort {
         pages: pages.map((page) => ({
           pageId: page.pageId,
           pageNumber: page.pageNumber,
-          sourceSceneIds: ['scene-1'],
+          sourceSceneIds: this.sourceSceneIds,
           pagePurpose: `Plan page ${page.pageNumber}.`,
           continuityNote: `Continue into page ${page.pageNumber + 1}.`,
           page: {
@@ -430,6 +431,7 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
   public outlineInputs: CompileEpisodeBeatPlanOutlineInput[] = [];
   public pagesToReturn: CompiledEpisodeBeatPlan['plan']['pages'] | null = null;
   public outputLimitAbovePageCount: number | null = null;
+  public error: Error | null = null;
   public sourceRequirementInputs: CompileEpisodeSourceRequirementsInput[] = [];
   public omitGlobalSourceContext = false;
 
@@ -437,6 +439,9 @@ class FakeEpisodeBeatPlanCompiler implements EpisodeBeatPlanCompilerPort {
     input: CompileEpisodeBeatPlanInput,
   ): Promise<CompiledEpisodeBeatPlan> {
     this.inputs.push(input);
+    if (this.error !== null) {
+      throw this.error;
+    }
     const pageRefs = extractCompilerBriefPageRefs(input.compilerBrief);
     if (
       this.outputLimitAbovePageCount !== null &&
@@ -1671,6 +1676,10 @@ describe('PageService', () => {
       'page-7',
     ]);
     expect(auditCompiler.inputs[0]?.coverageCatalog?.pages).toHaveLength(7);
+    expect(auditCompiler.inputs[0]?.visualSnapshot?.panels).toHaveLength(7);
+    expect(auditCompiler.inputs[0]?.visualSnapshot?.panels[0]).toEqual(
+      expect.objectContaining({ pageId: 'page-1', panelOrder: 1 }),
+    );
     expect(legacyAudit.sourceCoverage).toBeUndefined();
     expect(progressEvents.find((progress) => progress.stage === 'auditing_episode')).toMatchObject({
       currentChunk: null,
@@ -1680,9 +1689,11 @@ describe('PageService', () => {
     expect(panelRepository.updatedPanels).toHaveLength(7);
   });
 
-  it('continuity v3 は大きい話の台帳を全話アウトラインと連続パックに分けてから詳細生成する', async () => {
+  // Design invariant: routine episodes first use one full-episode beat request;
+  // outline and segmented packs are reserved for a confirmed output-capacity failure.
+  it('continuity v3 は通常16ページの全話台帳を1回で作り、容量分割を先回りしない', async () => {
     const pageRepository = new FakePageRepository();
-    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(10);
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(16);
     const panelRepository = new FakePanelRepository();
     const assignmentService = new FakePanelEntityAssignmentService();
     const beatPlanCompiler = new FakeEpisodeBeatPlanCompiler();
@@ -1701,15 +1712,11 @@ describe('PageService', () => {
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
     expect(result.compilerUsed).toBe(true);
-    expect(beatPlanCompiler.outlineInputs).toHaveLength(1);
-    expect(beatPlanCompiler.inputs).toHaveLength(2);
-    expect(beatPlanCompiler.inputs[0]?.compilerBrief).toContain('[TARGET PAGES]');
-    expect(beatPlanCompiler.inputs[0]?.compilerBrief).toContain('Page 8 (page-8) | frame_count=1');
-    expect(beatPlanCompiler.inputs[0]?.compilerBrief).not.toContain('Page 9 (page-9) | frame_count=1');
-    expect(beatPlanCompiler.inputs[1]?.compilerBrief).toContain('[GLOBAL EPISODE OUTLINE]');
-    expect(beatPlanCompiler.inputs[1]?.compilerBrief).toContain('[ALREADY PLANNED LEDGER]');
-    expect(beatPlanCompiler.inputs[1]?.compilerBrief).toContain('Page 9 (page-9) | frame_count=1');
-    expect(panelRepository.updatedPanels).toHaveLength(10);
+    expect(beatPlanCompiler.outlineInputs).toHaveLength(0);
+    expect(beatPlanCompiler.inputs).toHaveLength(1);
+    expect(extractCompilerBriefPageRefs(beatPlanCompiler.inputs[0]!.compilerBrief)).toHaveLength(16);
+    expect(beatPlanCompiler.inputs[0]?.compilerBrief).toContain('Page 16 (page-16) | frame_count=1');
+    expect(panelRepository.updatedPanels).toHaveLength(16);
   });
 
   it('continuity v3 は上限に達した台帳パックだけを半分に分け、成功済みパックを再生成しない', async () => {
@@ -1739,8 +1746,43 @@ describe('PageService', () => {
       beatPlanCompiler.inputs.map(
         (input) => extractCompilerBriefPageRefs(input.compilerBrief).length,
       ),
-    ).toEqual([8, 4, 4, 2]);
+    ).toEqual([10, 8, 4, 4, 2]);
     expect(panelRepository.updatedPanels).toHaveLength(10);
+  });
+
+  it('continuity v3 はcapacity以外の全話beat失敗を分割で隠さず保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(10);
+    const panelRepository = new FakePanelRepository();
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const beatPlanCompiler = new FakeEpisodeBeatPlanCompiler();
+    beatPlanCompiler.error = new ConfigurationError('Episode beat compiler unavailable');
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      new ChunkAwareEpisodePagePlanCompiler(),
+      undefined,
+      beatPlanCompiler,
+      new FakeEpisodePlanAuditCompiler(),
+      true,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result).toMatchObject({
+      compilerUsed: false,
+      compilerError: 'Episode beat compiler unavailable',
+      updatedPageCount: 0,
+      updatedPanelCount: 0,
+      updatedAssignmentCount: 0,
+    });
+    expect(beatPlanCompiler.inputs).toHaveLength(1);
+    expect(beatPlanCompiler.outlineInputs).toHaveLength(0);
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+    expect(assignmentService.updates).toHaveLength(0);
   });
 
   it('continuity v3 は1ページまで分割した台帳が上限に達した場合に何も保存しない', async () => {
@@ -1971,7 +2013,7 @@ describe('PageService', () => {
     expect(repairInstructions).toContain('page-1');
     expect(repairInstructions).not.toContain('page-4');
     expect(repairInstructions).not.toContain('duplicate_visual_beat');
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
   });
 
   it('完全なpage原文対応をfull contextで一度判定しnormal・repair・auditへtrusted flagを渡す', async () => {
@@ -2032,7 +2074,7 @@ describe('PageService', () => {
     )).toBe(true);
     expect(episodeCompiler.inputs[2]?.sourceRequirements)
       .toEqual(episodeCompiler.inputs[0]?.sourceRequirements);
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(auditCompiler.inputs.every((input) => input.sourceOwnedPageContext === true)).toBe(true);
     expect(auditCompiler.inputs.every(
       (input) => input.coverageCatalog?.pages.every(
@@ -2286,7 +2328,7 @@ describe('PageService', () => {
 
     expect(result.compilerUsed).toBe(true);
     expect(episodeCompiler.inputs).toHaveLength(3);
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
   });
 
   it('inline repair 無効時もbounded修復後の意味的指摘だけでは保存を破棄しない', async () => {
@@ -2343,7 +2385,7 @@ describe('PageService', () => {
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
     expect(result.compilerUsed).toBe(true);
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(episodeCompiler.inputs).toHaveLength(3);
     expect(pageRepository.updatedInputs).toHaveLength(4);
     expect(panelRepository.updatedPanels.length).toBeGreaterThan(0);
@@ -2376,12 +2418,14 @@ describe('PageService', () => {
 
     expect(result.compilerUsed).toBe(false);
     expect(result.compilerError).toContain('deterministic verification');
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(pageRepository.updatedInputs).toHaveLength(0);
     expect(panelRepository.updatedPanels).toHaveLength(0);
   });
 
-  it('inline repair 有効時は監査が指定したfieldだけを直してdetail compilerを再実行しない', async () => {
+  // One semantic audit is the full-run invariant. Its validated repairs are
+  // consumed once, then only local deterministic and persistence checks run.
+  it('inline repair 有効時は初回mixed patchless errorでも1回の監査で指定fieldだけを直して保存する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
     const panelRepository = new FakePanelRepository();
@@ -2397,6 +2441,13 @@ describe('PageService', () => {
             pageIds: ['page-2'],
             message: 'Page 2 rewinds the scene.',
             repairInstruction: 'Continue from page 1.',
+          },
+          {
+            code: 'unsupported_story_fact',
+            severity: 'error',
+            pageIds: ['page-3'],
+            message: 'Page 3 still requires semantic review.',
+            repairInstruction: 'Review page 3 without inventing a patch.',
           },
         ],
         panelRepairs: [
@@ -2427,14 +2478,14 @@ describe('PageService', () => {
 
     expect(result.compilerUsed).toBe(true);
     expect(episodeCompiler.inputs).toHaveLength(1);
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(
       panelRepository.updatedPanels.find((update) => update.panelId === 'panel-2')?.input
         .situationText,
     ).toContain('Page 2 continues directly from page 1');
   });
 
-  it('inline repair 有効時は2回目監査の修復を最後に適用し3回目監査なしで保存する', async () => {
+  it('inline repair 有効時は初回repairだけを適用し後続監査fixtureを呼ばない', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
     const panelRepository = new FakePanelRepository();
@@ -2537,19 +2588,23 @@ describe('PageService', () => {
 
     expect(result.compilerUsed).toBe(true);
     expect(episodeCompiler.inputs).toHaveLength(1);
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(pageRepository.updatedInputs).toHaveLength(4);
+    expect(
+      panelRepository.updatedPanels.find((update) => update.panelId === 'panel-2')?.input
+        .dialogue?.[0]?.text,
+    ).toBe('Page 2 now advances the conversation.');
     expect(
       panelRepository.updatedPanels.find((update) => update.panelId === 'panel-3')?.input
         .situationText,
-    ).toContain('Page 3 follows the event assigned by the story ledger');
+    ).not.toContain('Page 3 follows the event assigned by the story ledger');
     expect(
       panelRepository.updatedPanels.find((update) => update.panelId === 'panel-4')?.input
         .dialogue?.[0]?.text,
-    ).toBe('Page 4 responds after the preceding action.');
+    ).not.toBe('Page 4 responds after the preceding action.');
   });
 
-  it('inline repair 有効時は2回目監査の意味的指摘だけで修復案がなければ全体を破棄しない', async () => {
+  it('inline repair 有効時は初回repair後に後続の意味的監査fixtureを呼ばない', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
     const panelRepository = new FakePanelRepository();
@@ -2603,12 +2658,12 @@ describe('PageService', () => {
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
     expect(result.compilerUsed).toBe(true);
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(pageRepository.updatedInputs).toHaveLength(4);
     expect(panelRepository.updatedPanels.length).toBeGreaterThan(0);
   });
 
-  it('inline repair 有効時は修復後の2回目監査が壊れても決定的検証を通れば保存する', async () => {
+  it('inline repair 有効時は初回repair後に後続の監査エラーfixtureを呼ばない', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
     const panelRepository = new FakePanelRepository();
@@ -2655,7 +2710,7 @@ describe('PageService', () => {
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
     expect(result.compilerUsed).toBe(true);
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(pageRepository.updatedInputs).toHaveLength(4);
     expect(
       panelRepository.updatedPanels.find((update) => update.panelId === 'panel-2')?.input
@@ -2717,12 +2772,12 @@ describe('PageService', () => {
 
     expect(result.compilerUsed).toBe(false);
     expect(result.compilerError).toContain('deterministic verification');
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(pageRepository.updatedInputs).toHaveLength(0);
     expect(panelRepository.updatedPanels).toHaveLength(0);
   });
 
-  it('inline repair 有効時は2回目監査の不正な修復案を拒否する', async () => {
+  it('inline repair 有効時は未知ページの修復案を捨てて検証済みの元結果を保存する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
     const panelRepository = new FakePanelRepository();
@@ -2732,30 +2787,10 @@ describe('PageService', () => {
         accepted: false,
         issues: [
           {
-            code: 'timeline_discontinuity',
-            severity: 'error',
-            pageIds: ['page-2'],
-            message: 'Page 2 rewinds the scene.',
-            repairInstruction: 'Continue from page 1.',
-          },
-        ],
-        panelRepairs: [
-          {
-            pageId: 'page-2',
-            panelOrder: 1,
-            changedFields: ['situationText'],
-            patch: { situationText: 'Page 2 continues directly from page 1.' },
-          },
-        ],
-      },
-      {
-        accepted: false,
-        issues: [
-          {
             code: 'unsupported_story_fact',
             severity: 'error',
             pageIds: ['page-3'],
-            message: 'Page 3 still invents an unsupported event.',
+            message: 'Page 3 invents an unsupported event.',
             repairInstruction: 'Restore the source event.',
           },
         ],
@@ -2784,14 +2819,134 @@ describe('PageService', () => {
 
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
+    expect(result.compilerUsed).toBe(true);
+    expect(auditCompiler.inputs).toHaveLength(1);
+    expect(pageRepository.updatedInputs).toHaveLength(4);
+    expect(panelRepository.updatedPanels).toHaveLength(4);
+    expect(panelRepository.updatedPanels.every((panel) => panel.input.situationText !== 'This invalid repair must never be applied.')).toBe(true);
+  });
+
+  it.each(['unknown', 'unready', 'foreign'] as const)(
+    'inline repair 有効時は%s状態を入れる監査修復を捨て元の状態を保存する',
+    async (mode) => {
+      const entityId = '11111111-1111-4111-8111-111111111111';
+      const stateId = '22222222-2222-4222-8222-222222222222';
+      const context = buildMultiPageEpisodePlanningContext(4);
+      context.stateLibrary = mode === 'unknown' ? [] : [{
+        entityId: mode === 'foreign' ? '33333333-3333-4333-8333-333333333333' : entityId,
+        stateId, name: '負傷', description: '右腕の傷',
+        revision: '2026-10-14T00:00:00.000Z', baseRefId: 'base-ref',
+        baseRefUpdatedAt: '2026-10-14T00:00:00.000Z',
+        referenceReady: mode === 'foreign',
+        referenceImage: mode === 'unready' ? null : {
+          refId: 'state-ref', s3Key: 'private/state.png', storageOwnerUserId: entityId,
+          imageModel: 'gpt-image-2', baseRefId: 'base-ref',
+          createdAt: '2026-10-14T00:00:00.000Z', inputFingerprint: 'fingerprint',
+        },
+      }];
+      const pageRepository = new FakePageRepository();
+      pageRepository.episodePlanningContext = context;
+      const panelRepository = new FakePanelRepository();
+      const assignments = new FakePanelEntityAssignmentService();
+      const compiler = new ChunkAwareEpisodePagePlanCompiler();
+      const audit = new FakeEpisodePlanAuditCompiler();
+      audit.audits = [{
+        accepted: false,
+        issues: [{ code: 'visible_entity_mismatch', severity: 'error', pageIds: ['page-3'],
+          message: 'State should change.', repairInstruction: 'Apply the state.' }],
+        panelRepairs: [{ pageId: 'page-3', panelOrder: 1, changedFields: ['entities'], patch: {
+          entities: [{ entityId, role: 'primary', expression: 'calm', customExpression: null,
+            action: 'standing_firm', customAction: null, position: 'center', facingDirection: 'front',
+            effectNote: null, stateId }],
+        } }],
+      }];
+      const service = new PageService(pageRepository, panelRepository, assignments, undefined,
+        compiler, undefined, new FakeEpisodeBeatPlanCompiler(), audit, true,
+        { adaptivePackingEnabled: true, inlineRepairEnabled: true });
+      const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+      expect(result.compilerUsed).toBe(true);
+      expect(audit.inputs).toHaveLength(1);
+      expect(compiler.inputs).toHaveLength(1);
+      expect(pageRepository.updatedInputs).toHaveLength(4);
+      expect(panelRepository.updatedPanels).toHaveLength(4);
+      expect(assignments.updates).toHaveLength(4);
+      expect(assignments.updates.every((update) => update.assignments.every((value) => value.stateId === null))).toBe(true);
+    },
+  );
+
+  it('監査修復が新しい重複を作る場合は有効な元の台詞を1監査後に保存する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
+    const panelRepository = new FakePanelRepository();
+    const compiler = new ChunkAwareEpisodePagePlanCompiler();
+    const audit = new FakeEpisodePlanAuditCompiler();
+    audit.audits = [{ accepted: false,
+      issues: [{ code: 'dialogue_misplacement', severity: 'error', pageIds: ['page-4'],
+        message: 'Change the line.', repairInstruction: 'Correct the dialogue.' }],
+      panelRepairs: [{ pageId: 'page-4', panelOrder: 1, changedFields: ['dialogue'], patch: {
+        dialogue: [{ entityId: '11111111-1111-4111-8111-111111111111', text: 'Page 1 line.', type: 'speech', position: 'top' }],
+      } }],
+    }];
+    const service = new PageService(pageRepository, panelRepository, new FakePanelEntityAssignmentService(),
+      undefined, compiler, undefined, new FakeEpisodeBeatPlanCompiler(), audit, true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true });
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+    expect(result.compilerUsed).toBe(true);
+    expect(audit.inputs).toHaveLength(1);
+    expect(compiler.inputs).toHaveLength(1);
+    expect(panelRepository.updatedPanels[3]?.input.dialogue?.[0]?.text).toBe('Page 4 line.');
+  });
+
+  it('不正な監査修復を捨てても元の結果が重複している場合は保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
+    const panelRepository = new FakePanelRepository();
+    const audit = new FakeEpisodePlanAuditCompiler();
+    audit.audits = [{ accepted: false,
+      issues: [{ code: 'duplicate_dialogue', severity: 'error', pageIds: ['page-4'],
+        message: 'Page 4 repeats page 1.', repairInstruction: 'Replace the repeated line.' }],
+      panelRepairs: [{ pageId: 'unknown-page', panelOrder: 1, changedFields: ['situationText'],
+        patch: { situationText: 'Invalid patch.' } }],
+    }];
+    const service = new PageService(pageRepository, panelRepository, new FakePanelEntityAssignmentService(),
+      undefined, new DuplicateDialogueEpisodePagePlanCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), audit, true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true });
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
     expect(result.compilerUsed).toBe(false);
-    expect(result.compilerError).toContain('unknown page');
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(result.compilerError).toContain('deterministic verification');
+    expect(audit.inputs).toHaveLength(1);
     expect(pageRepository.updatedInputs).toHaveLength(0);
     expect(panelRepository.updatedPanels).toHaveLength(0);
   });
 
-  it('inline repair 有効時は修復情報のないerrorを保存しない', async () => {
+  it('監査修復中の予期しない例外は元結果の保存で隠さない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
+    const panelRepository = new FakePanelRepository();
+    const audit = new FakeEpisodePlanAuditCompiler();
+    audit.audits = [{ accepted: false,
+      issues: [{ code: 'unsupported_story_fact', severity: 'error', pageIds: ['page-3'],
+        message: 'Replace the content.', repairInstruction: 'Correct the content.' }],
+      panelRepairs: [{ pageId: 'page-3', panelOrder: 1, changedFields: ['situationText'], patch: {
+        get situationText(): string {
+          throw new ConfigurationError('Unexpected repair application failure');
+        },
+      } }],
+    }];
+    const service = new PageService(pageRepository, panelRepository, new FakePanelEntityAssignmentService(),
+      undefined, new ChunkAwareEpisodePagePlanCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), audit, true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true });
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+    expect(result.compilerUsed).toBe(false);
+    expect(result.compilerError).toContain('Unexpected repair application failure');
+    expect(audit.inputs).toHaveLength(1);
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+  });
+
+  it('inline repair 有効時は修復情報のない意味的errorだけなら決定的検証後に保存する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(4);
     const panelRepository = new FakePanelRepository();
@@ -2826,11 +2981,11 @@ describe('PageService', () => {
 
     const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
 
-    expect(result.compilerUsed).toBe(false);
-    expect(result.compilerError).toContain('field-level repair');
-    expect(pageRepository.updatedInputs).toHaveLength(0);
-    expect(panelRepository.updatedPanels).toHaveLength(0);
-    expect(assignmentService.updates).toHaveLength(0);
+    expect(result.compilerUsed).toBe(true);
+    expect(auditCompiler.inputs).toHaveLength(1);
+    expect(pageRepository.updatedInputs).toHaveLength(4);
+    expect(panelRepository.updatedPanels.length).toBeGreaterThan(0);
+    expect(assignmentService.updates.length).toBeGreaterThan(0);
   });
 
   it('continuity v3 は全ページ重複セリフを検知して該当 chunk だけ一度修復する', async () => {
@@ -2860,7 +3015,7 @@ describe('PageService', () => {
     expect(episodeCompiler.inputs[2]?.compilerBrief).toContain('[REPAIR REQUIRED]');
     expect(episodeCompiler.inputs[2]?.compilerBrief).toContain('[CURRENT CHUNK DRAFT TO REPAIR]');
     expect(episodeCompiler.inputs[2]?.compilerBrief).toContain('page-4');
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     const pageFourUpdate = panelRepository.updatedPanels.find(
       (update) => update.panelId === 'panel-4',
     );
@@ -3175,7 +3330,7 @@ describe('PageService', () => {
     await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja'))
       .resolves.toMatchObject({ compilerUsed: true });
 
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(persistence.calls).toHaveLength(1);
     expect(transactionPanelRepository.updatedPanels).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -3281,7 +3436,7 @@ describe('PageService', () => {
     await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja'))
       .resolves.toMatchObject({ compilerUsed: true });
 
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     const savedDialogue = transactionPanelRepository.updatedPanels
       .find((entry) => entry.panelId === 'panel-1')?.input.dialogue;
     expect(savedDialogue).toEqual([{
@@ -3472,7 +3627,7 @@ describe('PageService', () => {
     expect(persistence.calls).toHaveLength(0);
   });
 
-  it('状態反映v1は監査後に確定状態を割り当てて原子的保存へ渡す', async () => {
+  it('状態反映v1は1回の監査後に確定状態を割り当てて原子的保存へ渡す', async () => {
     const stateId = '22222222-2222-4222-8222-222222222222';
     const context = buildEpisodePlanningContext();
     context.episode.storyFullDraft = '1ページ目：負傷状態を保ったまま前へ進む。';
@@ -3550,7 +3705,7 @@ describe('PageService', () => {
     expect(auditCompiler.inputs[0]?.compilerBrief).toContain(stateId);
     expect(pageCompiler.inputs[0]?.sourceOwnedPageContext).toBeUndefined();
     expect(auditCompiler.inputs[0]?.sourceOwnedPageContext).toBe(false);
-    expect(auditCompiler.inputs).toHaveLength(2);
+    expect(auditCompiler.inputs).toHaveLength(1);
     expect(auditCompiler.inputs.every((input) => input.groundingAuthorities?.some(
       (authority) => authority.ref === 'validated_state'
         && authority.kind === 'validated_state'
@@ -3567,32 +3722,360 @@ describe('PageService', () => {
     expect(beginCommitCount).toBe(1);
     expect(transactionAssignments.updates).toHaveLength(1);
     expect(atomicCompleted).toBe(1);
+    const defaultFillResult = await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
+      {
+        statePlanVersion: 'episode_state_plan_v1',
+        stateAssignmentPolicy: 'preserve_existing',
+        allowUnassignedStateFill: true,
+      },
+    );
+    expect(defaultFillResult.stateTransitions).toHaveLength(1);
+    expect(transactionAssignments.updates[1]?.assignments[0]?.stateId).toBe(stateId);
+    expect(beginCommitCount).toBe(2);
+    expect(atomicCompleted).toBe(2);
     proposedStateTransitions = [];
-    auditCompiler.audits = [
-      { accepted: true, issues: [] },
-      { accepted: false, issues: [{
-        code: 'timeline_discontinuity', severity: 'error', pageIds: ['page-1'],
-        message: 'A stated injury has no state boundary', repairInstruction: 'Confirm the state boundary',
-      }] },
+    auditCompiler.errors = [
+      null,
+      new ConfigurationError('OpenAI episode plan audit compiler returned invalid JSON'),
     ];
-    await expect(service.autofillEpisodeFromStory(
+    auditCompiler.audits = [{
+      accepted: false,
+      issues: [{
+        code: 'timeline_discontinuity', severity: 'error', pageIds: ['page-1'],
+        message: 'Page 1 rewinds the scene', repairInstruction: 'Continue the scene',
+      }],
+      panelRepairs: [{
+        pageId: 'page-1',
+        panelOrder: 1,
+        changedFields: ['situationText'],
+        patch: { situationText: 'Page 1 now continues the scene.' },
+      }],
+    }];
+    const auditInputCountBeforeFallback = auditCompiler.inputs.length;
+    const fallbackResult = await service.autofillEpisodeFromStory(
       'user-1', 'episode-1', 'ja', undefined, null,
       { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
       { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
-    )).rejects.toMatchObject({ code: 'STATE_MAPPING_AMBIGUOUS' });
-    expect(beginCommitCount).toBe(1);
-    expect(transactionAssignments.updates).toHaveLength(1);
-    auditCompiler.audits = [{ accepted: false, issues: [{
-      code: 'timeline_discontinuity', severity: 'error', pageIds: ['page-1'],
-      message: 'A stated injury has no state boundary', repairInstruction: 'Confirm the state boundary',
-    }] }];
+    );
+    expect(fallbackResult.stateTransitions).toEqual([]);
+    expect(auditCompiler.inputs).toHaveLength(auditInputCountBeforeFallback + 1);
+    expect(beginCommitCount).toBe(3);
+    expect(transactionAssignments.updates).toHaveLength(3);
+    expect(atomicCompleted).toBe(3);
+  });
+
+  it('continuity v3 はscene未割当でも同じentityの登録済みREADY状態を生成結果へ使用できる', async () => {
+    const entityId = '11111111-1111-4111-8111-111111111111';
+    const stateId = '22222222-2222-4222-8222-222222222222';
+    const context = buildEpisodePlanningContext();
+    context.scenes[0]!.entityStates = [];
+    context.stateLibrary = [{
+      entityId,
+      stateId,
+      name: '負傷',
+      description: '腕に包帯',
+      revision: '2026-10-13T00:00:00.000Z',
+      baseRefId: 'base-ref',
+      baseRefUpdatedAt: '2026-10-13T00:00:00.000Z',
+      referenceImage: {
+        refId: 'state-ref',
+        s3Key: 'private/state.png',
+        storageOwnerUserId: entityId,
+        imageModel: 'gpt-image-2',
+        baseRefId: 'base-ref',
+        createdAt: '2026-10-13T00:00:00.000Z',
+        inputFingerprint: 'fingerprint',
+      },
+      referenceReady: true,
+    }];
+    const baseCompiler = new FakeEpisodePagePlanCompiler();
+    const pageCompiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(input): Promise<CompiledEpisodePagePlan> {
+        const compiled = await baseCompiler.compilePlan(input);
+        compiled.suggestion.pages[0]!.panels[0]!.entities![0]!.stateId = stateId;
+        return compiled;
+      },
+    };
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const assignmentService = new FakePanelEntityAssignmentService();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      assignmentService,
+      new FakePageAutofillCompiler(),
+      pageCompiler,
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+      { inlineRepairEnabled: true },
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(auditCompiler.inputs).toHaveLength(1);
+    expect(assignmentService.updates[0]?.assignments[0]?.stateId).toBe(stateId);
+  });
+
+  it.each([
+    ['unknown', '33333333-3333-4333-8333-333333333333', null, true, null],
+    ['foreign', '22222222-2222-4222-8222-222222222222',
+      '22222222-2222-4222-8222-222222222222', true,
+      '44444444-4444-4444-8444-444444444444'],
+    ['unready', '22222222-2222-4222-8222-222222222222',
+      '22222222-2222-4222-8222-222222222222', false, null],
+  ] as const)(
+    'continuity v3 はscene未割当の%s状態を生成結果で参照したら保存しない',
+    async (_case, assignedStateId, libraryStateId, referenceReady, foreignEntityId) => {
+      const entityId = '11111111-1111-4111-8111-111111111111';
+      const context = buildEpisodePlanningContext();
+      context.scenes[0]!.entityStates = [];
+      context.stateLibrary = libraryStateId === null ? [] : [{
+        entityId: foreignEntityId ?? entityId,
+        stateId: libraryStateId,
+        name: '負傷',
+        description: '腕に包帯',
+        revision: '2026-10-13T00:00:00.000Z',
+        baseRefId: 'base-ref',
+        baseRefUpdatedAt: '2026-10-13T00:00:00.000Z',
+        referenceImage: referenceReady ? {
+          refId: 'state-ref',
+          s3Key: 'private/state.png',
+          storageOwnerUserId: foreignEntityId ?? entityId,
+          imageModel: 'gpt-image-2',
+          baseRefId: 'base-ref',
+          createdAt: '2026-10-13T00:00:00.000Z',
+          inputFingerprint: 'fingerprint',
+        } : null,
+        referenceReady,
+      }];
+      const baseCompiler = new FakeEpisodePagePlanCompiler();
+      const pageCompiler: EpisodePagePlanCompilerPort = {
+        async compilePlan(input): Promise<CompiledEpisodePagePlan> {
+          const compiled = await baseCompiler.compilePlan(input);
+          compiled.suggestion.pages[0]!.panels[0]!.entities![0]!.stateId = assignedStateId;
+          return compiled;
+        },
+      };
+      const pageRepository = new FakePageRepository();
+      pageRepository.episodePlanningContext = context;
+      const panelRepository = new FakePanelRepository();
+      const assignmentService = new FakePanelEntityAssignmentService();
+      const service = new PageService(
+        pageRepository,
+        panelRepository,
+        assignmentService,
+        new FakePageAutofillCompiler(),
+        pageCompiler,
+        undefined,
+        new FakeEpisodeBeatPlanCompiler(),
+        new FakeEpisodePlanAuditCompiler(),
+        true,
+        { inlineRepairEnabled: true },
+      );
+
+      await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja'))
+        .rejects.toThrow('state outside the episode');
+      expect(pageRepository.updatedInputs).toHaveLength(0);
+      expect(panelRepository.updatedPanels).toHaveLength(0);
+      expect(assignmentService.updates).toHaveLength(0);
+    },
+  );
+
+  it('通常状態への復帰は詳細生成と監査へstate_id=nullとして渡す', async () => {
+    const context = buildEpisodePlanningContext();
+    context.episode.startingEntityStates = [];
+    context.stateLibrary = [];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const pageCompiler = new FakeEpisodePagePlanCompiler();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(), panelRepository: new FakePanelRepository(),
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+      completeStoryAutofillJob: async () => true,
+    });
+    const stateCompiler = {
+      compileStateTransitions: async () => ({
+        plan: {
+          transitions: [{
+            entityId: '11111111-1111-4111-8111-111111111111', stateId: null,
+            startsAtPanelId: 'panel-1', sourceSceneId: null,
+            sourceField: 'middle' as const, sourceQuote: 'Tension rises',
+          }], unresolved: [],
+        }, compilerProvider: 'openai' as const, compilerModel: 'test',
+        compilerPromptVersion: 'episode_state_transition_v2',
+      }),
+    };
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), pageCompiler, undefined,
+      new FakeEpisodeBeatPlanCompiler(), auditCompiler, true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+    await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => undefined },
+      { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
+    );
+    expect(pageCompiler.inputs[0]?.compilerBrief).toContain('state_id=null');
+    expect(pageCompiler.inputs[0]?.compilerBrief).not.toContain('state_id=default');
+    expect(auditCompiler.inputs[0]?.compilerBrief).toContain('state_id=null');
+    expect(auditCompiler.inputs).toHaveLength(1);
+  });
+
+  it('自動状態反映はREADY状態を維持し未登録の負傷を視覚描写として原子的に保存する', async () => {
+    const entityId = '11111111-1111-4111-8111-111111111111';
+    const readyStateId = '22222222-2222-4222-8222-222222222222';
+    const pendingStateId = '33333333-3333-4333-8333-333333333333';
+    const context = buildEpisodePlanningContext();
+    context.episode.storyFullDraft = 'Tension rises and Minerva injures her left arm.';
+    context.episode.startingEntityStates = [];
+    context.stateLibrary = [
+      {
+        entityId, stateId: readyStateId, name: '鬼', description: '登'.repeat(2_000),
+        revision: '2026-10-13T00:00:00.000Z', baseRefId: 'base-ref',
+        baseRefUpdatedAt: '2026-10-13T00:00:00.000Z', referenceReady: true,
+        referenceImage: {
+          refId: 'ready-ref', s3Key: 'private/ready.png', storageOwnerUserId: entityId,
+          imageModel: 'gpt-image-2', baseRefId: 'base-ref',
+          createdAt: '2026-10-13T00:00:00.000Z', inputFingerprint: 'ready-fingerprint',
+        },
+      },
+      {
+        entityId, stateId: pendingStateId, name: '負傷', description: '左腕に包帯を巻いている',
+        revision: '2026-10-13T00:00:00.000Z', baseRefId: 'base-ref',
+        baseRefUpdatedAt: '2026-10-13T00:00:00.000Z', referenceReady: false,
+        referenceImage: null,
+      },
+    ];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPanels = new FakePanelRepository();
+    const transactionAssignments = new FakePanelEntityAssignmentService();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(), panelRepository: transactionPanels,
+      panelEntityAssignmentService: transactionAssignments,
+      completeStoryAutofillJob: async () => true,
+    });
+    const stateCompiler = {
+      compileStateTransitions: async () => ({
+        plan: {
+          transitions: [{
+            entityId, stateId: readyStateId, startsAtPanelId: 'panel-1',
+            sourceSceneId: null, sourceField: 'middle' as const, sourceQuote: 'Tension rises',
+          }],
+          unresolved: [{
+            entityId, candidateStateId: pendingStateId, startsAtPanelId: 'panel-1',
+            suggestedName: '負傷', suggestedDescription: '左腕に包帯を巻いている',
+            sourceSceneId: null, sourceField: 'story_full_draft' as const,
+            sourceQuote: 'injures her left arm', reason: 'missing_reference' as const,
+          }],
+        },
+        compilerProvider: 'openai' as const, compilerModel: 'test',
+        compilerPromptVersion: 'episode_state_transition_v2',
+      }),
+    };
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), new FakeEpisodePagePlanCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+
     await expect(service.autofillEpisodeFromStory(
       'user-1', 'episode-1', 'ja', undefined, null,
-      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => { beginCommitCount += 1; } },
-      { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing' },
-    )).rejects.toMatchObject({ code: 'STATE_MAPPING_AMBIGUOUS' });
-    expect(beginCommitCount).toBe(1);
-    expect(transactionAssignments.updates).toHaveLength(1);
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => undefined },
+      {
+        statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing',
+        allowVisualStateFallback: true,
+      },
+    )).resolves.toMatchObject({ stateTransitions: [{ stateId: readyStateId }] });
+
+    expect(transactionAssignments.updates[0]?.assignments[0]?.stateId).toBe(readyStateId);
+    expect(transactionPanels.updatedPanels[0]?.input.situationText).toContain('鬼');
+    expect(transactionPanels.updatedPanels[0]?.input.situationText).not.toContain('登'.repeat(2_000));
+    expect(transactionPanels.updatedPanels[0]?.input.situationText).toContain('左腕に包帯');
+    expect(transactionPanels.updatedPanels[0]?.input.composition?.compositionPrompt).toContain('鬼');
+    expect(transactionPanels.updatedPanels[0]?.input.composition?.compositionPrompt).not.toContain('登'.repeat(2_000));
+    expect(transactionPanels.updatedPanels[0]?.input.composition?.compositionPrompt).toContain('左腕に包帯');
+  });
+
+  it('複数人物の長い視覚overlayが既存panel文字数上限を超える場合は何も保存しない', async () => {
+    const firstEntityId = '11111111-1111-4111-8111-111111111111';
+    const secondEntityId = '44444444-4444-4444-8444-444444444444';
+    const context = buildEpisodePlanningContext();
+    context.episode.storyFullDraft = 'Tension rises for both characters.';
+    context.entities.push({
+      id: secondEntityId, name: 'Second', entityType: 'character', freeDescription: null,
+      promptSupplement: null, structuredFields: {},
+    });
+    context.stateLibrary = [];
+    const baseCompiler = new FakeEpisodePagePlanCompiler();
+    const pageCompiler: EpisodePagePlanCompilerPort = {
+      async compilePlan(input): Promise<CompiledEpisodePagePlan> {
+        const compiled = await baseCompiler.compilePlan(input);
+        const first = compiled.suggestion.pages[0]!.panels[0]!.entities![0]!;
+        compiled.suggestion.pages[0]!.panels[0]!.entities = [
+          first,
+          { ...first, entityId: secondEntityId, role: 'secondary' },
+        ];
+        return compiled;
+      },
+    };
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPanels = new FakePanelRepository();
+    const transactionAssignments = new FakePanelEntityAssignmentService();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(), panelRepository: transactionPanels,
+      panelEntityAssignmentService: transactionAssignments,
+      completeStoryAutofillJob: async () => true,
+    });
+    const longDescription = '視覚差分'.repeat(155);
+    const stateCompiler = {
+      compileStateTransitions: async () => ({
+        plan: {
+          transitions: [],
+          unresolved: [firstEntityId, secondEntityId].map((entityId) => ({
+            entityId, candidateStateId: null, startsAtPanelId: 'panel-1',
+            suggestedName: '継続状態', suggestedDescription: longDescription,
+            sourceSceneId: null, sourceField: 'middle' as const, sourceQuote: 'Tension rises',
+            reason: 'missing_reference' as const,
+          })),
+        },
+        compilerProvider: 'openai' as const, compilerModel: 'test',
+        compilerPromptVersion: 'episode_state_transition_v2',
+      }),
+    };
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), pageCompiler, undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+    let beginCommitCount = 0;
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      {
+        jobId: 'job-1', checkpoint: async () => undefined,
+        beginCommit: async () => { beginCommitCount += 1; },
+      },
+      {
+        statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing',
+        allowVisualStateFallback: true,
+      },
+    )).rejects.toMatchObject({ code: 'STATE_PLAN_INVALID' });
+    expect(persistence.calls).toHaveLength(0);
+    expect(transactionPanels.updatedPanels).toHaveLength(0);
+    expect(transactionAssignments.updates).toHaveLength(0);
+    expect(beginCommitCount).toBe(0);
   });
 
   it('キャンセル制御付きの処理は機能フラグが無効でも原子的保存へ委譲する', async () => {
@@ -3853,6 +4336,7 @@ describe('PageService', () => {
       scenes: withScenes ? base.scenes : [],
     };
     const episodeCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    episodeCompiler.sourceSceneIds = withScenes ? ['scene-1'] : [];
     const beatPlanCompiler = new FakeEpisodeBeatPlanCompiler();
     const auditCompiler = new FakeEpisodePlanAuditCompiler();
     const service = new PageService(
@@ -3875,8 +4359,8 @@ describe('PageService', () => {
       ...episodeCompiler.inputs.map((input) => input.compilerBrief),
       ...auditCompiler.inputs.map((input) => input.compilerBrief),
     ];
-    expect(beatPlanCompiler.outlineInputs).toHaveLength(1);
-    expect(beatPlanCompiler.inputs.length).toBeGreaterThan(1);
+    expect(beatPlanCompiler.outlineInputs).toHaveLength(0);
+    expect(beatPlanCompiler.inputs).toHaveLength(1);
     expect(episodeCompiler.inputs.length).toBeGreaterThan(1);
     expect(auditCompiler.inputs).toHaveLength(1);
     expect(briefs.length).toBeGreaterThan(5);

@@ -10,7 +10,7 @@ import type { DatabaseClient, TransactionRunner } from '../src/lib/db.js';
 import type { Env } from '../src/lib/env.js';
 import { checkDeploymentDataInvariants } from './checkDeploymentDataInvariants.js';
 
-import { SECURITY_RUNTIME_MIGRATIONS, readRuntimeSchemaCatalogInTransaction } from '../src/lib/runtimeSchemaAttestation.js';
+import { WORK_DELETION_RUNTIME_MIGRATIONS, readRuntimeSchemaCatalogInTransaction } from '../src/lib/runtimeSchemaAttestation.js';
 import { describeProduction44ExpansionCheckpoint } from '../src/lib/production44ExpandedRuntimeSchemaAttestation.js';
 import { PRODUCTION44_EXPANSION_MIGRATIONS } from '../src/lib/production44ExpandedRuntimeSchemaDescriptor.js';
 import type { RepositorySchemaProfile } from '../src/repositories/RepositorySchemaProfile.js';
@@ -158,8 +158,8 @@ export function runtimeFromEnv(environment: Env): ReleaseCompatibilityRuntime {
 
 async function expectedMigrationFilenames(migrationsDir: string): Promise<string[]> {
   const filenames = (await readdir(migrationsDir)).filter((filename) => /^\d{3}_.+\.sql$/u.test(filename)).sort();
-  if (filenames.length !== SECURITY_RUNTIME_MIGRATIONS.length
-    || filenames.some((filename, index) => filename !== SECURITY_RUNTIME_MIGRATIONS[index])) {
+  if (filenames.length !== WORK_DELETION_RUNTIME_MIGRATIONS.length
+    || filenames.some((filename, index) => filename !== WORK_DELETION_RUNTIME_MIGRATIONS[index])) {
     throw new Error('Current release migration files are unavailable');
   }
   return filenames;

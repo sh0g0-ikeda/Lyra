@@ -196,12 +196,13 @@ describe('EpisodeStoryAutofillWorkerService cancellation', () => {
     expect(repository.failureInput?.errorMessage).not.toContain('database unavailable');
   });
 
-  it('通常の話全体反映もPageService内でjobを完了しworkerから重複完了しない', async () => {
+  it('canonical workerもclaim済みattemptを原子的なPageService保存へ渡しworkerから重複完了しない', async () => {
     const repository = new FakeExecutionRepository();
     const pageService = new ControlledPageService();
     const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
 
     expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.executionControl?.storyAutofillAttempt).toBe(repository.job);
     expect(repository.completeCalls).toBe(0);
   });
 
@@ -291,6 +292,90 @@ describe('EpisodeStoryAutofillWorkerService cancellation', () => {
       statePlanVersion: 'episode_state_plan_v1',
       stateAssignmentPolicy: 'overwrite_existing',
     });
+  });
+
+  it('過去のserver default preserve intentは保存方針を保ったまま視覚fallbackを許可する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = {
+      ...repository.job.params,
+      state_autofill_enabled: true,
+      state_autofill_origin: 'server_default',
+      state_autofill_version: 'v1',
+      state_assignment_policy: 'preserve_existing',
+    };
+    const pageService = new ControlledPageService();
+    pageService.result = {
+      ...buildApplyResult(),
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'preserve_existing',
+      stateTransitions: [],
+    };
+
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.stateOptions).toEqual({
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'preserve_existing',
+      allowUnassignedStateFill: true,
+      allowVisualStateFallback: true,
+    });
+  });
+
+  it('新しいboolean自動入力は話全体を上書きし視覚fallbackをworkerへ許可する', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = {
+      ...repository.job.params,
+      state_autofill_enabled: true,
+      state_autofill_origin: 'request_enabled',
+      state_autofill_version: 'v1',
+      state_assignment_policy: 'overwrite_existing',
+    };
+    const pageService = new ControlledPageService();
+    pageService.result = {
+      ...buildApplyResult(),
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'overwrite_existing',
+      stateTransitions: [],
+    };
+
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.stateOptions).toEqual({
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: 'overwrite_existing',
+      allowUnassignedStateFill: true,
+      allowVisualStateFallback: true,
+    });
+  });
+
+  it('明示無効intentはstate planを起動しない', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = {
+      ...repository.job.params,
+      state_autofill_enabled: false,
+      state_autofill_origin: 'request_disabled',
+    };
+    const pageService = new ControlledPageService();
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.stateOptions).toBeUndefined();
+  });
+
+  it('boolean intentと不整合なpolicyは旧処理へ読み替えず失敗にする', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = {
+      ...repository.job.params,
+      state_autofill_enabled: false,
+      state_autofill_origin: 'request_disabled',
+      state_autofill_version: 'v1',
+      state_assignment_policy: 'preserve_existing',
+    };
+    const pageService = new ControlledPageService();
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'failed' });
+    expect(pageService.autofillCalls).toBe(0);
   });
 
   it('未知の状態反映versionは旧処理へ読み替えず失敗にする', async () => {

@@ -1,16 +1,16 @@
 // Explicit artificial PG18 fixture rebuild; never a production migration entrypoint.
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Pool } from 'pg';
 import { readRuntimeSchemaCatalogInTransaction, type RuntimeSchemaCatalog } from '../../../src/lib/runtimeSchemaAttestation.js';
 import { describeProduction44RuntimeSchema } from '../../../src/lib/production44RuntimeSchemaAttestation.js';
 import { runPendingMigrations } from '../../../src/lib/migrations.js';
-if (process.env.APP_ENV !== 'test' || process.env.DATABASE_URL !== 'postgresql://postgres@127.0.0.1:15436/postgres') throw new Error('ARTIFICIAL_LOCAL_DATABASE_REQUIRED');
+if (process.env.APP_ENV !== 'test' || !['postgresql://postgres@127.0.0.1:15436/postgres', 'postgresql://postgres@127.0.0.1:15433/lyra_test'].includes(process.env.DATABASE_URL ?? '')) throw new Error('ARTIFICIAL_LOCAL_DATABASE_REQUIRED');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const session = await pool.connect();
 const schema = 'expanded_fixture_' + randomUUID().replaceAll('-', '');
-const filenames = ['040_add_entity_state_variants.sql', '041_add_episode_starting_entity_states.sql', '042_add_generation_quotes.sql', '043_add_quoted_import_analysis_jobs.sql', '044_add_google_identity_link_challenges.sql', '045_add_mobile_subscription_scheduled_plan_compatibility.sql', '047_add_state_reference_copy_attempts.sql', '048_advance_entity_state_revision_for_legacy_writers.sql'];
+const filenames = ['040_add_entity_state_variants.sql', '041_add_episode_starting_entity_states.sql', '042_add_generation_quotes.sql', '043_add_quoted_import_analysis_jobs.sql', '044_add_google_identity_link_challenges.sql', '045_add_mobile_subscription_scheduled_plan_compatibility.sql', '047_add_state_reference_copy_attempts.sql', '048_advance_entity_state_revision_for_legacy_writers.sql', '049_add_stripe_credit_recovery.sql', '050_add_work_deletion.sql'];
 const checkpoints: Array<Record<string, string>> = [];
 const migrations: Array<{ filename: string; sha256: string }> = [];
 const timings: Array<{ filename: string; milliseconds: number }> = [];
@@ -52,8 +52,9 @@ try {
     await session.query('COMMIT');
     timings.push({ filename, milliseconds: Math.round(performance.now() - started) });
   }
-  const fixtureRoot = join(process.cwd(), 'tests/fixtures/production44-expanded-pg18');
-  await writeFile(join(fixtureRoot, 'catalog.json'), JSON.stringify(catalog, null, 2) + '\n');
+  const fixtureRoot = join(process.cwd(), 'tests/fixtures/work-deletion-pg18');
+  await mkdir(fixtureRoot, { recursive: true });
+  await writeFile(join(fixtureRoot, 'expanded-catalog.json'), JSON.stringify(catalog, null, 2) + '\n');
   await writeFile(join(fixtureRoot, 'checkpoints.json'), JSON.stringify({ migrations, checkpoints }, null, 2) + '\n');
   await writeFile(join(process.cwd(), 'src/lib/production44ExpandedRuntimeSchemaDescriptor.ts'), '// Exact PG18 actual44 + forward additions; local-only fixture rebuild.\nexport const PRODUCTION44_EXPANSION_MIGRATIONS = ' + JSON.stringify(migrations, null, 2) + ' as const;\nexport const PRODUCTION44_EXPANSION_CHECKPOINTS = ' + JSON.stringify(checkpoints, null, 2) + ' as const;\n');
   console.log(JSON.stringify({ artificialOnly: true, migrationCount: catalog.migrationFilenames.length, timings }));

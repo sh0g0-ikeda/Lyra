@@ -73,7 +73,7 @@ describe('MobileStoreBillingPanel', () => {
     });
 
     const buttons = renderer!.root.findAllByType('button');
-    expect(buttons.map((button) => button.children.join(''))).toEqual(['購入する', '購入を復元']);
+    expect(buttons.map((button) => button.children.join(''))).toEqual(['クレジットを購入', '購入を復元']);
     await act(async () => {
       await buttons[0].props.onClick();
     });

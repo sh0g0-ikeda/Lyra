@@ -46,6 +46,13 @@ describe('MangaTutorial', () => {
     expect(renderer.root.findAllByType('modal')).toHaveLength(1);
     act(() => renderer.unmount());
   });
+  // Spec §7: the persisted authentication language is also the tutorial language.
+  it('選択済みの日本語に切り替えるとチュートリアル本文も日本語になる', async () => {
+    mocks.language = 'ja';
+    const renderer = await render();
+    expect(JSON.stringify(renderer.toJSON())).toContain('Lyraへようこそ');
+    act(() => renderer.unmount());
+  });
   it('既読や読取不可は自動表示せず、Guideからも手動で再表示できる', async () => {
     for (const status of ['seen', 'unavailable']) {
       mocks.load.mockResolvedValue(status);

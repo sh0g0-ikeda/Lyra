@@ -31,12 +31,15 @@ export const PRODUCTION44_EXPANSION_MIGRATIONS = [
   {
     "filename": "048_advance_entity_state_revision_for_legacy_writers.sql",
     "sha256": "d7553c0f6b7cc5416d1735fd3396942cd49d9b1251e410cf406ec984ffc362c0"
+  },
+  {
+    "filename": "049_add_stripe_credit_recovery.sql",
+    "sha256": "74af9b0ab85ff01eb7920fc293a17c71a1532a74db829b01e6a064c73beae855"
+  },
+  {
+    "filename": "050_add_work_deletion.sql",
+    "sha256": "890aad36e5aaa2b743ffc671205b5d07cb9802b70f59b05391c03f96b42ae0b4"
   }
-,
-{
-  "filename": "049_add_stripe_credit_recovery.sql",
-  "sha256": "74af9b0ab85ff01eb7920fc293a17c71a1532a74db829b01e6a064c73beae855"
-}
 ] as const;
 export const PRODUCTION44_EXPANSION_CHECKPOINTS = [
   {
@@ -128,16 +131,25 @@ export const PRODUCTION44_EXPANSION_CHECKPOINTS = [
     "indexes": "f481d845bb32ef6bd5c7475e3afe1e7d4eeacc2033a11267b0a6c442d452c4be",
     "triggers": "0cb560a9a2008aa602fa4a9032d92b9e601c6df954c87935b070a72ce907d344",
     "functions": "7a23857e36eb5babb8b37f88bbced5f3d29e2771564e8e927a607ab171c16b1c"
+  },
+  {
+    "migrationFilenames": "483aed9bd3ee6fb970486e3f34d789a9d3a70ac34453cd59bd6882733e58a16b",
+    "relations": "085b53cff10331708b44f58798f5d481e20067abbddf07f3aa2eb2150b8ebb93",
+    "namespaceArtifacts": "ff065c4c1f98c7f1a7c6f63c010026d79233ab35cdcaaf993cf1ecf9f6fb758d",
+    "columns": "1775e17bc4512494864452d35d60b8c7ac736f77b4a511d70f7551f70d0b23ea",
+    "constraints": "202ee17152d87031af48380ff63e066c660e2588168f61ab51d0b7d04347af16",
+    "indexes": "90c71972db007893dfc763f83e1bcf9ca8046602081e4fe78730e53dad95527f",
+    "triggers": "0cb560a9a2008aa602fa4a9032d92b9e601c6df954c87935b070a72ce907d344",
+    "functions": "7a23857e36eb5babb8b37f88bbced5f3d29e2771564e8e927a607ab171c16b1c"
+  },
+  {
+    "migrationFilenames": "204ecda344c3cfbd3af019ee7e5a200965aa7cc575fe2863f197e40a36418d20",
+    "relations": "f150850d5587f56107331c7eff5a9dee592a77e000af7ab565597f4a57571a7e",
+    "namespaceArtifacts": "c8b1385850ce1082bebdacdafa1db3d1fddffd4d2bacd0c1c052622716fc3294",
+    "columns": "a731e65053c5bc27a9ac898e80e4041d812fd9e7776805c68675e972d71a36ce",
+    "constraints": "5e8542900469dfc800a7059ca2bb53b12e351574f930754de910e7fbc187bcf0",
+    "indexes": "5de38037ad90b7e0482ecf546a2d635ff9fdbd0c9a4c5838e94ebaf4e552c328",
+    "triggers": "59c52163f89e91834d5e98ca0c165686f0c91cf665f332de382c1d96bed3ea1c",
+    "functions": "60fc9377b0b895615316b9b2da975bb2f394493bfb197cb50b4b3fa80e4265a5"
   }
-,
-{
-  "migrationFilenames": "483aed9bd3ee6fb970486e3f34d789a9d3a70ac34453cd59bd6882733e58a16b",
-  "relations": "085b53cff10331708b44f58798f5d481e20067abbddf07f3aa2eb2150b8ebb93",
-  "namespaceArtifacts": "ff065c4c1f98c7f1a7c6f63c010026d79233ab35cdcaaf993cf1ecf9f6fb758d",
-  "columns": "1775e17bc4512494864452d35d60b8c7ac736f77b4a511d70f7551f70d0b23ea",
-  "constraints": "202ee17152d87031af48380ff63e066c660e2588168f61ab51d0b7d04347af16",
-  "indexes": "90c71972db007893dfc763f83e1bcf9ca8046602081e4fe78730e53dad95527f",
-  "triggers": "0cb560a9a2008aa602fa4a9032d92b9e601c6df954c87935b070a72ce907d344",
-  "functions": "7a23857e36eb5babb8b37f88bbced5f3d29e2771564e8e927a607ab171c16b1c"
-}
 ] as const;

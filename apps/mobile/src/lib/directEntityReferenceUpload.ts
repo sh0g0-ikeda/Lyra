@@ -121,18 +121,31 @@ export async function uploadAndImportEntityReference<Result>(
   assertNotCanceled(input.signal, 'upload');
   input.onStageChange('upload');
   let lastProgress = 0;
-  const task = input.source.createUploadTask({
-    url: presign.upload_url,
-    headers: presign.upload_headers,
-    mimeType: input.mimeType,
-    ...(input.signal === undefined ? {} : { signal: input.signal }),
-    onProgress: ({ bytesSent, totalBytes }) => {
-      const denominator = totalBytes > 0 ? totalBytes : input.sizeBytes;
-      const progress = denominator <= 0 ? 0 : clampPercent(Math.round((bytesSent / denominator) * 100));
-      lastProgress = Math.max(lastProgress, progress);
-      input.onProgress(lastProgress);
+  let task: BinaryUploadTask;
+  try {
+    task = input.source.createUploadTask({
+      url: presign.upload_url,
+      headers: presign.upload_headers,
+      mimeType: input.mimeType,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+      onProgress: ({ bytesSent, totalBytes }) => {
+        const denominator = totalBytes > 0 ? totalBytes : input.sizeBytes;
+        const progress = denominator <= 0 ? 0 : clampPercent(Math.round((bytesSent / denominator) * 100));
+        lastProgress = Math.max(lastProgress, progress);
+        input.onProgress(lastProgress);
+      }
+    });
+  } catch (error) {
+    if (isAbortError(error) || input.signal?.aborted === true) {
+      throw canceledError('upload');
     }
-  });
+    throw new DirectEntityUploadError(
+      'UPLOAD_FAILED',
+      'upload',
+      isRetryableTransportError(error),
+      'The image upload failed.'
+    );
+  }
   const cancelTask = (): void => task.cancel();
   input.signal?.addEventListener('abort', cancelTask, { once: true });
 

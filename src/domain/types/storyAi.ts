@@ -162,6 +162,7 @@ export interface EpisodePageSkeletonContext {
   entitiesInvolved: string[];
   pageSkeletonGenerated: boolean;
   existingPageCount: number;
+  existingMaxPageNumber: number;
   entities: StoryEntitySummary[];
   sceneSummaries: string[];
 }

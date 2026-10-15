@@ -4,12 +4,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StoryHierarchySheet } from '@/components/StoryHierarchySheet';
+import { ApiError } from '@/lib/api';
 import { contrastRatio, renderedColors, renderedContrast, renderedStyle } from './helpers/renderedContrast';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { confirmDestructiveActionMock } = vi.hoisted(() => ({
-  confirmDestructiveActionMock: vi.fn(({ onConfirm }: { onConfirm: () => void }) => onConfirm())
+const { confirmDestructiveActionMock, loadStoryHierarchyExpansionMock, saveStoryHierarchyExpansionMock } = vi.hoisted(() => ({
+  confirmDestructiveActionMock: vi.fn(({ onConfirm }: { onConfirm: () => void }) => onConfirm()),
+  loadStoryHierarchyExpansionMock: vi.fn(),
+  saveStoryHierarchyExpansionMock: vi.fn()
 }));
 
 vi.mock('react-native', () => ({
@@ -119,11 +122,8 @@ vi.mock('@/lib/confirm', () => ({
 }));
 
 vi.mock('@/lib/storage', () => ({
-  loadStoryHierarchyExpansion: vi.fn().mockResolvedValue({
-    chapterIds: ['chapter-1'],
-    workIds: ['work-1']
-  }),
-  saveStoryHierarchyExpansion: vi.fn().mockResolvedValue(undefined)
+  loadStoryHierarchyExpansion: loadStoryHierarchyExpansionMock,
+  saveStoryHierarchyExpansion: saveStoryHierarchyExpansionMock
 }));
 
 const work = (id: string, title: string) => ({
@@ -189,10 +189,14 @@ const flushQueries = async (): Promise<void> => {
 describe('StoryHierarchySheet', () => {
   const onSelectEpisode = vi.fn();
   const onWorkRenamed = vi.fn();
+  const onBeforeWorkDelete = vi.fn<() => Promise<boolean>>();
+  const onWorkDeletionAccepted = vi.fn<() => Promise<void>>();
+  let renderedQueryClient: QueryClient | null = null;
   const api = {
     createChapter: vi.fn(),
     createEpisode: vi.fn(),
     createWork: vi.fn(),
+    deleteWork: vi.fn(),
     deleteChapter: vi.fn().mockResolvedValue(undefined),
     deleteEpisode: vi.fn().mockResolvedValue(undefined),
     getChapters: vi.fn(async (workId: string) => ({
@@ -203,6 +207,8 @@ describe('StoryHierarchySheet', () => {
     getEpisodes: vi.fn(async (chapterId: string) => ({
       episodes: chapterId === 'chapter-1'
         ? [episode('episode-1', 'chapter-1', 1, '第一話')]
+        : chapterId === 'chapter-2'
+          ? [episode('episode-2', 'chapter-2', 1, '第二話')]
         : []
     })),
     moveChapter: vi.fn(),
@@ -214,46 +220,69 @@ describe('StoryHierarchySheet', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    confirmDestructiveActionMock.mockImplementation(({ onConfirm }: { onConfirm: () => void }) => onConfirm());
+    onBeforeWorkDelete.mockResolvedValue(true);
+    onWorkDeletionAccepted.mockResolvedValue(undefined);
+    api.deleteWork.mockResolvedValue({
+      deletion_id: '11111111-1111-4111-8111-111111111111',
+      work_id: '22222222-2222-4222-8222-222222222222',
+      status: 'pending',
+      blocker_code: null
+    });
+    loadStoryHierarchyExpansionMock.mockResolvedValue({
+      chapterIds: ['chapter-1'],
+      workIds: ['work-1']
+    });
+    saveStoryHierarchyExpansionMock.mockResolvedValue(undefined);
   });
 
-  const renderSheet = async () => {
+  const sheet = (overrides: Partial<React.ComponentProps<typeof StoryHierarchySheet>> = {}) => (
+    <StoryHierarchySheet
+      api={api as never}
+      canCreateWork
+      canEdit
+      language="ja"
+      onChapterDeleted={vi.fn()}
+      onClose={vi.fn()}
+      onEpisodeDeleted={vi.fn()}
+      onBeforeWorkDelete={onBeforeWorkDelete}
+      onSelectChapter={vi.fn()}
+      onSelectEpisode={onSelectEpisode}
+      onSelectWork={vi.fn()}
+      onWorkDeletionAccepted={onWorkDeletionAccepted}
+      onWorkRenamed={onWorkRenamed}
+      onChapterRenamed={vi.fn()}
+      onEpisodeRenamed={vi.fn()}
+      organizationId={null}
+      selectedChapterId="chapter-1"
+      selectedEpisodeId="episode-1"
+      selectedWorkId="work-1"
+      sessionKey="session-1"
+      userId="user-1"
+      visible
+      works={[work('work-1', '作品A'), work('work-2', '作品B')]}
+      {...overrides}
+    />
+  );
+
+  const renderSheet = async (ensureCurrentEpisode = true, overrides: Partial<React.ComponentProps<typeof StoryHierarchySheet>> = {}) => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } }
     });
+    renderedQueryClient = queryClient;
     let renderer: ReturnType<typeof create>;
     await act(async () => {
       renderer = create(
         <QueryClientProvider client={queryClient}>
-          <StoryHierarchySheet
-            api={api as never}
-            canCreateWork
-            canEdit
-            language="ja"
-            onChapterDeleted={vi.fn()}
-            onClose={vi.fn()}
-            onEpisodeDeleted={vi.fn()}
-            onSelectChapter={vi.fn()}
-            onSelectEpisode={onSelectEpisode}
-            onSelectWork={vi.fn()}
-            onWorkRenamed={onWorkRenamed}
-            onChapterRenamed={vi.fn()}
-            onEpisodeRenamed={vi.fn()}
-            organizationId={null}
-            selectedChapterId="chapter-1"
-            selectedEpisodeId="episode-1"
-            selectedWorkId="work-1"
-            sessionKey="session-1"
-            userId="user-1"
-            visible
-            works={[work('work-1', '作品A'), work('work-2', '作品B')]}
-          />
+          {sheet(overrides)}
         </QueryClientProvider>
       );
-      for (let index = 0; index < 5; index += 1) {
-        await flushQueries();
-      }
     });
+    for (let index = 0; index < 5; index += 1) {
+      await act(flushQueries);
+    }
     if (
+      ensureCurrentEpisode &&
       renderer!.root.findAllByProps({ accessibilityLabel: '1. 第一話の操作' }).length === 0
     ) {
       const chapterToggle = renderer!.root.findByProps({ accessibilityLabel: '1. 第一章を折りたたむ' });
@@ -278,6 +307,329 @@ describe('StoryHierarchySheet', () => {
       await flushQueries();
     });
     expect(api.getChapters).toHaveBeenCalledWith('work-2', null);
+  });
+
+  // Expanded branches expose creation at the list boundary so users do not need the overflow menu.
+  it('展開済みの作品と章ではリスト直前の追加操作が既存のタイトル入力を開く', async () => {
+    const renderer = await renderSheet();
+
+    const addChapter = renderer.root.findByProps({ accessibilityLabel: 'この作品に章を追加' });
+    await act(async () => {
+      addChapter.props.onPress();
+    });
+    expect(renderer.root.findByType('input')).toBeDefined();
+
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === 'キャンセル')?.props.onClick();
+    });
+    const addEpisode = renderer.root.findByProps({ accessibilityLabel: 'この章に話を追加' });
+    await act(async () => {
+      addEpisode.props.onPress();
+    });
+    expect(renderer.root.findByType('input')).toBeDefined();
+  });
+
+  // Opening the creation entry point is a one-shot view intent. Tenant scope
+  // changes while the sheet stays open must never replay a create operation.
+  it('新規作成入口では作品追加を一度だけ開きscope変更後に再表示しない', async () => {
+    const renderer = await renderSheet(false, { initialAction: 'create-work' });
+    expect(renderer.root.findAllByType('input')).toHaveLength(1);
+
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === 'キャンセル')?.props.onClick();
+    });
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: 'create-work', organizationId: 'org-2' })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+  });
+
+  it('作品追加を開いたままscopeが変わった場合は旧入力を閉じる', async () => {
+    const renderer = await renderSheet(false, { initialAction: 'create-work' });
+    await act(async () => renderer.root.findByType('input').props.onChange('旧scopeの作品'));
+
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: 'create-work', organizationId: 'org-2' })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+    expect(api.createWork).not.toHaveBeenCalled();
+  });
+
+  it('sheetを閉じた場合は作品追加の入力を次の通常表示へ持ち越さない', async () => {
+    const renderer = await renderSheet(false, { initialAction: 'create-work' });
+    await act(async () => renderer.root.findByType('input').props.onChange('閉じる前の作品'));
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: 'create-work', visible: false })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: undefined, visible: true })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+    expect(api.createWork).not.toHaveBeenCalled();
+  });
+
+  it('作品作成権限を失った場合は古い保存操作から作成しない', async () => {
+    const renderer = await renderSheet(false, { initialAction: 'create-work' });
+    await act(async () => renderer.root.findByType('input').props.onChange('権限外の作品'));
+    const staleAdd = renderer.root.findAllByType('button').find((button) => button.children.join('') === '追加')?.props.onClick as (() => void) | undefined;
+
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ canCreateWork: false, initialAction: 'create-work' })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    await act(async () => {
+      staleAdd?.();
+      await flushQueries();
+    });
+
+    expect(api.createWork).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+  });
+
+  it('旧scopeの作成待機中でも新scopeで再入力でき旧結果は選択やdialogを変更しない', async () => {
+    let resolveCreateWork: ((value: ReturnType<typeof work>) => void) | null = null;
+    api.createWork.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveCreateWork = resolve;
+    }));
+    const onSelectWork = vi.fn();
+    const renderer = await renderSheet(false, { initialAction: 'create-work', onSelectWork });
+    await act(async () => renderer.root.findByType('input').props.onChange('旧scopeの作品'));
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '追加')?.props.onClick();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: 'create-work', onSelectWork, organizationId: 'org-2' })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '作品を追加' }).props.onPress();
+    });
+    await act(async () => renderer.root.findByType('input').props.onChange('新scopeの作品'));
+    await act(async () => {
+      resolveCreateWork?.(work('old-created-work', '旧scopeの作品'));
+      await flushQueries();
+    });
+
+    expect(onSelectWork).not.toHaveBeenCalled();
+    expect(renderer.root.findByType('input').props.value).toBe('新scopeの作品');
+  });
+
+  it('同じscopeでsheetを閉じ再表示した場合も旧作成結果は新dialogを閉じない', async () => {
+    let resolveCreateWork: ((value: ReturnType<typeof work>) => void) | null = null;
+    api.createWork.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveCreateWork = resolve;
+    }));
+    const onSelectWork = vi.fn();
+    const renderer = await renderSheet(false, { initialAction: 'create-work', onSelectWork });
+    await act(async () => renderer.root.findByType('input').props.onChange('古い作品'));
+    await act(async () => {
+      renderer.root.findAllByType('button').find((button) => button.children.join('') === '追加')?.props.onClick();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: 'create-work', onSelectWork, visible: false })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ initialAction: undefined, onSelectWork, visible: true })}
+        </QueryClientProvider>
+      );
+      await flushQueries();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '作品を追加' }).props.onPress();
+    });
+    await act(async () => renderer.root.findByType('input').props.onChange('新しい作品'));
+    await act(async () => {
+      resolveCreateWork?.(work('old-created-work', '古い作品'));
+      await flushQueries();
+    });
+
+    expect(onSelectWork).not.toHaveBeenCalled();
+    expect(renderer.root.findByType('input').props.value).toBe('新しい作品');
+  });
+
+  it('作品取得中または失敗時は作品なしと表示せず安全に再試行できる', async () => {
+    const retry = vi.fn();
+    const loadingRenderer = await renderSheet(false, {
+      isLoadingWorks: true,
+      selectedChapterId: null,
+      selectedEpisodeId: null,
+      selectedWorkId: null,
+      works: []
+    });
+    expect(JSON.stringify(loadingRenderer.toJSON())).not.toContain('作品はまだありません');
+    expect(loadingRenderer.root.findAllByType('activity-indicator').length).toBeGreaterThan(0);
+
+    const failedRenderer = await renderSheet(false, {
+      hierarchyError: new Error('private detail'),
+      isLoadingWorks: false,
+      onRetryHierarchy: retry,
+      selectedChapterId: null,
+      selectedEpisodeId: null,
+      selectedWorkId: null,
+      works: []
+    });
+    expect(JSON.stringify(failedRenderer.toJSON())).not.toContain('作品はまだありません');
+    const notice = failedRenderer.root.findByType('notice');
+    expect(notice.children.join('')).not.toContain('private detail');
+  });
+
+  it('作成権限がない場合は新規作成入口でも作品追加を開かない', async () => {
+    const renderer = await renderSheet(false, {
+      canCreateWork: false,
+      initialAction: 'create-work'
+    });
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+  });
+
+  it('章または話の取得失敗を空階層と誤表示せず再試行を案内する', async () => {
+    api.getChapters.mockRejectedValueOnce(new Error('private chapter detail'));
+    const chaptersRenderer = await renderSheet(false);
+    expect(JSON.stringify(chaptersRenderer.toJSON())).not.toContain('章はまだありません');
+    expect(chaptersRenderer.root.findByType('notice').children.join('')).not.toContain('private chapter detail');
+
+    api.getEpisodes.mockRejectedValueOnce(new Error('private episode detail'));
+    const episodesRenderer = await renderSheet(false);
+    expect(JSON.stringify(episodesRenderer.toJSON())).not.toContain('話はまだありません');
+    expect(episodesRenderer.root.findByType('notice').children.join('')).not.toContain('private episode detail');
+  });
+
+  // A FlatList cell must measure its hierarchy content, otherwise the episode rows can sit
+  // below an unscrollable cell after a user expands a chapter from the page editor.
+  it('章を展開したとき話まで到達できる高さで表示する', async () => {
+    const renderer = await renderSheet();
+
+    expect(renderer.root.findByProps({ accessibilityLabel: '1. 第一話の操作' })).toBeDefined();
+    const branches = renderer.root.findAll((node) => {
+      const style = node.props.style as { flex?: number } | undefined;
+      return style?.flex === 1 && Object.keys(style).length === 1;
+    });
+    expect(branches).toHaveLength(0);
+  });
+
+  it('ページ編集中に別の章を展開してもその話を選べる', async () => {
+    const renderer = await renderSheet(false);
+    const expandSecondChapter = renderer.root.findByProps({ accessibilityLabel: '2. 第二章を展開' });
+
+    await act(async () => {
+      expandSecondChapter.props.onPress();
+    });
+    for (let index = 0; index < 5; index += 1) {
+      await act(async () => {
+        await flushQueries();
+      });
+    }
+
+    expect(api.getEpisodes).toHaveBeenCalledWith('chapter-2', null);
+    expect(renderer.root.findByProps({ accessibilityLabel: '1. 第二話の操作' })).toBeDefined();
+  });
+
+  it('展開設定の読込中に別の章を開いても話を隠さない', async () => {
+    let resolveStoredExpansion: ((value: { chapterIds: string[]; workIds: string[] }) => void) | null = null;
+    loadStoryHierarchyExpansionMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStoredExpansion = resolve;
+    }));
+    const renderer = await renderSheet(false);
+    const expandSecondChapter = renderer.root.findByProps({ accessibilityLabel: '2. 第二章を展開' });
+    await act(async () => {
+      expandSecondChapter.props.onPress();
+      resolveStoredExpansion?.({ chapterIds: ['chapter-1'], workIds: ['work-1'] });
+      await flushQueries();
+    });
+    for (let index = 0; index < 5; index += 1) {
+      await act(flushQueries);
+    }
+
+    expect(renderer.root.findByProps({ accessibilityLabel: '1. 第二話の操作' })).toBeDefined();
+  });
+
+  it('読込中に開いて閉じた章を保存済み展開で再び開かない', async () => {
+    let resolveStoredExpansion: ((value: { chapterIds: string[]; workIds: string[] }) => void) | null = null;
+    loadStoryHierarchyExpansionMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStoredExpansion = resolve;
+    }));
+    const renderer = await renderSheet(false);
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '2. 第二章を展開' }).props.onPress();
+    });
+    await act(async () => {
+      renderer.root.findByProps({ accessibilityLabel: '2. 第二章を折りたたむ' }).props.onPress();
+      resolveStoredExpansion?.({ chapterIds: ['chapter-2'], workIds: ['work-1'] });
+      await flushQueries();
+    });
+    expect(renderer.root.findByProps({ accessibilityLabel: '2. 第二章を展開' })).toBeDefined();
+  });
+
+  it('scopeを切り替えた後は遅れて届く旧scopeの展開設定を保存しない', async () => {
+    const resolvers: ((value: { chapterIds: string[]; workIds: string[] }) => void)[] = [];
+    loadStoryHierarchyExpansionMock.mockImplementation(() => new Promise((resolve) => {
+      resolvers.push(resolve);
+    }));
+    const renderer = await renderSheet(false);
+    expect(renderedQueryClient).not.toBeNull();
+    await act(async () => {
+      renderer.update(
+        <QueryClientProvider client={renderedQueryClient!}>
+          {sheet({ organizationId: 'org-2', selectedChapterId: null, selectedEpisodeId: null, selectedWorkId: null, userId: 'user-2' })}
+        </QueryClientProvider>
+      );
+    });
+    await act(async () => {
+      resolvers[1]!({ chapterIds: ['chapter-2'], workIds: ['work-1'] });
+      await flushQueries();
+    });
+    for (let index = 0; index < 3; index += 1) {
+      await act(flushQueries);
+    }
+    expect(renderer.root.findByProps({ accessibilityLabel: '2. 第二章を折りたたむ' })).toBeDefined();
+    await act(async () => {
+      resolvers[0]!({ chapterIds: ['chapter-1'], workIds: ['work-1'] });
+      await flushQueries();
+    });
+    expect(renderer.root.findByProps({ accessibilityLabel: '2. 第二章を折りたたむ' })).toBeDefined();
+    const latestSave = saveStoryHierarchyExpansionMock.mock.calls.at(-1);
+    expect(latestSave).toEqual(['user-2', 'org-2', { chapterIds: ['chapter-2'], workIds: ['work-1'] }]);
   });
 
   it('章末の話を下へ移動すると章境界移動フラグを送る', async () => {
@@ -397,6 +749,7 @@ describe('StoryHierarchySheet', () => {
     });
     expect(renderer.root.findByProps({ accessibilityLabel: '作品名を変更' })).toBeDefined();
     expect(renderer.root.findByProps({ accessibilityLabel: '章を追加' })).toBeDefined();
+    expect(renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' })).toBeDefined();
 
     await act(async () => {
       renderer.root.findByProps({ accessibilityLabel: '1. 第一章の操作' }).props.onPress();
@@ -463,5 +816,103 @@ describe('StoryHierarchySheet', () => {
 
     expect(confirmDestructiveActionMock).toHaveBeenCalledOnce();
     expect(api.deleteEpisode).toHaveBeenCalledWith('episode-1', null);
+  });
+
+  it('作品削除の確認をキャンセルした場合は削除要求を送らない', async () => {
+    confirmDestructiveActionMock.mockImplementation(() => undefined);
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress());
+
+    expect(confirmDestructiveActionMock).toHaveBeenCalledOnce();
+    expect(api.deleteWork).not.toHaveBeenCalled();
+  });
+
+  it('dirty確認中に組織scopeが変わった場合は古い作品の削除要求を送らない', async () => {
+    let resolveDirty: ((allowed: boolean) => void) | undefined;
+    onBeforeWorkDelete.mockReturnValue(new Promise<boolean>((resolve) => { resolveDirty = resolve; }));
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress());
+    await act(async () => renderer.update(
+      <QueryClientProvider client={renderedQueryClient!}>
+        {sheet({ organizationId: '33333333-3333-4333-8333-333333333333' })}
+      </QueryClientProvider>
+    ));
+    await act(async () => { resolveDirty?.(true); await flushQueries(); });
+
+    expect(api.deleteWork).not.toHaveBeenCalled();
+    expect(onWorkDeletionAccepted).not.toHaveBeenCalled();
+  });
+
+  it('削除要求の202受付後は完了扱いせずreceiptを監視側へ渡す', async () => {
+    const receipt = {
+      deletion_id: '11111111-1111-4111-8111-111111111111',
+      work_id: '22222222-2222-4222-8222-222222222222',
+      status: 'pending' as const,
+      blocker_code: null
+    };
+    api.deleteWork.mockResolvedValue(receipt);
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress(); await flushQueries(); });
+
+    expect(onBeforeWorkDelete).toHaveBeenCalledWith('work-1');
+    expect(api.deleteWork).toHaveBeenCalledWith('work-1', null);
+    expect(onWorkDeletionAccepted).toHaveBeenCalledWith(receipt);
+    const confirmation = confirmDestructiveActionMock.mock.calls[0]?.[0] as { message: string };
+    expect(confirmation.message).toContain('画像');
+    expect(confirmation.message).toContain('章');
+    expect(confirmation.message).toContain('話');
+    expect(confirmation.message).toContain('元に戻せません');
+  });
+
+  it('削除要求待機中にscopeが変わった場合は新scopeの選択を解除しない', async () => {
+    let resolveDelete: ((receipt: { deletion_id: string; work_id: string; status: 'pending'; blocker_code: null }) => void) | undefined;
+    api.deleteWork.mockReturnValue(new Promise((resolve) => { resolveDelete = resolve; }));
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress(); await flushQueries(); });
+    await act(async () => renderer.update(
+      <QueryClientProvider client={renderedQueryClient!}>
+        {sheet({ organizationId: '33333333-3333-4333-8333-333333333333' })}
+      </QueryClientProvider>
+    ));
+    await act(async () => {
+      resolveDelete?.({
+        deletion_id: '11111111-1111-4111-8111-111111111111',
+        work_id: '22222222-2222-4222-8222-222222222222',
+        status: 'pending',
+        blocker_code: null
+      });
+      await flushQueries();
+    });
+
+    expect(api.deleteWork).toHaveBeenCalledWith('work-1', null);
+    expect(onWorkDeletionAccepted).not.toHaveBeenCalled();
+  });
+
+  it('削除要求の通信結果が不明な場合は状態更新だけを行いDELETEを再送しない', async () => {
+    api.deleteWork.mockRejectedValue(new Error('network unavailable'));
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress(); await flushQueries(); });
+    const notice = renderer.root.findByType('notice');
+    await act(async () => { notice.props.onAction(); await flushQueries(); });
+
+    expect(api.deleteWork).toHaveBeenCalledOnce();
+    expect(onWorkDeletionAccepted).not.toHaveBeenCalled();
+  });
+
+  it('削除409は進行中処理と保存結果の安全確認の両方を案内する', async () => {
+    api.deleteWork.mockRejectedValue(new ApiError('conflict', 409, 'CONFLICT'));
+    const renderer = await renderSheet();
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: '作品Aの操作' }).props.onPress());
+    await act(async () => { renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress(); await flushQueries(); });
+
+    const notice = String(renderer.root.findByType('notice').props.children);
+    expect(notice).toContain('安全確認が必要');
+    expect(notice).toContain('サポートへお問い合わせください');
+    expect(api.deleteWork).toHaveBeenCalledOnce();
   });
 });

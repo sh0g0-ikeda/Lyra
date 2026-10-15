@@ -23,12 +23,22 @@ describe('named state API', () => {
     expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body)).toEqual({});
     expect(JSON.parse(fetchMock.mock.calls[1]?.[1].body)).toEqual({ candidate_token: 'signed', expected_state_revision: state.updated_at });
   });
-  it('state自動入力は明示設定時だけv1と上書き方針を追加し従来bodyを維持する', async () => {
+  it('state自動入力はcapability対応時にbooleanを送り、明示上書きだけv1を送る', async () => {
     const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ job_id: 'job' }), { status: 202 }));
     vi.stubGlobal('fetch', fetchMock); const api = new LyraMobileApiClient(() => 'token');
     await api.autofillEpisodePagesFromStory('episode', 'ja', 'org');
-    await api.autofillEpisodePagesFromStory('episode', 'ja', 'org', { state_autofill_version: 'v1', state_assignment_policy: 'preserve_existing' });
+    await api.autofillEpisodePagesFromStory('episode', 'ja', 'org', { state_autofill_enabled: true });
+    await api.autofillEpisodePagesFromStory('episode', 'ja', 'org', { state_autofill_version: 'v1', state_assignment_policy: 'overwrite_existing' });
     expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body)).toEqual({ language: 'ja' });
-    expect(JSON.parse(fetchMock.mock.calls[1]?.[1].body)).toEqual({ language: 'ja', state_autofill_version: 'v1', state_assignment_policy: 'preserve_existing' });
+    expect(JSON.parse(fetchMock.mock.calls[1]?.[1].body)).toEqual({ language: 'ja', state_autofill_enabled: true });
+    expect(JSON.parse(fetchMock.mock.calls[2]?.[1].body)).toEqual({ language: 'ja', state_autofill_version: 'v1', state_assignment_policy: 'overwrite_existing' });
+  });
+  it('story autofill retryは元jobを指定するだけで再実行する', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ job_id: 'retry-job' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock); const api = new LyraMobileApiClient(() => 'token');
+    await api.retryEpisodeStoryAutofillJob('original-job', 'org');
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/jobs/original-job/retry?organization_id=org');
+    expect(fetchMock.mock.calls[0]?.[1].method).toBe('POST');
+    expect(fetchMock.mock.calls[0]?.[1].body).toBeUndefined();
   });
 });

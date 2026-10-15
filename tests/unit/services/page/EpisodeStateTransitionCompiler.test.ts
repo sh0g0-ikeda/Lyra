@@ -23,6 +23,11 @@ describe('buildEpisodeStateTransitionCompilerBrief', () => {
     expect(brief).not.toContain('reference/private/state.png');
     expect(brief).not.toContain('storage-owner-secret');
     expect(brief).not.toContain('base-ref-secret');
+    expect(brief).toContain('visual-only fallback');
+    expect(brief).toContain('Do not create a new state');
+    expect(brief).toContain('complete visible appearance');
+    expect(brief).toContain('Keep suggested_description concise');
+    expect(brief).toContain('Do not drop an earlier injury, costume, or transformation unless the saved source explicitly ends it');
   });
 });
 

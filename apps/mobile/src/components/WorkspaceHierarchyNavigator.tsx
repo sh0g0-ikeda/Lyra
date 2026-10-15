@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BookOpen, ChevronRight } from 'lucide-react-native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -6,6 +6,7 @@ import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
 import { StoryHierarchySheet } from '@/components/StoryHierarchySheet';
 import type { WorkspaceContextData } from '@/components/WorkspaceContextPicker';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
+import type { WorkDeletionRecord } from '@/domain/workDeletion';
 import { t } from '@/lib/i18n';
 import { navigationRef } from '@/navigation/navigationRef';
 import { useAppState } from '@/state/appState';
@@ -30,6 +31,15 @@ export function WorkspaceHierarchyNavigator({
   } = useAppState();
   const { resolveDirtyEditors } = useDirtyState();
   const [visible, setVisible] = useState(false);
+  const canEdit = hasCapability('edit_work');
+  const deletionScope = JSON.stringify([sessionKey, selection.organizationId]);
+  const liveDeletionContext = useRef({ canEdit, scope: deletionScope, selectedWorkId: selection.workId, visible });
+  useLayoutEffect(() => {
+    liveDeletionContext.current = { canEdit, scope: deletionScope, selectedWorkId: selection.workId, visible };
+  }, [canEdit, deletionScope, selection.workId, visible]);
+  useEffect(() => () => {
+    liveDeletionContext.current = { ...liveDeletionContext.current, visible: false };
+  }, []);
   const work =
     context.works.find((candidate) => candidate.id === context.selectedWorkId) ??
     null;
@@ -41,20 +51,19 @@ export function WorkspaceHierarchyNavigator({
     context.episodes.find(
       (candidate) => candidate.id === context.selectedEpisodeId
     ) ?? null;
-  const currentPath =
-    work === null || chapter === null || episode === null
-      ? t(language, 'component.workspaceHierarchy.selectEpisode')
-      : `${work.title} / ${
-          chapter.title?.trim() ||
-          t(language, 'component.storyHierarchySheet.chapterFallbackTitle', {
-            order: chapter.order
-          })
-        } / ${
-          episode.title?.trim() ||
-          t(language, 'component.storyHierarchySheet.episodeFallbackTitle', {
-            order: episode.order
-          })
-        }`;
+  const chapterTitle = chapter === null
+    ? null
+    : chapter.title?.trim() || t(language, 'component.storyHierarchySheet.chapterFallbackTitle', {
+      order: chapter.order
+    });
+  const episodeTitle = episode === null
+    ? t(language, 'component.workspaceHierarchy.selectEpisode')
+    : episode.title?.trim() || t(language, 'component.storyHierarchySheet.episodeFallbackTitle', {
+      order: episode.order
+    });
+  const workChapterContext = work === null || chapterTitle === null
+    ? null
+    : `${work.title} / ${chapterTitle}`;
 
   const selectEpisode = (
     workId: string,
@@ -92,9 +101,14 @@ export function WorkspaceHierarchyNavigator({
           <Text style={styles.title}>
             {t(language, 'component.workspaceHierarchy.title')}
           </Text>
-          <Text numberOfLines={1} style={styles.current}>
-            {currentPath}
+          <Text numberOfLines={1} style={styles.episode} testID="workspace-current-episode">
+            {episodeTitle}
           </Text>
+          {workChapterContext === null ? null : (
+            <Text numberOfLines={1} style={styles.current} testID="workspace-current-context">
+              {workChapterContext}
+            </Text>
+          )}
         </View>
         <ChevronRight color={colors.primary} size={22} strokeWidth={2.2} />
       </Pressable>
@@ -122,9 +136,12 @@ export function WorkspaceHierarchyNavigator({
       <StoryHierarchySheet
         api={api}
         canCreateWork={hasCapability('create_work')}
-        canEdit={hasCapability('edit_work')}
+        canEdit={canEdit}
         hasNextWorks={context.hasMoreWorks}
         isFetchingNextWorks={context.isFetchingMoreWorks}
+        isLoadingWorks={context.isLoadingWorks}
+        hierarchyError={context.error}
+        onRetryHierarchy={context.retry}
         language={language}
         onChapterDeleted={(chapterId) => {
           if (selection.chapterId === chapterId) {
@@ -135,6 +152,13 @@ export function WorkspaceHierarchyNavigator({
           }
         }}
         onChapterRenamed={() => undefined}
+        onBeforeWorkDelete={async () => {
+          const scope = deletionScope;
+          if (!liveDeletionContext.current.visible || !liveDeletionContext.current.canEdit || liveDeletionContext.current.scope !== scope) return false;
+          const allowed = await resolveDirtyEditors(language);
+          const live = liveDeletionContext.current;
+          return allowed && live.visible && live.canEdit && live.scope === scope;
+        }}
         onClose={() => setVisible(false)}
         onEndReachedWorks={context.loadMoreWorks}
         onEpisodeDeleted={(episodeId) => {
@@ -165,6 +189,14 @@ export function WorkspaceHierarchyNavigator({
             entityId: null
           });
         }}
+        onWorkDeletionAccepted={async (deletion: WorkDeletionRecord) => {
+          const live = liveDeletionContext.current;
+          if (!live.visible || !live.canEdit || live.scope !== deletionScope || live.selectedWorkId !== deletion.work_id) return;
+          await updateSelection(
+            { workId: null, chapterId: null, episodeId: null, pageId: null, entityId: null },
+            { skipDirtyCheck: true }
+          );
+        }}
         onWorkRenamed={() => undefined}
         organizationId={selection.organizationId}
         selectedChapterId={context.selectedChapterId}
@@ -188,6 +220,11 @@ const styles = StyleSheet.create({
   current: {
     ...textStyles.caption,
     color: colors.ink
+  },
+  episode: {
+    ...textStyles.body,
+    color: colors.inkStrong,
+    fontWeight: '700'
   },
   icon: {
     alignItems: 'center',

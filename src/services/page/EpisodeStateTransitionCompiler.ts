@@ -100,7 +100,12 @@ export function buildEpisodeStateTransitionCompilerBrief(
     '',
     '[BINDING RULES]',
     'Use only entity IDs, state IDs, scene IDs, and panel IDs listed above.',
-    'A state with reference_ready=false remains a candidate; report it as unresolved when it is needed.',
+    'Prefer a listed reference_ready=true state for a supported transformation.',
+    'A state with reference_ready=false remains an unassignable candidate; report it as an unresolved visual-only fallback when it is needed.',
+    'If no listed READY state represents an explicit injury, expression, costume, or other visible change, report a visual-only fallback. Do not create a new state.',
+    'Each unresolved suggested_description must describe the complete visible appearance from its boundary until the next boundary for that character.',
+    'Keep suggested_description concise (prefer at most 300 characters) while preserving every continuing visible change supported by the saved source.',
+    'Do not drop an earlier injury, costume, or transformation unless the saved source explicitly ends it; carry it into each later complete appearance.',
     'For each transition, quote the saved source text that proves it. Do not infer facts absent from that text.',
     'Use null state_id only when returning to the default state.',
   ].join('\n');

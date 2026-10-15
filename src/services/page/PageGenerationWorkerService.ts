@@ -694,7 +694,10 @@ async function compilePromptSafely(
     }
 
     return {
-      compiledPrompt,
+      compiledPrompt: ensureRequiredNamedStyleLock(
+        compiledPrompt,
+        extractRequiredNamedStyleLock(builtPrompt.compilerBrief),
+      ),
       compilerError: null,
     };
   } catch (error) {
@@ -712,6 +715,45 @@ async function compilePromptSafely(
       compilerError: sanitizePersistedErrorMessage(error, 'Page prompt compiler failed'),
     };
   }
+}
+
+function extractRequiredNamedStyleLock(compilerBrief: string): string | null {
+  const globalStyle = /\[GLOBAL STYLE\]\r?\n([^\r\n]+)\r?\n\r?\n\[REFERENCE IMAGE ROLES\]/u.exec(
+    compilerBrief,
+  )?.[1];
+  if (globalStyle === undefined || !globalStyle.includes('Named style reference constraint:')) {
+    return null;
+  }
+
+  return globalStyle;
+}
+
+function ensureRequiredNamedStyleLock(
+  compiledPrompt: CompiledPagePrompt,
+  requiredStyleLock: string | null,
+): CompiledPagePrompt {
+  if (requiredStyleLock === null) {
+    return compiledPrompt;
+  }
+
+  const firstIndex = compiledPrompt.prompt.indexOf(requiredStyleLock);
+  if (firstIndex === -1) {
+    return {
+      ...compiledPrompt,
+      prompt: `${compiledPrompt.prompt.trimEnd()}\n\n${requiredStyleLock}`,
+    };
+  }
+
+  const firstEnd = firstIndex + requiredStyleLock.length;
+  const remainder = compiledPrompt.prompt.slice(firstEnd);
+  if (!remainder.includes(requiredStyleLock)) {
+    return compiledPrompt;
+  }
+
+  return {
+    ...compiledPrompt,
+    prompt: `${compiledPrompt.prompt.slice(0, firstEnd)}${remainder.split(requiredStyleLock).join('')}`,
+  };
 }
 
 function shouldUseDraftPromptDirectly(compilerBrief: string): boolean {

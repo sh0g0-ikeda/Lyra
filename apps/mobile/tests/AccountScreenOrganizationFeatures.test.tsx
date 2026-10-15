@@ -168,6 +168,26 @@ describe('AccountScreen organization feature guard', () => {
     });
   });
 
+  it('ストア商品の取得に失敗した場合にプランとクレジットの購入を止め再読込だけを許可する', async () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    mocks.useQuery.mockImplementation((options: { queryKey: readonly string[] }) => options.queryKey[0] === 'mobile-store-product-catalog'
+      ? { data: undefined, isError: true, isFetching: false, isLoading: false, refetch: reload }
+      : { data: undefined, isError: false, isFetching: false, isLoading: false, refetch: vi.fn() });
+    mocks.useAppState.mockReturnValue({ api: {}, language: 'ja', logout: vi.fn(), selection: { organizationId: null }, session: refreshedSession, sessionKey: 'user-1', setLanguage: vi.fn(), setSession: vi.fn(), updateSelection: mocks.updateSelection });
+    let renderer: ReturnType<typeof create>;
+    await act(async () => { renderer = create(<AccountScreen />); });
+    const buttons = renderer!.root.findAllByType('button');
+    for (const label of ['プランを選ぶ', 'クレジットを購入']) {
+      const button = buttons.find(node => node.children.includes(label));
+      expect(button).toBeDefined();
+      expect(button!.props.disabled).toBe(true);
+    }
+    const retry = buttons.find(node => node.children.includes('ストア商品を再読み込み'));
+    expect(retry).toBeDefined();
+    await act(async () => retry!.props.onClick());
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ['cancelJob', 'Cancel job', 'Cancellation is unconfirmed'],
     ['hideJob', 'Hide job history', 'history visibility only'],

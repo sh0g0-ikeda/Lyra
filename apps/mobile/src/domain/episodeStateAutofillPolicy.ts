@@ -5,17 +5,25 @@ export interface EpisodeStateAutofillChoice {
   enabled: boolean;
   overwrite: boolean;
 }
-export interface EpisodeStateAutofillRequestOptions {
-  state_autofill_version: 'v1';
-  state_assignment_policy: 'preserve_existing' | 'overwrite_existing';
+export type EpisodeStateAutofillRequestOptions =
+  | { state_autofill_enabled: boolean; state_autofill_version?: never; state_assignment_policy?: never }
+  | { state_autofill_enabled?: never; state_autofill_version: 'v1'; state_assignment_policy: 'overwrite_existing' };
+
+/** New Mobile uses source-backed state application whenever the server advertises it. */
+export function automaticStateAutofillRequestOptions(
+  available: boolean
+): EpisodeStateAutofillRequestOptions | undefined {
+  return available ? { state_autofill_enabled: true } : undefined;
 }
 
 export function stateAutofillRequestOptions(
   available: boolean,
   choice: EpisodeStateAutofillChoice
 ): EpisodeStateAutofillRequestOptions | undefined {
-  if (!available || !choice.enabled) return undefined;
-  return { state_autofill_version: 'v1', state_assignment_policy: choice.overwrite ? 'overwrite_existing' : 'preserve_existing' };
+  if (!available) return undefined;
+  if (!choice.enabled) return { state_autofill_enabled: false };
+  if (!choice.overwrite) return { state_autofill_enabled: true };
+  return { state_autofill_version: 'v1', state_assignment_policy: 'overwrite_existing' };
 }
 
 // Reuse the canonical bounded public job-result schemas. Legacy jobs omit these

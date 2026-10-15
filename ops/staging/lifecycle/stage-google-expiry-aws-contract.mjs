@@ -43,6 +43,7 @@ export function assessGoogleExpiryAwsInventory({ runtimeStack, foundationStack, 
   ) throw new Error('GOOGLE_EXPIRY_CONFIGURATION_INVALID');
   const target = schedule?.Target;
   const network = target?.EcsParameters?.NetworkConfiguration?.awsvpcConfiguration;
+  const legacyEndDate = schedule?.EndDate;
   if (
     schedule?.Name !== expected.scheduleName
     || schedule?.GroupName !== expected.groupName
@@ -50,7 +51,7 @@ export function assessGoogleExpiryAwsInventory({ runtimeStack, foundationStack, 
     || !['ENABLED', 'DISABLED'].includes(schedule?.State)
     || schedule?.ScheduleExpression !== 'rate(15 minutes)'
     || schedule?.FlexibleTimeWindow?.Mode !== 'OFF'
-    || schedule?.EndDate?.toISOString?.() !== '2026-10-10T00:00:00.000Z'
+    || !acceptedLegacyEndDate(legacyEndDate)
     || target?.Arn !== expected.clusterArn
     || target?.RoleArn !== outputs.GoogleLinkExpirySchedulerRoleArn
     || target?.DeadLetterConfig?.Arn !== outputs.GoogleLinkExpiryDlqArn
@@ -202,5 +203,12 @@ function sameSet(actual, expected) {
 }
 function canonical(value) {
   return typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(Date.parse(value)).toISOString() === value;
+}
+function acceptedLegacyEndDate(value) {
+  return value === undefined || (
+    value instanceof Date
+    && Number.isFinite(value.getTime())
+    && value.toISOString() === '2026-10-10T00:00:00.000Z'
+  );
 }
 function record(value) { return typeof value === 'object' && value !== null && !Array.isArray(value); }

@@ -80,7 +80,7 @@ export function GuideScreen(): React.JSX.Element {
       subtitle={t(language, "generated.screens.GuideScreen.a.focused.first.run.guide.for.the.main.w.3d898886")}
       title={t(language, 'tutorial')}
     >
-      <MangaTutorial />
+      <MangaTutorial replayVariant="primary" />
       {tutorialGroups.map((group) => (
         <Section key={group.id} title={t(language, group.titleKey)} tone="highlight">
           {group.stepKeys.map((stepKey, index) => (

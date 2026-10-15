@@ -49,6 +49,8 @@ interface LinkFlowPorts {
   openBrowser: (url: string, returnUri: string) => Promise<{ type: string; url?: string }>;
 }
 
+export type GoogleIdentityLinkFailureStage = 'preparation' | 'start' | 'authorization' | 'status';
+
 // The flow owns only short-lived native reauthentication in memory. It has no
 // token persistence or AppState mutation port. Only authenticated server status
 // establishes success; a browser return is not evidence of identity ownership.
@@ -57,9 +59,11 @@ export class GoogleIdentityLinkFlow {
   private receipt: GoogleLinkStart | null = null;
   private valid = true;
   private inFlight: Promise<GoogleLinkStatus> | null = null;
+  private lastFailureStage: GoogleIdentityLinkFailureStage | null = null;
   public constructor(private readonly ports: LinkFlowPorts) {}
   public get canRetryStart(): boolean { return this.prepared !== null && this.receipt === null; }
   public get challengeId(): string | null { return this.receipt?.challenge_id ?? null; }
+  public get failureStage(): GoogleIdentityLinkFailureStage | null { return this.lastFailureStage; }
   public get requiresReauthentication(): boolean { return this.receipt?.status === 'pending' && this.receipt.requires_reauthentication; }
   public get canContinueAuthorization(): boolean { return this.receipt?.status === 'pending' && this.receipt.authorization_url !== null && !this.receipt.requires_reauthentication; }
   public invalidate(): void { this.valid = false; this.prepared = null; }
@@ -74,39 +78,61 @@ export class GoogleIdentityLinkFlow {
     return pending;
   }
   private async startOnce(): Promise<GoogleLinkStatus> {
-    this.assertCurrent();
-    if (this.prepared === null) {
-      const tokens = await this.ports.reauthenticate();
+    this.lastFailureStage = null;
+    try {
       this.assertCurrent();
-      const client = this.ports.createClient(tokens);
-      const session = await client.getCurrentSession();
-      this.assertCurrent();
-      if (session.user.id !== this.ports.expectedUserId) throw new Error('ACCOUNT_MISMATCH');
-      this.prepared = { client, requestKey: this.ports.createRequestKey() };
+      if (this.prepared === null) {
+        const tokens = await this.ports.reauthenticate();
+        this.assertCurrent();
+        const client = this.ports.createClient(tokens);
+        const session = await client.getCurrentSession();
+        this.assertCurrent();
+        if (session.user.id !== this.ports.expectedUserId) throw new Error('ACCOUNT_MISMATCH');
+        this.prepared = { client, requestKey: this.ports.createRequestKey() };
+      }
+    } catch (error) {
+      this.lastFailureStage = 'preparation';
+      throw error;
     }
     if (this.receipt === null) {
-      this.receipt = await this.prepared.client.startGoogleIdentityLink({ platform: 'mobile', request_key: this.prepared.requestKey });
+      try {
+        this.receipt = await this.prepared.client.startGoogleIdentityLink({ platform: 'mobile', request_key: this.prepared.requestKey });
+      } catch (error) {
+        this.lastFailureStage = 'start';
+        throw error;
+      }
     }
-    this.assertCurrent();
-    if (this.receipt.status === 'pending' && this.receipt.authorization_url !== null && !this.receipt.requires_reauthentication) {
-      const url = validateGoogleAuthorizationUrl(this.receipt.authorization_url);
-      const result = await this.ports.openBrowser(url, googleIdentityLinkReturnUriForRedirectUri(this.ports.cognitoRedirectUri));
+    try {
       this.assertCurrent();
-      if (result.type === 'success' && parseGoogleLinkReturn(result.url ?? '', this.ports.cognitoRedirectUri) !== this.receipt.challenge_id) throw new Error('INVALID_RETURN');
+      if (this.receipt.status === 'pending' && this.receipt.authorization_url !== null && !this.receipt.requires_reauthentication) {
+        const url = validateGoogleAuthorizationUrl(this.receipt.authorization_url);
+        const result = await this.ports.openBrowser(url, googleIdentityLinkReturnUriForRedirectUri(this.ports.cognitoRedirectUri));
+        this.assertCurrent();
+        if (result.type === 'success' && parseGoogleLinkReturn(result.url ?? '', this.ports.cognitoRedirectUri) !== this.receipt.challenge_id) throw new Error('INVALID_RETURN');
+      }
+    } catch (error) {
+      this.lastFailureStage = 'authorization';
+      throw error;
     }
     return this.check();
   }
   public async check(): Promise<GoogleLinkStatus> {
-    this.assertCurrent();
-    if (this.prepared === null || this.receipt === null) throw new Error('NO_CHALLENGE');
-    const status = await this.prepared.client.getGoogleIdentityLinkStatus(this.receipt.challenge_id);
-    this.assertCurrent();
-    if (status.challenge_id !== this.receipt.challenge_id) throw new Error('INVALID_STATUS');
-    // A status read proves the outcome but cannot reissue authorization for a
-    // changed native session. Keep that pending restriction until the user
-    // explicitly verifies again and creates a separate flow with a new key.
-    const result = { ...status, requires_reauthentication: status.requires_reauthentication || (status.status === 'pending' && this.receipt.requires_reauthentication) };
-    this.receipt = { ...result, authorization_url: result.status === 'pending' && !result.requires_reauthentication ? this.receipt.authorization_url : null };
-    return result;
+    this.lastFailureStage = null;
+    try {
+      this.assertCurrent();
+      if (this.prepared === null || this.receipt === null) throw new Error('NO_CHALLENGE');
+      const status = await this.prepared.client.getGoogleIdentityLinkStatus(this.receipt.challenge_id);
+      this.assertCurrent();
+      if (status.challenge_id !== this.receipt.challenge_id) throw new Error('INVALID_STATUS');
+      // A status read proves the outcome but cannot reissue authorization for a
+      // changed native session. Keep that pending restriction until the user
+      // explicitly verifies again and creates a separate flow with a new key.
+      const result = { ...status, requires_reauthentication: status.requires_reauthentication || (status.status === 'pending' && this.receipt.requires_reauthentication) };
+      this.receipt = { ...result, authorization_url: result.status === 'pending' && !result.requires_reauthentication ? this.receipt.authorization_url : null };
+      return result;
+    } catch (error) {
+      this.lastFailureStage = 'status';
+      throw error;
+    }
   }
 }

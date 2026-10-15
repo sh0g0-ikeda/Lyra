@@ -83,14 +83,33 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
   const [hydrated, setHydrated] = useState(false);
   const [tokens, setTokensState] = useState<AuthTokens | null>(null);
   const [languageState, setLanguageState] = useState<UiLanguage>('ja');
-  const [session, setSession] = useState<CurrentSessionRecord | null>(null);
+  const [session, setSessionState] = useState<CurrentSessionRecord | null>(null);
   const [selection, setSelection] = useState<PersistedWorkspaceSelection>(defaultSelection);
   const [trackedJobIds, setTrackedJobIds] = useState<string[]>([]);
   const selectionRef = useRef<PersistedWorkspaceSelection>(defaultSelection);
   const trackedJobIdsRef = useRef<string[]>([]);
   const tokensRef = useRef<AuthTokens | null>(null);
+  const sessionRef = useRef<CurrentSessionRecord | null>(null);
+  const selectionRevisionRef = useRef(0);
+  const selectionPersistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
   const authGenerationRef = useRef(0);
   const backgroundResolutionRequestedRef = useRef(false);
+
+  const setSession = useCallback((nextSession: CurrentSessionRecord | null): void => {
+    if (sessionRef.current?.user.id !== nextSession?.user.id) {
+      selectionRevisionRef.current += 1;
+      trackedJobIdsRef.current = [];
+      setTrackedJobIds([]);
+    }
+    sessionRef.current = nextSession;
+    setSessionState(nextSession);
+  }, []);
+
+  const persistSelectionInOrder = useCallback(async (operation: () => Promise<void>): Promise<void> => {
+    const pending = selectionPersistenceQueueRef.current.then(operation, operation);
+    selectionPersistenceQueueRef.current = pending.catch(() => undefined);
+    await pending;
+  }, []);
 
   const clearLocalAuthentication = useCallback(async (
     options?: { skipNativePushUnregister?: boolean }
@@ -111,7 +130,7 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
         ? Promise.resolve()
         : unregisterNativePushNotifications()
     ]);
-  }, [queryClient]);
+  }, [queryClient, setSession]);
 
   const refreshAndPersistTokens = useCallback(async (): Promise<string | null> => {
     const currentTokens = tokensRef.current;
@@ -204,8 +223,10 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
         setTrackedJobIds([]);
         return;
       }
+      const hydrationUserId = session.user.id;
+      const hydrationRevision = selectionRevisionRef.current;
       const storedOrganizationId = config.organizationFeaturesEnabled
-        ? await loadActiveOrganizationId(session.user.id)
+        ? await loadActiveOrganizationId(hydrationUserId)
         : null;
       const organizationId =
         storedOrganizationId !== null &&
@@ -217,14 +238,20 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
           ? storedOrganizationId
           : null;
       const [storedSelection, storedJobIds] = await Promise.all([
-        loadSelection(session.user.id, organizationId),
-        loadTrackedJobIds(session.user.id)
+        loadSelection(hydrationUserId, organizationId),
+        loadTrackedJobIds(hydrationUserId)
       ]);
-      if (mounted) {
-        selectionRef.current = storedSelection;
-        trackedJobIdsRef.current = storedJobIds;
-        setSelection(storedSelection);
-        setTrackedJobIds(storedJobIds);
+      if (mounted && sessionRef.current?.user.id === hydrationUserId) {
+        const mergedJobIds = [
+          ...trackedJobIdsRef.current,
+          ...storedJobIds
+        ].filter((jobId, index, allJobIds) => allJobIds.indexOf(jobId) === index).slice(0, 10);
+        trackedJobIdsRef.current = mergedJobIds;
+        setTrackedJobIds(mergedJobIds);
+        if (selectionRevisionRef.current === hydrationRevision) {
+          selectionRef.current = storedSelection;
+          setSelection(storedSelection);
+        }
       }
     };
     void hydrateSelection();
@@ -308,6 +335,30 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
       nextSelection: Partial<PersistedWorkspaceSelection>,
       options?: SelectionUpdateOptions
     ): Promise<boolean> => {
+      const initiatingUserId = sessionRef.current?.user.id ?? null;
+      const initialOrganizationId = selectionRef.current.organizationId;
+      const initialRequestedOrganizationId = config.organizationFeaturesEnabled && Object.prototype.hasOwnProperty.call(nextSelection, 'organizationId')
+        ? nextSelection.organizationId ?? null
+        : config.organizationFeaturesEnabled
+          ? initialOrganizationId
+          : null;
+      const initialPatch = {
+        ...nextSelection,
+        organizationId: initialRequestedOrganizationId
+      };
+      if (!hasSelectionChange(selectionRef.current, initialPatch)) {
+        return true;
+      }
+      const initiatingRevision = selectionRevisionRef.current;
+      if (!options?.skipDirtyCheck && !(await resolveDirtyEditors(languageState))) {
+        return false;
+      }
+      if (
+        selectionRevisionRef.current !== initiatingRevision ||
+        (sessionRef.current?.user.id ?? null) !== initiatingUserId
+      ) {
+        return false;
+      }
       const previousOrganizationId = selectionRef.current.organizationId;
       const requestedOrganizationId = config.organizationFeaturesEnabled && Object.prototype.hasOwnProperty.call(nextSelection, 'organizationId')
         ? nextSelection.organizationId ?? null
@@ -330,14 +381,26 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
       if (!hasSelectionChange(selectionRef.current, effectiveSelectionPatch)) {
         return true;
       }
-      if (!options?.skipDirtyCheck && !(await resolveDirtyEditors(languageState))) {
-        return false;
-      }
+      const updateRevision = selectionRevisionRef.current + 1;
+      selectionRevisionRef.current = updateRevision;
+      const activeSession = sessionRef.current;
       let baseSelection = selectionRef.current;
-      if (session !== null && requestedOrganizationId !== previousOrganizationId) {
+      if (activeSession !== null && requestedOrganizationId !== previousOrganizationId) {
         await clearAuthenticatedImageCache();
-        baseSelection = await loadSelection(session.user.id, requestedOrganizationId);
-        await saveActiveOrganizationId(session.user.id, requestedOrganizationId);
+        baseSelection = await loadSelection(activeSession.user.id, requestedOrganizationId);
+        if (
+          selectionRevisionRef.current !== updateRevision ||
+          sessionRef.current?.user.id !== activeSession.user.id
+        ) {
+          return false;
+        }
+        await persistSelectionInOrder(() => saveActiveOrganizationId(activeSession.user.id, requestedOrganizationId));
+        if (
+          selectionRevisionRef.current !== updateRevision ||
+          sessionRef.current?.user.id !== activeSession.user.id
+        ) {
+          return false;
+        }
       }
       const merged = {
         ...baseSelection,
@@ -355,12 +418,15 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
       };
       selectionRef.current = merged;
       setSelection(merged);
-      if (session !== null) {
-        await saveSelection(session.user.id, requestedOrganizationId, merged);
+      if (activeSession !== null) {
+        await persistSelectionInOrder(async () => {
+          await saveActiveOrganizationId(activeSession.user.id, requestedOrganizationId);
+          await saveSelection(activeSession.user.id, requestedOrganizationId, merged);
+        });
       }
       return true;
     },
-    [languageState, resolveDirtyEditors, session]
+    [languageState, persistSelectionInOrder, resolveDirtyEditors]
   );
 
   const trackJob = useCallback(
@@ -402,8 +468,8 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
       trackedJobIds,
       sessionKey,
       setLanguage,
-      setTokens,
       setSession,
+      setTokens,
       trackJob,
       updateSelection,
       logout
@@ -418,6 +484,7 @@ export function AppStateProvider({ children }: PropsWithChildren): React.JSX.Ele
       session,
       sessionKey,
       setLanguage,
+      setSession,
       setTokens,
       trackJob,
       trackedJobIds,

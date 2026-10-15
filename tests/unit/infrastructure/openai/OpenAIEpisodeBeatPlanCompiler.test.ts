@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { STORY_SPEAKER_POLICY, STORY_DIALOGUE_FLOW_POLICY } from '../../../../src/infrastructure/openai/StoryEditorialPrompts.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIEpisodeBeatPlanCompiler } from '../../../../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
+import { episodeBeatPlanSchema } from '../../../../src/lib/validators/episodeBeatPlan.schema.js';
+import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
 import { StructuredOpenAIResponseError } from '../../../../src/infrastructure/openai/StructuredOpenAIResponse.js';
 import { EpisodeBeatPlanOutputLimitError } from '../../../../src/services/page/EpisodeBeatPlanCompiler.js';
 import {
@@ -134,6 +136,80 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     expect(text.format).toMatchObject({ type: 'json_schema', strict: true });
   });
 
+  // Full-episode beat planning must cover the skeleton page domain once; the 8-panel
+  // per-page bound must never cap the number of pages in the episode response.
+  it('16ページの全話台帳をtyped応答として保持しpage schemaは32ページ上限を使う', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const pages = Array.from({ length: 16 }, (_value, index) => {
+      const pageNumber = index + 1;
+      return {
+        page_id: `00000000-0000-4000-8000-${pageNumber.toString().padStart(12, '0')}`,
+        page_number: pageNumber,
+        story_beats: [`第${pageNumber}ページの出来事`],
+        entry_state: `第${pageNumber}ページ開始`,
+        exit_state: `第${pageNumber}ページ終了`,
+        new_information: [],
+        dialogue_intent: null,
+        text_plan: {
+          required_text_beats: [],
+          visual_only_beats: [`第${pageNumber}ページの視覚情報`],
+          density_reason: '4コマへ収める',
+        },
+        handoff: pageNumber === 16 ? null : `第${pageNumber + 1}ページへ続く`,
+      };
+    });
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: { output_text: JSON.stringify({ pages }) },
+          requestId: 'req-beat-plan-16-pages',
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodeBeatPlanCompiler(client).compileBeatPlan({
+      compilerBrief: pages.map((page) =>
+        `Page ${page.page_number} (${page.page_id})`).join('\n'),
+      language: 'ja',
+    });
+
+    expect(result.plan.pages).toHaveLength(16);
+    expect(result.plan.pages.map((page) => [page.pageId, page.pageNumber])).toEqual(
+      pages.map((page) => [page.page_id, page.page_number]),
+    );
+    const schema = (requests[0]?.text as {
+      format: { schema: { properties: { pages: { maxItems: number } } } };
+    }).format.schema;
+    expect(schema.properties.pages.maxItems).toBe(STORY_AI_LIMITS.maxSkeletonPages);
+  });
+
+  it('全話台帳のtyped schemaは32ページを許可し33ページを拒否する', () => {
+    const buildPayload = (count: number) => ({
+      pages: Array.from({ length: count }, (_value, index) => {
+        const pageNumber = index + 1;
+        return {
+          page_id: `00000000-0000-4000-8000-${pageNumber.toString().padStart(12, '0')}`,
+          page_number: pageNumber,
+          story_beats: [`第${pageNumber}ページ`],
+          entry_state: '開始',
+          exit_state: '終了',
+          new_information: [],
+          dialogue_intent: null,
+          text_plan: {
+            required_text_beats: [],
+            visual_only_beats: [],
+            density_reason: '4コマへ収める',
+          },
+          handoff: null,
+        };
+      }),
+    });
+
+    expect(episodeBeatPlanSchema.safeParse(buildPayload(STORY_AI_LIMITS.maxSkeletonPages)).success).toBe(true);
+    expect(episodeBeatPlanSchema.safeParse(buildPayload(STORY_AI_LIMITS.maxSkeletonPages + 1)).success).toBe(false);
+  });
+
   it('全話アウトラインは短いページ役割だけを strict JSON で返し、台帳の出力制約より小さい schema を使う', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
@@ -189,7 +265,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     expect(input[0]?.content[0]?.text).not.toContain(
       'Do not include dialogue, camera direction, alternatives',
     );
-    expect(schema.properties.pages.maxItems).toBe(32);
+    expect(schema.properties.pages.maxItems).toBe(STORY_AI_LIMITS.maxSkeletonPages);
     expect(schema.properties.pages.items.properties.story_anchor?.maxLength).toBe(45);
     expect(schema.properties.pages.items.properties.reserved_transition?.maxLength).toBe(60);
   });
@@ -240,7 +316,7 @@ describe('OpenAIEpisodeBeatPlanCompiler', () => {
     };
 
     expect(requests[0]?.max_output_tokens).toBeGreaterThanOrEqual(32_000);
-    expect(schema.properties.pages.maxItems).toBe(8);
+    expect(schema.properties.pages.maxItems).toBe(STORY_AI_LIMITS.maxSkeletonPages);
     expect(pageProperties.story_beats.items.maxLength).toBe(45);
     expect(pageProperties.entry_state.maxLength).toBe(60);
     expect(pageProperties.exit_state.maxLength).toBe(60);

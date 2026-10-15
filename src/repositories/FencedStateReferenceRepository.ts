@@ -11,10 +11,11 @@ import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { lockAndValidateConfirmation, parseStateReferenceDescriptor, toPersistedDescriptor } from './EntityStateReferenceRepository.js';
 
 export type FencedStateReferenceState = 'unresolved' | 'confirmed' | 'fencing' | 'effects_fenced';
-export type FencedStateReferenceReason = 'unconfirmed_recovery' | 'account_deletion';
+export type FencedStateReferenceReason = 'unconfirmed_recovery' | 'account_deletion' | 'work_deletion';
 export interface FencedStateReferenceFencingClaim {
   reason: FencedStateReferenceReason;
   processingToken?: string;
+  workDeletionRequestId?: string;
   /** Current authorized editor; the admitted actor/owner is never rebound. */
   recoveryUserId?: string;
 }
@@ -46,6 +47,7 @@ export interface FencedStateReferenceRepository {
   findPendingAttemptForRecovery(scope: FencedStateReferenceRecoveryScope): Promise<FencedStateReferenceAttempt | null>;
   findByKeyAndScope(scope: { s3Key: string; ownerUserId: string; entityId: string; organizationId: string | null }): Promise<FencedStateReferenceAttempt | null>;
   listPersonalPendingFences(userId: string, processingToken: string, limit?: number): Promise<FencedStateReferenceAttempt[]>;
+  listWorkPendingFences?(requestId: string, processingToken: string, limit?: number): Promise<FencedStateReferenceAttempt[]>;
 }
 
 interface AttemptRow extends QueryResultRow {
@@ -165,9 +167,12 @@ export class PostgresFencedStateReferenceRepository implements FencedStateRefere
 
   public async claimFencing(attempt: FencedStateReferenceAttempt, claim: FencedStateReferenceFencingClaim): Promise<FencedStateReferenceAttempt> {
     assertAttempt(attempt);
-    if (!['unconfirmed_recovery', 'account_deletion'].includes(claim.reason)) throw conflict();
+    if (!['unconfirmed_recovery', 'account_deletion', 'work_deletion'].includes(claim.reason)) throw conflict();
     return this.client.transaction(async (client) => {
-      if (claim.reason === 'account_deletion') {
+      if (claim.reason === 'work_deletion') {
+        if (claim.processingToken === undefined || claim.workDeletionRequestId === undefined) throw conflict();
+        await requireWorkDeletionClaim(client, claim.workDeletionRequestId, claim.processingToken, attempt.input.entityId, attempt.input.organizationId);
+      } else if (claim.reason === 'account_deletion') {
         await lockUser(client, attempt.input.userId);
         if (attempt.input.organizationId !== null || claim.processingToken === undefined) throw conflict();
         await requireDeletionClaim(client, attempt.input.userId, claim.processingToken);
@@ -178,13 +183,13 @@ export class PostgresFencedStateReferenceRepository implements FencedStateRefere
       }
       const current = await lockAttempt(client, attempt);
       if (current.state === 'effects_fenced') return current;
-      if (current.state === 'confirmed' && claim.reason !== 'account_deletion') throw conflict();
-      if (current.state === 'fencing' && current.fencingReason === 'account_deletion' && claim.reason !== 'account_deletion') throw conflict();
+      if (current.state === 'confirmed' && !['account_deletion','work_deletion'].includes(claim.reason)) throw conflict();
+      if (current.state === 'fencing' && current.fencingReason !== 'unconfirmed_recovery' && claim.reason !== current.fencingReason) throw conflict();
       const result = await client.query<AttemptRow>(
         `UPDATE state_reference_copy_attempts SET state='fencing',fencing_reason=$3,
            deletion_processing_token=$4::uuid,updated_at=NOW()
          WHERE attempt_token=$1::uuid AND s3_key=$2 AND state IN ('unresolved','confirmed','fencing') RETURNING *`,
-        [attempt.intent.attemptToken,attempt.intent.s3Key,claim.reason,claim.reason === 'account_deletion' ? claim.processingToken : null],
+        [attempt.intent.attemptToken,attempt.intent.s3Key,claim.reason,['account_deletion','work_deletion'].includes(claim.reason) ? claim.processingToken : null],
       );
       return mapAttempt(requiredRow(result.rows[0]));
     });
@@ -196,7 +201,10 @@ export class PostgresFencedStateReferenceRepository implements FencedStateRefere
     if (attempt.state !== 'fencing' && attempt.state !== 'effects_fenced') throw conflict();
     return this.client.transaction(async (client) => {
       await lockUser(client, attempt.input.userId);
-      if (attempt.fencingReason === 'account_deletion') {
+      if (attempt.fencingReason === 'work_deletion') {
+        if (attempt.deletionProcessingToken === null) throw conflict();
+        await requireWorkDeletionClaim(client, undefined, attempt.deletionProcessingToken, attempt.input.entityId, attempt.input.organizationId);
+      } else if (attempt.fencingReason === 'account_deletion') {
         if (attempt.deletionProcessingToken === null) throw conflict();
         await requireDeletionClaim(client, attempt.input.userId, attempt.deletionProcessingToken);
       }
@@ -254,6 +262,20 @@ export class PostgresFencedStateReferenceRepository implements FencedStateRefere
       [scope.s3Key,scope.ownerUserId,scope.entityId,scope.organizationId],
     );
     return result.rows[0] === undefined ? null : mapAttempt(result.rows[0]);
+  }
+
+  public async listWorkPendingFences(requestId: string, processingToken: string, limit = 25): Promise<FencedStateReferenceAttempt[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw conflict();
+    return this.client.transaction(async client => {
+      const claim = await client.query(`SELECT id FROM work_deletion_requests WHERE id=$1::uuid AND processing_token=$2::uuid AND status='processing' AND lease_expires_at>now() FOR UPDATE`, [requestId, processingToken]);
+      if (claim.rows.length !== 1) throw conflict();
+      const result = await client.query<AttemptRow>(
+        `SELECT a.* FROM state_reference_copy_attempts a JOIN work_deletion_resources r
+          ON r.kind='entity' AND r.resource_id=a.entity_id
+         WHERE r.request_id=$1::uuid AND a.state<>'effects_fenced' AND a.scrubbed_at IS NULL
+         ORDER BY a.created_at,a.attempt_token LIMIT $2`, [requestId,limit]);
+      return result.rows.map(mapAttempt);
+    });
   }
 
   public async listPersonalPendingFences(userId: string, processingToken: string, limit = 100): Promise<FencedStateReferenceAttempt[]> {
@@ -405,3 +427,13 @@ function canonical(value: unknown): unknown {
   return value;
 }
 function conflict(): ConflictError { return new ConflictError('State reference durable evidence is stale or incomplete'); }
+
+async function requireWorkDeletionClaim(client: DatabaseClient, requestId: string | undefined, token: string, entityId: string, organizationId: string | null): Promise<void> {
+  const claim = await client.query<{id:string}>(
+    `SELECT r.id FROM work_deletion_requests r JOIN work_deletion_resources target ON target.request_id=r.id
+      WHERE ($1::uuid IS NULL OR r.id=$1::uuid) AND r.processing_token=$2::uuid AND r.status='processing'
+        AND r.lease_expires_at>now() AND target.kind='entity' AND target.resource_id=$3::uuid
+        AND r.organization_id IS NOT DISTINCT FROM $4::uuid FOR UPDATE OF r`, [requestId??null,token,entityId,organizationId]);
+  if(claim.rows.length!==1) throw conflict();
+  await client.query("SELECT set_config('lyra.work_deletion_request',$1,true),set_config('lyra.work_deletion_token',$2,true)",[claim.rows[0]!.id,token]);
+}

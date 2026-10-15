@@ -1,3 +1,7 @@
+import {createWorkDeletionRuntime} from './infrastructure/work/WorkDeletionRuntime.js';
+import {createWorkDeletionRoutes} from './routes/workDeletion.js';
+import {createWorkDeletionAccessGuard,isDeletionGuardError} from './routes/workDeletionAccessGuard.js';
+import type {WorkDeletionServicePort} from './services/work/WorkDeletionService.js';
 import { TransactionalUserProvisioningService } from './services/auth/TransactionalUserProvisioningService.js';
 import { BillingCreditAdjustmentService } from './services/credit/BillingCreditAdjustmentService.js';
 import { resolveEpisodeOpenAIModelProfile } from './infrastructure/openai/EpisodeOpenAIModelProfile.js';
@@ -16,7 +20,7 @@ import { resolveGoogleIdentityLinkConfig } from './infrastructure/auth/GoogleIde
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { organizationInvitationPreviewResponseSchema } from '../packages/api-contract/src/mobileApiSchemas.js';
-import { ConfigurationError, ValidationError } from './domain/errors/index.js';
+import { ConfigurationError, ValidationError, ConflictError } from './domain/errors/index.js';
 import type { EnterprisePlanCode, PaidPlanCode } from './domain/constants/billing.js';
 import type { SubscriptionPlanCatalogEntry } from './domain/types/billing.js';
 import {
@@ -339,6 +343,8 @@ export interface AppDependencies {
   aiContentReportService?: AiContentReportServicePort;
   organizationSafetyReportService?: OrganizationSafetyReportServicePort;
   accountDeletionService?: AccountDeletionServicePort;
+  workDeletionService?: WorkDeletionServicePort;
+  workDeletionAccessGuard?: MiddlewareHandler<AppEnv>;
   balloonService?: BalloonServicePort;
   billingCreditGrantService?: BillingCreditGrantServicePort;
   billingService?: BillingServicePort;
@@ -413,7 +419,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     throw new ConfigurationError('DEV_AUTH_BYPASS is only allowed in explicit development or test runtimes');
   }
   const enableDevAuthBypass = requestedDevAuthBypass;
-  const authMiddleware = createAuthMiddleware(resolvedDependencies.userProvisioningService, {
+  const baseAuthMiddleware = createAuthMiddleware(resolvedDependencies.userProvisioningService, {
     authProvider: dependencies.authProvider,
     jwtSecret: dependencies.jwtSecret,
     cognito: dependencies.cognito,
@@ -421,6 +427,8 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     enableDevBypass: enableDevAuthBypass,
     devBypassClaims: dependencies.devAuthBypassClaims,
   });
+  const deletionGuard=resolvedDependencies.workDeletionAccessGuard;
+  const authMiddleware:MiddlewareHandler<AppEnv>=(c,next)=>baseAuthMiddleware(c,async()=>{await deletionGuard(c,next);});
   const rateLimitMiddleware: MiddlewareHandler<AppEnv> = enableDevAuthBypass
     ? (async (_c, next) => {
         await next();
@@ -437,7 +445,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       })
     : createPublicIpRateLimitMiddleware(resolvedDependencies.rateLimitStore, 'read', { headerName: env.ORIGIN_GUARD_HEADER_NAME, headerValue: env.ORIGIN_GUARD_HEADER_VALUE });
 
-  app.onError(errorHandler);
+  app.onError((error,c)=>errorHandler(isDeletionGuardError(error)?new ConflictError('Work deletion is pending'):error,c));
   app.use('*', createSecurityHeadersMiddleware());
   app.use('*', createCorsMiddleware(parseCorsAllowedOrigins(env.CORS_ALLOWED_ORIGINS)));
   app.use('*', createRequestContextMiddleware());
@@ -621,6 +629,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       }),
     );
   }
+  app.route('/api',createWorkDeletionRoutes({authMiddleware,rateLimitMiddleware,workDeletionService:resolvedDependencies.workDeletionService,admissionEnabled:env.WORK_DELETION_ENABLED}));
   if (resolvedDependencies.accountDeletionService !== undefined) {
     app.route(
       '/api',
@@ -637,6 +646,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       authMiddleware,
       rateLimitMiddleware,
       jobService: resolvedDependencies.jobService,
+      episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       organizationService: resolvedDependencies.organizationService,
     }),
   );
@@ -836,6 +846,8 @@ function resolveDependencies(
       | 'entityReferenceUploadService'
       | 'episodeExportService'
       | 'accountDeletionService'
+      | 'workDeletionService'
+      | 'workDeletionAccessGuard'
       | 'mobileStorePurchaseService'
       | 'googlePubSubPushVerifier'
       | 'pushTokenRegistryService'
@@ -847,6 +859,8 @@ function resolveDependencies(
   >,
   'storyEpisodeImprovementPlanner'
 > & {
+  workDeletionService: WorkDeletionServicePort;
+  workDeletionAccessGuard: MiddlewareHandler<AppEnv>;
   episodePageSkeletonQueue?: EpisodePageSkeletonQueuePort;
   episodePageSkeletonService?: EpisodePageSkeletonServicePort;
   entityReferenceUploadService?: EntityReferenceUploadServicePort;
@@ -1002,6 +1016,10 @@ function resolveDependencies(
         jobTypes: EPISODE_LONG_JOB_ACTIVE_JOB_TYPES,
       },
       env.EPISODE_STATE_AUTOFILL_V1_ENABLED
+        && env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED
+        && env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
+      env.EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED
+        && env.EPISODE_STATE_AUTOFILL_V1_ENABLED
         && env.EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED
         && env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
     );
@@ -1286,6 +1304,10 @@ function resolveDependencies(
   return {
     aiContentReportService,
     organizationSafetyReportService,
+    workDeletionAccessGuard: dependencies.workDeletionAccessGuard ?? (process.env.NODE_ENV === 'test' && dependencies.attestedRuntime === undefined
+      ? (async (_c, next) => { await next(); }) as MiddlewareHandler<AppEnv>
+      : createWorkDeletionAccessGuard(db, persistenceProfile)),
+    workDeletionService: dependencies.workDeletionService ?? createWorkDeletionRuntime(env,db,fencedStateReferenceRuntime,persistenceProfile).service,
     accountDeletionService,
     balloonService,
     billingCreditGrantService,

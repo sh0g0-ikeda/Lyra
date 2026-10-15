@@ -417,23 +417,6 @@ function ConfirmedReferencePreview({
   );
 }
 
-const formatReferenceStatus = (status: string | undefined, language: 'ja' | 'en'): string => {
-  if (status === undefined) {
-    return '-';
-  }
-
-  const labels: Record<string, ScreenTranslationKey> = {
-    empty: 'screen.characters.referenceStatus.empty',
-    partial: 'screen.characters.referenceStatus.partial',
-    ready: 'screen.characters.referenceStatus.ready'
-  };
-  const label = labels[status];
-  if (label === undefined) {
-    return status;
-  }
-  return t(language, label);
-};
-
 const generationBlockerMessage = (
   code: EntityReferenceGenerationBlockerCode,
   language: 'ja' | 'en'
@@ -1663,6 +1646,11 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   const [lastImportedCandidateToken, setLastImportedCandidateToken] = useState<string | null>(null);
   const [lastImportedCandidateEntityId, setLastImportedCandidateEntityId] = useState<string | null>(null);
   const [importBusy, setImportBusy] = useState(false);
+  const [pendingImageImportTarget, setPendingImageImportTarget] = useState<{
+    entityId: string;
+    workspaceScope: string;
+  } | null>(null);
+  const imageImportPreparation = useRef<Promise<void> | null>(null);
   const [localJob, setLocalJob] = useState<{
     id: string;
     resourceId: string;
@@ -1684,6 +1672,9 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
   const draftScope = JSON.stringify([sessionKey, organizationId, activeWorkId, selection.entityId]);
+  const imageImportWorkspaceScope = JSON.stringify([sessionKey, organizationId, activeWorkId]);
+  const imageImportWorkspaceScopeRef = useRef(imageImportWorkspaceScope);
+  useLayoutEffect(() => { imageImportWorkspaceScopeRef.current = imageImportWorkspaceScope; }, [imageImportWorkspaceScope]);
 
   const activeFieldKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
 
@@ -1994,8 +1985,13 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         });
 
   const createEntityMutation = useMutation({
-    mutationFn: () => api.createEntity(activeWorkId ?? '', toEntityPayload(), organizationId),
-    onSuccess: async (entity) => {
+    mutationFn: (_input?: { expectedImageImportWorkspaceScope?: string }) =>
+      api.createEntity(activeWorkId ?? '', toEntityPayload(), organizationId),
+    onSuccess: async (entity, input) => {
+      if (
+        input?.expectedImageImportWorkspaceScope !== undefined &&
+        imageImportWorkspaceScopeRef.current !== input.expectedImageImportWorkspaceScope
+      ) return;
       setEntityEditorMode('edit');
       await updateSelection({ entityId: entity.id }, { skipDirtyCheck: true });
       await invalidateEntities();
@@ -2032,6 +2028,34 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   });
   const saveNewEntityMutation = createEntityMutation.mutateAsync;
   const saveExistingEntityMutation = updateEntityMutation.mutateAsync;
+
+  const requireSavedEntityForImageImport = useCallback(async (): Promise<void> => {
+    if (selectedEntity !== null) return;
+    if (imageImportPreparation.current !== null) {
+      await imageImportPreparation.current;
+      return;
+    }
+    const originWorkspaceScope = imageImportWorkspaceScope;
+    const preparation = (async (): Promise<void> => {
+      if (!canEdit || activeWorkId === null || name.trim().length === 0) {
+        throw new Error('A saved character with a name is required before image import.');
+      }
+      const created = await createEntityMutation.mutateAsync({
+        expectedImageImportWorkspaceScope: originWorkspaceScope,
+      });
+      if (imageImportWorkspaceScopeRef.current !== originWorkspaceScope) return;
+      setPendingImageImportTarget({
+        entityId: created.id,
+        workspaceScope: originWorkspaceScope,
+      });
+    })();
+    imageImportPreparation.current = preparation;
+    try {
+      await preparation;
+    } finally {
+      if (imageImportPreparation.current === preparation) imageImportPreparation.current = null;
+    }
+  }, [activeWorkId, canEdit, createEntityMutation, imageImportWorkspaceScope, name, selectedEntity, setPendingImageImportTarget]);
 
   const discardEntityDraft = useCallback((): void => {
     setDraftResetVersion((version) => version + 1);
@@ -2098,7 +2122,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         if (activeWorkId === null) {
           throw new Error(t(language, "generated.screens.CharactersScreen.select.a.work.first.d7bcfe9f"));
         }
-        await saveNewEntityMutation();
+        await saveNewEntityMutation(undefined);
         return;
       }
       await saveExistingEntityMutation();
@@ -2202,6 +2226,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
       setCandidateToken('');
       setLastImportedCandidateToken(null);
       setLastImportedCandidateEntityId(null);
+      setPendingImageImportTarget(null);
       setLocalJob(null);
       await Promise.all([invalidateEntities(), invalidateReference()]);
     }
@@ -2339,6 +2364,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
       setImportResult(null);
       setLastImportedCandidateToken(null);
       setLastImportedCandidateEntityId(null);
+      setPendingImageImportTarget(null);
       setLocalJob(null);
       lastSyncedEntityId.current = null;
     };
@@ -2577,7 +2603,10 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
             {editorMessage(language, 'importHelp')}
           </Text>
           <QuotedEntityImport entityId={selectedEntity?.id ?? null} entityType={entityType} entityName={name} workId={activeWorkId}
+            autoStart={pendingImageImportTarget?.workspaceScope === imageImportWorkspaceScope && pendingImageImportTarget.entityId === selectedEntity?.id}
             draftRevision={entityDraftRevision} onBusyChange={setImportBusy} parentBusy={previewBusy || hasActivePreviewJob}
+            onAutoStartConsumed={() => setPendingImageImportTarget(null)}
+            onRequireSavedEntity={requireSavedEntityForImageImport}
             onApply={(result, expectedRevision) => {
               if (entityDraftRevisionRef.current !== expectedRevision) return;
               const nextKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
@@ -2662,7 +2691,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         />
         <View style={styles.buttonRow}>
           {entityEditorMode === 'create' ? (
-            <PrimaryButton disabled={!canEdit || activeWorkId === null || name.trim().length === 0} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : activeWorkId === null ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'create')} loading={createEntityMutation.isPending} onPress={() => createEntityMutation.mutate()} variant={secondaryActions ? 'secondary' : 'primary'} />
+            <PrimaryButton disabled={!canEdit || activeWorkId === null || name.trim().length === 0} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : activeWorkId === null ? t(language, "generated.screens.CharactersScreen.select.a.work.first.1219842f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'create')} loading={createEntityMutation.isPending} onPress={() => createEntityMutation.mutate(undefined)} variant={secondaryActions ? 'secondary' : 'primary'} />
           ) : (
             <>
               <PrimaryButton disabled={!canEdit || entityStale || selectedEntity === null || name.trim().length === 0 || !entityDirty} disabledReason={!canEdit ? t(language, "generated.screens.CharactersScreen.editing.permission.is.required.6d3b86ee") : entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : selectedEntity === null ? t(language, "generated.screens.CharactersScreen.select.a.character.first.7075de9f") : name.trim().length === 0 ? t(language, "generated.screens.CharactersScreen.name.is.required.a58dfb87") : undefined} label={t(language, 'save')} loading={updateEntityMutation.isPending} onPress={() => updateEntityMutation.mutate()} variant="secondary" />
@@ -2677,24 +2706,6 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
 
 
       <Section collapsible persistKey="characters:reference-set" subtitle={editorMessage(language, 'characterPreviewHelp')} title={editorMessage(language, 'characterPreview')}>
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.status.bd826326")}</Text>
-            <Text style={styles.metric}>{formatReferenceStatus(referenceQuery.data?.status, language)}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.primary.a481ddc0")}</Text>
-            <Text style={styles.metric}>
-              {referenceQuery.data?.primary_ref_id === null || referenceQuery.data?.primary_ref_id === undefined
-                ? t(language, "generated.screens.CharactersScreen.not.set.3ecccf12")
-                : t(language, "generated.screens.CharactersScreen.set.d44ebb68")}
-            </Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.images.716d1857")}</Text>
-            <Text style={styles.metric}>{referenceQuery.data?.reference_images.length ?? 0}</Text>
-          </View>
-        </View>
         {activeReferenceCandidate === null && (referenceQuery.data?.reference_images.length ?? 0) === 0 ? null : (
           <>
             <Text style={styles.groupTitle}>{t(language, "generated.screens.CharactersScreen.preview.and.confirmed.images.78120ddc")}</Text>
@@ -2779,6 +2790,9 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
           organizationId={organizationId}
           onCompleted={async () => {
             await Promise.all([invalidateEntities(), invalidateReference()]);
+          }}
+          onMissing={async () => {
+            setLocalJob((current) => current?.id === displayedJobId ? null : current);
           }}
           sessionKey={sessionKey}
         />
@@ -2995,26 +3009,6 @@ const styles = StyleSheet.create({
     ...textStyles.caption,
     color: colors.ink,
     fontWeight: '700'
-  },
-  metric: {
-    ...textStyles.body,
-    flexShrink: 1,
-    fontWeight: '700'
-  },
-  metricCard: {
-    backgroundColor: 'rgba(16, 16, 16, 0.82)',
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    gap: 4,
-    minWidth: 88,
-    padding: spacing.sm
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm
   },
   referenceCard: {
     backgroundColor: colors.surfaceAlt,

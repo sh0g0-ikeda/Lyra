@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -14,9 +14,8 @@ import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { JobStatusCard } from '@/components/JobStatusCard';
 import { LayoutTemplatePreview, type FramePreviewDefinition } from '@/components/LayoutTemplatePreview';
 import { Notice } from '@/components/Notice';
-import { PageCreationStepActions, PageCreationStepNavigation, PageWorkflowSection } from '@/components/PageCreationWorkflow';
-import { PageSettingsPreview } from '@/components/PageSettingsPreview';
-import { inferPageCreationStep, nextPageInSequence, type PageCreationStep } from '@/domain/pageCreationWorkflow';
+import { PageStoryAutofillAction } from '@/components/PageCreationWorkflow';
+import { nextPageInSequence } from '@/domain/pageCreationWorkflow';
 import { pageWorkflowMessage } from '@/lib/pageWorkflowMessages';
 import { collectOperationFailures, operationFailure } from '@/lib/operationErrorContext';
 import { PageGenerationQuoteDialog } from '@/components/PageGenerationQuoteDialog';
@@ -25,8 +24,7 @@ import { usePageGenerationQuote } from '@/hooks/usePageGenerationQuote';
 import { usePageCompletion } from '@/hooks/usePageCompletion';
 import { useConfirmationPresentation } from '@/lib/confirmationPresentation';
 import { useMangaWorkflow } from '@/state/mangaWorkflow';
-import { PageCompletionActions } from '@/components/PageCompletionActions';
-import { PageGenerationActions } from '@/components/PageGenerationActions';
+import { PageCompletionActions, PageConfirmationAction, PageGenerationStartActions } from '@/components/PageCompletionActions';
 import { PageImageViewer } from '@/components/PageImageViewer';
 import { PageSceneAutofillAction } from '@/components/PageSceneAutofillAction';
 import { PageThumbnailPicker } from '@/components/PageThumbnailPicker';
@@ -41,11 +39,8 @@ import { RecordPicker } from '@/components/RecordPicker';
 import { Screen } from '@/components/Screen';
 import { Section } from '@/components/Section';
 import { SegmentedControl } from '@/components/SegmentedControl';
-import { EpisodeStateAutofillResult } from '@/components/EpisodeStateAutofillResult';
-import { StoryStateAutofillOptions } from '@/components/StoryStateAutofillOptions';
 import { confirmStoryStateAutofill } from '@/lib/confirmStoryStateAutofill';
-import type { EpisodeStateAutofillChoice, EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
-import { StoryGenerationControls } from '@/components/StoryGenerationControls';
+import type { EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
 import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
 import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
 import {
@@ -77,7 +72,9 @@ import { canDisplayMobileImage, imageAccessNotice } from '@/domain/imageAccess';
 import { canUseMobilePageImage, mobilePageExportCandidates } from '@/domain/mobilePageImageAccess';
 import { buildEpisodeExportPayload } from '@/domain/pageExport';
 import { createSafeLayoutTemplatePayload, selectExcessPanels } from '@/domain/pageSafety';
-import { selectPageForEpisode } from '@/domain/pageSelection';
+import { adjacentPage, initialPageAndPanel, selectPageForEpisode } from '@/domain/pageSelection';
+import { usePagePanelSelection } from '@/hooks/usePagePanelSelection';
+import { PageSwipeNavigator } from '@/components/PageSwipeNavigator';
 import {
   buildFullPageImageSources,
   buildPageThumbnailImageSources
@@ -94,7 +91,6 @@ import type {
   PanelFrameRecord,
   PanelRecord
 } from '@/domain/types';
-import { shouldOverwritePageSkeleton } from '@/domain/storyWorkflow';
 import { useActiveResourceJobId } from '@/hooks/useActiveResourceJobId';
 import { usePanelInsertion } from '@/hooks/usePanelInsertion';
 import { panelInsertionMessage } from '@/lib/panelInsertionMessages';
@@ -111,7 +107,7 @@ import {
 import { t } from '@/lib/i18n';
 import { editorMessage } from '@/lib/editorUiMessages';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
-import { ApiError } from '@/lib/api';
+import { ApiError, type PanelFrameUpdateInput } from '@/lib/api';
 import {
   flattenUniqueRecords,
   MOBILE_LIST_PAGE_SIZE,
@@ -170,6 +166,15 @@ interface FrameDraft {
   border_color: string;
   z_index: string;
   reading_order: string;
+}
+
+interface FrameSaveRequest {
+  frames: PanelFrameUpdateInput[];
+  organizationId: string | null;
+  pageId: string;
+  revision: string;
+  scope: string;
+  sessionKey: string;
 }
 
 const nullable = (value: string): string | null => {
@@ -372,9 +377,8 @@ const toFrameDraft = (frame: PanelFrameRecord): FrameDraft => {
   };
 };
 
-const toFrameRecord = (draft: FrameDraft): PanelFrameRecord => ({
+const toFrameUpdateInput = (draft: FrameDraft): PanelFrameUpdateInput => ({
   id: draft.id,
-  page_id: draft.page_id,
   panel_id: draft.panel_id,
   vertices: draft.vertices.slice(0, 4).map((vertex) => ({
     x: clampPreviewCoordinate(numeric(vertex.x, 0)),
@@ -678,12 +682,13 @@ export function PagesScreen(): React.JSX.Element {
   const canExport = hasCapability('export');
   const stateAutofillScope = JSON.stringify([sessionKey, organizationId, selection.workId, selection.episodeId]);
   const stateAutofillAvailable = session?.capabilities?.episode_state_autofill_v1 === true;
-  const [stateAutofillDraft, setStateAutofillDraft] = useState<{ scope: string; value: EpisodeStateAutofillChoice } | null>(null);
-  const stateAutofillChoice = stateAutofillDraft?.scope === stateAutofillScope ? stateAutofillDraft.value : { enabled: false, overwrite: false };
   const currentAutofillScope = useRef({ scope: stateAutofillScope, available: stateAutofillAvailable, canGenerate });
+  const pendingStoryAutofillAfterSkeleton = useRef<{ scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined } | null>(null);
   useEffect(() => {
     currentAutofillScope.current = { scope: stateAutofillScope, available: stateAutofillAvailable, canGenerate };
+    if (pendingStoryAutofillAfterSkeleton.current?.scope !== stateAutofillScope) pendingStoryAutofillAfterSkeleton.current = null;
   }, [canGenerate, stateAutofillAvailable, stateAutofillScope]);
+  useEffect(() => () => { pendingStoryAutofillAfterSkeleton.current = null; }, []);
 
   const [styleReferenceTitle, setStyleReferenceTitle] = useState('');
   const [styleReferenceNotes, setStyleReferenceNotes] = useState('');
@@ -693,6 +698,8 @@ export function PagesScreen(): React.JSX.Element {
   const [templateId, setTemplateId] = useState('standard_4');
   const [templateModalVisible, setTemplateModalVisible] = useState(false);
   const [panelId, setPanelId] = useState<string | null>(null);
+  const initialSelectionScopeRef = useRef<string | null>(null);
+  const currentInitialSelectionScopeRef = useRef<string | null>(null);
   const [panelRole, setPanelRole] = useState<PanelRecord['panel_role']>('action');
   const [panelSize, setPanelSize] = useState<PanelRecord['panel_size']>('standard');
   const [situationText, setSituationText] = useState('');
@@ -734,17 +741,26 @@ export function PagesScreen(): React.JSX.Element {
     useState<string | null>(null);
   const [lastSyncedPageId, setLastSyncedPageId] = useState<string | null>(null);
   const [lastSyncedPanelId, setLastSyncedPanelId] = useState<string | null>(null);
-  const [lastSyncedFramePageId, setLastSyncedFramePageId] =
-    useState<string | null>(null);
+  const [lastSyncedFrameScope, setLastSyncedFrameScope] = useState<string | null>(null);
+  const [lastSyncedFrameRevision, setLastSyncedFrameRevision] = useState<string | null>(null);
   const exportAttemptRef = useRef<EpisodeExportAttempt | null>(null);
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
   const activeEpisodeId = workspaceContext.selectedEpisodeId;
+  const initialPageSelectionScope = JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId]);
   const pageWorkflowScope = JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, selection.pageId]);
   const latestPageWorkflowScope = useRef(pageWorkflowScope);
   const pageQuoteIntent = useRef(0);
+  const [pageNavigationLookup, setPageNavigationLookup] = useState<{ scope: string; loading: boolean; error: boolean } | null>(null);
+  const pageNavigationIntent = useRef(0);
   const [nextPageLookup, setNextPageLookup] = useState<{ scope: string; error: boolean; loading: boolean } | null>(null);
-  useLayoutEffect(() => { latestPageWorkflowScope.current = pageWorkflowScope; pageQuoteIntent.current += 1; }, [pageWorkflowScope]);
+  useLayoutEffect(() => {
+    latestPageWorkflowScope.current = pageWorkflowScope;
+    pageQuoteIntent.current += 1;
+  }, [pageWorkflowScope]);
+  useLayoutEffect(() => {
+    currentInitialSelectionScopeRef.current = initialPageSelectionScope;
+  }, [initialPageSelectionScope]);
   const resultTriggerRef = useRef<View | null>(null);
   const screenScrollRef = useRef<ScrollView | null>(null);
 
@@ -763,6 +779,13 @@ export function PagesScreen(): React.JSX.Element {
     () => flattenUniqueRecords(pagesQuery.data?.pages.map((page) => page.pages) ?? []),
     [pagesQuery.data?.pages],
   );
+  const pageSkeletonCapabilitiesQuery = useQuery({
+    enabled: pages.length > 0,
+    queryKey: ['page-skeleton-capabilities', sessionKey],
+    queryFn: () => api.getPageSkeletonCapabilities(),
+    retry: false,
+    staleTime: 300_000,
+  });
 
   const pageLayoutTemplatesQuery = useQuery({
     enabled: pageLayoutEditingUiEnabled,
@@ -790,6 +813,28 @@ export function PagesScreen(): React.JSX.Element {
     selectedPageCandidate?.episode_id === activeEpisodeId
       ? selectedPageCandidate
       : null;
+  useEffect(() => {
+    if (activeEpisodeId === null || !pagesQuery.isSuccess) return;
+    if (initialSelectionScopeRef.current === initialPageSelectionScope) return;
+
+    if (selection.pageId !== null) {
+      if (selectedPage === null) return;
+      initialSelectionScopeRef.current = initialPageSelectionScope;
+      setPanelId(null);
+      return;
+    }
+
+    const target = initialPageAndPanel(pages, []);
+    if (target.pageId === null) return;
+    initialSelectionScopeRef.current = initialPageSelectionScope;
+    setPanelId(null);
+    const scope = initialPageSelectionScope;
+    void updateSelection({ pageId: target.pageId }).then((changed) => {
+      if (!changed && currentInitialSelectionScopeRef.current === scope) {
+        initialSelectionScopeRef.current = null;
+      }
+    });
+  }, [activeEpisodeId, initialPageSelectionScope, pages, pagesQuery.isSuccess, selectedPage, selection.pageId, updateSelection]);
   const selectedPageDetailNotFound =
     shouldFetchSelectedPageDetail &&
     selectedPageQuery.error instanceof ApiError &&
@@ -981,6 +1026,14 @@ export function PagesScreen(): React.JSX.Element {
     () => panelsQuery.data?.panels.find((panel) => panel.id === panelId) ?? null,
     [panelId, panelsQuery.data?.panels]
   );
+  usePagePanelSelection({
+    page: selectedPage,
+    selectionScope: initialPageSelectionScope,
+    panels: panelsQuery.data?.panels,
+    panelsLoaded: panelsQuery.isSuccess,
+    panelsFetching: panelsQuery.isFetching,
+    onSelect: setPanelId,
+  });
 
   const selectedFrame = useMemo(
     () => frameDrafts.find((frame) => frame.id === frameId) ?? null,
@@ -1070,14 +1123,36 @@ export function PagesScreen(): React.JSX.Element {
       (assignment.action === 'custom' && (assignment.custom_action ?? '').trim().length === 0) ||
       ((assignment.state_id ?? '').trim().length > 0 && !isUuidText(assignment.state_id ?? ''))
     );
+  const frameDraftScope = selectedPage === null
+    ? null
+    : JSON.stringify([sessionKey, organizationId, selectedPage.id]);
+  const frameDraftRevision = JSON.stringify(frameDrafts);
+  const serverFrameRevision = JSON.stringify(
+    (framesQuery.data?.frames ?? []).map(toFrameDraft)
+  );
   const frameValuesDiffer =
-    JSON.stringify(frameDrafts.map(toFrameRecord)) !== JSON.stringify((framesQuery.data?.frames ?? []));
+    lastSyncedFrameRevision !== null && frameDraftRevision !== lastSyncedFrameRevision;
   const framesDirty = editorDraftHasUnsavedChanges({
     hasServerSnapshot: framesQuery.data !== undefined,
-    lastResourceId: lastSyncedFramePageId,
-    resourceId: selectedPage?.id ?? null,
+    lastResourceId: lastSyncedFrameScope,
+    resourceId: frameDraftScope,
     valuesDiffer: frameValuesDiffer
   });
+  const frameDraftSaveReady =
+    selectedPage !== null &&
+    frameDraftScope !== null &&
+    lastSyncedFrameScope === frameDraftScope &&
+    frameDrafts.every((frame) => frame.page_id === selectedPage.id);
+  const latestFrameDraft = useRef({
+    revision: frameDraftRevision,
+    scope: frameDraftScope,
+  });
+  useLayoutEffect(() => {
+    latestFrameDraft.current = {
+      revision: frameDraftRevision,
+      scope: frameDraftScope,
+    };
+  }, [frameDraftRevision, frameDraftScope]);
 
   const discardPageDraft = useCallback((): void => {
     const styleReference = readStyleReference(selectedPage?.layout_config ?? {});
@@ -1107,12 +1182,14 @@ export function PagesScreen(): React.JSX.Element {
   const discardFrameDraft = useCallback((): void => {
     const drafts = (framesQuery.data?.frames ?? []).map(toFrameDraft);
     setFrameDrafts(drafts);
+    setLastSyncedFrameScope(frameDraftScope);
+    setLastSyncedFrameRevision(serverFrameRevision);
     setFrameId((current) =>
       current !== null && drafts.some((frame) => frame.id === current)
         ? current
         : drafts[0]?.id ?? null
     );
-  }, [framesQuery.data?.frames]);
+  }, [frameDraftScope, framesQuery.data?.frames, serverFrameRevision]);
 
   const discardAllPageDrafts = useCallback((): void => {
     discardPageDraft();
@@ -1167,22 +1244,22 @@ export function PagesScreen(): React.JSX.Element {
   }, [lastSyncedPanelId, panelDirty, selectedPanel]);
 
   useEffect(() => {
-    const nextPageId = selectedPage?.id ?? null;
     if (
       !shouldHydrateEditorDraft({
         hasServerSnapshot: framesQuery.data !== undefined,
         hasUnsavedChanges: framesDirty,
-        lastResourceId: lastSyncedFramePageId,
-        resourceId: nextPageId
+        lastResourceId: lastSyncedFrameScope,
+        resourceId: frameDraftScope
       })
     ) {
       return;
     }
-    setLastSyncedFramePageId(nextPageId);
+    setLastSyncedFrameScope(frameDraftScope);
+    setLastSyncedFrameRevision(serverFrameRevision);
     const drafts = (framesQuery.data?.frames ?? []).map(toFrameDraft);
     setFrameDrafts(drafts);
     setFrameId((current) => (current !== null && drafts.some((frame) => frame.id === current) ? current : drafts[0]?.id ?? null));
-  }, [framesDirty, framesQuery.data, lastSyncedFramePageId, selectedPage?.id]);
+  }, [frameDraftScope, framesDirty, framesQuery.data, lastSyncedFrameScope, serverFrameRevision]);
 
   const invalidatePageReadiness = async (): Promise<void> => {
     await queryClient.invalidateQueries({
@@ -1289,7 +1366,8 @@ export function PagesScreen(): React.JSX.Element {
     onSuccess: async () => {
       setLastSyncedPageId(null);
       setLastSyncedPanelId(null);
-      setLastSyncedFramePageId(null);
+      setLastSyncedFrameScope(null);
+      setLastSyncedFrameRevision(null);
       setPageStale(false);
       await Promise.all([
         invalidatePages(),
@@ -1495,12 +1573,66 @@ export function PagesScreen(): React.JSX.Element {
     );
   };
 
+  const createFrameSaveRequest = useCallback((): FrameSaveRequest => {
+    if (
+      selectedPage === null ||
+      frameDraftScope === null ||
+      lastSyncedFrameScope !== frameDraftScope ||
+      frameDrafts.some((frame) => frame.page_id !== selectedPage.id)
+    ) {
+      throw new Error(t(language, "generated.screens.PagesScreen.select.a.page.first.390bc86e"));
+    }
+    const frames = frameDrafts.map(toFrameUpdateInput);
+    return {
+      frames,
+      organizationId,
+      pageId: selectedPage.id,
+      revision: frameDraftRevision,
+      scope: frameDraftScope,
+      sessionKey,
+    };
+  }, [frameDraftRevision, frameDraftScope, frameDrafts, language, lastSyncedFrameScope, organizationId, selectedPage, sessionKey]);
+
   const replaceFramesMutation = useMutation({
-    mutationFn: () => api.replaceFrames(selectedPage?.id ?? '', { frames: frameDrafts.map(toFrameRecord) }, organizationId),
-    onSuccess: invalidateFrames
+    mutationFn: (request: FrameSaveRequest) => {
+      if (latestFrameDraft.current.scope !== request.scope) {
+        throw new Error(t(language, 'shared.error.workspacePermission'));
+      }
+      return api.replaceFrames(
+        request.pageId,
+        { frames: request.frames },
+        request.organizationId
+      );
+    },
+    onSuccess: async (_result, request) => {
+      if (
+        latestFrameDraft.current.scope === request.scope &&
+        latestFrameDraft.current.revision === request.revision
+      ) {
+        setLastSyncedFrameScope(request.scope);
+        setLastSyncedFrameRevision(request.revision);
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: framesQueryKey(
+            request.sessionKey,
+            request.pageId,
+            request.organizationId
+          )
+        }),
+        queryClient.invalidateQueries({
+          queryKey: pageGenerationReadinessQueryKey(
+            request.sessionKey,
+            request.pageId,
+            request.organizationId
+          )
+        })
+      ]);
+    }
   });
 
   const saveAllPageDrafts = useCallback(async (): Promise<void> => {
+    const pendingFrameSave = framesDirty ? createFrameSaveRequest() : null;
     if (pageDirty) {
       if (selectedPage === null) {
         throw new Error(t(language, "generated.screens.PagesScreen.select.a.page.to.save.c7125ffd"));
@@ -1520,14 +1652,18 @@ export function PagesScreen(): React.JSX.Element {
         await updatePanelMutation.mutateAsync();
       }
     }
-    if (framesDirty) {
+    if (pendingFrameSave !== null) {
       if (selectedPage === null || frameDraftsInvalid) {
         throw new Error(t(language, "generated.screens.PagesScreen.check.the.frame.values.666cb307"));
       }
-      await replaceFramesMutation.mutateAsync();
+      if (latestFrameDraft.current.scope !== pendingFrameSave.scope) {
+        throw new Error(t(language, 'shared.error.workspacePermission'));
+      }
+      await replaceFramesMutation.mutateAsync(pendingFrameSave);
     }
   }, [
     createPanelMutation,
+    createFrameSaveRequest,
     frameDraftsInvalid,
     framesDirty,
     language,
@@ -1543,7 +1679,7 @@ export function PagesScreen(): React.JSX.Element {
 
   const pageEditorRevision = JSON.stringify({
     pageId: selectedPage?.id ?? null,
-    frameDrafts: frameDrafts.map(toFrameRecord),
+    frameDraftRevision,
     page: {
       continuityNote,
       pagePurpose,
@@ -1587,44 +1723,63 @@ export function PagesScreen(): React.JSX.Element {
       setLocalPageDesignJob(null);
       setPageDesignJobEnqueued(false);
     },
-    mutationFn: async () => {
+    mutationFn: async (request: { scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined; overwriteExisting: boolean; preserveGeneratedImages: boolean }) => {
+      if (request.overwriteExisting && !request.preserveGeneratedImages) {
+        throw new Error('Safe page redesign capability is required');
+      }
+      const canSubmit = (): boolean => currentAutofillScope.current.scope === request.scope && currentAutofillScope.current.canGenerate &&
+        (request.options === undefined || currentAutofillScope.current.available);
+      if (!canSubmit()) throw new Error(t(language, 'shared.error.workspacePermission'));
       await saveAllPageDrafts();
+      if (!canSubmit()) throw new Error(t(language, 'shared.error.workspacePermission'));
       return api.generatePageSkeleton(
-        activeEpisodeId ?? '',
+        request.episodeId,
         {
-          overwrite_existing: shouldOverwritePageSkeleton(pages.length),
+          overwrite_existing: request.overwriteExisting,
+          ...(request.preserveGeneratedImages ? { preserve_generated_images: true } : {}),
           apply_story_plan: false,
           language
         },
         organizationId
       );
     },
-    onSuccess: async (result) => {
+    onSuccess: async (result, request) => {
+      const requestStillCurrent = currentAutofillScope.current.scope === request.scope;
       const followUps: Promise<unknown>[] = [invalidatePageDesignResources()];
       if ('job_id' in result) {
-        setLocalPageDesignJob({
-          id: result.job_id,
-          kind: 'skeleton',
-          resourceId: activeEpisodeId ?? ''
-        });
-        setPageDesignJobEnqueued(true);
-        followUps.push(trackJob(result.job_id));
-      } else {
-        followUps.push(clearPageSelectionAfterSkeleton());
-        if (result.story_plan_job_id !== null) {
+        if (requestStillCurrent) {
           setLocalPageDesignJob({
-            id: result.story_plan_job_id,
-            kind: 'autofill',
-            resourceId: activeEpisodeId ?? ''
+            id: result.job_id,
+            kind: 'skeleton',
+            resourceId: request.episodeId
           });
           setPageDesignJobEnqueued(true);
+        }
+        followUps.push(trackJob(result.job_id));
+      } else {
+        if (requestStillCurrent) followUps.push(clearPageSelectionAfterSkeleton());
+        if (result.story_plan_job_id !== null) {
+          pendingStoryAutofillAfterSkeleton.current = null;
+          if (requestStillCurrent) {
+            setLocalPageDesignJob({
+              id: result.story_plan_job_id,
+              kind: 'autofill',
+              resourceId: request.episodeId
+            });
+            setPageDesignJobEnqueued(true);
+          }
           followUps.push(trackJob(result.story_plan_job_id));
         }
       }
       await Promise.allSettled(followUps);
+      if (requestStillCurrent && !('job_id' in result) && result.story_plan_job_id === null) {
+        continueStoryAutofillAfterSkeleton();
+      }
     },
-    onError: () => {
+    onError: async () => {
+      pendingStoryAutofillAfterSkeleton.current = null;
       setPageDesignJobEnqueued(false);
+      await Promise.allSettled([invalidatePageDesignResources()]);
     }
   });
 
@@ -1656,15 +1811,31 @@ export function PagesScreen(): React.JSX.Element {
         invalidatePageDesignResources()
       ]);
     },
-    onError: (_error, request) => {
+    onError: async (_error, request) => {
       if (currentAutofillScope.current.scope === request.scope) setPageDesignJobEnqueued(false);
+      await Promise.allSettled([invalidatePageDesignResources()]);
     }
   });
+
+  function continueStoryAutofillAfterSkeleton(): void {
+    const pending = pendingStoryAutofillAfterSkeleton.current;
+    if (
+      pending === null ||
+      currentAutofillScope.current.scope !== pending.scope ||
+      !currentAutofillScope.current.canGenerate
+    ) {
+      pendingStoryAutofillAfterSkeleton.current = null;
+      return;
+    }
+    pendingStoryAutofillAfterSkeleton.current = null;
+    pageStoryAutofillMutation.mutate(pending);
+  }
 
   const cancelPageDesignJobMutation = useMutation({
     mutationFn: (job: GenerationJobRecord) =>
       api.cancelJob(job.id, organizationId),
     onSuccess: async () => {
+      pendingStoryAutofillAfterSkeleton.current = null;
       setPageDesignJobEnqueued(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['job', sessionKey] }),
@@ -1675,19 +1846,7 @@ export function PagesScreen(): React.JSX.Element {
     }
   });
 
-  const [pageStepSelection, setPageStepSelection] = useState<{ scope: string; step: PageCreationStep } | null>(null);
-  const pageStep = pageStepSelection?.scope === pageWorkflowScope ? pageStepSelection.step : inferPageCreationStep({
-    hasPage: selectedPage !== null,
-    hasFrames: frameDrafts.length > 0,
-    hasSettings: (panelsQuery.data?.panels ?? []).some((panel) => Boolean(panel.situation_text?.trim()) || panel.entities.length > 0 || panel.dialogue.length > 0),
-    hasImage: selectedPage?.generated_image != null
-  });
-  const changePageStep = (step: PageCreationStep): void => {
-    Keyboard.dismiss();
-    setPageStepSelection({ scope: pageWorkflowScope, step });
-    screenScrollRef.current?.scrollTo({ y: 0, animated: true });
-  };
-  const pageCreationFocused = focused && (mangaWorkflow === null || mangaWorkflow.activeStep === 'pages') && pageStep === 'create';
+  const pageCreationFocused = focused && (mangaWorkflow === null || mangaWorkflow.activeStep === 'pages');
   const generationQuotesAvailable = session?.capabilities?.generation_quotes === true;
   const generationQuote = usePageGenerationQuote({
     api, contextKey: pageWorkflowScope, organizationId, enabled: canGenerate && generationQuotesAvailable && pageCreationFocused,
@@ -1709,7 +1868,7 @@ export function PagesScreen(): React.JSX.Element {
       setLocalJob({ id: receipt.job_id, resourceId: target.pageId });
       if (originKey === pageWorkflowScope && pageCreationFocused) {
         const changed = await updateSelection({ pageId: target.pageId });
-        if (changed) setPageStepSelection({ scope: JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, target.pageId]), step: 'create' });
+        if (changed) screenScrollRef.current?.scrollTo({ y: 0, animated: true });
       }
       await Promise.allSettled([trackJob(receipt.job_id), invalidatePages(), invalidatePanels(), invalidateFrames()]);
     }
@@ -1879,13 +2038,36 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const switchPage = (pageId: string): void => {
-    void updateSelection({ pageId }).then((changed) => {
-      if (changed) {
-        setPanelId(null);
+  const switchPage = useCallback((pageId: string): void => {
+    // The page-scoped hook initializes after authoritative data, including cache hits.
+    void updateSelection({ pageId });
+  }, [updateSelection]);
+  const { hasNextPage: hasMorePages, fetchNextPage: fetchMorePages } = pagesQuery;
+  const movePage = useCallback((direction: -1 | 1): void => {
+    if (selectedPage === null || activeEpisodeId === null || (pageNavigationLookup?.scope === pageWorkflowScope && pageNavigationLookup.loading)) return;
+    const target = adjacentPage(pages, selectedPage.id, direction);
+    if (target !== null) { switchPage(target.id); return; }
+    const selectedIsLoaded = pages.some((page) => page.id === selectedPage.id);
+    if (selectedIsLoaded && (direction === -1 || !hasMorePages)) return;
+    const scope = pageWorkflowScope;
+    const selectedId = selectedPage.id;
+    const episodeId = activeEpisodeId;
+    const intent = ++pageNavigationIntent.current;
+    setPageNavigationLookup({ scope, loading: true, error: false });
+    const candidates = selectedIsLoaded
+      ? fetchMorePages({ throwOnError: true }).then((result) => flattenUniqueRecords(result.data?.pages.map((page) => page.pages) ?? []))
+      : api.getPages(episodeId, organizationId).then((result) => result.pages);
+    void candidates.then((records) => {
+      if (latestPageWorkflowScope.current !== scope || pageNavigationIntent.current !== intent) return;
+      const next = adjacentPage(records.filter((page) => page.episode_id === episodeId), selectedId, direction);
+      setPageNavigationLookup({ scope, loading: false, error: false });
+      if (next !== null) switchPage(next.id);
+    }).catch(() => {
+      if (latestPageWorkflowScope.current === scope && pageNavigationIntent.current === intent) {
+        setPageNavigationLookup({ scope, loading: false, error: true });
       }
     });
-  };
+  }, [selectedPage, activeEpisodeId, pageNavigationLookup, pageWorkflowScope, pages, switchPage, hasMorePages, fetchMorePages, api, organizationId]);
 
   const previewPage = (pageId: string): void => {
     const page = pages.find((candidate) => candidate.id === pageId);
@@ -1920,7 +2102,8 @@ export function PagesScreen(): React.JSX.Element {
   const reloadAfterPageStale = async (): Promise<void> => {
     setLastSyncedPageId(null);
     setLastSyncedPanelId(null);
-    setLastSyncedFramePageId(null);
+    setLastSyncedFrameScope(null);
+    setLastSyncedFrameRevision(null);
     await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
     setPageStale(false);
   };
@@ -1980,13 +2163,17 @@ export function PagesScreen(): React.JSX.Element {
   };
 
   const existingEpisodePageCount = pages.length;
-  const existingEpisodePanelCount = pages.reduce(
-    (total, page) => total + page.panel_count,
-    0
-  );
-  const overwritePageSkeleton = shouldOverwritePageSkeleton(
-    existingEpisodePageCount
-  );
+  const existingEpisodePanelCount = pages.reduce((total, page) => total + page.panel_count, 0);
+  const overwritePageSkeleton = existingEpisodePageCount > 0;
+  const generatedPageImageCount = pages.filter((page) => page.generated_image !== null).length;
+  const safeRedesignAvailable = pages.length === 0 || pageSkeletonCapabilitiesQuery.data?.preserve_generated_images === true;
+  const safeRedesignBlockReason = safeRedesignAvailable
+    ? undefined
+    : pageSkeletonCapabilitiesQuery.isLoading
+      ? t(language, 'screen.pages.safeRedesignChecking')
+      : generatedPageImageCount > 0
+        ? t(language, 'screen.pages.safeRedesignUnavailableWithImages', { imageCount: generatedPageImageCount })
+        : t(language, 'screen.pages.safeRedesignUnavailable');
   const pageDesignOperationActive =
     activePageDesignServerJobId !== null ||
     pageDesignJobEnqueued ||
@@ -2021,58 +2208,35 @@ export function PagesScreen(): React.JSX.Element {
     });
   };
 
-  const confirmPageSkeletonGeneration = (): void => {
-    if (
-      !canGenerate ||
-      activeEpisodeId === null ||
-      pageDesignOperationActive
-    ) {
-      return;
-    }
-    void resolveDirtyEditors(language).then((canContinue) => {
-      if (!canContinue) {
-        return;
-      }
-      confirmAction({
-        language,
-        title: overwritePageSkeleton
-          ? t(language, "generated.screens.StoryScreen.regenerate.and.replace.page.plan.f11f5d2d")
-          : t(language, "generated.screens.StoryScreen.generate.page.plan.2bf7c88e"),
-        message: appendAiProviderDisclosure(
-          overwritePageSkeleton
-            ? t(language, 'screen.story.replacePagePlan', {
-                pageCount: existingEpisodePageCount,
-                panelCount: existingEpisodePanelCount
-              })
-            : t(language, 'screen.pages.design.generateConfirmation'),
-          language,
-          'text'
-        ),
-        confirmLabel: overwritePageSkeleton
-          ? t(language, "generated.screens.StoryScreen.replace.and.regenerate.6303262c")
-          : t(language, 'pageSkeleton'),
-        destructive: overwritePageSkeleton,
-        onConfirm: () => pageSkeletonMutation.mutate()
-      });
-    });
-  };
-
   const confirmPageStoryAutofill = (): void => {
-    if (!canGenerate || activeEpisodeId === null || pageDesignOperationActive) return;
+    if (!canGenerate || activeEpisodeId === null || pageDesignOperationActive || !safeRedesignAvailable) return;
     const episodeId = activeEpisodeId;
     const scope = stateAutofillScope;
     const available = stateAutofillAvailable;
-    const choice = { ...stateAutofillChoice };
     const isCurrent = (): boolean => currentAutofillScope.current.scope === scope && currentAutofillScope.current.canGenerate &&
-      (!choice.enabled || !available || currentAutofillScope.current.available);
+      (!available || currentAutofillScope.current.available);
     void resolveDirtyEditors(language).then((canContinue) => {
       if (!canContinue || !isCurrent()) return;
       confirmStoryStateAutofill({
         language,
         available,
-        choice,
+        includeSkeletonGeneration: true,
         isCurrent,
-        onConfirm: (options) => pageStoryAutofillMutation.mutate({ scope, episodeId, options })
+        overwriteSummary: overwritePageSkeleton
+          ? `${t(language, 'screen.story.replacePagePlan', {
+              pageCount: existingEpisodePageCount,
+              panelCount: existingEpisodePanelCount
+            })}\n${t(language, 'screen.pages.safeRedesignPreservationSummary')}`
+          : undefined,
+        onConfirm: (options) => {
+          const request = { scope, episodeId, options };
+          pendingStoryAutofillAfterSkeleton.current = request;
+          pageSkeletonMutation.mutate({
+            ...request,
+            overwriteExisting: overwritePageSkeleton,
+            preserveGeneratedImages: overwritePageSkeleton
+          });
+        }
       });
     });
   };
@@ -2127,7 +2291,6 @@ export function PagesScreen(): React.JSX.Element {
   const requestPageQuote = (renderStyle: 'color' | 'monochrome'): void => {
     pageQuoteIntent.current += 1;
     if (selectedPage === null) return;
-    changePageStep('create');
     completion.close();
     setResultRenderStyle(renderStyle);
     void generationQuote.controller.open({ pageId: selectedPage.id, pageNumber: selectedPage.page_number, renderStyle });
@@ -2305,15 +2468,7 @@ export function PagesScreen(): React.JSX.Element {
     () => frameDrafts.map(toFramePreviewDefinition),
     [frameDrafts]
   );
-  const previewPanels = (panelsQuery.data?.panels ?? []).map((panel) => panel.id === panelId ? {
-    ...panel, situation_text: nullable(situationText), background_note: nullable(backgroundNote),
-    entities: assignments.map(toAssignmentRecord), dialogue: dialogues
-  } : panel);
-  useEffect(() => mangaWorkflow?.registerPageBackHandler?.(() => {
-    if (pageStep === 'design') return false;
-    setPageStepSelection({ scope: pageWorkflowScope, step: pageStep === 'create' ? 'settings' : 'design' });
-    return true;
-  }), [mangaWorkflow, pageStep, pageWorkflowScope]);
+  useEffect(() => mangaWorkflow?.registerPageBackHandler?.(() => false), [mangaWorkflow]);
   const selectedImageAllowed = canDisplayMobileImage(selectedPage?.generated_image);
   const previewImagePage = pages.find((page) => page.id === previewImagePageId) ?? (selectedPage?.id === previewImagePageId ? selectedPage : null);
   const completion = usePageCompletion({
@@ -2335,10 +2490,6 @@ export function PagesScreen(): React.JSX.Element {
       completion.complete({ jobId, pageId, pageNumber: saved.page_number, imageSources: fullPageImageSourcesFor(saved), targetKey: JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, pageId]) });
     } catch { /* Fail closed; the existing image/refresh controls remain available. */ }
   };
-  const openCurrentResult = (): void => {
-    if (selectedPage === null || !canUseMobilePageImage(selectedPage) || activeServerJobId !== null) return;
-    completion.open({ jobId: completion.result?.jobId ?? `saved:${selectedPage.id}:${selectedPage.generated_image?.generated_at ?? selectedPage.updated_at}`, pageId: selectedPage.id, pageNumber: selectedPage.page_number, imageSources: selectedPageImageSources, targetKey: pageWorkflowScope });
-  };
   const requestNextPageQuote = async (): Promise<void> => {
     if (selectedPage === null || activeEpisodeId === null) return;
     const origin = pageWorkflowScope;
@@ -2349,7 +2500,7 @@ export function PagesScreen(): React.JSX.Element {
       const allPages = await api.getPages(activeEpisodeId, organizationId);
       if (latestPageWorkflowScope.current !== origin || pageQuoteIntent.current !== intent) return;
       const next = nextPageInSequence(allPages.pages, selectedPage.id);
-      if (next === null) { changePageStep('design'); return; }
+      if (next === null) { screenScrollRef.current?.scrollTo({ y: 0, animated: true }); return; }
       await generationQuote.controller.open({ pageId: next.id, pageNumber: next.page_number, renderStyle: resultRenderStyle });
     } catch { if (latestPageWorkflowScope.current === origin) setNextPageLookup({ scope: origin, error: true, loading: false }); }
     finally { setNextPageLookup((current) => current?.scope === origin ? { ...current, loading: false } : current); }
@@ -2371,6 +2522,7 @@ export function PagesScreen(): React.JSX.Element {
     void invalidateEntities();
     void invalidatePageLayoutTemplates();
     void invalidatePageReadiness();
+    if (pages.length > 0) void pageSkeletonCapabilitiesQuery.refetch();
   };
   const pageFailures = collectOperationFailures([
     ...queryFailures,
@@ -2392,6 +2544,7 @@ export function PagesScreen(): React.JSX.Element {
       onRefresh={refreshPages}
       refreshing={
         pagesQuery.isFetching ||
+        pageSkeletonCapabilitiesQuery.isFetching ||
         pageLayoutTemplatesQuery.isFetching ||
         pageGenerationReadinessQuery.isFetching ||
         panelsQuery.isFetching ||
@@ -2409,89 +2562,28 @@ export function PagesScreen(): React.JSX.Element {
         />
       ) : null}
       {activeEpisodeId === null ? <Notice message={t(language, 'selectEpisodeFirst')} tone="warning" /> : null}
-      <PageCreationStepNavigation language={language} step={pageStep} hasPage={selectedPage !== null} onChange={changePageStep} />
-      <PageWorkflowSection active={pageStep === 'design'}>
-      <Section persistKey="pages:design" title={pageWorkflowMessage(language, 'design')} tone="highlight">
-        <Text style={styles.metric}>{pageWorkflowMessage(language, 'designCount', { pages: existingEpisodePageCount, panels: existingEpisodePanelCount })}</Text>
-        {selectedPage === null ? <Notice message={pageWorkflowMessage(language, 'noDesign')} tone="info" /> : <LayoutTemplatePreview frames={currentFramePreviewFrames} title={pageWorkflowMessage(language, 'currentDesign')} />}
-        <StoryGenerationControls visibleAction="skeleton"
-          canGenerate={canGenerate}
-          estimatedPagesInvalid={false}
-          hasActiveJob={pageDesignOperationActive}
-          jobEnqueued={pageDesignJobEnqueued}
-          language={language}
-          onApplyStory={() => { changePageStep('settings'); confirmPageStoryAutofill(); }}
-          onGenerateSkeleton={() => { changePageStep('design'); confirmPageSkeletonGeneration(); }}
-          overwrite={overwritePageSkeleton}
-          pagesLoading={pagesQuery.isLoading}
-          selectedEpisode={activeEpisodeId !== null}
-          skeletonLoading={pageSkeletonMutation.isPending}
-          storyApplyLoading={pageStoryAutofillMutation.isPending}
-        />
-      </Section>
-      </PageWorkflowSection>
-        <JobStatusCard
-          api={api}
-          cancelLoading={cancelPageDesignJobMutation.isPending}
-          jobId={displayedPageDesignJobId}
-          language={language}
-          organizationId={organizationId}
-          onCompleted={async () => {
-            const completedSkeleton =
-              localPageDesignJob?.id === displayedPageDesignJobId &&
-              localPageDesignJob.kind === 'skeleton';
-            setPageDesignJobEnqueued(false);
-            if (completedSkeleton) {
-              await clearPageSelectionAfterSkeleton();
-            }
-            await invalidatePageDesignResources();
-          }}
-          onFailed={async () => {
-            setPageDesignJobEnqueued(false);
-            await invalidatePageDesignResources();
-          }}
-          onCanceled={async () => {
-            setPageDesignJobEnqueued(false);
-            await invalidatePageDesignResources();
-          }}
-          onMissing={async () => {
-            setPageDesignJobEnqueued(false);
-            setLocalPageDesignJob((current) =>
-              current?.id === displayedPageDesignJobId ? null : current
-            );
-            await invalidatePageDesignResources();
-          }}
-          onCancel={async (job) => {
-            await cancelPageDesignJobMutation.mutateAsync(job);
-          }}
-          sessionKey={sessionKey}
-        />
-      {pageFailures.map((failure, index) => (
-        <PageErrorRecoveryNotice
-          key={`${failure.context.operation}-${index}`}
-          context={failure.context}
-          error={failure.error}
-          language={language}
-          onAccount={() => navigateAfterDirtyCheck('Account')}
-          onCharacters={() => navigateAfterDirtyCheck('Characters')}
-          onLayout={pageLayoutEditingUiEnabled ? () => setTemplateModalVisible(true) : undefined}
-          onLogin={() => {
-            void resolveDirtyEditors(language).then((canLeave) => {
-              if (canLeave) {
-                void logout();
-              }
-            });
-          }}
-          onReloadStale={() => {
-            void reloadAfterPageStale();
-          }}
-          onRetry={() => {
-            failure.retry();
-          }}
-        />
-      ))}
+      {safeRedesignBlockReason === undefined ? null : <Notice message={safeRedesignBlockReason} tone="warning" />}
+      <PageStoryAutofillAction
+        blockReason={safeRedesignBlockReason}
+        canGenerate={canGenerate}
+        hasActiveJob={pageDesignOperationActive}
+        jobEnqueued={pageDesignJobEnqueued}
+        language={language}
+        loading={pageSkeletonMutation.isPending || pageStoryAutofillMutation.isPending}
+        onPress={confirmPageStoryAutofill}
+        pagesLoading={pagesQuery.isLoading}
+        selectedEpisode={activeEpisodeId !== null}
+      />
 
       <Section collapsible persistKey="pages:list" title={editorMessage(language, 'pageList')} subtitle={editorMessage(language, 'pageListHelp')}>
+        {selectedPage === null ? null : <PageSwipeNavigator
+          currentPageNumber={selectedPage.page_number} language={language} onMove={movePage}
+          canPrevious={adjacentPage(pages, selectedPage.id, -1) !== null || !pages.some((page) => page.id === selectedPage.id)}
+          canNext={adjacentPage(pages, selectedPage.id, 1) !== null || pagesQuery.hasNextPage || !pages.some((page) => page.id === selectedPage.id)}
+          loading={pageNavigationLookup?.scope === pageWorkflowScope && pageNavigationLookup.loading}
+        />}
+        {pageNavigationLookup?.scope === pageWorkflowScope && pageNavigationLookup.error
+          ? <Notice tone="warning" message={t(language, 'navigation.pageLoadFailed')} /> : null}
         <PageThumbnailPicker
           emptyLabel={t(language, 'emptyPages')}
           hasNextPage={pagesQuery.hasNextPage}
@@ -2515,32 +2607,44 @@ export function PagesScreen(): React.JSX.Element {
           onEndReached={() => { void pagesQuery.fetchNextPage(); }} />
       </Section>
 
-      <PageWorkflowSection active={pageStep === 'settings'}>
-      <Section collapsible persistKey="pages:settings-autofill" title={pageWorkflowMessage(language, 'settings')} tone="highlight">
-        <StoryStateAutofillOptions
-          available={stateAutofillAvailable}
-          disabled={!canGenerate || activeEpisodeId === null || pageDesignOperationActive}
+      <JobStatusCard
+          api={api}
+          cancelLoading={cancelPageDesignJobMutation.isPending}
+          jobId={displayedPageDesignJobId}
           language={language}
-          value={stateAutofillChoice}
-          onChange={(value) => setStateAutofillDraft({ scope: stateAutofillScope, value })}
-        />
-        <StoryGenerationControls visibleAction="autofill"
-          canGenerate={canGenerate}
-          estimatedPagesInvalid={false}
-          hasActiveJob={pageDesignOperationActive}
-          jobEnqueued={pageDesignJobEnqueued}
-          language={language}
-          onApplyStory={() => { changePageStep('settings'); confirmPageStoryAutofill(); }}
-          onGenerateSkeleton={() => { changePageStep('design'); confirmPageSkeletonGeneration(); }}
-          overwrite={overwritePageSkeleton}
-          pagesLoading={pagesQuery.isLoading}
-          selectedEpisode={activeEpisodeId !== null}
-          skeletonLoading={pageSkeletonMutation.isPending}
-          storyApplyLoading={pageStoryAutofillMutation.isPending}
-        />
-        {stateAutofillAvailable ? <EpisodeStateAutofillResult jobId={displayedPageDesignJobId} episodeId={activeEpisodeId} entities={entities} canEdit={canEdit} /> : null}
-      </Section>
-      <PageSettingsPreview language={language} panels={previewPanels} entities={entities} pageNumber={selectedPage?.page_number ?? null} />
+          organizationId={organizationId}
+          onCompleted={async () => {
+            const completionScope = initialPageSelectionScope;
+            const completedSkeleton = localPageDesignJob?.id === displayedPageDesignJobId && localPageDesignJob.kind === 'skeleton';
+            setPageDesignJobEnqueued(false);
+            await invalidatePageDesignResources();
+            if (currentInitialSelectionScopeRef.current !== completionScope) return;
+            initialSelectionScopeRef.current = null;
+            setPanelId(null);
+            const cleared = await updateSelection({ pageId: null }, { skipDirtyCheck: true });
+            if (!cleared || currentInitialSelectionScopeRef.current !== completionScope) {
+              return;
+            }
+            if (completedSkeleton) continueStoryAutofillAfterSkeleton();
+          }}
+          onFailed={async () => { pendingStoryAutofillAfterSkeleton.current = null; setPageDesignJobEnqueued(false); await invalidatePageDesignResources(); }}
+          onCanceled={async () => { pendingStoryAutofillAfterSkeleton.current = null; setPageDesignJobEnqueued(false); await invalidatePageDesignResources(); }}
+          onMissing={async () => {
+            pendingStoryAutofillAfterSkeleton.current = null;
+            setPageDesignJobEnqueued(false);
+            setLocalPageDesignJob((current) => current?.id === displayedPageDesignJobId ? null : current);
+            await invalidatePageDesignResources();
+          }}
+          onCancel={async (job) => { await cancelPageDesignJobMutation.mutateAsync(job); }}
+          sessionKey={sessionKey}
+      />
+      {pageFailures.map((failure, index) => (
+        <PageErrorRecoveryNotice key={`${failure.context.operation}-${index}`} context={failure.context} error={failure.error} language={language}
+          onAccount={() => navigateAfterDirtyCheck('Account')} onCharacters={() => navigateAfterDirtyCheck('Characters')}
+          onLayout={pageLayoutEditingUiEnabled ? () => setTemplateModalVisible(true) : undefined}
+          onLogin={() => { void resolveDirtyEditors(language).then((canLeave) => { if (canLeave) void logout(); }); }}
+          onReloadStale={() => { void reloadAfterPageStale(); }} onRetry={() => { failure.retry(); }} />
+      ))}
       {selectedPage?.status === 'confirmed' ? (
         <Section
           persistKey="pages:confirmed-summary"
@@ -2769,7 +2873,7 @@ export function PagesScreen(): React.JSX.Element {
               />
             ) : null}
             {frameDraftsInvalid ? <Notice message={t(language, "generated.screens.PagesScreen.frames.require.four.vertices.coordinates.25a49784")} tone="warning" /> : null}
-            <PrimaryButton disabled={!canEdit || selectedPage === null || frameDrafts.length === 0 || frameDraftsInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : frameDrafts.length === 0 ? t(language, "generated.screens.PagesScreen.no.frames.b75c13aa") : frameDraftsInvalid ? t(language, "generated.screens.PagesScreen.check.frame.values.adb62959") : undefined} label={t(language, 'save')} loading={replaceFramesMutation.isPending} onPress={() => replaceFramesMutation.mutate()} variant="secondary" />
+            <PrimaryButton disabled={!canEdit || selectedPage === null || frameDrafts.length === 0 || frameDraftsInvalid || !frameDraftSaveReady} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPage === null ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876") : frameDrafts.length === 0 ? t(language, "generated.screens.PagesScreen.no.frames.b75c13aa") : frameDraftsInvalid ? t(language, "generated.screens.PagesScreen.check.frame.values.adb62959") : undefined} label={t(language, 'save')} loading={replaceFramesMutation.isPending} onPress={() => replaceFramesMutation.mutate(createFrameSaveRequest())} testID="frame-save" variant="secondary" />
           </>
         )}
       </Section>
@@ -2964,9 +3068,6 @@ export function PagesScreen(): React.JSX.Element {
       </Section>
         </>
       )}
-      </PageWorkflowSection>
-      <PageWorkflowSection active={pageStep === 'create'}>
-      <PageSettingsPreview language={language} panels={previewPanels} entities={entities} pageNumber={selectedPage?.page_number ?? null} />
       <PageCompletionActions
         exportSection={config.episodeExportEnabled ? (
       <Section
@@ -3081,20 +3182,8 @@ export function PagesScreen(): React.JSX.Element {
         title={t(language, 'generate')}
         tone="highlight"
       >
-        <PageGenerationActions
-          canConfirm={canEdit && selectedPage !== null && !unsavedNewPanelDraft}
-          confirmDisabledReason={
-            !canEdit
-              ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee")
-              : selectedPage === null
-                ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
-                : unsavedNewPanelDraft
-                  ? t(language, 'screen.pages.unsavedNewPanelDraft')
-                  : undefined
-          }
-          confirmed={pageRequiresReopen}
-          confirmLoading={confirmPageMutation.isPending}
-          generateDisabled={
+        <PageGenerationStartActions
+          canGenerate={!(
             !generationQuotesAvailable ||
             !canGenerate ||
             selectedPage === null ||
@@ -3106,8 +3195,8 @@ export function PagesScreen(): React.JSX.Element {
             frameDraftsInvalid ||
             panelPayloadInvalid ||
             pageGenerationPending
-          }
-          generateDisabledReason={
+          )}
+          disabledReason={
             !generationQuotesAvailable ? pageWorkflowMessage(language, 'quoteUnavailable') :
             paidGenerationBlockedReason ?? (!canGenerate
               ? t(language, "generated.screens.PagesScreen.generation.permission.is.required.1bc5b7af")
@@ -3132,18 +3221,14 @@ export function PagesScreen(): React.JSX.Element {
           generateLoading={generatePageMutation.isPending}
           generateMonochromeLoading={generateMonochromePageMutation.isPending}
           language={language}
-          onConfirm={confirmConfirmPage}
           onGenerate={confirmGeneratePage}
           onGenerateMonochrome={confirmGenerateMonochromePage}
-          onReopen={confirmReopenPage}
-          reopenLoading={reopenPageMutation.isPending}
         />
         {!generationQuotesAvailable ? <Notice message={pageWorkflowMessage(language, 'quoteUnavailable')} tone="info" /> : null}
         <Text style={styles.caption}>{pageWorkflowMessage(language, 'quoteSaving')}</Text>
         <Text style={styles.caption}>{t(language, 'component.jobStatusCard.imageDurationEstimate')}</Text>
         {nextPageLookup?.scope === pageWorkflowScope && nextPageLookup.loading ? <Notice message={pageWorkflowMessage(language, 'morePages')} tone="info" /> : null}
         {nextPageLookup?.scope === pageWorkflowScope && nextPageLookup.error ? <Notice message={pageWorkflowMessage(language, 'quoteError')} tone="warning" /> : null}
-        {!canUseMobilePageImage(selectedPage) ? null : <PrimaryButton buttonRef={resultTriggerRef} disabled={activeServerJobId !== null} label={pageWorkflowMessage(language, 'viewResult')} onPress={openCurrentResult} variant="secondary" testID="page-open-result" />}
         <View style={styles.pageImageFrame}>
           {!selectedImageAllowed ? <Notice message={imageAccessNotice(language)} tone="warning" /> : selectedPage === null || selectedPage.generated_image === null || pageImageFailed ? (
             <Text style={styles.emptySmall}>
@@ -3236,6 +3321,23 @@ export function PagesScreen(): React.JSX.Element {
             tone="warning"
           />
         ) : null}
+        <PageConfirmationAction
+          buttonRef={resultTriggerRef}
+          canConfirm={canEdit && selectedPage !== null && !unsavedNewPanelDraft}
+          confirmed={pageRequiresReopen}
+          confirmLoading={confirmPageMutation.isPending}
+          disabledReason={!canEdit
+            ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee")
+            : selectedPage === null
+              ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
+              : unsavedNewPanelDraft
+                ? t(language, 'screen.pages.unsavedNewPanelDraft')
+                : undefined}
+          language={language}
+          onConfirm={confirmConfirmPage}
+          onReopen={confirmReopenPage}
+          reopenLoading={reopenPageMutation.isPending}
+        />
         <View style={styles.buttonRow}>
           <PrimaryButton
             disabled={!canExport || !canUseMobilePageImage(selectedPage)}
@@ -3282,8 +3384,6 @@ export function PagesScreen(): React.JSX.Element {
       </Section>
         )}
       />
-      </PageWorkflowSection>
-      <PageCreationStepActions language={language} step={pageStep} hasPage={selectedPage !== null} onChange={changePageStep} />
       <PageGenerationQuoteDialog
         state={{ ...generationQuote.state, phase: quoteDraftStale ? 'stale' : generationQuote.state.phase, visible: generationQuote.state.visible && pageCreationFocused }} language={language}
         canAccept={!quoteDraftStale && generationQuote.controller.canAccept()} onAccept={() => {
@@ -3300,7 +3400,7 @@ export function PagesScreen(): React.JSX.Element {
         renderStyle={resultRenderStyle} onRenderStyleChange={setResultRenderStyle}
         onClose={completion.close} onRegenerate={() => requestPageQuote(resultRenderStyle)}
         onNextPage={() => { void requestNextPageQuote().catch(() => undefined); }}
-        onReviewPages={() => { completion.close(); changePageStep('design'); screenScrollRef.current?.scrollTo({ y: 0, animated: true }); }}
+        onReviewPages={() => { completion.close(); screenScrollRef.current?.scrollTo({ y: 0, animated: true }); }}
         onExpand={(source) => { if (selectedPage === null || !canUseMobilePageImage(selectedPage)) return; completion.close(); setPreviewImagePageId(selectedPage.id); setPreviewImageHeaders(source.headers); setPreviewImageUri(source.uri); }}
         restoreFocusRef={resultTriggerRef}
       />

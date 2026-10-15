@@ -50,6 +50,25 @@ export interface EpisodePlanAuditQuoteCorrectionPlan {
 
 const MAX_CITATION_DIAGNOSTICS = 8;
 const MAX_CITATION_RETRY_CHARS = 4_000;
+const GENERIC_COVERAGE_RETRY_INSTRUCTION = 'Coverage correction for the retry: rebuild source_coverage from exact named refs and contiguous displayed quotes only.';
+
+export type EpisodePlanAuditCoverageReasonCode =
+  | 'coverage_missing'
+  | 'catalog_page_duplicate'
+  | 'coverage_page_duplicate'
+  | 'page_set_mismatch'
+  | 'unknown_page'
+  | 'catalog_source_ref_duplicate'
+  | 'catalog_output_ref_duplicate'
+  | 'duplicate_check'
+  | 'duplicate_output_evidence'
+  | 'citation_unknown_ref'
+  | 'citation_mismatch'
+  | 'catalog_output_not_visible'
+  | 'present_contract_invalid'
+  | 'missing_contract_invalid'
+  | 'repair_panel_unknown'
+  | 'issue_repair_link_missing';
 
 interface CitationDiagnostic {
   pageId: string;
@@ -65,8 +84,11 @@ interface CitationDiagnostic {
 export class EpisodePlanAuditCoverageError extends ConfigurationError {
   public constructor(
     message: string,
+    public readonly reasonCode: EpisodePlanAuditCoverageReasonCode,
     public readonly retryInstruction: string,
     public readonly quoteCorrectionPlan: EpisodePlanAuditQuoteCorrectionPlan | null,
+    public readonly violationCount: number,
+    public readonly canFreezeBody: boolean,
   ) {
     super(message);
     this.name = 'EpisodePlanAuditCoverageError';
@@ -85,15 +107,17 @@ export function validateEpisodePlanAuditCoverage(
 ): void {
   const coverage = audit.sourceCoverage;
   if (coverage === undefined) {
-    throw new ConfigurationError('Episode plan audit omitted source coverage');
+    throw coverageError('coverage_missing', 'Episode plan audit omitted source coverage');
   }
 
   const catalogByPage = uniqueByPage(catalog.pages, 'catalog');
   const coverageByPage = uniqueByPage(coverage, 'coverage');
   const citationDiagnostics: CitationDiagnostic[] = [];
   let citationErrorCount = 0;
+  let hasUnknownCitationRef = false;
   const recordCitationDiagnostic = (diagnostic: CitationDiagnostic): void => {
     citationErrorCount += 1;
+    hasUnknownCitationRef ||= diagnostic.reason === 'unknown_ref';
     if (citationDiagnostics.length < MAX_CITATION_DIAGNOSTICS) {
       citationDiagnostics.push(diagnostic);
     }
@@ -102,13 +126,13 @@ export function validateEpisodePlanAuditCoverage(
     catalogByPage.size !== coverageByPage.size
     || [...catalogByPage.keys()].some((pageId) => !coverageByPage.has(pageId))
   ) {
-    throw new ConfigurationError('Episode plan audit coverage must include every page exactly once');
+    throw coverageError('page_set_mismatch', 'Episode plan audit coverage must include every page exactly once');
   }
 
   for (const [pageId, pageCoverage] of coverageByPage) {
     const pageCatalog = catalogByPage.get(pageId);
     if (pageCatalog === undefined) {
-      throw new ConfigurationError('Episode plan audit coverage referenced an unknown page');
+      throw coverageError('unknown_page', 'Episode plan audit coverage referenced an unknown page');
     }
     const sourceByRef = uniqueByRef(pageCatalog.sources, pageId, 'source');
     const outputByRef = uniqueByRef(pageCatalog.outputs, pageId, 'output');
@@ -117,7 +141,7 @@ export function validateEpisodePlanAuditCoverage(
     for (const [checkIndex, check] of pageCoverage.checks.entries()) {
       const checkKey = `${check.sourceRef}\u0000${check.sourceQuote}`;
       if (seenChecks.has(checkKey)) {
-        throw new ConfigurationError('Episode plan audit coverage contains a duplicate check');
+        throw coverageError('duplicate_check', 'Episode plan audit coverage contains a duplicate check');
       }
       seenChecks.add(checkKey);
 
@@ -149,7 +173,7 @@ export function validateEpisodePlanAuditCoverage(
       for (const [evidenceIndex, evidence] of check.outputEvidence.entries()) {
         const evidenceKey = `${evidence.outputRef}\u0000${evidence.quote}`;
         if (evidenceCitations.has(evidenceKey)) {
-          throw new ConfigurationError('Episode plan audit coverage contains duplicate output evidence');
+          throw coverageError('duplicate_output_evidence', 'Episode plan audit coverage contains duplicate output evidence');
         }
         evidenceCitations.add(evidenceKey);
         const output = outputByRef.get(evidence.outputRef);
@@ -166,7 +190,7 @@ export function validateEpisodePlanAuditCoverage(
           });
           continue;
         } else if (output.panelOrder === null) {
-          throw new ConfigurationError('Episode plan audit coverage output quote is not exact');
+          throw coverageError('catalog_output_not_visible', 'Episode plan audit coverage output quote is not exact');
         }
         if (!output.text.includes(evidence.quote)) {
           recordCitationDiagnostic({
@@ -187,7 +211,7 @@ export function validateEpisodePlanAuditCoverage(
           || check.issueCode !== null
           || check.repairTarget !== null
         ) {
-          throw new ConfigurationError('Present source coverage requires evidence and no repair');
+          throw coverageError('present_contract_invalid', 'Present source coverage requires evidence and no repair');
         }
         continue;
       }
@@ -198,7 +222,7 @@ export function validateEpisodePlanAuditCoverage(
         || check.repairTarget === null
         || check.repairTarget.pageId !== pageId
       ) {
-        throw new ConfigurationError('Missing source coverage requires a same-page issue and repair');
+        throw coverageError('missing_contract_invalid', 'Missing source coverage requires a same-page issue and repair');
       }
       const knownPanelOrders = new Set(
         pageCatalog.outputs
@@ -206,7 +230,7 @@ export function validateEpisodePlanAuditCoverage(
           .filter((panelOrder): panelOrder is number => panelOrder !== null),
       );
       if (!knownPanelOrders.has(check.repairTarget.panelOrder)) {
-        throw new ConfigurationError('Missing source coverage referenced an unknown panel');
+        throw coverageError('repair_panel_unknown', 'Missing source coverage referenced an unknown panel');
       }
       const linkedIssue = audit.issues.some((issue) =>
         issue.code === check.issueCode
@@ -214,7 +238,7 @@ export function validateEpisodePlanAuditCoverage(
         && issue.pageIds.includes(pageId),
       );
       if (!linkedIssue || !hasRepairTarget(audit, check.repairTarget)) {
-        throw new ConfigurationError('Missing source coverage is not linked to an error and repair');
+        throw coverageError('issue_repair_link_missing', 'Missing source coverage is not linked to an error and repair');
       }
     }
   }
@@ -222,8 +246,11 @@ export function validateEpisodePlanAuditCoverage(
   if (citationErrorCount > 0) {
     throw new EpisodePlanAuditCoverageError(
       'Episode plan audit coverage contains invalid citations',
+      hasUnknownCitationRef ? 'citation_unknown_ref' : 'citation_mismatch',
       buildCitationRetryInstruction(citationDiagnostics, citationErrorCount),
       buildQuoteCorrectionPlan(citationDiagnostics, citationErrorCount),
+      citationErrorCount,
+      true,
     );
   }
 }
@@ -304,12 +331,15 @@ function boundedPageId(pageId: string): string {
 
 function uniqueByPage<TValue extends { pageId: string }>(
   values: readonly TValue[],
-  label: string,
+  label: 'catalog' | 'coverage',
 ): Map<string, TValue> {
   const result = new Map<string, TValue>();
   for (const value of values) {
     if (result.has(value.pageId)) {
-      throw new ConfigurationError(`Episode plan audit ${label} contains a duplicate page`);
+      throw coverageError(
+        label === 'catalog' ? 'catalog_page_duplicate' : 'coverage_page_duplicate',
+        `Episode plan audit ${label} contains a duplicate page`,
+      );
     }
     result.set(value.pageId, value);
   }
@@ -319,16 +349,33 @@ function uniqueByPage<TValue extends { pageId: string }>(
 function uniqueByRef<TValue extends { ref: string }>(
   values: readonly TValue[],
   pageId: string,
-  label: string,
+  label: 'source' | 'output',
 ): Map<string, TValue> {
   const result = new Map<string, TValue>();
   for (const value of values) {
     if (result.has(value.ref)) {
-      throw new ConfigurationError(`Episode plan audit ${label} catalog contains a duplicate ref on ${pageId}`);
+      throw coverageError(
+        label === 'source' ? 'catalog_source_ref_duplicate' : 'catalog_output_ref_duplicate',
+        `Episode plan audit ${label} catalog contains a duplicate ref on ${pageId}`,
+      );
     }
     result.set(value.ref, value);
   }
   return result;
+}
+
+function coverageError(
+  reasonCode: EpisodePlanAuditCoverageReasonCode,
+  message: string,
+): EpisodePlanAuditCoverageError {
+  return new EpisodePlanAuditCoverageError(
+    message,
+    reasonCode,
+    GENERIC_COVERAGE_RETRY_INSTRUCTION,
+    null,
+    1,
+    false,
+  );
 }
 
 function hasRepairTarget(

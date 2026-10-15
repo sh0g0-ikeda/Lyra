@@ -67,12 +67,39 @@ are not useful image-model prompt content.
 
 ## 6. Quality gates and fallback
 
-Schema validity alone is not sufficient. Successful compiler output is checked for
-incorrectly empty assignments where the source requires a visible character,
-missing source facts or continuing actions, missing visual beats, generic repeated composition,
-speaker/dialogue mismatch, invalid page coverage, and frame/panel count mismatch.
-Repair is field-level where possible. Deterministic fallback must use only entities
-supported by the story context and must not promote unrelated work entities or
+The normal episode audit returns accepted, issues, page_repairs and panel_repairs.
+It reviews original facts, continuing actions, dialogue/speaker placement, visible
+beats and cross-page continuity. Useful repairs remain field-level. Auxiliary
+source-coverage, grounding and per-unit proofs are not required in the response or
+requested in the normal prompt. A patchless semantic finding does not invalidate
+the typed result or another valid patch; an old expression quoted in a negative
+explanation is not by itself a malformed repair.
+
+Schema, bounded values, known targets, unique changed fields and matching patch
+values remain hard checks. Page/panel identities, frame counts and geometry cannot
+be changed by audit repairs. Invalid structured responses retain the existing
+bounded retry with cancellation checkpoints. Each autofill performs one semantic
+audit. It applies that audit's validated field repairs once, or recompiles its
+affected chunks once in the legacy non-inline path, and then runs local deterministic
+validation. It does not submit the repaired draft for a second semantic audit.
+Patchless or residual semantic findings do not discard a structurally and
+deterministically valid draft. Actual invalid state references, deterministic
+duplicate errors, authorization, cancellation, concurrency and atomic saving remain
+hard controls. State IDs and reference readiness are independently revalidated
+before and under the save lock.
+
+Automatic state planning with visual fallback requires a bounded, nonblank source
+quote and a source field or scene ID that points to real non-null saved source.
+Literal containment of that quote is soft provenance metadata, so a paraphrased or
+translated quote does not discard an otherwise valid draft. Entity, panel and state
+ownership, READY references and transition order remain hard checks. Legacy strict
+state validation continues to require an exact source quote. Generated assignments
+may use a registered READY state owned by the assigned entity even when that state is
+not preassigned to a scene. Unknown, foreign-entity and unready states remain invalid.
+
+Source and continuity repairs should reconcile conflicting visible fields while
+preserving source-faithful fields. Deterministic fallback uses only entities
+supported by the story context and does not promote unrelated work entities or
 repopulate explicit empty lists for character-free cutaways.
 
 Fallback use is recorded in server logs and job metadata, not exposed as technical
@@ -99,3 +126,17 @@ take.
 - dialogue speaker validation and narration behavior
 - requested page/panel count coverage
 - duplicate active-job prevention and terminal recovery
+
+Source-owned audit prompts render original source once as an ordered canonical
+global-preface and page-source section. The raw original slices, page ownership,
+global chronology, exact source quotations, offsets and state authorities remain
+unchanged. Complete original source, dialogue and minimum panel evidence reserve
+their space before optional displays; insufficient capacity fails closed.
+Page ownership and original state authorities remain available without auxiliary
+proof-output requirements. Client APIs, detail prompts, provider model, reasoning,
+retry limits, output limits and atomic persistence are unchanged.
+
+Normal audit regression checks additionally cover four-field-only responses,
+patchless and mixed findings, inline and legacy repair with one semantic audit,
+state-aware review with one call, invalid repair values/targets, and preservation of
+cancellation, conflict and atomic-save behavior.

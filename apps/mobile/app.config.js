@@ -14,6 +14,7 @@ const PRODUCTION_COGNITO_REDIRECT_URI = 'lyra-mobile://auth/mobile/callback';
 const PRODUCTION_COGNITO_LOGOUT_REDIRECT_URI = 'lyra-mobile://auth/mobile/logout';
 const STAGING_APP_NAME = 'Lyra Mobile Staging';
 const STAGING_ANDROID_PACKAGE = 'com.lyra.mobile.staging';
+const STAGING_IOS_BUNDLE_IDENTIFIER = 'com.lyra.mobile.staging';
 const STAGING_SCHEME = 'lyra-mobile-staging';
 const STAGING_COGNITO_REDIRECT_URI = `${STAGING_SCHEME}://auth/mobile/callback`;
 const STAGING_COGNITO_LOGOUT_REDIRECT_URI = `${STAGING_SCHEME}://auth/mobile/logout`;
@@ -125,6 +126,7 @@ module.exports = ({ config }) => {
     ...(variant === 'staging' ? { name: STAGING_APP_NAME, scheme: STAGING_SCHEME } : {}),
     ios: {
       ...ios,
+      ...(variant === 'staging' ? { bundleIdentifier: STAGING_IOS_BUNDLE_IDENTIFIER } : {}),
       ...(appLinkHost && iOSAssociatedDomainsEnabled ? { associatedDomains: [`applinks:${appLinkHost}`] } : {}),
     },
     android: {

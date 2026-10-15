@@ -225,12 +225,12 @@ const styles = StyleSheet.create({
     borderColor: colors.controlBorder,
     borderRadius: 4,
     borderWidth: 1,
-    bottom: 45,
-    height: 34,
+    bottom: 42,
+    height: 48,
     justifyContent: 'center',
     position: 'absolute',
     right: spacing.xs,
-    width: 34,
+    width: 48,
     zIndex: 2
   },
   selectionIndicator: {

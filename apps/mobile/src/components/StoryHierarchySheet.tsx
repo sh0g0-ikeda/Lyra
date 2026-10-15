@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -43,6 +43,7 @@ import type {
   UiLanguage,
   WorkRecord
 } from '@/domain/types';
+import { workDeletionMessage, type WorkDeletionRecord } from '@/domain/workDeletion';
 import { ApiError, type LyraMobileApiClient } from '@/lib/api';
 import { confirmDestructiveAction } from '@/lib/confirm';
 import { t } from '@/lib/i18n';
@@ -57,6 +58,7 @@ import {
   saveStoryHierarchyExpansion
 } from '@/lib/storage';
 import { errorRefreshLabel, operationErrorMessage, type ErrorOperation, type OperationErrorContext, type OperationFailure } from '@/lib/operationErrorContext';
+import { currentQueryError } from '@/lib/queryErrorPolicy';
 
 type StoryHierarchyApi = Pick<
   LyraMobileApiClient,
@@ -65,6 +67,7 @@ type StoryHierarchyApi = Pick<
   | 'createWork'
   | 'deleteChapter'
   | 'deleteEpisode'
+  | 'deleteWork'
    | 'getChapters'
    | 'getEpisodes'
    | 'getWork'
@@ -81,6 +84,10 @@ interface StoryHierarchySheetProps {
   works: WorkRecord[];
   hasNextWorks?: boolean;
   isFetchingNextWorks?: boolean;
+  isLoadingWorks?: boolean;
+  hierarchyError?: unknown;
+  initialAction?: 'create-work';
+  onRetryHierarchy?: () => void;
   onEndReachedWorks?: () => void;
   selectedWorkId: string | null;
   selectedChapterId: string | null;
@@ -97,7 +104,9 @@ interface StoryHierarchySheetProps {
   onSelectEpisode: (workId: string, chapterId: string, episodeId: string) => void;
   onChapterDeleted: (chapterId: string) => void;
   onEpisodeDeleted: (episodeId: string) => void;
+  onBeforeWorkDelete: (workId: string) => Promise<boolean>;
   onWorkRenamed: (workId: string, title: string) => void;
+  onWorkDeletionAccepted: (deletion: WorkDeletionRecord) => Promise<void>;
   onChapterRenamed: (chapterId: string, title: string) => void;
   onEpisodeRenamed: (episodeId: string, title: string) => void;
 }
@@ -133,6 +142,13 @@ type TitleIntent =
   | { kind: 'create-episode'; work: WorkRecord; chapter: ChapterRecord }
   | { kind: 'rename-episode'; work: WorkRecord; chapter: ChapterRecord; episode: EpisodeRecord };
 
+interface ScopedExpansionState {
+  baseIds: Set<string>;
+  loaded: boolean;
+  overrides: Map<string, boolean>;
+  scope: string;
+}
+
 interface WorkNodeProps {
   api: StoryHierarchyApi;
   work: WorkRecord;
@@ -152,6 +168,8 @@ interface WorkNodeProps {
   onSelectWork: (workId: string) => void;
   onSelectChapter: (workId: string, chapterId: string) => void;
   onSelectEpisode: (workId: string, chapterId: string, episodeId: string) => void;
+  onCreateChapter: (work: WorkRecord) => void;
+  onCreateEpisode: (work: WorkRecord, chapter: ChapterRecord) => void;
   onOpenMenu: (target: MenuTarget) => void;
 }
 
@@ -172,6 +190,7 @@ interface ChapterNodeProps {
   onToggle: () => void;
   onSelectChapter: (workId: string, chapterId: string) => void;
   onSelectEpisode: (workId: string, chapterId: string, episodeId: string) => void;
+  onCreateEpisode: (work: WorkRecord, chapter: ChapterRecord) => void;
   onOpenMenu: (target: MenuTarget) => void;
 }
 
@@ -190,6 +209,16 @@ interface TreeRowProps {
 
 const sortedByOrder = <T extends { order: number }>(records: readonly T[]): T[] =>
   [...records].sort((left, right) => left.order - right.order);
+
+const resolvedExpansionIds = (state: ScopedExpansionState, scope: string): Set<string> => {
+  if (state.scope !== scope) return new Set();
+  const ids = new Set(state.baseIds);
+  for (const [id, expanded] of state.overrides) {
+    if (expanded) ids.add(id);
+    else ids.delete(id);
+  }
+  return ids;
+};
 
 const titleForChapter = (chapter: ChapterRecord, language: UiLanguage): string =>
   chapter.title?.trim() || t(language, 'component.storyHierarchySheet.chapterFallbackTitle', { order: chapter.order });
@@ -283,14 +312,21 @@ function ChapterNode({
   onToggle,
   onSelectChapter,
   onSelectEpisode,
+  onCreateEpisode,
   onOpenMenu
 }: ChapterNodeProps): React.JSX.Element {
+  const queryEnabled = visible && expanded;
   const episodesQuery = useQuery({
-    enabled: visible && expanded,
+    enabled: queryEnabled,
     queryKey: episodesQueryKey(sessionKey, chapter.id, organizationId),
     queryFn: () => api.getEpisodes(chapter.id, organizationId)
   });
   const episodes = sortedByOrder(episodesQuery.data?.episodes ?? []);
+  const episodesError = currentQueryError({
+    data: episodesQuery.data,
+    enabled: queryEnabled,
+    error: episodesQuery.error
+  });
   const title = titleForChapter(chapter, language);
 
   return (
@@ -314,6 +350,25 @@ function ChapterNode({
               <ActivityIndicator color={colors.primary} size="small" />
               <Text style={styles.loadingLabel}>{t(language, "generated.components.StoryHierarchySheet.loading.episodes.e4ed2ecc")}</Text>
             </View>
+          ) : null}
+          {episodesError === null ? null : (
+            <Notice
+              actionLabel={errorRefreshLabel(language)}
+              message={operationErrorMessage(episodesError, { operation: 'loadHierarchy' }, language)}
+              onAction={() => { void episodesQuery.refetch(); }}
+              tone="warning"
+            />
+          )}
+          {canEdit ? (
+            <Pressable
+              accessibilityLabel={t(language, 'component.storyHierarchySheet.addEpisodeHere')}
+              accessibilityRole="button"
+              onPress={() => onCreateEpisode(work, chapter)}
+              style={styles.branchAddButton}
+            >
+              <Plus color={colors.primary} size={18} strokeWidth={2.2} />
+              <Text style={styles.branchAddLabel}>{t(language, "generated.components.StoryHierarchySheet.add.episode.ad67475b")}</Text>
+            </Pressable>
           ) : null}
           {episodes.map((episode, episodeIndex) => {
             const episodeTitle = titleForEpisode(episode, language);
@@ -340,7 +395,7 @@ function ChapterNode({
               />
             );
           })}
-          {!episodesQuery.isLoading && episodes.length === 0 ? (
+          {episodesQuery.isSuccess && episodes.length === 0 ? (
             <Text style={styles.emptyBranch}>{t(language, "generated.components.StoryHierarchySheet.no.episodes.yet.7abbd110")}</Text>
           ) : null}
         </View>
@@ -367,14 +422,22 @@ function WorkNode({
   onSelectWork,
   onSelectChapter,
   onSelectEpisode,
+  onCreateChapter,
+  onCreateEpisode,
   onOpenMenu
 }: WorkNodeProps): React.JSX.Element {
+  const queryEnabled = visible && expanded;
   const chaptersQuery = useQuery({
-    enabled: visible && expanded,
+    enabled: queryEnabled,
     queryKey: chaptersQueryKey(sessionKey, work.id, organizationId),
     queryFn: () => api.getChapters(work.id, organizationId)
   });
   const chapters = sortedByOrder(chaptersQuery.data?.chapters ?? []);
+  const chaptersError = currentQueryError({
+    data: chaptersQuery.data,
+    enabled: queryEnabled,
+    error: chaptersQuery.error
+  });
 
   return (
     <View style={styles.branch}>
@@ -398,6 +461,25 @@ function WorkNode({
               <Text style={styles.loadingLabel}>{t(language, "generated.components.StoryHierarchySheet.loading.chapters.62730c70")}</Text>
             </View>
           ) : null}
+          {chaptersError === null ? null : (
+            <Notice
+              actionLabel={errorRefreshLabel(language)}
+              message={operationErrorMessage(chaptersError, { operation: 'loadHierarchy' }, language)}
+              onAction={() => { void chaptersQuery.refetch(); }}
+              tone="warning"
+            />
+          )}
+          {canEdit ? (
+            <Pressable
+              accessibilityLabel={t(language, 'component.storyHierarchySheet.addChapterHere')}
+              accessibilityRole="button"
+              onPress={() => onCreateChapter(work)}
+              style={styles.branchAddButton}
+            >
+              <Plus color={colors.primary} size={18} strokeWidth={2.2} />
+              <Text style={styles.branchAddLabel}>{t(language, "generated.components.StoryHierarchySheet.add.chapter.774ad8c0")}</Text>
+            </Pressable>
+          ) : null}
           {chapters.map((chapter, chapterIndex) => (
             <ChapterNode
               api={api}
@@ -409,6 +491,7 @@ function WorkNode({
               key={chapter.id}
               language={language}
               onOpenMenu={onOpenMenu}
+              onCreateEpisode={onCreateEpisode}
               onSelectChapter={onSelectChapter}
               onSelectEpisode={onSelectEpisode}
               onToggle={() => onToggleChapter(chapter.id)}
@@ -420,7 +503,7 @@ function WorkNode({
               work={work}
             />
           ))}
-          {!chaptersQuery.isLoading && chapters.length === 0 ? (
+          {chaptersQuery.isSuccess && chapters.length === 0 ? (
             <Text style={styles.emptyBranch}>{t(language, "generated.components.StoryHierarchySheet.no.chapters.yet.4d8608eb")}</Text>
           ) : null}
         </View>
@@ -435,7 +518,11 @@ export function StoryHierarchySheet({
   works,
   hasNextWorks = false,
   isFetchingNextWorks = false,
+  isLoadingWorks = false,
+  hierarchyError = null,
+  initialAction,
   onEndReachedWorks,
+  onRetryHierarchy,
   selectedWorkId,
   selectedChapterId,
   selectedEpisodeId,
@@ -451,21 +538,32 @@ export function StoryHierarchySheet({
   onSelectEpisode,
   onChapterDeleted,
   onEpisodeDeleted,
+  onBeforeWorkDelete,
   onWorkRenamed,
+  onWorkDeletionAccepted,
   onChapterRenamed,
   onEpisodeRenamed
 }: StoryHierarchySheetProps): React.JSX.Element {
   const queryClient = useQueryClient();
   const expansionScope = `${userId}:${organizationId ?? 'personal'}`;
-  const [expandedWorkIds, setExpandedWorkIds] = useState<Set<string>>(new Set());
-  const [expandedChapterIds, setExpandedChapterIds] = useState<Set<string>>(new Set());
-  const [loadedExpansionScope, setLoadedExpansionScope] = useState<string | null>(null);
+  const [workExpansion, setWorkExpansion] = useState<ScopedExpansionState>(() => ({ baseIds: new Set(), loaded: false, overrides: new Map(), scope: expansionScope }));
+  const [chapterExpansion, setChapterExpansion] = useState<ScopedExpansionState>(() => ({ baseIds: new Set(), loaded: false, overrides: new Map(), scope: expansionScope }));
   const [menuTarget, setMenuTarget] = useState<MenuTarget | null>(null);
   const [titleIntent, setTitleIntent] = useState<TitleIntent | null>(null);
   const [titleValue, setTitleValue] = useState('');
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<(OperationFailure & { scope: string; titleIntent: TitleIntent | null }) | null>(null);
+  const wasVisibleRef = useRef(false);
   const errorScope = JSON.stringify([sessionKey, userId, organizationId]);
+  const titleScopeRef = useRef(errorScope);
+  const liveTitleContextRef = useRef<{
+    canCreateWork: boolean;
+    canEdit: boolean;
+    intent: TitleIntent | null;
+    scope: string;
+    visible: boolean;
+  }>({ canCreateWork, canEdit, intent: titleIntent, scope: errorScope, visible });
+  const liveWorkDeletionContextRef = useRef({ canEdit, scope: errorScope, visible });
   const error = failure?.scope === errorScope ? failure.error : null;
   const recordFailure = (cause: unknown, context: OperationErrorContext, intent: TitleIntent | null = null): void => {
     setFailure({ error: cause, context, scope: errorScope, titleIntent: intent });
@@ -477,9 +575,18 @@ export function StoryHierarchySheet({
       if (!active) {
         return;
       }
-      setExpandedWorkIds(new Set(stored.workIds));
-      setExpandedChapterIds(new Set(stored.chapterIds));
-      setLoadedExpansionScope(expansionScope);
+      setWorkExpansion((current) => ({
+        baseIds: new Set(stored.workIds),
+        loaded: true,
+        overrides: current.scope === expansionScope ? current.overrides : new Map(),
+        scope: expansionScope
+      }));
+      setChapterExpansion((current) => ({
+        baseIds: new Set(stored.chapterIds),
+        loaded: true,
+        overrides: current.scope === expansionScope ? current.overrides : new Map(),
+        scope: expansionScope
+      }));
     });
     return () => {
       active = false;
@@ -488,25 +595,23 @@ export function StoryHierarchySheet({
 
   const effectiveExpandedWorkIds = useMemo(() => {
     const liveWorkIds = new Set(works.map((work) => work.id));
-    const storedIds = loadedExpansionScope === expansionScope ? expandedWorkIds : new Set<string>();
-    const result = new Set([...storedIds].filter((id) => liveWorkIds.has(id)));
+    const result = new Set([...resolvedExpansionIds(workExpansion, expansionScope)].filter((id) => liveWorkIds.has(id)));
     if (selectedWorkId !== null && liveWorkIds.has(selectedWorkId)) {
       result.add(selectedWorkId);
     }
     return result;
-  }, [expandedWorkIds, expansionScope, loadedExpansionScope, selectedWorkId, works]);
+  }, [expansionScope, selectedWorkId, workExpansion, works]);
 
   const effectiveExpandedChapterIds = useMemo(() => {
-    const storedIds = loadedExpansionScope === expansionScope ? expandedChapterIds : new Set<string>();
-    const result = new Set(storedIds);
+    const result = resolvedExpansionIds(chapterExpansion, expansionScope);
     if (selectedChapterId !== null) {
       result.add(selectedChapterId);
     }
     return result;
-  }, [expandedChapterIds, expansionScope, loadedExpansionScope, selectedChapterId]);
+  }, [chapterExpansion, expansionScope, selectedChapterId]);
 
   useEffect(() => {
-    if (loadedExpansionScope !== expansionScope) {
+    if (!workExpansion.loaded || !chapterExpansion.loaded || workExpansion.scope !== expansionScope || chapterExpansion.scope !== expansionScope) {
       return;
     }
     void saveStoryHierarchyExpansion(userId, organizationId, {
@@ -517,7 +622,8 @@ export function StoryHierarchySheet({
     effectiveExpandedChapterIds,
     effectiveExpandedWorkIds,
     expansionScope,
-    loadedExpansionScope,
+    workExpansion,
+    chapterExpansion,
     organizationId,
     userId
   ]);
@@ -525,35 +631,36 @@ export function StoryHierarchySheet({
   const sortedWorks = useMemo(() => [...works], [works]);
   const titleValid = titleValue.trim().length >= 1 && titleValue.trim().length <= 200;
 
-  const toggleSetId = (
-    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
-    id: string
+  const updateExpansionId = (
+    setter: React.Dispatch<React.SetStateAction<ScopedExpansionState>>,
+    id: string,
+    value: boolean | null
   ): void => {
     setter((current) => {
-      const next = new Set(current);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
+      const scoped = current.scope === expansionScope
+        ? current
+        : { baseIds: new Set<string>(), loaded: false, overrides: new Map<string, boolean>(), scope: expansionScope };
+      const expanded = scoped.overrides.get(id) ?? scoped.baseIds.has(id);
+      const overrides = new Map(scoped.overrides);
+      overrides.set(id, value ?? !expanded);
+      return { ...scoped, overrides };
     });
   };
 
   const selectWorkFromTree = (workId: string): void => {
-    setExpandedWorkIds((current) => new Set([...current, workId]));
+    updateExpansionId(setWorkExpansion, workId, true);
     onSelectWork(workId);
   };
 
   const selectChapterFromTree = (workId: string, chapterId: string): void => {
-    setExpandedWorkIds((current) => new Set([...current, workId]));
-    setExpandedChapterIds((current) => new Set([...current, chapterId]));
+    updateExpansionId(setWorkExpansion, workId, true);
+    updateExpansionId(setChapterExpansion, chapterId, true);
     onSelectChapter(workId, chapterId);
   };
 
   const selectEpisodeFromTree = (workId: string, chapterId: string, episodeId: string): void => {
-    setExpandedWorkIds((current) => new Set([...current, workId]));
-    setExpandedChapterIds((current) => new Set([...current, chapterId]));
+    updateExpansionId(setWorkExpansion, workId, true);
+    updateExpansionId(setChapterExpansion, chapterId, true);
     onSelectEpisode(workId, chapterId, episodeId);
   };
 
@@ -598,6 +705,50 @@ export function StoryHierarchySheet({
     setTitleIntent(intent);
   };
 
+  useEffect(() => {
+    const scopeChanged = titleScopeRef.current !== errorScope;
+    titleScopeRef.current = errorScope;
+    liveTitleContextRef.current = { canCreateWork, canEdit, intent: titleIntent, scope: errorScope, visible };
+    liveWorkDeletionContextRef.current = { canEdit, scope: errorScope, visible };
+    const permissionLost = titleIntent?.kind === 'create-work'
+      ? !canCreateWork
+      : titleIntent !== null && !canEdit;
+    if (!scopeChanged && visible && !permissionLost) {
+      return;
+    }
+    setMenuTarget(null);
+    setTitleIntent(null);
+    setTitleValue('');
+    setFailure(null);
+    setPending(false);
+  }, [canCreateWork, canEdit, errorScope, titleIntent, visible]);
+
+  useEffect(() => () => {
+    liveTitleContextRef.current = {
+      ...liveTitleContextRef.current,
+      intent: null,
+      visible: false
+    };
+    liveWorkDeletionContextRef.current = {
+      ...liveWorkDeletionContextRef.current,
+      visible: false
+    };
+  }, []);
+
+  useEffect(() => {
+    const becameVisible = visible && !wasVisibleRef.current;
+    wasVisibleRef.current = visible;
+    if (!becameVisible || initialAction !== 'create-work' || !canCreateWork) {
+      return;
+    }
+    // The entry action belongs to this visibility edge only. A tenant/capability
+    // rerender while open must not replay a creation dialog.
+    setMenuTarget(null);
+    setFailure(null);
+    setTitleValue('');
+    setTitleIntent({ kind: 'create-work' });
+  }, [canCreateWork, initialAction, visible]);
+
   const titleHasStaleConflict = error instanceof ApiError && error.code === 'RESOURCE_STALE';
   const titleAlreadyConfirmed = error !== null && failure?.context.confirmed === true && failure.titleIntent === titleIntent;
 
@@ -629,7 +780,27 @@ export function StoryHierarchySheet({
   };
 
   const submitTitle = async (): Promise<void> => {
-    if (titleIntent === null || !titleValid || pending || titleAlreadyConfirmed) {
+    if (
+      titleIntent === null ||
+      !titleValid ||
+      pending ||
+      titleAlreadyConfirmed ||
+      (titleIntent.kind === 'create-work' ? !canCreateWork : !canEdit)
+    ) {
+      return;
+    }
+    const operationScope = errorScope;
+    const operationIntent = titleIntent;
+    const isCurrentTitleOperation = (): boolean => {
+      const liveContext = liveTitleContextRef.current;
+      return liveContext.scope === operationScope &&
+        liveContext.intent === operationIntent &&
+        liveContext.visible &&
+        (operationIntent.kind === 'create-work'
+          ? liveContext.canCreateWork
+          : liveContext.canEdit);
+    };
+    if (!isCurrentTitleOperation()) {
       return;
     }
     const title = titleValue.trim();
@@ -657,12 +828,21 @@ export function StoryHierarchySheet({
           overall_flow: null
         }, organizationId);
         confirmed = true;
-        setExpandedWorkIds((current) => new Set([...current, created.id]));
+        if (!isCurrentTitleOperation()) {
+          return;
+        }
+        updateExpansionId(setWorkExpansion, created.id, true);
         await invalidateWorks();
+        if (!isCurrentTitleOperation()) {
+          return;
+        }
         onSelectWork(created.id);
       } else if (titleIntent.kind === 'rename-work') {
         await api.updateWork(titleIntent.work.id, { title, expected_updated_at: titleIntent.work.updated_at }, organizationId);
         confirmed = true;
+        if (!isCurrentTitleOperation()) {
+          return;
+        }
         onWorkRenamed(titleIntent.work.id, title);
         await invalidateWorks();
       } else if (titleIntent.kind === 'create-chapter') {
@@ -684,13 +864,19 @@ export function StoryHierarchySheet({
           created = await create(true);
         }
         confirmed = true;
-        setExpandedWorkIds((current) => new Set([...current, titleIntent.work.id]));
-        setExpandedChapterIds((current) => new Set([...current, created.id]));
+        if (!isCurrentTitleOperation()) {
+          return;
+        }
+        updateExpansionId(setWorkExpansion, titleIntent.work.id, true);
+        updateExpansionId(setChapterExpansion, created.id, true);
         await invalidateChapters(titleIntent.work.id);
         onSelectChapter(titleIntent.work.id, created.id);
       } else if (titleIntent.kind === 'rename-chapter') {
         await api.updateChapter(titleIntent.chapter.id, { title, expected_updated_at: titleIntent.chapter.updated_at }, organizationId);
         confirmed = true;
+        if (!isCurrentTitleOperation()) {
+          return;
+        }
         onChapterRenamed(titleIntent.chapter.id, title);
         await invalidateChapters(titleIntent.work.id);
       } else if (titleIntent.kind === 'create-episode') {
@@ -712,8 +898,11 @@ export function StoryHierarchySheet({
           created = await create(true);
         }
         confirmed = true;
-        setExpandedWorkIds((current) => new Set([...current, titleIntent.work.id]));
-        setExpandedChapterIds((current) => new Set([...current, titleIntent.chapter.id]));
+        if (!isCurrentTitleOperation()) {
+          return;
+        }
+        updateExpansionId(setWorkExpansion, titleIntent.work.id, true);
+        updateExpansionId(setChapterExpansion, titleIntent.chapter.id, true);
         await queryClient.invalidateQueries({
           queryKey: episodesQueryKey(sessionKey, titleIntent.chapter.id, organizationId)
         });
@@ -721,17 +910,26 @@ export function StoryHierarchySheet({
       } else {
         await api.updateEpisode(titleIntent.episode.id, { title, expected_updated_at: titleIntent.episode.updated_at }, organizationId);
         confirmed = true;
+        if (!isCurrentTitleOperation()) {
+          return;
+        }
         onEpisodeRenamed(titleIntent.episode.id, title);
         await queryClient.invalidateQueries({
           queryKey: episodesQueryKey(sessionKey, titleIntent.chapter.id, organizationId)
         });
       }
-      setTitleIntent(null);
-      setTitleValue('');
+      if (isCurrentTitleOperation()) {
+        setTitleIntent(null);
+        setTitleValue('');
+      }
     } catch (submitError) {
-      recordFailure(submitError, { operation: titleOperations[titleIntent.kind], targetLabel, retainedDraft: confirmed ? undefined : 'title', confirmed }, titleIntent);
+      if (isCurrentTitleOperation()) {
+        recordFailure(submitError, { operation: titleOperations[titleIntent.kind], targetLabel, retainedDraft: confirmed ? undefined : 'title', confirmed }, titleIntent);
+      }
     } finally {
-      setPending(false);
+      if (isCurrentTitleOperation()) {
+        setPending(false);
+      }
     }
   };
 
@@ -799,11 +997,7 @@ export function StoryHierarchySheet({
         void api.deleteChapter(target.chapter.id, organizationId)
           .then(async () => {
             confirmed = true;
-            setExpandedChapterIds((current) => {
-              const next = new Set(current);
-              next.delete(target.chapter.id);
-              return next;
-            });
+            updateExpansionId(setChapterExpansion, target.chapter.id, false);
             onChapterDeleted(target.chapter.id);
             await invalidateChapters(target.work.id);
             await invalidateAllEpisodes();
@@ -840,6 +1034,51 @@ export function StoryHierarchySheet({
     });
   };
 
+  const deleteWork = (target: Extract<MenuTarget, { kind: 'work' }>): void => {
+    setMenuTarget(null);
+    const operationScope = errorScope;
+    const isCurrentDeletion = (): boolean => {
+      const live = liveWorkDeletionContextRef.current;
+      return live.scope === operationScope && live.visible && live.canEdit;
+    };
+    confirmDestructiveAction({
+      language,
+      title: workDeletionMessage(language, 'deleteTitle'),
+      message: workDeletionMessage(language, 'deleteWarning', { title: target.work.title }),
+      onConfirm: () => {
+        void (async () => {
+          if (!isCurrentDeletion() || !await onBeforeWorkDelete(target.work.id) || !isCurrentDeletion()) return;
+          setPending(true);
+          setFailure(null);
+          let confirmed = false;
+          try {
+            const deletion = await api.deleteWork(target.work.id, organizationId);
+            confirmed = true;
+            await Promise.allSettled([
+              invalidateWorks(),
+              queryClient.invalidateQueries({ queryKey: workDetailQueryKey(sessionKey, target.work.id, organizationId) }),
+              queryClient.invalidateQueries({ queryKey: ['chapters', sessionKey] }),
+              queryClient.invalidateQueries({ queryKey: ['episodes', sessionKey] }),
+              queryClient.invalidateQueries({ queryKey: ['work-deletions', sessionKey, organizationId ?? 'personal'] })
+            ]);
+            if (isCurrentDeletion()) await onWorkDeletionAccepted(deletion);
+          } catch (cause) {
+            await Promise.allSettled([
+              queryClient.invalidateQueries({ queryKey: ['work-deletions', sessionKey, organizationId ?? 'personal'] }),
+              invalidateWorks(),
+              queryClient.invalidateQueries({ queryKey: workDetailQueryKey(sessionKey, target.work.id, organizationId) })
+            ]);
+            if (isCurrentDeletion()) {
+              recordFailure(cause, { operation: 'deleteWork', targetLabel: target.work.title, confirmed });
+            }
+          } finally {
+            if (isCurrentDeletion()) setPending(false);
+          }
+        })();
+      }
+    });
+  };
+
   const renderMenuItems = (): React.JSX.Element[] => {
     if (menuTarget === null) {
       return [];
@@ -870,6 +1109,7 @@ export function StoryHierarchySheet({
     };
 
     if (menuTarget.kind === 'work') {
+      const target = menuTarget;
       item(
         'rename',
         t(language, "generated.components.StoryHierarchySheet.rename.work.25fb474a"),
@@ -881,6 +1121,14 @@ export function StoryHierarchySheet({
         t(language, "generated.components.StoryHierarchySheet.add.chapter.774ad8c0"),
         <Plus color={colors.primary} size={19} />,
         () => openTitleIntent({ kind: 'create-chapter', work: menuTarget.work })
+      );
+      item(
+        'delete',
+        workDeletionMessage(language, 'deleteMenu'),
+        <Trash2 color={colors.danger} size={19} />,
+        () => deleteWork(target),
+        false,
+        true
       );
       return items;
     }
@@ -978,12 +1226,26 @@ export function StoryHierarchySheet({
     }).catch((cause: unknown) => recordFailure(cause, failure.context, failure.titleIntent))
       .finally(() => setPending(false));
   };
+  const refreshDeleteStatus = (): void => {
+    if (pending) return;
+    setPending(true);
+    void Promise.all([
+      invalidateWorks(),
+      queryClient.invalidateQueries({ queryKey: ['work-deletions', sessionKey, organizationId ?? 'personal'] })
+    ]).then(() => setFailure(null))
+      .catch((cause: unknown) => recordFailure(cause, { operation: 'loadWorkDeletions' }))
+      .finally(() => setPending(false));
+  };
+  const deleteFailure = failureContext?.operation === 'deleteWork';
+  const deleteRecoveryMessage = deleteFailure && error instanceof ApiError && error.status === 409
+    ? workDeletionMessage(language, 'activeConflict')
+    : undefined;
   const errorNotice = error === null || failureContext === null ? null : (
     <Notice
       announce
-      message={operationErrorMessage(error, failureContext, language)}
-      actionLabel={failureContext.confirmed === true ? errorRefreshLabel(language) : undefined}
-      onAction={failureContext.confirmed === true ? refreshConfirmedOperation : undefined}
+      message={operationErrorMessage(error, failureContext, language, deleteRecoveryMessage)}
+      actionLabel={deleteFailure || failureContext.confirmed === true ? errorRefreshLabel(language) : undefined}
+      onAction={deleteFailure ? refreshDeleteStatus : failureContext.confirmed === true ? refreshConfirmedOperation : undefined}
       tone="warning"
     />
   );
@@ -1045,6 +1307,14 @@ export function StoryHierarchySheet({
               tone="info"
             />
           ) : null}
+          {hierarchyError === null ? null : (
+            <Notice
+              actionLabel={onRetryHierarchy === undefined ? undefined : errorRefreshLabel(language)}
+              message={operationErrorMessage(hierarchyError, { operation: 'loadHierarchy' }, language)}
+              onAction={onRetryHierarchy}
+              tone="warning"
+            />
+          )}
           <FlatList
             contentContainerStyle={styles.tree}
             data={sortedWorks}
@@ -1052,9 +1322,23 @@ export function StoryHierarchySheet({
             keyboardShouldPersistTaps="handled"
             keyExtractor={(work) => work.id}
             ListEmptyComponent={
-              <Text style={styles.emptyRoot}>
-                {t(language, "generated.components.StoryHierarchySheet.no.works.yet.use.to.create.one.b9c65592")}
-              </Text>
+              isLoadingWorks
+                ? (
+                    <View style={styles.loadingRow}>
+                      <ActivityIndicator
+                        accessibilityLabel={t(language, 'generated.components.OrganizationCollectionModal.loading.7c96f399')}
+                        color={colors.primary}
+                        size="small"
+                      />
+                    </View>
+                  )
+                : hierarchyError === null
+                  ? (
+                      <Text style={styles.emptyRoot}>
+                        {t(language, "generated.components.StoryHierarchySheet.no.works.yet.use.to.create.one.b9c65592")}
+                      </Text>
+                    )
+                  : null
             }
             ListFooterComponent={
               isFetchingNextWorks
@@ -1077,11 +1361,13 @@ export function StoryHierarchySheet({
                 key={work.id}
                 language={language}
                 onOpenMenu={setMenuTarget}
+                onCreateChapter={(work) => openTitleIntent({ kind: 'create-chapter', work })}
+                onCreateEpisode={(work, chapter) => openTitleIntent({ kind: 'create-episode', work, chapter })}
                 onSelectChapter={selectChapterFromTree}
                 onSelectEpisode={selectEpisodeFromTree}
                 onSelectWork={selectWorkFromTree}
-                onToggleChapter={(chapterId) => toggleSetId(setExpandedChapterIds, chapterId)}
-                onToggleWork={(workId) => toggleSetId(setExpandedWorkIds, workId)}
+                onToggleChapter={(chapterId) => updateExpansionId(setChapterExpansion, chapterId, null)}
+                onToggleWork={(workId) => updateExpansionId(setWorkExpansion, workId, null)}
                 organizationId={organizationId}
                 selectedChapterId={selectedChapterId}
                 selectedEpisodeId={selectedEpisodeId}
@@ -1231,7 +1517,19 @@ const styles = StyleSheet.create({
     width: '100%'
   },
   branch: {
-    flex: 1
+    // FlatList cells must take their measured content height so nested episode rows remain scrollable.
+  },
+  branchAddButton: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    minHeight: 44,
+    paddingHorizontal: spacing.xl
+  },
+  branchAddLabel: {
+    ...textStyles.body,
+    color: colors.primary,
+    fontWeight: '700'
   },
   chevronSpacer: {
     height: 44,

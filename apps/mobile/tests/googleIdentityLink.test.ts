@@ -43,10 +43,33 @@ describe('GoogleIdentityLinkFlow', () => {
     const { flow, client, ports } = fixture();
     client.startGoogleIdentityLink.mockRejectedValueOnce(new Error('timeout'));
     await expect(flow.start()).rejects.toThrow();
+    expect(flow.failureStage).toBe('start');
     expect(flow.canRetryStart).toBe(true);
     await flow.start();
+    expect(flow.failureStage).toBeNull();
     expect(ports.reauthenticate).toHaveBeenCalledOnce();
     expect(client.startGoogleIdentityLink.mock.calls.map(([body]) => body.request_key)).toEqual([key, key]);
+  });
+  it.each(['reauthenticate', 'session'] as const)('連携POST前の%s失敗をpreparationとして区別する', async (failure) => {
+    const { flow, client, ports } = fixture();
+    if (failure === 'reauthenticate') ports.reauthenticate.mockRejectedValueOnce(new Error('offline'));
+    else client.getCurrentSession.mockRejectedValueOnce(new Error('offline'));
+    await expect(flow.start()).rejects.toThrow('offline');
+    expect(flow.failureStage).toBe('preparation');
+    expect(flow.canRetryStart).toBe(false);
+    expect(client.startGoogleIdentityLink).not.toHaveBeenCalled();
+    expect(ports.openBrowser).not.toHaveBeenCalled();
+  });
+  it('receipt後のstatus失敗はchallengeを保持し新しいPOST retryに変換しない', async () => {
+    const { flow, client } = fixture();
+    client.getGoogleIdentityLinkStatus.mockRejectedValueOnce(new Error('offline'));
+    await expect(flow.start()).rejects.toThrow('offline');
+    expect(flow.failureStage).toBe('status');
+    expect(flow.challengeId).toBe(id);
+    expect(flow.canRetryStart).toBe(false);
+    await expect(flow.check()).resolves.toMatchObject({ status: 'linked' });
+    expect(flow.failureStage).toBeNull();
+    expect(client.startGoogleIdentityLink).toHaveBeenCalledOnce();
   });
   it('別user再認証・logout後はstartやbrowserを実行しない', async () => {
     const wrong = fixture(); wrong.client.getCurrentSession.mockResolvedValue({ user: { id: 'wrong-user' } });

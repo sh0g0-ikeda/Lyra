@@ -460,6 +460,12 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     return c.json(assertMobileResponseContract(episodeSchema, payload));
   });
 
+  app.get('/story/page-skeleton-capabilities', async (c) => {
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    return c.json({ preserve_generated_images: true });
+  });
+
   app.post('/episodes/:id/generate-page-skeleton', async (c) => {
     const user = c.get('user');
     const organizationId = parseOptionalOrganizationId(c);
@@ -488,6 +494,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         parsedEpisodeId.data,
         {
           overwriteExisting: body.data.overwrite_existing,
+          preserveGeneratedImages: body.data.preserve_generated_images,
           applyStoryPlan: false,
           language: body.data.language,
         },
@@ -503,6 +510,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         {
           job_id: queued.jobId,
           overwrite_existing: body.data.overwrite_existing,
+          preserve_generated_images: body.data.preserve_generated_images,
           apply_story_plan: false,
         },
       );
@@ -517,6 +525,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
     const result = await dependencies.pageSkeletonService.generateForEpisode(user.id, parsedEpisodeId.data, {
       overwriteExisting: body.data.overwrite_existing,
+      preserveGeneratedImages: body.data.preserve_generated_images,
       language: body.data.language,
     }, organizationId);
 

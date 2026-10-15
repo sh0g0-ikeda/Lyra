@@ -44,8 +44,10 @@ vi.mock('@tanstack/react-query', () => ({
 }));
 
 vi.mock('react-native', () => ({
+  ActivityIndicator: 'activity-indicator',
   StyleSheet: { create: <T,>(styles: T): T => styles },
-  Text: 'text'
+  Text: 'text',
+  View: 'view'
 }));
 
 vi.mock('@/components/Notice', () => ({
@@ -101,6 +103,9 @@ function context(error: unknown, retry = vi.fn()): WorkspaceContextData {
     error,
     hasMoreWorks: false,
     isFetchingMoreWorks: false,
+    isLoadingWorks: false,
+    isLoadingChapters: false,
+    isLoadingEpisodes: false,
     loadMoreWorks: vi.fn(),
     retry,
     selectedChapterId: null,
@@ -162,6 +167,18 @@ describe('WorkspaceContextPicker recovery actions', () => {
     mocks.resolveDirtyEditors.mockResolvedValue(true);
   });
 
+  it('取得失敗で空配列の場合は成功時の空pickerを表示しない', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <WorkspaceContextPicker context={context(new Error('temporary failure'))} />
+      );
+    });
+
+    expect(renderer!.root.findAllByType('notice')).toHaveLength(1);
+    expect(renderer!.root.findAllByType('record-picker')).toHaveLength(0);
+  });
+
   it('一時エラーの再試行ボタンで全階層queryのretryを実行する', () => {
     const retry = vi.fn();
     const rendered = renderNotice(
@@ -196,6 +213,20 @@ describe('WorkspaceContextPicker recovery actions', () => {
 
     expect(mocks.resolveDirtyEditors).toHaveBeenCalledWith('ja');
     expect(mocks.navigate).toHaveBeenCalledWith('Account');
+  });
+
+  it('作品取得中は空表示ではなく読込状態を表示する', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <WorkspaceContextPicker
+          context={{ ...context(null), isLoadingWorks: true }}
+        />
+      );
+    });
+
+    expect(renderer!.root.findAllByType('activity-indicator')).toHaveLength(1);
+    expect(renderer!.root.findAllByType('record-picker')).toHaveLength(0);
   });
   it('利用可能な階層データがある場合は再取得の429を表示しない', async () => {
     const worksError = new ApiError('busy', 429, 'RATE_LIMITED');
@@ -378,6 +409,40 @@ describe('useWorkspaceContextSelection', () => {
 
     expect(enabledByQueryKey.get('work-detail')).toBe(false);
     expect(enabledByQueryKey.get('chapters')).toBe(false);
+  });
+
+  // A pending scoped query is not an authoritative empty hierarchy. Keeping
+  // this distinction prevents a tenant switch from looking like data loss.
+  it('現在scopeの作品取得中は作品と下位選択を空データとして確定しない', async () => {
+    mocks.selection.chapterId = 'chapter-1';
+    mocks.selection.episodeId = 'episode-1';
+    mocks.useInfiniteQuery.mockReturnValue({
+      data: undefined,
+      error: null,
+      fetchNextPage: vi.fn(),
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      isPending: true,
+      isSuccess: false,
+      refetch: vi.fn()
+    });
+    mocks.useQuery.mockReturnValue({
+      data: undefined,
+      error: null,
+      isPending: true,
+      isSuccess: false,
+      refetch: vi.fn()
+    });
+    let value: WorkspaceContextData | null = null;
+
+    await act(async () => {
+      create(<SelectionProbe onValue={(nextValue) => { value = nextValue; }} />);
+    });
+
+    expect(value?.isLoadingWorks).toBe(true);
+    expect(value?.isLoadingChapters).toBe(true);
+    expect(value?.isLoadingEpisodes).toBe(true);
+    expect(mocks.updateSelection).not.toHaveBeenCalled();
   });
 
   it('一覧にも詳細にも選択作品がない場合は選択を解除する', async () => {

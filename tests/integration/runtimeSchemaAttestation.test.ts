@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, copyFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { Pool, type QueryResultRow } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
@@ -58,22 +59,19 @@ describePostgres('runtime schema attestation PostgreSQL boundary', () => {
     `);
     expect(physical.rows).toEqual([]);
     expect(() => assertAttestedRuntimeCapabilities(attestedSecurityRuntime, {})).not.toThrow();
-    // Historical descriptors remain inspectable, but the security binary cannot boot before049.
-    await pool.query(`ALTER TABLE credit_ledger DROP COLUMN stripe_payment_recovery_id;
-      DROP TABLE stripe_payment_adjustment_objects, stripe_unresolved_payment_adjustments, stripe_payment_recoveries;
-      ALTER TABLE payment_records DROP CONSTRAINT payment_records_credit_grant_check,
-        DROP COLUMN granted_credits, DROP COLUMN credit_bucket, DROP COLUMN grant_expires_at;
-      DELETE FROM schema_migrations WHERE filename='049_add_stripe_credit_recovery.sql'`);
-    const historicalRuntime = await attestRuntimeSchema(database);
-    expect(() => assertAttestedRuntimeCapabilities(historicalRuntime, {})).toThrow('049');
-    // A staged canonical047 descriptor remains recognizable; a half-recorded048 is not.
-    await pool.query("DELETE FROM schema_migrations WHERE filename='048_advance_entity_state_revision_for_legacy_writers.sql'");
-    await expect(attestCanonicalRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
-    await pool.query('DROP TRIGGER entity_states_monotonic_revision ON entity_states; DROP FUNCTION lyra_advance_entity_state_revision()');
-    expect(await attestCanonicalRuntimeSchema(database)).toBe('canonical_fresh_v1');
-    await pool.query(await readFile(join(process.cwd(),'migrations/048_advance_entity_state_revision_for_legacy_writers.sql'),'utf8'));
-    await pool.query("INSERT INTO schema_migrations(filename) VALUES('048_advance_entity_state_revision_for_legacy_writers.sql')");
-    expect(await attestCanonicalRuntimeSchema(database)).toBe('canonical_fresh_v1');
+  }, 120_000);
+
+  it('049までの別schemaは履歴として認識するが050なしでは起動を拒否する', async () => {
+    const { database } = await isolatedDatabase('historical49');
+    const directory = await mkdtemp(join(tmpdir(), 'lyra-migrations-'));
+    try {
+      for (const filename of await readdir(join(process.cwd(), 'migrations'))) {
+        if (/^0(?:0[1-9]|[1-4][0-9])_.+\.sql$/u.test(filename)) await copyFile(join(process.cwd(), 'migrations', filename), join(directory, filename));
+      }
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      const historicalRuntime = await attestRuntimeSchema(database);
+      expect(() => assertAttestedRuntimeCapabilities(historicalRuntime, {})).toThrow('050');
+    } finally { await rm(directory, { recursive: true, force: true }); }
   }, 120_000);
 
   it('2debe production lineage schemaをread-onlyで拒否しmigration receiptを変えない', async () => {

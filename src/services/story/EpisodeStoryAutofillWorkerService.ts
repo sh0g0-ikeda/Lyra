@@ -200,7 +200,7 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
     const { id: jobId, userId } = job;
     return {
       jobId,
-      ...(this.legacyAttempt === undefined ? {} : { storyAutofillAttempt: job }),
+      storyAutofillAttempt: job,
       checkpoint: async () => {
         if (this.legacyAttempt !== undefined) {
           const settlement = await this.legacyAttempt.settleEpisodeStoryAutofillAttempt(job);
@@ -298,8 +298,31 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
 function readStateAutofillOptions(
   params: Record<string, unknown>,
 ): EpisodeStateAutofillOptions | undefined | null {
+  const enabled = params.state_autofill_enabled;
+  const origin = params.state_autofill_origin;
   const version = params.state_autofill_version;
   const policy = params.state_assignment_policy;
+  if (enabled === false) {
+    return origin === 'request_disabled' && version === undefined && policy === undefined
+      ? undefined
+      : null;
+  }
+  if (enabled === true) {
+    if ((origin !== 'server_default' && origin !== 'request_enabled')
+      || version !== 'v1'
+      || (policy !== 'preserve_existing' && policy !== 'overwrite_existing')) {
+      return null;
+    }
+    return {
+      statePlanVersion: 'episode_state_plan_v1',
+      stateAssignmentPolicy: policy,
+      allowUnassignedStateFill: true,
+      allowVisualStateFallback: true,
+    };
+  }
+  if (enabled !== undefined || origin !== undefined) {
+    return null;
+  }
   if (version === undefined) {
     return policy === undefined ? undefined : null;
   }

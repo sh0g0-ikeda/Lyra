@@ -1,43 +1,21 @@
-import type { PropsWithChildren } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { colors, radius, spacing, textStyles } from '@/constants/theme';
-import { pageCreationSteps, type PageCreationStep } from '@/domain/pageCreationWorkflow';
 import type { UiLanguage } from '@/domain/types';
-import { pageWorkflowMessage as message } from '@/lib/pageWorkflowMessages';
+import { t } from '@/lib/i18n';
 
-export function PageWorkflowSection({ active, children }: PropsWithChildren<{ active: boolean }>): React.JSX.Element {
-  return <View accessibilityElementsHidden={!active} importantForAccessibility={active ? 'auto' : 'no-hide-descendants'} style={active ? styles.content : styles.hidden}>{children}</View>;
-}
+interface PageStoryAutofillActionProps { blockReason?: string; canGenerate: boolean; hasActiveJob: boolean; jobEnqueued: boolean; language: UiLanguage; loading: boolean; onPress: () => void; pagesLoading: boolean; selectedEpisode: boolean; }
 
-export function PageCreationStepNavigation({ language, step, hasPage, onChange }: {
-  language: UiLanguage; step: PageCreationStep; hasPage: boolean; onChange: (step: PageCreationStep) => void;
-}): React.JSX.Element {
-  return <View style={styles.content}>
-    <View accessibilityLabel={message(language, 'workflow')} style={styles.steps}>
-      {pageCreationSteps.map((target, index) => <Pressable
-        accessibilityRole="tab" accessibilityState={{ selected: step === target, disabled: target !== 'design' && !hasPage }}
-        disabled={target !== 'design' && !hasPage} key={target} onPress={() => onChange(target)}
-        style={[styles.step, step === target ? styles.selected : null]} testID={`page-step-${target}`}
-      ><Text style={[styles.label, step === target ? styles.selectedLabel : null]}>{index + 1}. {message(language, target)}</Text></Pressable>)}
-    </View>
-    <Text style={styles.help}>{message(language, 'stepHelp')}</Text>
-  </View>;
+// One user intent owns the skeleton then autofill chain. PagesScreen keeps its
+// monitor mounted separately until that intent settles.
+export function PageStoryAutofillAction({ blockReason, canGenerate, hasActiveJob, jobEnqueued, language, loading, onPress, pagesLoading, selectedEpisode }: PageStoryAutofillActionProps): React.JSX.Element {
+  const disabled = blockReason !== undefined || !canGenerate || !selectedEpisode || hasActiveJob || jobEnqueued || loading || pagesLoading;
+  const disabledReason = blockReason ?? (!canGenerate
+    ? t(language, 'generated.components.StoryGenerationControls.generation.permission.is.required.1bc5b7af')
+    : !selectedEpisode
+      ? t(language, 'generated.components.StoryGenerationControls.select.an.episode.first.437356a6')
+      : pagesLoading
+        ? t(language, 'generated.components.StoryGenerationControls.checking.existing.pages.4fbfc50b')
+        : hasActiveJob || loading || jobEnqueued
+          ? t(language, 'component.storyGenerationControls.activeJob')
+          : undefined);
+  return <PrimaryButton disabled={disabled} disabledReason={disabledReason} label={t(language, 'component.storyGenerationControls.autofillAction')} loading={loading} onPress={onPress} testID="page-story-autofill-primary" variant="primary" />;
 }
-
-export function PageCreationStepActions({ language, step, hasPage, onChange }: {
-  language: UiLanguage; step: PageCreationStep; hasPage: boolean; onChange: (step: PageCreationStep) => void;
-}): React.JSX.Element {
-  return <View style={styles.actions}>
-    {step === 'design' ? null : <PrimaryButton label={message(language, 'previous')} onPress={() => onChange(step === 'create' ? 'settings' : 'design')} variant="ghost" testID="page-step-previous" />}
-    {step === 'create' ? null : <PrimaryButton disabled={!hasPage} disabledReason={!hasPage ? message(language, 'noDesign') : undefined} label={message(language, step === 'design' ? 'nextSettings' : 'nextCreate')} onPress={() => onChange(step === 'design' ? 'settings' : 'create')} testID="page-step-next" />}
-  </View>;
-}
-const styles = StyleSheet.create({
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, paddingVertical: spacing.md },
-  content: { gap: spacing.sm }, hidden: { display: 'none' }, help: { ...textStyles.caption },
-  label: { ...textStyles.caption, color: colors.inkStrong, fontWeight: '700', textAlign: 'center' },
-  selectedLabel: { color: colors.primaryText }, selected: { backgroundColor: colors.primary },
-  step: { minHeight: 44, minWidth: 92, flex: 1, justifyContent: 'center', borderRadius: radius.sm, borderColor: colors.controlBorder, borderWidth: 1, padding: spacing.sm },
-  steps: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }
-});

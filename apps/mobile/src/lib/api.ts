@@ -1,8 +1,11 @@
+import { workDeletionSchema, workDeletionsSchema, type WorkDeletionRecord, type WorkDeletionsRecord } from '@/domain/workDeletion';
+import { pageSkeletonCapabilitiesSchema, type PageSkeletonCapabilities } from '@/domain/pageSkeletonCapabilities';
 import type { GenerationQuote, GenerationQuoteReceipt, GenerationQuoteAcceptance, GenerationQuoteRequest } from '@/domain/pageGenerationQuote';
 import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStartBody, type GoogleLinkStatus } from '@/domain/googleAuth';
 import { z, type ZodType } from 'zod';
 import type { EditableEntityState, NamedEntityStatePayload } from '@/domain/entityStateEditor';
 import type { InsertPanelAfterPayload, PanelStructureResult } from '@/domain/panelInsertion';
+import type { EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
 import { onlineManager } from '@tanstack/react-query';
 
 import {
@@ -182,6 +185,20 @@ type StoryCollaborationRequest = StoryCollaborationInput & { language: UiLanguag
 
 export type AiContentReportKind = 'generated_image' | 'story_proposal';
 export type OrganizationSafetyReportTargetKind = 'workspace_content' | 'member';
+export type PanelFrameUpdateInput = Omit<PanelFrameRecord, 'id' | 'page_id'> & {
+  id?: string;
+};
+
+const panelFrameUpdateInput = (frame: PanelFrameUpdateInput): PanelFrameUpdateInput => ({
+  ...(frame.id === undefined ? {} : { id: frame.id }),
+  panel_id: frame.panel_id,
+  vertices: frame.vertices,
+  border_style: frame.border_style,
+  border_width: frame.border_width,
+  border_color: frame.border_color,
+  z_index: frame.z_index,
+  reading_order: frame.reading_order,
+});
 
 export interface AiContentReportReceipt {
   report_id: string;
@@ -855,6 +872,22 @@ export class LyraMobileApiClient {
     return this.requestVoid(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
+  public getPageSkeletonCapabilities(): Promise<PageSkeletonCapabilities> {
+    return this.request('/api/story/page-skeleton-capabilities', pageSkeletonCapabilitiesSchema);
+  }
+
+  public deleteWork(workId: string, organizationId?: string | null): Promise<WorkDeletionRecord> {
+    return this.request(`/api/works/${workId}${organizationQuery(organizationId)}`, workDeletionSchema, { method: 'DELETE' });
+  }
+
+  public getWorkDeletion(deletionId: string, organizationId?: string | null): Promise<WorkDeletionRecord> {
+    return this.request(`/api/work-deletions/${deletionId}${organizationQuery(organizationId)}`, workDeletionSchema);
+  }
+
+  public getWorkDeletions(organizationId?: string | null): Promise<WorkDeletionsRecord> {
+    return this.request(`/api/work-deletions${organizationQuery(organizationId)}`, workDeletionsSchema);
+  }
+
   public generatePageSkeleton(
     episodeId: string,
     body: GeneratePageSkeletonPayload,
@@ -1263,7 +1296,7 @@ export class LyraMobileApiClient {
     episodeId: string,
     language: 'ja' | 'en',
     organizationId?: string | null,
-    stateOptions?: { state_autofill_version: 'v1'; state_assignment_policy: 'preserve_existing' | 'overwrite_existing' }
+    stateOptions?: EpisodeStateAutofillRequestOptions,
   ): Promise<{ job_id: string }> {
     return this.request(
       `/api/episodes/${episodeId}/autofill-pages-from-story${organizationQuery(organizationId)}`,
@@ -1272,6 +1305,17 @@ export class LyraMobileApiClient {
       method: 'POST',
       body: { language, ...stateOptions }
       }
+    );
+  }
+
+  public retryEpisodeStoryAutofillJob(
+    jobId: string,
+    organizationId?: string | null,
+  ): Promise<{ job_id: string }> {
+    return this.request(
+      `/api/jobs/${encodeURIComponent(jobId)}/retry${organizationQuery(organizationId)}`,
+      jobAcceptedSchema,
+      { method: 'POST' },
     );
   }
 
@@ -1397,12 +1441,12 @@ export class LyraMobileApiClient {
 
   public replaceFrames(
     pageId: string,
-    body: { frames: PanelFrameRecord[] },
+    body: { frames: PanelFrameUpdateInput[] },
     organizationId?: string | null
   ): Promise<{ frames: PanelFrameRecord[] }> {
     return this.request(`/api/pages/${pageId}/frames${organizationQuery(organizationId)}`, framesResponseSchema, {
       method: 'PUT',
-      body
+      body: { frames: body.frames.map(panelFrameUpdateInput) }
     });
   }
 

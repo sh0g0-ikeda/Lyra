@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
@@ -38,6 +38,9 @@ export interface WorkspaceContextData extends WorkspaceContextSelection {
   error: unknown;
   hasMoreWorks: boolean;
   isFetchingMoreWorks: boolean;
+  isLoadingWorks: boolean;
+  isLoadingChapters: boolean;
+  isLoadingEpisodes: boolean;
   loadMoreWorks: () => void;
   retry: () => void;
 }
@@ -120,6 +123,25 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
   });
   const episodes = useMemo(() => episodesQuery.data?.episodes ?? [], [episodesQuery.data?.episodes]);
   const selectedEpisode = episodes.find((episode) => episode.id === selection.episodeId) ?? null;
+  const isLoadingWorks = worksQuery.data === undefined && worksQuery.isPending === true;
+  const isLoadingSelectedWork =
+    shouldFetchSelectedWorkDetail &&
+    selectedWorkQuery.data === undefined &&
+    selectedWorkQuery.isPending === true;
+  const isLoadingChapters =
+    selection.workId !== null &&
+    !selectedWorkNotFound &&
+    (
+      isLoadingWorks ||
+      isLoadingSelectedWork ||
+      (selectedWork !== null && chaptersQuery.data === undefined && chaptersQuery.isPending === true)
+    );
+  const isLoadingEpisodes =
+    selection.chapterId !== null &&
+    (
+      isLoadingChapters ||
+      (selectedChapter !== null && episodesQuery.data === undefined && episodesQuery.isPending === true)
+    );
   const worksError = currentQueryError({
     data: worksQuery.data,
     enabled: true,
@@ -206,6 +228,9 @@ export function useWorkspaceContextSelection(): WorkspaceContextData {
     error: hierarchyFailure?.error ?? null,
     hasMoreWorks: worksQuery.hasNextPage,
     isFetchingMoreWorks: worksQuery.isFetchingNextPage,
+    isLoadingWorks,
+    isLoadingChapters,
+    isLoadingEpisodes,
     loadMoreWorks: () => {
       void worksQuery.fetchNextPage();
     },
@@ -248,47 +273,65 @@ export function WorkspaceContextPicker({ context }: WorkspaceContextPickerProps)
         />
       )}
       <Text style={styles.label}>{t(language, 'works')}</Text>
-      <RecordPicker
-        emptyLabel={t(language, 'emptyWorks')}
-        hasNextPage={context.hasMoreWorks}
-        isFetchingNextPage={context.isFetchingMoreWorks}
-        items={context.works}
-        language={language}
-        labelForItem={(work) => work.title}
-        onEndReached={context.loadMoreWorks}
-        onSelect={(workId) => {
-          void updateSelection({ workId, chapterId: null, episodeId: null, pageId: null, entityId: null });
-        }}
-        selectedId={context.selectedWorkId}
-      />
+      {context.isLoadingWorks ? (
+        <View style={styles.loading}>
+          <ActivityIndicator accessibilityLabel={t(language, 'generated.components.OrganizationCollectionModal.loading.7c96f399')} color={colors.primary} />
+        </View>
+      ) : context.error === null || context.works.length > 0 ? (
+        <RecordPicker
+          emptyLabel={t(language, 'emptyWorks')}
+          hasNextPage={context.hasMoreWorks}
+          isFetchingNextPage={context.isFetchingMoreWorks}
+          items={context.works}
+          language={language}
+          labelForItem={(work) => work.title}
+          onEndReached={context.loadMoreWorks}
+          onSelect={(workId) => {
+            void updateSelection({ workId, chapterId: null, episodeId: null, pageId: null, entityId: null });
+          }}
+          selectedId={context.selectedWorkId}
+        />
+      ) : null}
       {context.selectedWorkId === null ? null : (
         <>
           <Text style={styles.label}>{t(language, 'chapters')}</Text>
-          <RecordPicker
-            emptyLabel={t(language, 'emptyChapters')}
-            items={context.chapters}
-            language={language}
-            labelForItem={(chapter) => `${chapter.order}. ${chapter.title ?? t(language, 'chapter')}`}
-            onSelect={(chapterId) => {
-              void updateSelection({ chapterId, episodeId: null, pageId: null });
-            }}
-            selectedId={context.selectedChapterId}
-          />
+          {context.isLoadingChapters ? (
+            <View style={styles.loading}>
+              <ActivityIndicator accessibilityLabel={t(language, 'generated.components.StoryHierarchySheet.loading.chapters.62730c70')} color={colors.primary} />
+            </View>
+          ) : context.error === null || context.chapters.length > 0 ? (
+            <RecordPicker
+              emptyLabel={t(language, 'emptyChapters')}
+              items={context.chapters}
+              language={language}
+              labelForItem={(chapter) => `${chapter.order}. ${chapter.title ?? t(language, 'chapter')}`}
+              onSelect={(chapterId) => {
+                void updateSelection({ chapterId, episodeId: null, pageId: null });
+              }}
+              selectedId={context.selectedChapterId}
+            />
+          ) : null}
         </>
       )}
       {context.selectedChapterId === null ? null : (
         <>
           <Text style={styles.label}>{t(language, 'episodes')}</Text>
-          <RecordPicker
-            emptyLabel={t(language, 'emptyEpisodes')}
-            items={context.episodes}
-            language={language}
-            labelForItem={(episode) => `${episode.order}. ${episode.title ?? t(language, 'episode')}`}
-            onSelect={(episodeId) => {
-              void updateSelection({ episodeId, pageId: null });
-            }}
-            selectedId={context.selectedEpisodeId}
-          />
+          {context.isLoadingEpisodes ? (
+            <View style={styles.loading}>
+              <ActivityIndicator accessibilityLabel={t(language, 'generated.components.StoryHierarchySheet.loading.episodes.e4ed2ecc')} color={colors.primary} />
+            </View>
+          ) : context.error === null || context.episodes.length > 0 ? (
+            <RecordPicker
+              emptyLabel={t(language, 'emptyEpisodes')}
+              items={context.episodes}
+              language={language}
+              labelForItem={(episode) => `${episode.order}. ${episode.title ?? t(language, 'episode')}`}
+              onSelect={(episodeId) => {
+                void updateSelection({ episodeId, pageId: null });
+              }}
+              selectedId={context.selectedEpisodeId}
+            />
+          ) : null}
         </>
       )}
     </Section>
@@ -300,5 +343,10 @@ const styles = StyleSheet.create({
     ...textStyles.caption,
     color: colors.ink,
     fontWeight: '700'
+  },
+  loading: {
+    alignItems: 'center',
+    minHeight: 48,
+    justifyContent: 'center'
   }
 });

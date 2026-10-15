@@ -228,9 +228,8 @@ const baseConfig: Omit<MobileConfig, 'webEditorUrl'> = {
   episodeExportEnabled: readPublicBooleanEnv(
     process.env.EXPO_PUBLIC_EPISODE_EXPORT_ENABLED,
   ),
-  mobileStoreBillingEnabled: readPublicBooleanEnv(
-    process.env.EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED,
-  ),
+  mobileStoreBillingEnabled: readPublicEnv(process.env.EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED) === ''
+    || readPublicBooleanEnv(process.env.EXPO_PUBLIC_MOBILE_STORE_BILLING_ENABLED),
   organizationFeaturesEnabled: readPublicBooleanEnv(process.env.EXPO_PUBLIC_ORGANIZATION_FEATURES_ENABLED),
   sentryDsn: readPublicEnv(process.env.EXPO_PUBLIC_SENTRY_DSN),
   buildEnvironment: readBuildEnvironment(process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT)

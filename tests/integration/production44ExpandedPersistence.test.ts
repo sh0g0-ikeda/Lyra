@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { Hono } from 'hono';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
@@ -18,6 +19,9 @@ import { PageAtomicGenerationService } from '../../src/services/page/PageAtomicG
 import type { SaveAndGeneratePageInput } from '../../src/services/page/PageSaveAndGenerate.js';
 import { PostgresPanelRepository } from '../../src/repositories/PanelRepository.js';
 import { PostgresPanelFrameRepository } from '../../src/repositories/PanelFrameRepository.js';
+import { PostgresWorkDeletionRepository } from '../../src/repositories/WorkDeletionRepository.js';
+import { createWorkDeletionAccessGuard } from '../../src/routes/workDeletionAccessGuard.js';
+import type { AppEnv } from '../../src/types/app.js';
 
 import { QuotedImportWorkerService } from '../../src/services/generation/QuotedImportWorkerService.js';
 import { QuotedGenerationInputs } from '../../src/services/generation/QuotedGenerationInputs.js';
@@ -26,7 +30,7 @@ import type { EntityReferenceUploadStoragePort } from '../../src/services/entity
 
 const native = process.env.APP_ENV === 'test' && process.env.DATABASE_URL ? describe : describe.skip;
 const profile = 'production44_expanded_pg18_v1';
-native('expanded53 persistence capabilities', () => {
+native('expanded54 persistence capabilities', () => {
   let admin: Pool, pool: Pool, database: DatabaseClient & TransactionRunner;
   const schema = 'expanded_persistence_' + randomUUID().replaceAll('-','');
   beforeAll(async () => {
@@ -38,8 +42,10 @@ native('expanded53 persistence capabilities', () => {
       try {await client.query('BEGIN');const result=await work(client);await client.query('COMMIT');return result;}
       catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
     }};
-    await withPostgresTestMigrationLock(admin,()=>runPendingMigrations(database,{migrationsDir:join(process.cwd(),'tests/fixtures/production44-pg18')}));
-    expect(await runProduction44Expansion(pool)).toHaveLength(9);
+    await withPostgresTestMigrationLock(admin,async()=>{
+      await runPendingMigrations(database,{migrationsDir:join(process.cwd(),'tests/fixtures/production44-pg18')});
+      expect(await runProduction44Expansion(pool)).toHaveLength(10);
+    });
   },120_000);
   afterAll(async()=>{if(pool)await pool.end();if(admin){await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();}});
   async function seed():Promise<{userId:string;workId:string;episodeId:string;pageId:string;entityId:string}> {
@@ -127,5 +133,35 @@ native('expanded53 persistence capabilities', () => {
     const notifications=await createTerminalGenerationNotificationRecoveryRepository(database,profile);
     expect(await notifications.enqueueCurrentTerminal(jobId)).toBe('deferred');
     expect((await pool.query('SELECT id FROM mobile_push_notification_outbox WHERE generation_job_id=$1',[jobId])).rows).toEqual([]);
+  });
+  it('work deletionはexpanded profileのphysical episode export relationで受付する',async()=>{
+    const f=await seed();
+    const request=await new PostgresWorkDeletionRepository(database,profile).request(f.userId,f.workId,null);
+    expect(request.workId).toBe(f.workId);
+    expect((await pool.query('SELECT work_id FROM work_deletion_requests WHERE id=$1',[request.id])).rows[0]?.work_id).toBe(f.workId);
+  });
+  it('work deletion access guardはexpanded profileのphysical episode export jobを認可する',async()=>{
+    const f=await seed();
+    const exportJobId=randomUUID();
+    await pool.query(
+      `INSERT INTO episode_export_jobs(
+         id,user_id,episode_id,format,filename,page_ids,page_snapshot,request_fingerprint,idempotency_key,expires_at
+       ) VALUES(
+         $1,$2,$3,'pdf','expanded.pdf',ARRAY[$4::uuid],
+         jsonb_build_array(jsonb_build_object('page_id',$4::text,'page_number',1,'s3_key',$5::text,'mime_type','image/png')),
+         $6,$7,NOW()+INTERVAL '1 hour'
+       )`,
+      [exportJobId,f.userId,f.episodeId,f.pageId,`saved/${f.userId}/pages/${f.pageId}/source.png`,'b'.repeat(64),`expanded-${exportJobId}`],
+    );
+    const app=new Hono<AppEnv>();
+    app.use('*',async(c,next)=>{
+      c.set('user',{id:f.userId,supabaseId:f.userId,email:'expanded-guard@example.invalid',displayName:null,planCode:'free'});
+      await next();
+    });
+    app.use('*',createWorkDeletionAccessGuard(database,profile));
+    app.get('/api/exports/:id',c=>c.json({id:c.req.param('id')}));
+    const response=await app.request(`/api/exports/${exportJobId}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({id:exportJobId});
   });
 });

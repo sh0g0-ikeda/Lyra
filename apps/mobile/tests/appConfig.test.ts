@@ -29,7 +29,7 @@ const originalEnvironment = {
 const baseConfig = {
   name: 'Lyra Mobile',
   ios: {
-    bundleIdentifier: 'com.lyra.mobile',
+    bundleIdentifier: 'jp.lyra.mobile',
     associatedDomains: ['applinks:app.lyra-editor.com'],
   },
   android: {
@@ -119,9 +119,9 @@ describe('Expo app config', () => {
     });
   });
 
-  // Staging is an independently installable Android app. Its backend and OAuth
+  // Staging is independently installable alongside production on both platforms. Its backend and OAuth
   // identifiers arrive only from explicitly supplied EAS environment values.
-  it('stagingでは独立package・scheme・callbackとstaging App Linkを出力する', () => {
+  it('stagingでは独立package・bundle ID・scheme・callbackとstaging App Linkを出力する', () => {
     process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
     process.env.EXPO_PUBLIC_APP_VARIANT = 'staging';
     process.env.EXPO_PUBLIC_APP_LINK_HOST = 'staging.lyra-editor.test';
@@ -134,6 +134,7 @@ describe('Expo app config', () => {
     expect(createExpoConfig({ config: baseConfig })).toMatchObject({
       name: 'Lyra Mobile Staging',
       scheme: 'lyra-mobile-staging',
+      ios: { bundleIdentifier: 'com.lyra.mobile.staging' },
       android: {
         package: 'com.lyra.mobile.staging',
         intentFilters: [
@@ -196,6 +197,16 @@ describe('Expo app config', () => {
     expect(() => createExpoConfig({ config: baseConfig })).toThrow(
       'EXPO_PUBLIC_APP_LINK_HOST must be app.lyra-editor.com for production',
     );
+  });
+
+  it('productionは登録済みiOS bundle IDとAndroid packageを維持する', () => {
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'production';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'app.lyra-editor.com';
+
+    expect(createExpoConfig({ config: baseConfig })).toMatchObject({
+      ios: { bundleIdentifier: 'jp.lyra.mobile' },
+      android: { package: 'com.lyra.mobile' },
+    });
   });
 
   it.each([

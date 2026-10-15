@@ -3,7 +3,7 @@
     "name": "Lyra Mobile",
     "slug": "lyra-mobile",
     "scheme": "lyra-mobile",
-    "version": "0.1.18",
+    "version": "1.0.9",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -38,6 +38,17 @@
           "photosPermission": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。"
         }
       ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "選択したキャラ画像を取り込むために写真を利用します。",
+          "savePhotosPermission": "作成した画像を端末の写真ライブラリへ保存します。",
+          "granularPermissions": [
+            "photo"
+          ],
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
       "expo-sharing",
       "expo-web-browser",
       "expo-image",
@@ -51,10 +62,15 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.lyra.mobile",
+      "bundleIdentifier": "jp.lyra.mobile",
       "infoPlist": {
+        "CFBundleLocalizations": [
+          "ja",
+          "en"
+        ],
         "ITSAppUsesNonExemptEncryption": false,
-        "NSPhotoLibraryUsageDescription": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。"
+        "NSPhotoLibraryUsageDescription": "キャラクター参照情報を読み込むため、あなたが選択した画像だけを使用します。",
+        "NSPhotoLibraryAddUsageDescription": "作成した画像を端末の写真ライブラリへ保存します。"
       },
       "privacyManifests": {
         "NSPrivacyTracking": false,
@@ -119,12 +135,16 @@
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.READ_APP_BADGE",
         "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.ACCESS_MEDIA_LOCATION",
         "android.permission.RECORD_AUDIO",
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.VIBRATE",
         "android.permission.WAKE_LOCK",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
         "com.anddoes.launcher.permission.UPDATE_COUNT",
         "com.google.android.c2dm.permission.RECEIVE",
         "com.htc.launcher.permission.READ_SETTINGS",

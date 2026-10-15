@@ -53,6 +53,9 @@ const envSchema = z.object({
     .min(1)
     .max(10)
     .default(1),
+  WORK_DELETION_ENABLED: z.string().optional().transform(value => value === 'true'),
+  WORK_DELETION_RECOVERY_INTERVAL_MS: z.coerce.number().int().min(5000).max(3600000).default(15000),
+  WORK_DELETION_RECOVERY_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(2),
   S3_BUCKET_IMAGES: z.string().min(1).optional(),
   IMAGE_DELIVERY_MODE: z.enum(['cloudfront_signed', 's3_presigned']).default('cloudfront_signed'),
   IMAGES_CDN_BASE_URL: z.string().optional(),
@@ -93,6 +96,10 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === 'true'),
   EPISODE_STATE_AUTOFILL_V1_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED: z
     .string()
     .optional()
     .transform((value) => value === 'true'),

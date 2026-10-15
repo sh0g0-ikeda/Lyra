@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { FormField } from '@/components/FormField';
 import type { LabelOption } from '@/constants/options';
 import { colors, spacing, textStyles } from '@/constants/theme';
@@ -70,50 +70,52 @@ export function CharacterChoiceField({
         <Text style={styles.choiceChevron}>{optionsOpen ? '^' : 'v'}</Text>
       </Pressable>
       <Modal animationType="fade" onRequestClose={() => setOptionsOpen(false)} transparent visible={optionsOpen}>
-        <Pressable
-          accessibilityLabel={t(language, "generated.screens.CharactersScreen.close.603bc62f")}
-          accessibilityRole="button"
-          onPress={() => setOptionsOpen(false)}
-          style={styles.choiceModalBackdrop}
-        >
-          <View
-            accessibilityLabel={label}
-            accessibilityViewIsModal
-            onAccessibilityEscape={() => setOptionsOpen(false)}
-            onStartShouldSetResponder={() => true}
-            style={styles.choiceModalSheet}
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.choiceModalKeyboard}>
+          <Pressable
+            accessibilityLabel={t(language, "generated.screens.CharactersScreen.close.603bc62f")}
+            accessibilityRole="button"
+            onPress={() => setOptionsOpen(false)}
+            style={styles.choiceModalBackdrop}
           >
-            <View style={styles.choiceModalHeader}>
-              <Text style={styles.groupTitle}>{label}</Text>
-              <Pressable accessibilityLabel={t(language, "generated.screens.CharactersScreen.close.603bc62f")} accessibilityRole="button" onPress={() => setOptionsOpen(false)} style={styles.choiceModalClose}>
-                <Text style={styles.choiceModalCloseText}>x</Text>
-              </Pressable>
+            <View
+              accessibilityLabel={label}
+              accessibilityViewIsModal
+              onAccessibilityEscape={() => setOptionsOpen(false)}
+              onStartShouldSetResponder={() => true}
+              style={styles.choiceModalSheet}
+            >
+              <View style={styles.choiceModalHeader}>
+                <Text style={styles.groupTitle}>{label}</Text>
+                <Pressable accessibilityLabel={t(language, "generated.screens.CharactersScreen.close.603bc62f")} accessibilityRole="button" onPress={() => setOptionsOpen(false)} style={styles.choiceModalClose}>
+                  <Text style={styles.choiceModalCloseText}>x</Text>
+                </Pressable>
+              </View>
+              {searchable ? <FormField label={editorMessage(language, 'searchChoices')} value={search} onChangeText={setSearch} maxLength={100} /> : null}
+              {filteredOptions.length === 0 ? <Text style={styles.label}>{editorMessage(language, 'noChoices')}</Text> : null}
+              <ScrollView accessibilityRole="radiogroup" contentContainerStyle={styles.choiceMenu} keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled" style={styles.choiceModalScroll}>
+                {filteredOptions.map((option) => {
+                  const selected = option.value === inferredValue || (customMode && option.value === 'custom');
+                  return (
+                    <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected }}
+                      key={option.value}
+                      onPress={() => selectValue(option.value)}
+                      style={[styles.choiceOption, selected ? styles.choiceOptionSelected : null]}
+                    >
+                      <View style={[styles.choiceRadioOuter, selected ? styles.choiceRadioOuterSelected : null]}>
+                        {selected ? <View style={styles.choiceRadioInner} /> : null}
+                      </View>
+                      <Text style={[styles.choiceOptionText, selected ? styles.choiceOptionTextSelected : null]}>
+                        {language === 'ja' ? option.labelJa : option.labelEn}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
             </View>
-            {searchable ? <FormField label={editorMessage(language, 'searchChoices')} value={search} onChangeText={setSearch} maxLength={100} /> : null}
-            {filteredOptions.length === 0 ? <Text style={styles.label}>{editorMessage(language, 'noChoices')}</Text> : null}
-            <ScrollView accessibilityRole="radiogroup" contentContainerStyle={styles.choiceMenu} style={styles.choiceModalScroll}>
-              {filteredOptions.map((option) => {
-                const selected = option.value === inferredValue || (customMode && option.value === 'custom');
-                return (
-                  <Pressable
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected }}
-                    key={option.value}
-                    onPress={() => selectValue(option.value)}
-                    style={[styles.choiceOption, selected ? styles.choiceOptionSelected : null]}
-                  >
-                    <View style={[styles.choiceRadioOuter, selected ? styles.choiceRadioOuterSelected : null]}>
-                      {selected ? <View style={styles.choiceRadioInner} /> : null}
-                    </View>
-                    <Text style={[styles.choiceOptionText, selected ? styles.choiceOptionTextSelected : null]}>
-                      {language === 'ja' ? option.labelJa : option.labelEn}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
       {customMode ? (
         <FormField
@@ -169,7 +171,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     justifyContent: 'space-between'
   },
+  choiceModalKeyboard: {
+    flex: 1
+  },
   choiceModalScroll: {
+    flexShrink: 1,
     width: '100%'
   },
   choiceModalSheet: {
@@ -177,6 +183,7 @@ const styles = StyleSheet.create({
     borderColor: colors.controlBorder,
     borderRadius: 8,
     borderWidth: 1,
+    flexShrink: 1,
     gap: spacing.md,
     maxHeight: '76%',
     maxWidth: 520,

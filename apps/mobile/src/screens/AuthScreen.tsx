@@ -26,6 +26,8 @@ import { googleAllowedOnPlatform } from '@/lib/googleIdentityLink';
 import { useAppState } from '@/state/appState';
 
 const heroImage = require('../../assets/start_lyra.jpg') as ImageSourcePropType;
+const heroImageSize = Image.resolveAssetSource(heroImage);
+const heroImageAspectRatio = heroImageSize.width / heroImageSize.height;
 const legalLinks = {
   ja: {
     privacy: 'https://app.lyra-editor.com/privacy.html',
@@ -76,7 +78,9 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
         const current = await capabilities.refetch();
         if (current.isError || !googleAllowedOnPlatform(current.data, Platform.OS, 'google_sign_in')) throw new Error('GOOGLE_DISABLED');
       }
-      const tokens = await signInWithCognito(google ? { identityProvider: 'Google' } : undefined);
+      const tokens = await signInWithCognito(
+        google ? { identityProvider: 'Google', language } : { language }
+      );
       await setTokens(tokens);
     } catch (error) {
       setErrorMessage(google ? copy.unavailable : userErrorMessage(error, language));
@@ -98,16 +102,16 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
   return showSplash ? (
     <View style={styles.splash}>
       <StatusBar backgroundColor={colors.canvas} barStyle="light-content" />
-      <Animated.Image resizeMode="cover" source={heroImage} style={[styles.splashImage, { opacity: splashOpacity }]} />
+      <Animated.Image resizeMode="contain" source={heroImage} style={[styles.splashImage, { opacity: splashOpacity }]} />
       <Animated.View style={[styles.splashCopy, { opacity: splashOpacity }]}>
         <Text style={styles.splashTitle}>Lyra Japan</Text>
         <Text style={styles.splashSubtitle}>{t(language, 'lyraSubtitle')}</Text>
       </Animated.View>
     </View>
   ) : (
-    <Screen showHeader={false} testID="auth-screen" title="Lyra Japan">
+    <Screen chrome="language" showHeader={false} testID="auth-screen" title="Lyra Japan">
       <View style={styles.authCard}>
-        <Image resizeMode="cover" source={heroImage} style={styles.heroImage} />
+        <Image resizeMode="contain" source={heroImage} style={styles.heroImage} />
         <View style={styles.copy}>
           <Text style={styles.eyebrow}>Lyra</Text>
           <Text style={styles.title}>Lyra Japan</Text>
@@ -185,8 +189,9 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase'
   },
   heroImage: {
-    aspectRatio: 2.45,
+    aspectRatio: heroImageAspectRatio,
     backgroundColor: colors.surfaceAlt,
+    height: undefined,
     maxHeight: 220,
     width: '100%'
   },
@@ -222,10 +227,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs
   },
   splashImage: {
-    aspectRatio: 1.18,
+    aspectRatio: heroImageAspectRatio,
     borderColor: colors.border,
     borderRadius: radius.md,
     borderWidth: 1,
+    height: undefined,
     maxHeight: 420,
     opacity: 0.92,
     overflow: 'hidden',

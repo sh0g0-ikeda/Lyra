@@ -96,7 +96,10 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified, current
       {state.error !== null ? <Notice message={errorMessage(state.error.code, language)} tone={errorTone(state.error.code)} /> : null}
       {refreshFailed ? <Notice message={billingPlanMessage(language, 'refreshFailed')} tone="warning" /> : null}
       {effectiveScheduledPlan === null ? null : <Notice message={billingPlanMessage(language, 'scheduledNotice', { plan: billingPlanMessage(language, effectiveScheduledPlan) })} tone="info" />}
-      {state.products.map((product) => {
+      {(['subscription', 'credit_pack'] as const).filter((kind) => state.products.some((product) => product.kind === kind)).map((kind) => (
+        <View key={kind} style={styles.products}>
+          <Text style={styles.productTitle}>{billingPlanMessage(language, kind === 'subscription' ? 'plans' : 'creditPacks')}</Text>
+          {state.products.filter((product) => product.kind === kind).map((product) => {
         const isCurrent = product.kind === 'subscription' && product.planCode !== undefined && product.planCode === effectivePlan;
         const isScheduled = product.kind === 'subscription' && product.planCode !== undefined && product.planCode === effectiveScheduledPlan;
         const planUnknown = product.kind === 'subscription' && (effectivePlan === undefined || product.planCode === undefined);
@@ -114,7 +117,7 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified, current
             <PrimaryButton
               disabled={!online || !state.connected || !product.available || isBusy || isCurrent || isScheduled || planUnknown}
               disabledReason={!online ? offlineMessage(language) : disabledReason ?? (isBusy ? busyMessage(language) : undefined)}
-              label={product.kind === 'credit_pack' ? t(language, "generated.components.MobileStoreBillingPanel.purchase.8ff82e16") : isCurrent ? billingPlanMessage(language, 'current') : isScheduled ? scheduledLabel(effectiveScheduledAt, language) : billingPlanMessage(language, effectivePlan === 'free' ? 'subscribe' : 'change')}
+              label={product.kind === 'credit_pack' ? billingPlanMessage(language, 'creditsPurchase') : isCurrent ? billingPlanMessage(language, 'current') : isScheduled ? scheduledLabel(effectiveScheduledAt, language) : billingPlanMessage(language, effectivePlan === 'free' ? 'subscribe' : 'change')}
               loading={productBusy}
               onPress={() => {
                 if (isCurrent || isScheduled || planUnknown || isBusy || !online) return;
@@ -124,7 +127,9 @@ export function MobileStoreBillingPanel({ adapter, language, onVerified, current
             />
           </View>
         );
-      })}
+          })}
+        </View>
+      ))}
       {(state.error !== null || state.products.length === 0 || state.products.some((product) => !product.available)) ? <PrimaryButton label={billingPlanMessage(language, 'retryCatalog')} disabled={!online || isBusy} onPress={() => { void (adapter.refreshProducts?.() ?? adapter.connect()).catch(() => undefined); }} variant="secondary" /> : null}
       <PrimaryButton
         disabled={!online || !state.connected || isBusy}
@@ -200,6 +205,7 @@ function errorTone(code: NativeStoreBillingErrorCode): 'danger' | 'warning' | 'i
 }
 
 const styles = StyleSheet.create({
+  products: { gap: spacing.md },
   caption: { ...textStyles.caption },
   container: {
     backgroundColor: colors.surface,

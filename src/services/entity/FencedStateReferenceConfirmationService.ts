@@ -1,3 +1,4 @@
+import type { WorkDeletionRecord } from '../work/WorkDeletionService.js';
 import { ConfigurationError, ConflictError } from '../../domain/errors/index.js';
 import type { ConfirmedEntityStateReference, ConfirmEntityStateReferenceInput } from '../../domain/types/entityStateReference.js';
 import type {
@@ -87,6 +88,25 @@ implements FencedStateReferenceConfirmationPort, PersonalStateReferenceFencingPo
       await this.dependencies.repository.completeFencing(claimed, receipt);
     }
     return (await this.dependencies.repository.listPersonalPendingFences(userId, processingToken, 1)).length === 0;
+  }
+
+  public async fenceWorkReferences(request: WorkDeletionRecord): Promise<boolean> {
+    const list = this.dependencies.repository.listWorkPendingFences;
+    if (list === undefined || request.processingToken === null) return false;
+    const recovery = this.requireRecovery();
+    const attempts = await list.call(this.dependencies.repository, request.id, request.processingToken, 1);
+    for (const attempt of attempts) {
+      const claimed = await this.dependencies.repository.claimFencing(attempt, {
+        reason: 'work_deletion', processingToken: request.processingToken, workDeletionRequestId: request.id,
+      });
+      const deadline=Date.now()+15_000;let remainingRequests=25;
+      const receipt = await recovery.fenceAndErase(claimed.intent,{
+        remainingTimeMs:()=>Math.max(0,deadline-Date.now()),
+        beforeRequest:()=>{if(remainingRequests--<=0)throw new Error('Work fence operation budget exhausted');},
+      });
+      await this.dependencies.repository.completeFencing(claimed, receipt);
+    }
+    return (await list.call(this.dependencies.repository, request.id, request.processingToken, 1)).length === 0;
   }
 
   private async recoverConfirmation(attempt: FencedStateReferenceAttempt): Promise<ConfirmedEntityStateReference | null> {

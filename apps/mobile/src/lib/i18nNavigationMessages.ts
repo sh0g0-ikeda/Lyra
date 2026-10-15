@@ -1,14 +1,14 @@
 export const navigationTranslations = {
   ja: {
     'navigation.openStory': 'ストーリーを開く',
-    'navigation.manga': '漫画',
+    'navigation.manga': '編集',
     'navigation.assets': 'アセット',
     'navigation.myPage': 'マイページ',
     'navigation.workflow': '漫画の制作工程',
     'navigation.library': '漫画一覧',
-    'navigation.libraryHelp': '作品・章・話を選び、続きから制作できます。',
+    'navigation.libraryHelp': '作品・章・話を選び、続きから製作できます。',
     'navigation.chooseWork': '作品・章・話を選ぶ',
-    'navigation.createManga': '漫画を作成',
+    'navigation.createManga': '漫画を新規作成',
     'navigation.resume': '選択中の話を続ける',
     'navigation.resumeAt': '「{step}」から再開',
     'navigation.nextCharacters': '次へ：キャラクター',
@@ -18,18 +18,23 @@ export const navigationTranslations = {
     'navigation.openWork': '{title}を開く',
     'navigation.moreWorks': '作品をさらに読み込む',
     'navigation.loadingResume': '保存済みの制作状況を読み込み中…',
-    'navigation.retryResume': '制作状況を再読み込み'
+    'navigation.retryResume': '制作状況を再読み込み',
+    'navigation.previousPage': '前のページ',
+    'navigation.nextPage': '次のページ',
+    'navigation.pageNumber': '{number}ページ',
+    'navigation.pageSwipeHint': '左右にスワイプでページ移動',
+    'navigation.pageLoadFailed': 'ページを読み込めませんでした。もう一度ページ移動を試してください。'
   },
   en: {
     'navigation.openStory': 'Open story',
-    'navigation.manga': 'Manga',
+    'navigation.manga': 'Edit',
     'navigation.assets': 'Assets',
     'navigation.myPage': 'My Page',
     'navigation.workflow': 'Manga creation steps',
     'navigation.library': 'Manga library',
     'navigation.libraryHelp': 'Choose a work, chapter, and episode to continue creating.',
     'navigation.chooseWork': 'Choose work, chapter, and episode',
-    'navigation.createManga': 'Create manga',
+    'navigation.createManga': 'Create new manga',
     'navigation.resume': 'Continue selected episode',
     'navigation.resumeAt': 'Resume at {step}',
     'navigation.nextCharacters': 'Next: Characters',
@@ -39,7 +44,12 @@ export const navigationTranslations = {
     'navigation.openWork': 'Open {title}',
     'navigation.moreWorks': 'Load more works',
     'navigation.loadingResume': 'Loading saved creation progress…',
-    'navigation.retryResume': 'Reload creation progress'
+    'navigation.retryResume': 'Reload creation progress',
+    'navigation.previousPage': 'Previous page',
+    'navigation.nextPage': 'Next page',
+    'navigation.pageNumber': 'Page {number}',
+    'navigation.pageSwipeHint': 'Swipe to change pages',
+    'navigation.pageLoadFailed': 'The page could not be loaded. Try changing pages again.'
   }
 } as const;
 

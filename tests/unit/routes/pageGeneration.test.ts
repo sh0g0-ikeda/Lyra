@@ -171,6 +171,7 @@ class FakePageService implements PageServicePort {
 class FakeEpisodeStoryAutofillService implements EpisodeStoryAutofillServicePort {
   public autofilledEpisodeId: string | null = null;
   public options: unknown = null;
+  public retriedJob: GenerationJob | null = null;
   public shouldThrow = false;
 
   public async enqueueEpisodeStoryAutofill(
@@ -187,6 +188,14 @@ class FakeEpisodeStoryAutofillService implements EpisodeStoryAutofillServicePort
     }
 
     return { jobId: '55555555-5555-4555-8555-555555555555' };
+  }
+
+  public async retryEpisodeStoryAutofill(
+    _userId: string,
+    sourceJob: GenerationJob,
+  ): Promise<EnqueueEpisodeStoryAutofillResult> {
+    this.retriedJob = sourceJob;
+    return { jobId: '66666666-6666-4666-8666-666666666666' };
   }
 }
 
@@ -619,6 +628,35 @@ describe('page generation routes', () => {
 
     expect(response.status).toBe(422);
     expect(episodeStoryAutofillService.autofilledEpisodeId).toBeNull();
+  });
+
+  it('episode story autofillのboolean intentをserviceへ渡し高度指定との混在を拒否する', async () => {
+    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
+    const app = createTestApp(
+      new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService(),
+      new FakePageQueryService(), new FakePageService(), new FakePageExportService(), episodeStoryAutofillService,
+    );
+    const token = await createToken();
+    const path = '/api/episodes/33333333-3333-4333-8333-333333333333/autofill-pages-from-story';
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const enabled = await app.request(path, {
+      method: 'POST', headers, body: JSON.stringify({ state_autofill_enabled: true }),
+    });
+    expect(enabled.status).toBe(202);
+    expect(episodeStoryAutofillService.options).toEqual({ stateAutofillEnabled: true });
+
+    const disabled = await app.request(path, {
+      method: 'POST', headers, body: JSON.stringify({ state_autofill_enabled: false }),
+    });
+    expect(disabled.status).toBe(202);
+    expect(episodeStoryAutofillService.options).toEqual({ stateAutofillEnabled: false });
+
+    const mixed = await app.request(path, {
+      method: 'POST', headers,
+      body: JSON.stringify({ state_autofill_enabled: true, state_autofill_version: 'v1' }),
+    });
+    expect(mixed.status).toBe(422);
   });
 
   it('episode 全体の story plan autofill は enqueue 失敗時に成功扱いしない', async () => {
@@ -1060,6 +1098,75 @@ describe('page generation routes', () => {
     });
   });
 
+  it('失敗した話全体反映jobを認可済みsourceから再enqueueする', async () => {
+    const jobService = new FakeJobService();
+    jobService.job = {
+      ...buildJob(),
+      jobType: 'episode_story_autofill',
+      status: 'failed',
+      generationMode: null,
+      creditCost: 0,
+      errorMessage: 'provider timeout',
+      params: { episode_id: '44444444-4444-4444-8444-444444444444', language: 'ja' },
+    };
+    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
+    const app = createTestApp(
+      new FakePageGenerationService(), new FakePageFinalizeService(), jobService,
+      new FakePageQueryService(), new FakePageService(), new FakePageExportService(),
+      episodeStoryAutofillService,
+    );
+    const token = await createToken();
+
+    const response = await app.request(
+      '/api/jobs/22222222-2222-4222-8222-222222222222/retry',
+      { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({
+      job_id: '66666666-6666-4666-8666-666666666666',
+    });
+    expect(episodeStoryAutofillService.retriedJob).toBe(jobService.job);
+  });
+
+  it('法人の話全体反映retryはedit_work確認後に認可済みsourceだけを渡す', async () => {
+    const organizationId = '11111111-1111-4111-8111-111111111111';
+    const requiredCapabilities: string[] = [];
+    const organizationService = {
+      requireMembership: async (
+        _organizationId: string,
+        _userId: string,
+        capability: string,
+      ) => {
+        requiredCapabilities.push(capability);
+        return {};
+      },
+    } as unknown as OrganizationServicePort;
+    const jobService = new FakeJobService();
+    jobService.job = {
+      ...buildJob(), userId: 'original-org-member', organizationId,
+      jobType: 'episode_story_autofill', status: 'failed', generationMode: null, creditCost: 0,
+      errorMessage: 'provider timeout',
+      params: { episode_id: '44444444-4444-4444-8444-444444444444', language: 'ja' },
+    };
+    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
+    const app = createTestApp(
+      new FakePageGenerationService(), new FakePageFinalizeService(), jobService,
+      new FakePageQueryService(), new FakePageService(), new FakePageExportService(),
+      episodeStoryAutofillService, organizationService,
+    );
+    const token = await createToken();
+
+    const response = await app.request(
+      `/api/jobs/22222222-2222-4222-8222-222222222222/retry?organization_id=${organizationId}`,
+      { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    expect(response.status).toBe(202);
+    expect(requiredCapabilities).toEqual(['edit_work']);
+    expect(episodeStoryAutofillService.retriedJob).toBe(jobService.job);
+  });
+
   it('法人の話全体反映 job は権限確認後に法人スコープで停止する', async () => {
     const organizationId = '11111111-1111-4111-8111-111111111111';
     const requiredMemberships: Array<{
@@ -1217,6 +1324,7 @@ describe('page generation routes', () => {
       params: {
         episode_id: '44444444-4444-4444-8444-444444444444', language: 'ja',
         state_autofill_version: 'v1', state_assignment_policy: 'overwrite_existing',
+        state_autofill_enabled: true, state_autofill_origin: 'server_default',
         organization_id: 'private', internal: 'must-not-leak',
       },
     };

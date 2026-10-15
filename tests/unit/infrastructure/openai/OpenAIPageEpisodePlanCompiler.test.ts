@@ -271,6 +271,341 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
       .rejects.toMatchObject({ reason: 'invalid_payload' });
     expect(requestCount).toBe(2);
   });
+
+  it('nullable自由記述の空白だけをnullへ正規化し必須台詞の空白は拒否する', async () => {
+    let returnBlankDialogue = false;
+    const client = {
+      postJson: async () => ({
+        body: {
+          output_text: JSON.stringify({
+            pages: [{
+              page_id: '11111111-1111-4111-8111-111111111111',
+              page_number: 1,
+              source_scene_ids: [],
+              page_purpose: '   ',
+              continuity_note: '\t',
+              page: null,
+              panels: [{
+                order: 1,
+                panel_role: 'action',
+                panel_size: 'standard',
+                situation_text: '  ',
+                composition: {
+                  source: 'custom',
+                  gallery_item_id: ' ',
+                  composition_prompt: '\n',
+                  shot_type: null,
+                  angle: null,
+                  custom_note: '\t ',
+                },
+                dialogue_in_panel: true,
+                dialogue: returnBlankDialogue
+                  ? [{ entity_id: null, text: '  ', type: 'narration', position: 'top' }]
+                  : [],
+                sfx_text: ' ',
+                background_note: '\n',
+                panel_notes: '\t',
+                entities: [{
+                  entity_id: '22222222-2222-4222-8222-222222222222',
+                  role: 'primary',
+                  expression: 'custom',
+                  custom_expression: ' ',
+                  action: 'custom',
+                  custom_action: '\t',
+                  position: 'center',
+                  facing_direction: null,
+                  effect_note: '\n',
+                  state_id: null,
+                }],
+              }],
+            }],
+          }),
+        },
+        requestId: 'req-blank-nullable-text',
+      }),
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .resolves.toMatchObject({
+        suggestion: {
+          pages: [{
+            pagePurpose: null,
+            continuityNote: null,
+            panels: [{
+              situationText: null,
+              composition: {
+                galleryItemId: null,
+                compositionPrompt: null,
+                customNote: null,
+              },
+              sfxText: null,
+              backgroundNote: null,
+              panelNotes: null,
+              entities: [{ customExpression: null, customAction: null, effectNote: null }],
+            }],
+          }],
+        },
+      });
+
+    returnBlankDialogue = true;
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .rejects.toMatchObject({ reason: 'invalid_payload' });
+  });
+
+  it('nullable自由記述は非空を既存trimで保持し上限超過を切り捨てずID空文字も拒否する', async () => {
+    type ResponseVariant = 'valid_text' | 'oversized_sfx' | 'blank_state_id';
+    let variant: ResponseVariant = 'valid_text';
+    let requestCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        const entities = variant === 'blank_state_id'
+          ? [{
+              entity_id: '22222222-2222-4222-8222-222222222222',
+              role: 'primary',
+              expression: 'calm',
+              custom_expression: null,
+              action: 'standing_firm',
+              custom_action: null,
+              position: 'center',
+              facing_direction: null,
+              effect_note: null,
+              state_id: ' ',
+            }]
+          : [];
+        return {
+          body: {
+            output_text: JSON.stringify({
+              pages: [{
+                page_id: '11111111-1111-4111-8111-111111111111',
+                page_number: 1,
+                panels: [{
+                  order: 1,
+                  sfx_text: variant === 'oversized_sfx' ? 'x'.repeat(201) : '  ドン  ',
+                  entities,
+                }],
+              }],
+            }),
+          },
+          requestId: `req-bounded-nullable-text-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .resolves.toMatchObject({
+        suggestion: { pages: [{ panels: [{ sfxText: 'ドン' }] }] },
+      });
+    expect(requestCount).toBe(1);
+
+    variant = 'oversized_sfx';
+    requestCount = 0;
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .rejects.toMatchObject({ reason: 'invalid_payload' });
+    expect(requestCount).toBe(2);
+
+    variant = 'blank_state_id';
+    requestCount = 0;
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .rejects.toMatchObject({ reason: 'invalid_payload' });
+    expect(requestCount).toBe(2);
+  });
+
+  it('state_idを既存UUIDまたはdefault用nullに限定してproviderへ要求する', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    let responseStateId: string | null = '33333333-3333-4333-8333-333333333333';
+    let responseDialogueEntityId: string | null = '22222222-2222-4222-8222-222222222222';
+    let requestCount = 0;
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        requestCount += 1;
+        return {
+          body: {
+            output_text: JSON.stringify({
+              pages: [{
+                page_id: '11111111-1111-4111-8111-111111111111',
+                page_number: 1,
+                panels: [{
+                  order: 1,
+                  dialogue: [{ entity_id: responseDialogueEntityId, text: '確認する。', type: 'speech', position: 'top' }],
+                  entities: [{
+                    entity_id: '22222222-2222-4222-8222-222222222222',
+                    role: 'primary',
+                    expression: 'calm',
+                    custom_expression: null,
+                    action: 'standing_firm',
+                    custom_action: null,
+                    position: 'center',
+                    facing_direction: null,
+                    effect_note: null,
+                    state_id: responseStateId,
+                  }],
+                }],
+              }],
+            }),
+          },
+          requestId: `req-state-id-contract-${requestCount}`,
+        };
+      },
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIPageEpisodePlanCompiler(client);
+
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .resolves.toMatchObject({
+        suggestion: { pages: [{ panels: [{ entities: [{ stateId: responseStateId }] }] }] },
+      });
+    responseStateId = null;
+    responseDialogueEntityId = null;
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .resolves.toMatchObject({
+        suggestion: { pages: [{ panels: [{ entities: [{ stateId: null }] }] }] },
+      });
+
+    const schema = (requests[0]?.text as {
+      format: {
+        schema: {
+          properties: {
+            pages: {
+              items: {
+                properties: {
+                  panels: {
+                    items: {
+                      properties: {
+                        entities: {
+                          items: {
+                            properties: {
+                              state_id: { anyOf: Array<{ type: string; format?: string }> };
+                            };
+                          };
+                        };
+                      };
+                    };
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    }).format.schema;
+    const stateIdSchema = schema.properties.pages.items.properties.panels.items
+      .properties.entities.items.properties.state_id;
+    expect(stateIdSchema.anyOf).toEqual([
+      { type: 'string', format: 'uuid' },
+      { type: 'null' },
+    ]);
+    const pageProperties = schema.properties.pages.items.properties as unknown as {
+      page_id: unknown;
+      source_scene_ids: { items: unknown };
+      panels: { items: { properties: { entities: { items: { properties: { entity_id: unknown } } }; dialogue: { anyOf: Array<{ items: { properties: { entity_id: unknown } } }> } } } };
+    };
+    expect(pageProperties.page_id).toEqual({ type: 'string', format: 'uuid' });
+    expect(pageProperties.source_scene_ids.items).toEqual({ type: 'string', format: 'uuid' });
+    expect(pageProperties.panels.items.properties.entities.items.properties.entity_id)
+      .toEqual({ type: 'string', format: 'uuid' });
+    expect(pageProperties.panels.items.properties.dialogue.anyOf[0]?.items.properties.entity_id)
+      .toEqual({ anyOf: [{ type: 'string', format: 'uuid' }, { type: 'null' }] });
+    const systemPrompt = (requests[0]?.input as Array<{ content: Array<{ text: string }> }>)[0]
+      ?.content[0]?.text ?? '';
+    expect(systemPrompt).toContain(
+      'state_id must be an existing state UUID or JSON null for the default state; never use strings such as default or none',
+    );
+    expect(systemPrompt).toContain('Identifier fields must copy only supplied UUIDs; use JSON null for an ambiguous dialogue speaker');
+
+    responseStateId = 'default';
+    requestCount = 0;
+    await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+      .rejects.toMatchObject({ reason: 'invalid_payload' });
+    expect(requestCount).toBe(2);
+    responseStateId = null;
+    for (const invalidDialogueEntityId of ['奏', 'null']) {
+      responseDialogueEntityId = invalidDialogueEntityId;
+      requestCount = 0;
+      await expect(compiler.compilePlan({ compilerBrief: '[TASK]\nReturn JSON.', language: 'ja' }))
+        .rejects.toMatchObject({ reason: 'invalid_payload' });
+      expect(requestCount).toBe(2);
+    }
+  });
+
+  it('provider schemaの文字列上限とpanel orderは保存時Zod契約に一致する', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return validCompilerResponse();
+      },
+    } as unknown as OpenAIClient;
+    await new OpenAIPageEpisodePlanCompiler(client).compilePlan({
+      compilerBrief: '[TASK]\nReturn JSON.',
+      language: 'ja',
+    });
+
+    type NullableTextJsonSchema = { anyOf: Array<{ maxLength?: number }> };
+    const schema = (requests[0]?.text as {
+      format: {
+        schema: {
+          properties: {
+            pages: {
+              items: {
+                properties: {
+                  page_purpose: NullableTextJsonSchema;
+                  continuity_note: NullableTextJsonSchema;
+                  panels: {
+                    items: {
+                      properties: {
+                        order: { maximum: number };
+                        situation_text: NullableTextJsonSchema;
+                        sfx_text: NullableTextJsonSchema;
+                        background_note: NullableTextJsonSchema;
+                        panel_notes: NullableTextJsonSchema;
+                        composition: { anyOf: Array<{ properties: {
+                          gallery_item_id: NullableTextJsonSchema;
+                          composition_prompt: NullableTextJsonSchema;
+                          custom_note: NullableTextJsonSchema;
+                        } }> };
+                        dialogue: { anyOf: Array<{ items: { properties: {
+                          text: { minLength: number; maxLength: number };
+                        } } }> };
+                        entities: { items: { properties: {
+                          custom_expression: NullableTextJsonSchema;
+                          custom_action: NullableTextJsonSchema;
+                          effect_note: NullableTextJsonSchema;
+                        } } };
+                      };
+                    };
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    }).format.schema;
+    const page = schema.properties.pages.items.properties;
+    const panel = page.panels.items.properties;
+    const composition = panel.composition.anyOf[0]!.properties;
+    const dialogue = panel.dialogue.anyOf[0]!.items.properties;
+    const assignment = panel.entities.items.properties;
+
+    expect(page.page_purpose.anyOf[0].maxLength).toBe(500);
+    expect(page.continuity_note.anyOf[0].maxLength).toBe(1_000);
+    expect(panel.order.maximum).toBe(1_000);
+    expect(panel.situation_text.anyOf[0].maxLength).toBe(2_000);
+    expect(panel.sfx_text.anyOf[0].maxLength).toBe(200);
+    expect(panel.background_note.anyOf[0].maxLength).toBe(2_000);
+    expect(panel.panel_notes.anyOf[0].maxLength).toBe(2_000);
+    expect(composition.gallery_item_id.anyOf[0].maxLength).toBe(100);
+    expect(composition.composition_prompt.anyOf[0].maxLength).toBe(1_000);
+    expect(composition.custom_note.anyOf[0].maxLength).toBe(1_000);
+    expect(dialogue.text).toMatchObject({ minLength: 1, maxLength: 500 });
+    expect(assignment.custom_expression.anyOf[0].maxLength).toBe(200);
+    expect(assignment.custom_action.anyOf[0].maxLength).toBe(200);
+    expect(assignment.effect_note.anyOf[0].maxLength).toBe(500);
+  });
+
   it('JSON の前後に余計な文章があっても最初の JSON object を読める', async () => {
     const client = {
       postJson: async () => ({
@@ -454,13 +789,15 @@ describe('OpenAIPageEpisodePlanCompiler', () => {
     const request = requests[0]!;
     const input = request.input as Array<{ content: Array<{ text: string }> }>;
     const schema = (request.text as {
-      format: { schema: { required: string[]; properties: Record<string, unknown> } };
+      format: { schema: { required: string[]; properties: { source_requirement_placements: { items: { properties: { page_id: unknown } } } } } };
     }).format.schema;
     expect(input[0]?.content[0]?.text).toContain('allocate every PAGE requirement');
     expect(input[0]?.content[0]?.text).toContain('derived draft metadata');
     expect(schema.required).toContain('source_requirement_placements');
     expect(Object.keys(schema.properties)[0]).toBe('source_requirement_placements');
     expect(schema.required[0]).toBe('source_requirement_placements');
+    expect(schema.properties.source_requirement_placements.items.properties.page_id)
+      .toEqual({ type: 'string', format: 'uuid' });
   });
 
   it('同一pageのafter関係がpanel順序と逆転する場合は拒否し同一panelは許可する', async () => {

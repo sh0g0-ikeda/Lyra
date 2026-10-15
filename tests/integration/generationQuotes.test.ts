@@ -10,8 +10,10 @@ import { QuotedGenerationInputs } from '../../src/services/generation/QuotedGene
 import { LayoutGuideImageRenderer } from '../../src/services/page/LayoutGuideImageRenderer.js';
 import { PostgresQuotedImportExecutionRepository } from '../../src/repositories/QuotedImportExecutionRepository.js';
 import { PostgresGenerationJobRepository } from '../../src/repositories/GenerationJobRepository.js';
+import { PostgresGenerationQuoteRepository } from '../../src/repositories/GenerationQuoteRepository.js';
 import { PostgresAccountDeletionRepository } from '../../src/repositories/AccountDeletionRepository.js';
 import { PostgresImageStorageReferenceRepository } from '../../src/repositories/ImageStorageReferenceRepository.js';
+import { PostgresWorkDeletionRepository } from '../../src/repositories/WorkDeletionRepository.js';
 import type { EntityReferenceUploadStoragePort } from '../../src/services/entity/EntityReferenceUploadStorage.js';
 import { computeStateReferenceFingerprint } from '../../src/domain/state/StateReferenceFingerprint.js';
 import { PostgresGenerationQuotePlanResolver } from '../../src/repositories/GenerationQuotePlanResolver.js';
@@ -69,6 +71,42 @@ describePostgres('atomic generation quotes', () => {
       expect(result.quote.expiresAt.getTime()-Date.now()).toBeGreaterThan(290_000);
     }
     expect(await (money(ids.userId))).toEqual({ purchased_credits:30, debits:0, jobs:0 });
+  });
+  it('作品削除フェンス中の期限切れ見積を保持し他作品の期限切れ見積だけを整理する', async () => {
+    // Quote maintenance is not part of the deletion claim. It must leave the
+    // fenced manifest untouched while still pruning an unrelated expired row.
+    const fenced = await fixture();
+    const unrelated = await fixture();
+    const fencedQuote = await service().issue(fenced.userId, { operation:'page_generate', targetId:fenced.pageId });
+    const unrelatedQuote = await service().issue(unrelated.userId, { operation:'page_generate', targetId:unrelated.pageId });
+    await pool.query(
+      `UPDATE generation_quotes SET expires_at=NOW()-INTERVAL '2 days' WHERE id=ANY($1::uuid[])`,
+      [[fencedQuote.quote.id, unrelatedQuote.quote.id]],
+    );
+    const request = await new PostgresWorkDeletionRepository(database).request(fenced.userId, fenced.workId, null);
+    const manifestBefore = (await pool.query(
+      `SELECT
+        (SELECT count(*)::int FROM work_deletion_resources WHERE request_id=$1) AS resources,
+        (SELECT count(*)::int FROM work_deletion_assets WHERE request_id=$1) AS assets,
+        (SELECT count(*)::int FROM work_deletion_prefixes WHERE request_id=$1) AS prefixes`,
+      [request.id],
+    )).rows[0];
+
+    await expect(new PostgresGenerationQuoteRepository(database).pruneUnaccepted()).resolves.toBe(1);
+
+    expect((await pool.query(
+      `SELECT id FROM generation_quotes WHERE id=ANY($1::uuid[]) ORDER BY id`,
+      [[fencedQuote.quote.id, unrelatedQuote.quote.id]],
+    )).rows).toEqual([{ id: fencedQuote.quote.id }]);
+    expect((await pool.query(
+      `SELECT
+        (SELECT count(*)::int FROM work_deletion_resources WHERE request_id=$1) AS resources,
+        (SELECT count(*)::int FROM work_deletion_assets WHERE request_id=$1) AS assets,
+        (SELECT count(*)::int FROM work_deletion_prefixes WHERE request_id=$1) AS prefixes`,
+      [request.id],
+    )).rows[0]).toEqual(manifestBefore);
+    expect(await money(fenced.userId)).toEqual({ purchased_credits:30, debits:0, jobs:0 });
+    expect(await money(unrelated.userId)).toEqual({ purchased_credits:30, debits:0, jobs:0 });
   });
   it('同時・重複受付は1jobと1控除と1dispatchだけを保存し期限後もreceiptを返す', async () => {
     const ids = await fixture(); const instance=service(); const requestKey=randomUUID();

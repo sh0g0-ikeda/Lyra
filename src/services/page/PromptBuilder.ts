@@ -1214,10 +1214,13 @@ const STYLE_LOCK_TEXT =
 const MONOCHROME_STYLE_LOCK_TEXT =
   'Style lock: black-and-white manga ink, grayscale shading and screentones, clean black line art, white paper, crisp panel borders with visible gutters, right-to-left reading flow, no colored fills, no photorealism, no western comic styling. Use reference colors only to preserve character identity and translate them into distinct grayscale tones.';
 const STYLE_PROMPT_TEXT_LIMITS = {
+  title: 200,
   compiledBrief: 820,
   anchorLine: 180,
   notes: 300,
 } as const;
+const STYLE_REFERENCE_PRIORITY_AND_SCOPE_TEXT =
+  "Style priority: preserve this reference's visual treatment over generic defaults. Visual only: preserve character identity/reference mapping, authored story/dialogue, panel count/order/layout, and camera/composition.";
 
 function buildStyleLock(page: PagePromptContext, renderStyle: PageRenderStyle): string {
   const styleLock = renderStyle === 'monochrome' ? MONOCHROME_STYLE_LOCK_TEXT : STYLE_LOCK_TEXT;
@@ -1238,15 +1241,16 @@ function buildStyleLock(page: PagePromptContext, renderStyle: PageRenderStyle): 
       : `User notes: ${ensureTerminalPunctuation(
           compactStylePromptText(page.styleReference.notes, STYLE_PROMPT_TEXT_LIMITS.notes),
         )}`;
+  const title = compactStylePromptText(page.styleReference.title, STYLE_PROMPT_TEXT_LIMITS.title);
 
   return [
     styleLock,
-    `Named style reference constraint: "${page.styleReference.title}". Treat it as a hard page-wide rendering constraint.`,
+    `Named style reference constraint: "${title}". Treat it as a hard page-wide rendering constraint.`,
     `Generalized style interpretation: ${compactStylePromptText(
       page.styleReference.compiledBrief,
       STYLE_PROMPT_TEXT_LIMITS.compiledBrief,
     )}`,
-    'Keep each character face, eye shape, hair silhouette, body proportions, and outfit silhouette anchored to the character reference images. Apply the style reference to rendering treatment, not to character identity.',
+    STYLE_REFERENCE_PRIORITY_AND_SCOPE_TEXT,
     anchorConstraint,
     notes,
   ]

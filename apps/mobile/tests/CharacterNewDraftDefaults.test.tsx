@@ -14,8 +14,9 @@ let language: 'ja' | 'en';
 const refetchEntity = vi.fn();
 let pages: { entities: EntityRecord[] }[];
 let registration: {dirty:boolean;save:()=>Promise<void>;discard:()=>void};
-const updateEntity=vi.fn(); const createEntity=vi.fn(); const navigate=vi.fn();
+const updateEntity=vi.fn(); const createEntity=vi.fn(); const navigate=vi.fn(); const trackJob=vi.fn();
 const resolveDirtyEditors = vi.fn();
+const assetQuoteCapture = vi.hoisted(() => ({ options: null as Record<string, unknown> | null }));
 const updateSelection = vi.fn(async (next: Partial<typeof selection>) => { selection = { ...selection, ...next }; return true; });
 const queryClient={invalidateQueries:vi.fn(),fetchQuery:vi.fn()};
 const query=(data:unknown):Record<string,unknown>=>({data,error:null,isFetching:false,refetch:vi.fn()});
@@ -25,14 +26,14 @@ vi.mock('@tanstack/react-query',()=>({useQueryClient:()=>queryClient,
  useInfiniteQuery:()=>({...query({pages}),hasNextPage:false,isFetchingNextPage:false,fetchNextPage:vi.fn()}),
  useQuery:(options:{queryKey:readonly unknown[]})=>options.queryKey[0] === 'entity-detail'
    ? {...query(entityDetail),error:entityDetailError,refetch:refetchEntity} : query(undefined),
- useMutation:(options:{mutationFn:()=>Promise<unknown>;onSuccess?:(value:unknown)=>Promise<void>;onError?:(error:unknown)=>void})=>{
- const run=async():Promise<unknown>=>{try{const value=await options.mutationFn();await options.onSuccess?.(value);return value;}catch(error){options.onError?.(error);throw error;}};
- return {mutateAsync:run,mutate:()=>{void run();},isPending:false,error:null,reset:vi.fn()};}
+ useMutation:(options:{mutationFn:(variables?:unknown)=>Promise<unknown>;onSuccess?:(value:unknown,variables?:unknown)=>Promise<void>;onError?:(error:unknown)=>void})=>{
+ const run=async(variables?:unknown):Promise<unknown>=>{try{const value=await options.mutationFn(variables);await options.onSuccess?.(value,variables);return value;}catch(error){options.onError?.(error);throw error;}};
+ return {mutateAsync:run,mutate:(variables?:unknown)=>{void run(variables);},isPending:false,error:null,reset:vi.fn()};}
 }));
-vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob:vi.fn(),updateSelection})}));
+vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob,updateSelection})}));
 vi.mock('@/state/dirtyState',()=>({useDirtyState:()=>({resolveDirtyEditors}),useDirtyEditorRegistration:(input:typeof registration)=>{registration=input;}}));
 vi.mock('@/hooks/useActiveResourceJobId',()=>({useActiveResourceJobId:()=>null}));
-vi.mock('@/hooks/useAssetGenerationQuote',()=>({useAssetGenerationQuote:()=>({state:{phase:'closed',visible:false},controller:{open:vi.fn(),close:vi.fn(),accept:vi.fn(),reconcile:vi.fn(),canAccept:()=>false}})}));
+vi.mock('@/hooks/useAssetGenerationQuote',()=>({useAssetGenerationQuote:(options: Record<string, unknown>)=>{assetQuoteCapture.options=options;return {state:{phase:'closed',visible:false},controller:{open:vi.fn(),close:vi.fn(),accept:vi.fn(),reconcile:vi.fn(),canAccept:()=>false}};}}));
 vi.mock('@/components/WorkspaceContextPicker',()=>({useWorkspaceContextSelection:()=>({selectedWorkId:selection.workId,selectedEpisodeId:'episode'})}));
 vi.mock('@/lib/config',()=>({config:{apiBaseUrl:'https://example.test'}}));
 vi.mock('@/lib/api',()=>({ApiError:class ApiError extends Error{}}));
@@ -85,6 +86,8 @@ beforeEach(() => {
   createEntity.mockReset().mockResolvedValue({ ...entity, id: 'created' });
   updateSelection.mockClear();
   resolveDirtyEditors.mockReset().mockResolvedValue(true);
+  trackJob.mockReset().mockResolvedValue(undefined);
+  assetQuoteCapture.options = null;
 });
 afterEach(async () => { await act(async () => root?.unmount()); root = undefined; });
 const render = async (): Promise<void> => { await act(async () => { root = create(<CharactersScreen />); }); };
@@ -255,6 +258,66 @@ describe('新規人物だけの編集可能な初期値', () => {
     });
   });
 
+  it('新規draftの画像importは既存の保存経路を一度だけ完了して保存済みentityで再開する', async () => {
+    // Design: paid image analysis must start only after the draft has one stable,
+    // owned entity id; the resumed picker is scoped to that persisted record.
+    await render();
+    await act(async () => field('名前').props.onChangeText('Imported hero'));
+    const importControl = root!.root.findByType('QuotedEntityImport');
+
+    await act(async () => {
+      await Promise.all([
+        importControl.props.onRequireSavedEntity(),
+        importControl.props.onRequireSavedEntity(),
+      ]);
+    });
+
+    expect(createEntity).toHaveBeenCalledOnce();
+    expect(updateSelection).toHaveBeenCalledWith(
+      { entityId: 'created' },
+      { skipDirtyCheck: true },
+    );
+
+    const created = { ...entity, id: 'created', name: 'Imported hero' };
+    pages = [{ entities: [created] }];
+    await rerender();
+    const resumedImport = root!.root.findByType('QuotedEntityImport');
+    expect(resumedImport.props.entityId).toBe('created');
+    expect(resumedImport.props.autoStart).toBe(true);
+
+    await act(async () => resumedImport.props.onAutoStartConsumed());
+    await rerender();
+    expect(root!.root.findByType('QuotedEntityImport').props.autoStart).toBe(false);
+  });
+
+  it.each(['work', 'organization', 'session'] as const)('%s変更中に画像import用の保存が完了しても現在の選択を汚染せず再開しない', async (scope) => {
+    // A late create response belongs to the workspace that started it. It must
+    // neither select that entity in the new workspace nor resume its picker.
+    let finishCreate: ((value: EntityRecord) => void) | undefined;
+    createEntity.mockImplementationOnce(() => new Promise<EntityRecord>((resolve) => { finishCreate = resolve; }));
+    await render();
+    await act(async () => field('名前').props.onChangeText('Imported hero'));
+    const pending = root!.root.findByType('QuotedEntityImport').props.onRequireSavedEntity();
+    await act(async () => { await Promise.resolve(); });
+
+    if (scope === 'work') selection.workId = 'other-work';
+    if (scope === 'organization') selection.organizationId = 'organization';
+    if (scope === 'session') sessionKey = 'other-user';
+    await rerender();
+    await act(async () => {
+      finishCreate?.({ ...entity, id: 'late-created', name: 'Imported hero' });
+      await pending;
+    });
+    await rerender();
+
+    expect(selection.entityId).toBeNull();
+    expect(updateSelection).not.toHaveBeenCalledWith(
+      { entityId: 'late-created' },
+      { skipDirtyCheck: true },
+    );
+    expect(root!.root.findAllByType('QuotedEntityImport').some(node => node.props.autoStart === true)).toBe(false);
+  });
+
   it.each(['work', 'organization', 'session'])('%sを変更した新規formは旧draftを引き継がず別の初期値から始まる', async (scope) => {
     await render();
     await act(async () => field('名前').props.onChangeText('Old scope draft'));
@@ -302,5 +365,25 @@ describe('新規人物だけの編集可能な初期値', () => {
     await act(async () => registration.discard());
     expect(choice('性別表現').props.value).toBe('male');
     expect(registration.dirty).toBe(false);
+  });
+
+  it('画像生成ジョブが見つからない場合は古い監視対象を外して再生成を妨げない', async () => {
+    selection.entityId = entity.id;
+    await render();
+    const options = assetQuoteCapture.options as {
+      contextKey: string;
+      onAccepted: (receipt: { job_id: string }, target: { request: { target_id: string } }, originKey: string) => Promise<void>;
+    };
+    await act(async () => {
+      await options.onAccepted(
+        { job_id: 'expired-job' },
+        { request: { target_id: entity.id } },
+        options.contextKey,
+      );
+    });
+    const status = root!.root.findByType('JobStatusCard');
+    expect(status.props.jobId).toBe('expired-job');
+    await act(async () => { await status.props.onMissing(); });
+    expect(root!.root.findByType('JobStatusCard').props.jobId).toBeNull();
   });
 });

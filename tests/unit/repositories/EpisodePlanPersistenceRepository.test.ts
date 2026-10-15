@@ -81,6 +81,10 @@ class ProfileCapturingClient extends LockCapturingClient {
 }
 
 class AttemptCapturingClient extends ProfileCapturingClient {
+  public constructor(private readonly row: QueryResultRow = attemptJobRow()) {
+    super();
+  }
+
   public override async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
     values?: readonly unknown[],
@@ -88,7 +92,7 @@ class AttemptCapturingClient extends ProfileCapturingClient {
     if (text.includes('generation_jobs')) {
       this.queries.push(text);
       this.values.push(values);
-      const rows = [attemptJobRow()];
+      const rows = [this.row];
       return { command: text.includes('UPDATE') ? 'UPDATE' : 'SELECT', rowCount: 1, oid: 0, fields: [], rows: rows as unknown as T[] };
     }
     return super.query(text, values);
@@ -275,6 +279,63 @@ describe('PostgresEpisodePlanPersistenceRepository', () => {
     expect(client.transactionCount).toBe(1);
   });
 
+  it.each(['canonical', 'production44_expanded_pg18_v1'] as const)(
+    '%s queued attemptはregistry・job・commit・NOWAIT graph・progressを同一TXへ束ねる', async (profile) => {
+      const client = new AttemptCapturingClient();
+      const repository = new PostgresEpisodePlanPersistenceRepository(client, profile);
+      const job = attemptJob();
+
+      await expect(repository.withLockedEpisodePlan(
+        { episodeId: 'episode-1', userId: 'user-1', organizationId: null, storyAutofillAttempt: job },
+        async (_context, resources) => {
+          expect(resources.storyAutofillCommitStarted).toBe(true);
+          return resources.updateStoryAutofillProgress?.({
+            stage: 'applying', message: 'saving', currentChunk: null, totalChunks: null,
+          });
+        },
+      )).resolves.toBe(true);
+
+      const classify = client.queries.map((query) => {
+        if (query.includes('FROM generation_jobs') && query.includes('FOR UPDATE')) return 'job-lock';
+        if (query.includes('FROM generation_jobs')) return 'job-read';
+        if (query.includes('pg_advisory_xact_lock')) return 'registry';
+        if (query.includes('SET commit_started_at')) return 'commit-cas';
+        if (query.includes('FOR UPDATE OF works')) return 'graph';
+        if (query.includes("SET result = COALESCE(result, '{}'::jsonb)")) return 'progress';
+        return 'other';
+      });
+      expect(classify.indexOf('registry')).toBeGreaterThan(classify.indexOf('job-read'));
+      expect(classify.indexOf('job-lock')).toBeGreaterThan(classify.indexOf('registry'));
+      expect(classify.indexOf('commit-cas')).toBeGreaterThan(classify.indexOf('job-lock'));
+      expect(classify.indexOf('graph')).toBeGreaterThan(classify.indexOf('commit-cas'));
+      expect(classify.indexOf('progress')).toBeGreaterThan(classify.indexOf('graph'));
+      expect(client.queries.some((query) => query.includes('account_deletion_requests'))).toBe(false);
+      expect(client.queries.filter((query) => query.includes('FOR UPDATE')).slice(-8)
+        .every((query) => query.includes('NOWAIT'))).toBe(true);
+      expect(client.transactionCount).toBe(1);
+    },
+  );
+
+  it.each([
+    ['wrong actor', attemptJobRow(), { episodeId: 'episode-1', userId: 'other-user', organizationId: null }],
+    ['cancel requested', attemptJobRow(null, { cancel_requested_at: new Date('2026-10-01T00:00:02.000Z') }), { episodeId: 'episode-1', userId: 'user-1', organizationId: null }],
+    ['stale retry', attemptJobRow(null, { retry_count: 1 }), { episodeId: 'episode-1', userId: 'user-1', organizationId: null }],
+  ] as const)(
+    'canonical queued attemptは%sならcallbackとgraph lock前に拒否する', async (_case, row, input) => {
+      const client = new AttemptCapturingClient(row);
+      const repository = new PostgresEpisodePlanPersistenceRepository(client, 'canonical');
+      let callbackCalled = false;
+
+      await expect(repository.withLockedEpisodePlan(
+        { ...input, storyAutofillAttempt: attemptJob() },
+        async () => { callbackCalled = true; },
+      )).rejects.toMatchObject({ code: 'CONFLICT' });
+
+      expect(callbackCalled).toBe(false);
+      expect(client.queries.some((query) => query.includes('FOR UPDATE OF works'))).toBe(false);
+    },
+  );
+
   it('legacy org attemptはusers・organization・registry・job・membership・NOWAIT graph順で確定する', async () => {
     const client = new OrganizationAttemptCapturingClient();
     const repository = new PostgresEpisodePlanPersistenceRepository(client, 'legacy_2debe_v1');
@@ -391,7 +452,10 @@ function attemptJob(organizationId: string | null = null): GenerationJob {
   };
 }
 
-function attemptJobRow(organizationId: string | null = null): QueryResultRow {
+function attemptJobRow(
+  organizationId: string | null = null,
+  overrides: Partial<QueryResultRow> = {},
+): QueryResultRow {
   const job = attemptJob(organizationId);
   return {
     id: job.id, user_id: job.userId, organization_id: organizationId, job_type: job.jobType,
@@ -399,5 +463,6 @@ function attemptJobRow(organizationId: string | null = null): QueryResultRow {
     sqs_message_id: null, openai_request_id: null, error_message: null, retry_count: 0,
     created_at: job.createdAt, started_at: job.startedAt, completed_at: null, expires_at: null,
     cancel_requested_at: null, cancel_requested_by: null, cancelled_at: null, commit_started_at: null,
+    ...overrides,
   };
 }

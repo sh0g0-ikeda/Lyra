@@ -167,4 +167,16 @@ describe('parseEnv', () => {
     expect(parseEnv({}).EPISODE_STATE_AUTOFILL_V1_ENABLED).toBe(false);
     expect(parseEnv({ EPISODE_STATE_AUTOFILL_V1_ENABLED: 'true' }).EPISODE_STATE_AUTOFILL_V1_ENABLED).toBe(true);
   });
+
+  it('状態自動入力の既定適用は環境を問わず既定OFFで明示値だけを解釈する', () => {
+    expect(parseEnv({ APP_ENV: 'production' }).EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED).toBe(false);
+    expect(parseEnv({
+      APP_ENV: 'production',
+      EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED: 'false',
+    }).EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED).toBe(false);
+    expect(parseEnv({
+      APP_ENV: 'production',
+      EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED: 'true',
+    }).EPISODE_STATE_AUTOFILL_DEFAULT_ENABLED).toBe(true);
+  });
 });

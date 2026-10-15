@@ -2,7 +2,6 @@ import { createContext, useContext, type PropsWithChildren, type RefObject } fro
 import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { CreditBalanceBadge } from '@/components/CreditBalanceBadge';
 import { Notice } from '@/components/Notice';
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 import { t } from '@/lib/i18n';
@@ -17,6 +16,11 @@ export function EmbeddedScreenProvider({ children }: PropsWithChildren): React.J
 }
 
 interface ScreenProps extends PropsWithChildren {
+  /**
+   * `auto` keeps the pre-auth language choice but never exposes credit UI on
+   * ordinary authenticated screens. Manga opts into `language` explicitly.
+   */
+  chrome?: 'auto' | 'language' | 'none';
   title: string;
   eyebrow?: string;
   subtitle?: string;
@@ -28,6 +32,7 @@ interface ScreenProps extends PropsWithChildren {
 }
 
 export function Screen({
+  chrome = 'auto',
   title,
   eyebrow,
   subtitle,
@@ -41,12 +46,14 @@ export function Screen({
   const { language, online, setLanguage } = useNetworkStatus();
   const session = useOptionalAppState()?.session ?? null;
   const embedded = useContext(EmbeddedScreenContext);
+  const showLanguageSwitcher = chrome === 'language' || (chrome === 'auto' && session === null);
+  const showChrome = !embedded && chrome !== 'none' && showLanguageSwitcher;
   return (
-    <SafeAreaView edges={embedded ? ['bottom'] : ['top', 'bottom']} style={styles.safeArea} testID={testID}>
+    <SafeAreaView edges={embedded ? [] : ['top', 'bottom']} style={styles.safeArea} testID={testID}>
       <StatusBar backgroundColor={colors.canvas} barStyle="light-content" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardAvoider}>
-        <View style={styles.chrome}>
-          {session === null ? (
+        {!showChrome ? null : <View style={styles.chrome}>
+          {showLanguageSwitcher ? (
             <View accessibilityLabel="Language / 言語" style={styles.languageSwitcher}>
               <Pressable
                 accessibilityLabel="English"
@@ -58,7 +65,7 @@ export function Screen({
                   ...(language === 'en' ? styles.languageOptionActive : {})
                 }}
               >
-                <Text style={language === 'en' ? styles.languageTextActive : styles.languageText}>ENG</Text>
+                <Text style={language === 'en' ? styles.languageTextActive : styles.languageText}>English</Text>
               </Pressable>
               <Pressable
                 accessibilityLabel="日本語"
@@ -73,12 +80,12 @@ export function Screen({
                 <Text style={language === 'ja' ? styles.languageTextActive : styles.languageText}>日本語</Text>
               </Pressable>
             </View>
-          ) : <CreditBalanceBadge />}
-        </View>
+          ) : null}
+        </View>}
         <ScrollView
           automaticallyAdjustKeyboardInsets
           contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, embedded ? styles.embeddedContent : null]}
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           refreshControl={
@@ -121,6 +128,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     paddingBottom: 112
   },
+  embeddedContent: { paddingBottom: spacing.md },
   eyebrow: {
     color: colors.accent,
     fontSize: 11,

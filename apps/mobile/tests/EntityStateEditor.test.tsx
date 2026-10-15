@@ -3,13 +3,13 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api';
 import { EntityStateEditor } from '@/components/EntityStateEditor';
-const test = vi.hoisted(() => ({ api: { getJob: vi.fn(), saveNamedEntityState: vi.fn(), generateEntityStateReference: vi.fn(), confirmEntityStateReference: vi.fn(), createGenerationQuote: vi.fn(), acceptGenerationQuote: vi.fn(), getGenerationQuote: vi.fn() }, session: {} as Record<string, unknown>, language: 'ja' as 'ja' | 'en', sessionKey: 'session', organizationId: null as string | null, states: [] as unknown[], jobs: [] as unknown[], confirmation: null as null | { onConfirm: () => void }, dirtyRegistration: null as unknown, resolveDirtyEditors: vi.fn(async () => true), trackJob: vi.fn(async () => undefined), queryClient: { getQueryData: vi.fn(), invalidateQueries: vi.fn(async () => undefined), setQueryData: vi.fn() } }));
+const test = vi.hoisted(() => ({ api: { getJob: vi.fn(), saveNamedEntityState: vi.fn(), generateEntityStateReference: vi.fn(), confirmEntityStateReference: vi.fn(), createGenerationQuote: vi.fn(), acceptGenerationQuote: vi.fn(), getGenerationQuote: vi.fn() }, session: {} as Record<string, unknown>, language: 'ja' as 'ja' | 'en', sessionKey: 'session', organizationId: null as string | null, states: [] as unknown[], jobs: [] as unknown[], referenceSet: {} as Record<string, unknown>, confirmation: null as null | { onConfirm: () => void }, dirtyRegistration: null as unknown, resolveDirtyEditors: vi.fn(async () => true), trackJob: vi.fn(async () => undefined), queryClient: { getQueryData: vi.fn(), invalidateQueries: vi.fn(async () => undefined), setQueryData: vi.fn() } }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.mock('@/lib/config', () => ({ config: { apiBaseUrl: 'https://api.example' } }));
 vi.mock('@/state/appState', () => ({ useAppState: () => ({ api: test.api, language: test.language, session: test.session, selection: { organizationId: test.organizationId }, sessionKey: test.sessionKey, tokens: null, trackJob: test.trackJob, hasCapability: () => true }) }));
 vi.mock('@/state/dirtyState', () => ({ useDirtyEditorRegistration: (input: unknown) => { test.dirtyRegistration = input; }, useDirtyState: () => ({ resolveDirtyEditors: test.resolveDirtyEditors }) }));
 vi.mock('@/lib/confirm', () => ({ confirmAction: (input: { onConfirm: () => void }) => { test.confirmation = input; } }));
-vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => test.queryClient, useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'entity-states' ? { entity_states: test.states } : queryKey[0] === 'entity-reference-set' ? { primary_ref_id: 'base', status: 'ready', reference_images: [{ ref_id: 'base', source: 'generated', created_at: '2026-01-01T00:00:00Z' }], updated_at: '2026-01-01T00:00:00Z' } : queryKey[0] === 'entity-state-jobs' ? test.jobs : queryKey[0] === 'job' ? test.jobs[0] : undefined, isSuccess: true, isPending: false, error: null, refetch: vi.fn(async () => ({ data: test.jobs })) }) }));
+vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => test.queryClient, useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'entity-states' ? { entity_states: test.states } : queryKey[0] === 'entity-reference-set' ? test.referenceSet : queryKey[0] === 'entity-state-jobs' ? test.jobs : queryKey[0] === 'job' ? test.jobs[0] : undefined, isSuccess: true, isPending: false, error: null, refetch: vi.fn(async () => ({ data: test.jobs })) }) }));
 vi.mock('react-native', () => ({ Pressable: 'button', Text: 'text', View: 'view', StyleSheet: { create: (styles: unknown) => styles } }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => '00000000-0000-4000-8000-000000000001' }));
 vi.mock('@/components/AssetGenerationQuoteDialog', () => ({ AssetGenerationQuoteDialog: 'quote-dialog' }));
@@ -39,7 +39,7 @@ describe('EntityStateEditor', () => {
     test.queryClient.invalidateQueries.mockResolvedValue(undefined);
     test.queryClient.getQueryData.mockImplementation(() => ({ entity_states: test.states }));
     test.resolveDirtyEditors.mockResolvedValue(true);
-    test.queryClient.setQueryData.mockImplementation((_key: unknown, updater: (previous: { entity_states: unknown[] }) => { entity_states: unknown[] }) => { test.states = updater({ entity_states: test.states }).entity_states; }); test.states = [state]; test.jobs = []; test.session = {}; test.confirmation = null;
+    test.queryClient.setQueryData.mockImplementation((_key: unknown, updater: (previous: { entity_states: unknown[] }) => { entity_states: unknown[] }) => { test.states = updater({ entity_states: test.states }).entity_states; }); test.states = [state]; test.jobs = []; test.referenceSet = { primary_ref_id: 'base', status: 'ready', reference_images: [{ ref_id: 'base', source: 'generated', created_at: '2026-01-01T00:00:00Z' }], updated_at: '2026-01-01T00:00:00Z' }; test.session = {}; test.confirmation = null;
     test.api.createGenerationQuote.mockResolvedValue({ quote_id: 'quote', quote_token: 'opaque', operation: 'entity_state_preview', target_id: 'state', billing_scope: { kind: 'personal', organization_id: null }, image_model: 'gpt-image-2', quality: 'medium', render_style: 'color', amount_credits: 7, reference_count: 1, expires_at: '2099-01-01T00:00:00Z', blockers: [] });
     test.api.acceptGenerationQuote.mockResolvedValue({ quote_id: 'quote', job_id: 'job', accepted_at: state.created_at, amount_credits: 7 });
     test.api.getJob.mockResolvedValue(completedPreview);
@@ -50,7 +50,7 @@ describe('EntityStateEditor', () => {
   it('能力のない旧APIでは有料previewを無効化し既存IDの編集候補はserver値を表示する', () => {
     const renderer = render();
     expect(renderer.root.findAllByType('field').find((node) => node.props.label === '状態名')?.props.value).toBe('外傷');
-    const preview = renderer.root.findAllByType('action').find((node) => node.props.label.startsWith('プレビュー'))!;
+    const preview = renderer.root.findAllByType('action').find((node) => node.props.label === 'キャラをプレビューする')!;
     expect(preview.props.disabled).toBe(true); expect(test.api.generateEntityStateReference).not.toHaveBeenCalled();
   });
   it('保存は名前と説明だけを更新しlegacyや基本参照を消さない', async () => {
@@ -63,7 +63,7 @@ describe('EntityStateEditor', () => {
   it('server見積の7クレジットを確認してからのみ受付し旧previewAPIを呼ばない', async () => {
     test.session = { capabilities: { entity_state_reference_generation: true, generation_quotes: true } };
     const renderer = render();
-    await act(async () => { await action(renderer, 'プレビュー料金を確認').props.onPress(); });
+    await act(async () => { await action(renderer, 'キャラをプレビューする').props.onPress(); });
     expect(test.api.createGenerationQuote).toHaveBeenCalledWith({ operation: 'entity_state_preview', target_id: 'state', entity_id: 'entity' }, null);
     expect(test.api.acceptGenerationQuote).not.toHaveBeenCalled();
     expect(renderer.root.findByType('quote-dialog').props.state.quote.amount_credits).toBe(7);
@@ -71,6 +71,31 @@ describe('EntityStateEditor', () => {
     expect(test.api.acceptGenerationQuote).toHaveBeenCalledOnce();
     expect(test.api.generateEntityStateReference).not.toHaveBeenCalled();
     act(() => renderer.unmount());
+  });
+  // A confirmed primary controls preview admission; aggregate set status only describes completeness.
+  it('1枚だけのpartialでも確定primaryがmobile表示可能なら見積確認後にだけ受付する', async () => {
+    test.session = { capabilities: { entity_state_reference_generation: true, generation_quotes: true } };
+    test.referenceSet = { primary_ref_id: 'base', status: 'partial', reference_images: [{ ref_id: 'base', source: 'generated', created_at: '2026-01-01T00:00:00Z' }], updated_at: '2026-01-01T00:00:00Z' };
+    const renderer = render();
+    expect(action(renderer, 'キャラをプレビューする').props.disabled).toBe(false);
+    await act(async () => { await action(renderer, 'キャラをプレビューする').props.onPress(); });
+    expect(test.api.createGenerationQuote).toHaveBeenCalledWith({ operation: 'entity_state_preview', target_id: 'state', entity_id: 'entity' }, null);
+    expect(test.api.acceptGenerationQuote).not.toHaveBeenCalled();
+    await act(async () => { await renderer.root.findByType('quote-dialog').props.onAccept(); });
+    expect(test.api.acceptGenerationQuote).toHaveBeenCalledOnce();
+  });
+  it.each([
+    ['primaryなし', { primary_ref_id: null, status: 'partial', reference_images: [{ ref_id: 'base', source: 'generated', created_at: '2026-01-01T00:00:00Z' }], updated_at: '2026-01-01T00:00:00Z' }],
+    ['primary不一致', { primary_ref_id: 'other', status: 'partial', reference_images: [{ ref_id: 'base', source: 'generated', created_at: '2026-01-01T00:00:00Z' }], updated_at: '2026-01-01T00:00:00Z' }],
+    ['candidateだけ', { primary_ref_id: 'base', status: 'partial', reference_images: [{ ref_id: 'candidate', source: 'generated', created_at: '2026-01-01T00:00:00Z' }], updated_at: '2026-01-01T00:00:00Z' }],
+    ['partialのweb_only primary', { primary_ref_id: 'base', status: 'partial', reference_images: [{ ref_id: 'base', source: 'generated', mobile_access: 'web_only', created_at: '2026-01-01T00:00:00Z' }], updated_at: '2026-01-01T00:00:00Z' }],
+    ['readyでもprimary欠損', { primary_ref_id: 'base', status: 'ready', reference_images: [], updated_at: '2026-01-01T00:00:00Z' }],
+  ])('%sではpreviewをblockedし見積を要求しない', (_name, referenceSet) => {
+    test.session = { capabilities: { entity_state_reference_generation: true, generation_quotes: true } };
+    test.referenceSet = referenceSet;
+    const renderer = render();
+    expect(action(renderer, 'キャラをプレビューする').props.disabled).toBe(true);
+    expect(test.api.createGenerationQuote).not.toHaveBeenCalled();
   });
   it('状態専用の候補を明示選択してからtokenとrevisionで確定する', async () => {
     test.jobs = [{ id: 'job', job_type: 'entity_generate', status: 'completed', created_at: state.created_at,
@@ -87,7 +112,7 @@ describe('EntityStateEditor', () => {
   it('古いpreview確認後に入力が変わった場合は課金操作を送らない', async () => {
     test.session = { capabilities: { entity_state_reference_generation: true, generation_quotes: true } };
     const renderer = render();
-    await act(async () => { action(renderer, 'プレビュー料金を確認').props.onPress(); });
+    await act(async () => { action(renderer, 'キャラをプレビューする').props.onPress(); });
     act(() => renderer.root.findAllByType('field').find((node) => node.props.label === '自由入力')!.props.onChangeText('未保存変更'));
     await act(async () => { renderer.root.findByType('quote-dialog').props.onAccept(); });
     expect(test.api.acceptGenerationQuote).not.toHaveBeenCalled();
@@ -99,18 +124,18 @@ describe('EntityStateEditor', () => {
     test.api.acceptGenerationQuote.mockRejectedValue(new Error('offline'));
     const renderer = render();
     const before = renderer.root.findAllByType('image').length;
-    await act(async () => { action(renderer, 'プレビュー料金を確認').props.onPress(); });
+    await act(async () => { action(renderer, 'キャラをプレビューする').props.onPress(); });
     await act(async () => { renderer.root.findByType('quote-dialog').props.onAccept(); });
     expect(renderer.root.findAllByType('image')).toHaveLength(before);
     expect(JSON.stringify(renderer.toJSON())).toContain('受付結果が不明');
     expect(test.api.acceptGenerationQuote).toHaveBeenCalledTimes(1);
-    expect(action(renderer, 'プレビュー料金を確認').props.disabled).toBe(true);
+    expect(action(renderer, 'キャラをプレビューする').props.disabled).toBe(true);
   });
   it('未保存入力があるとpreviewせずdirty guardへ登録する', () => {
     test.session = { capabilities: { entity_state_reference_generation: true, generation_quotes: true } };
     const renderer = render();
     act(() => renderer.root.findAllByType('field').find((node) => node.props.label === '自由入力')!.props.onChangeText('変更'));
-    expect(action(renderer, 'プレビュー料金を確認').props.disabled).toBe(true);
+    expect(action(renderer, 'キャラをプレビューする').props.disabled).toBe(true);
     expect(test.dirtyRegistration).toMatchObject({ dirty: true });
   });
   it.each(['ja', 'en'] as const)('保存応答後の読込失敗でも保存済みを認識して再送しない (%s)', async (language) => {
@@ -319,7 +344,7 @@ describe('EntityStateEditor', () => {
     act(() => renderer.root.findAllByType('field')[0]!.props.onChangeText('別の編集'));
     test.api.saveNamedEntityState.mockResolvedValue({ ...state, name: '別の編集', updated_at: '2026-01-04T00:00:00Z' });
     await act(async () => { await action(renderer, '状態を保存').props.onPress(); });
-    expect(action(renderer, 'プレビュー料金を確認').props.disabled).toBe(false);
+    expect(action(renderer, 'キャラをプレビューする').props.disabled).toBe(false);
     expect(JSON.stringify(renderer.toJSON())).toContain('前の状態画像の確定結果は未確認のままです');
     expect(test.api.createGenerationQuote).not.toHaveBeenCalled();
     expect(test.api.generateEntityStateReference).not.toHaveBeenCalled();
@@ -345,19 +370,19 @@ describe('EntityStateEditor', () => {
     await act(async () => { action(renderer, '選択した候補を状態画像に確定').props.onPress(); });
     await act(async () => { renderer.root.findByType('picker').props.onSelect('state'); });
     expect(JSON.stringify(renderer.toJSON())).toContain('状態画像の確定結果を確認できません');
-    expect(action(renderer, 'プレビュー料金を確認').props.disabled).toBe(true);
+    expect(action(renderer, 'キャラをプレビューする').props.disabled).toBe(true);
     await act(async () => { renderer.root.findByType('picker').props.onSelect('second'); });
     expect(renderer.root.findAllByType('field')[0]!.props.value).toBe('休息');
     await act(async () => { renderer.root.findByType('picker').props.onSelect('state'); });
     expect(JSON.stringify(renderer.toJSON())).toContain('状態画像の確定結果を確認できません');
-    expect(action(renderer, 'プレビュー料金を確認').props.disabled).toBe(true);
+    expect(action(renderer, 'キャラをプレビューする').props.disabled).toBe(true);
     await act(async () => { action(renderer, '同じ候補の確定結果を照合').props.onPress(); });
     expect(test.api.confirmEntityStateReference).toHaveBeenCalledTimes(2);
   });
   it('終端jobの再読込失敗をcallback外へthrowせず読込専用の案内にする', async () => {
     const renderer = render(); test.queryClient.invalidateQueries.mockRejectedValue(new Error('offline'));
     await act(async () => { await expect(renderer.root.findByType('job-card').props.onCompleted()).resolves.toBeUndefined(); });
-    expect(JSON.stringify(renderer.toJSON())).toContain('状態・参照画像・ジョブの読み込みに失敗しました');
+    expect(JSON.stringify(renderer.toJSON())).toContain('状態・キャラ画像・ジョブの読み込みに失敗しました');
     expect(test.api.confirmEntityStateReference).not.toHaveBeenCalled();
     expect(test.api.saveNamedEntityState).not.toHaveBeenCalled();
   });

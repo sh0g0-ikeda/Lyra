@@ -1,0 +1,19 @@
+# EAS builds use the self-contained mobile app; exclude server code, docs, tests and secrets.
+**
+!apps
+!apps/mobile
+!apps/mobile/App.tsx
+!apps/mobile/index.ts
+!apps/mobile/package.json
+!apps/mobile/package-lock.json
+!apps/mobile/app.json
+!apps/mobile/app.config.js
+!apps/mobile/eas.json
+!apps/mobile/metro.config.js
+!apps/mobile/babel.config.js
+!apps/mobile/tsconfig.json
+!apps/mobile/eslint.config.js
+!apps/mobile/assets
+!apps/mobile/assets/**
+!apps/mobile/src
+!apps/mobile/src/**

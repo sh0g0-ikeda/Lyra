@@ -97,9 +97,10 @@ function toSafeJobError(job: GenerationJob): SafeJobErrorResponse {
   }
 
   const raw = job.errorMessage?.toLowerCase() ?? '';
-  const invalidProviderOutput = raw.includes('openai') && matchesAny(raw, [
-    'returned an invalid payload', 'returned invalid json',
-  ]);
+  const invalidProviderOutput = job.errorMessage === 'OpenAI episode plan audit compiler returned invalid source coverage'
+    || raw.includes('openai') && matchesAny(raw, [
+      'returned an invalid payload', 'returned invalid json',
+    ]);
   if (invalidProviderOutput) {
     return {
       code: 'GENERATION_TEMPORARILY_UNAVAILABLE',

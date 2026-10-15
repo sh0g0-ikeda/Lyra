@@ -9,6 +9,9 @@ export function assertAttestedRuntimeCapabilities(runtime: AttestedRuntime, conf
   if (runtime.capabilities.stripeCreditRecovery !== true) {
     throw new ConfigurationError('Credit recovery requires attested migration 049');
   }
+  if (runtime.capabilities.workDeletion !== true) {
+    throw new ConfigurationError('Work access requires attested migration 050');
+  }
   if (!runtime.capabilities.entityStateMonotonicRevision
     && (config.ENTITY_STATE_REFERENCE_GENERATION_ENABLED === true || config.STATE_REFERENCE_COPY_V2_ADMISSION_ENABLED === true)) {
     throw new ConfigurationError('Entity state generation admission requires attested migration 048');
