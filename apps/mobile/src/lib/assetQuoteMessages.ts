@@ -16,7 +16,7 @@ const copy = {
     applyBody: 'This replaces the current appearance fields, additional structured fields, prompt supplement, and image candidate with the analysis result. The name and free description stay as entered. Cancel keeps all current input.',
     changedDraft: 'Your draft changed while the image was analyzed. Review the current input before replacing these fields.',
     importError: 'The image or analysis status could not be loaded. Your current input is retained.',
-    imageType: 'Choose a JPEG, PNG, or WebP image up to 5 MB.', imagePickerError: 'The image picker could not open that image. Choose it again.', imageFileError: 'The selected image could not be read. Choose another image.', imageTooLarge: 'Choose an image that is 5 MB or smaller.', uploadReady: 'The image is uploaded. Review the analysis price before starting.',
+    imageType: 'Choose a JPEG, PNG, WebP, HEIC, or HEIF image up to 5 MB.', imagePickerError: 'The image picker could not open that image. Choose it again.', imageFileError: 'The selected image could not be read. Choose another image.', imageTooLarge: 'Choose an image that is 5 MB or smaller.', imageConversionError: 'This HEIC or HEIF image could not be prepared. Choose another image.', uploadReady: 'The image is uploaded. Review the analysis price before starting.',
     importPending: 'Image analysis is running. You can continue editing; results will only be applied after your confirmation.',
     sourcePending: 'Confirm the imported image before requesting this preview.', quoteChanged: 'The input changed. Review a fresh quote before starting.'
   },
@@ -35,7 +35,7 @@ const copy = {
     applyBody: '現在の外見の選択項目・追加の構造化項目・プロンプト補足・画像候補を解析結果に置き換えます。名前と自由記述は入力した内容を保持します。キャンセルすると現在の入力をすべて保持します。',
     changedDraft: '画像解析中に入力が変更されました。対象項目を置き換える前に、現在の入力を確認してください。',
     importError: '画像または解析状況を読み込めません。現在の入力は保持されています。',
-    imageType: '5 MB以下のJPEG・PNG・WebP画像を選んでください。', imagePickerError: '画像を選択できませんでした。もう一度選んでください。', imageFileError: '選択した画像を読み取れませんでした。別の画像を選んでください。', imageTooLarge: '5 MB以下の画像を選んでください。', uploadReady: 'アップロードが完了しました。開始前に解析料金を確認してください。',
+    imageType: '5 MB以下のJPEG・PNG・WebP・HEIC・HEIF画像を選んでください。', imagePickerError: '画像を選択できませんでした。もう一度選んでください。', imageFileError: '選択した画像を読み取れませんでした。別の画像を選んでください。', imageTooLarge: '5 MB以下の画像を選んでください。', imageConversionError: 'このHEIC・HEIF画像を準備できませんでした。別の画像を選んでください。', uploadReady: 'アップロードが完了しました。開始前に解析料金を確認してください。',
     importPending: '画像を解析中です。入力の編集を続けられます。結果は確認後にのみ入力へ適用します。',
     sourcePending: 'キャラをプレビューする前に、取り込んだ画像を確定してください。', quoteChanged: '入力が変更されました。開始前に料金を確認し直してください。'
   }

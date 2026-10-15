@@ -283,14 +283,22 @@ or unmatched primaries and unconfirmed candidates remain unavailable; capability
 authorization, saved-input revision, active-job, and explicit quote acceptance
 checks still apply.
 
-Mobile import validates local file access and the existing 5 MB upload bound
-before preparing a network upload. When image-picker MIME and filename metadata
-are absent, the same validated file may be inspected for a PNG, JPEG, or WebP
-header; no conversion or larger upload is admitted. Local selection, format,
-size, and file-access failures are distinct from loading a submitted analysis job.
-The server still verifies actual bytes, MIME, size, and storage identity. Analysis
-starts only after explicit quote acceptance, and its validated result replaces
-draft fields only after a separate apply confirmation.
+Mobile import validates local file access, actual image bytes, and the existing
+5 MiB bound before preparing a network upload. JPEG, PNG, and WebP keep their
+original bytes. Starting with native/runtime version 1.0.9, recognized HEIC/HEIF
+photos are converted once on the device into a JPEG cache copy (quality 0.9,
+without resizing). The original photo is never changed or deleted. Both source
+and converted files must contain between 1 byte and 5 MiB; the converted JPEG signature
+and actual size are revalidated before upload. Unsupported containers and failed
+conversion remain local failures before upload, quote acceptance, or charging.
+Cancelled or stale preparation results cannot start an upload; only generated
+cache copies are cleaned up. Local selection, format, size, conversion, and file
+access failures are distinct from loading a submitted analysis job. The server
+still verifies actual bytes, MIME, size, and storage identity using the existing
+JPEG/PNG/WebP upload contract. Analysis starts only after explicit quote
+acceptance, and its validated result replaces draft fields only after a separate
+apply confirmation. Version 1.0.8 must not receive an OTA update requiring the
+new native image conversion module.
 
 Story-to-page autofill plans beat ownership across the complete episode before
 expanding the existing pages. The normal path first requests the full-episode beat

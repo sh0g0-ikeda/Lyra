@@ -10,32 +10,24 @@ import { PrimaryButton } from '@/components/PrimaryButton';
 import { textStyles } from '@/constants/theme';
 import { entityImportResponseSchema } from '@/domain/apiSchemas';
 import type { EntityType } from '@/domain/types';
-import type { EntityReferenceUploadMimeType } from '@/domain/payloads';
 import { useAssetGenerationQuote } from '@/hooks/useAssetGenerationQuote';
 import type { LyraMobileApiClient } from '@/lib/api';
 import { assetQuoteMessages } from '@/lib/assetQuoteMessages';
 import { appendAiProviderDisclosure } from '@/lib/aiProviderDisclosure';
 import { confirmAction } from '@/lib/confirm';
 import { DirectEntityUploadError, uploadAndImportEntityReference, type BinaryUploadSource, type DirectEntityUploadStage } from '@/lib/directEntityReferenceUpload';
-import { createExpoBinaryUploadFile } from '@/lib/expoBinaryUpload';
+import { EntityReferenceImagePreparationError, prepareEntityReferenceImage } from '@/lib/prepareEntityReferenceImage';
 import { jobQueryKey } from '@/lib/queryKeys';
 import { useAppState } from '@/state/appState';
 export type ImportedEntityDetails = Awaited<ReturnType<LyraMobileApiClient['importEntityImage']>>;
 interface Props { entityId: string | null; entityType: EntityType; entityName: string; workId: string | null; draftRevision: string; parentBusy?: boolean; autoStart?: boolean; onAutoStartConsumed?: () => void; onRequireSavedEntity?: () => Promise<void>; onApply: (result: ImportedEntityDetails, expectedRevision: string) => void; onBusyChange: (busy: boolean) => void; }
-interface Upload { source: BinaryUploadSource; mimeType: EntityReferenceUploadMimeType; sizeBytes: number; token: string | null; scope: string; revision: string; }
-type LocalImageInputErrorCode = 'PICKER_FAILED' | 'MIME_UNSUPPORTED' | 'FILE_UNREADABLE' | 'FILE_TOO_LARGE';
+interface Upload { source: BinaryUploadSource; mimeType: import('@/domain/payloads').EntityReferenceUploadMimeType; sizeBytes: number; token: string | null; scope: string; revision: string; dispose: () => void; }
+type LocalImageInputErrorCode = 'PICKER_FAILED' | 'MIME_UNSUPPORTED' | 'FILE_UNREADABLE' | 'FILE_TOO_LARGE' | 'CONVERSION_FAILED';
 class LocalImageInputError extends Error {
   public constructor(public readonly code: LocalImageInputErrorCode) {
     super(code);
     this.name = 'LocalImageInputError';
   }
-}
-const maximumImageSizeBytes = 5 * 1024 * 1024;
-function mimeType(asset: ImagePicker.ImagePickerAsset): EntityReferenceUploadMimeType | null {
-  if (asset.mimeType === 'image/png' || asset.mimeType === 'image/jpeg' || asset.mimeType === 'image/webp') return asset.mimeType;
-  if (asset.mimeType !== null && asset.mimeType !== undefined) return null;
-  const source = `${asset.uri} ${asset.fileName ?? ''}`.toLowerCase();
-  return /\.png\b/u.test(source) ? 'image/png' : /\.webp\b/u.test(source) ? 'image/webp' : /\.jpe?g\b/u.test(source) ? 'image/jpeg' : null;
 }
 // Uploading only obtains a server-owned source token. Analysis begins through
 // quote acceptance, and its result never writes the editor without confirmation.
@@ -47,13 +39,18 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
   const copy = assetQuoteMessages(language);
   const queryClient = useQueryClient();
   const [upload, setUpload] = useState<Upload | null>(null);
+  const [uploadScope, setUploadScope] = useState(scope);
+  if (uploadScope !== scope) {
+    setUploadScope(scope);
+    setUpload(null);
+  }
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState<DirectEntityUploadStage | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [job, setJob] = useState<{ id: string; scope: string; revision: string } | null>(null);
   const [appliedJobId, setAppliedJobId] = useState<string | null>(null);
-  const abort = useRef<AbortController | null>(null);
+  const abort = useRef<AbortController | null>(null); const cachedDisposer = useRef<(() => void) | null>(null);
   const lock = useRef(false); const entityPreparation = useRef<Promise<void> | null>(null); const alive = useRef(true);
   const autoStartKey = props.autoStart === true ? `${scope}:${props.draftRevision}` : null;
   const onAutoStartConsumed = props.onAutoStartConsumed;
@@ -61,13 +58,14 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
   const startUploadRef = useRef<(retry: boolean) => Promise<void>>(async () => undefined);
   const current = useRef({ scope, revision: props.draftRevision, enabled });
   useLayoutEffect(() => { current.current = { scope, revision: props.draftRevision, enabled }; }, [scope, props.draftRevision, enabled]);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; abort.current?.abort(); }; }, []);
-  useEffect(() => { abort.current?.abort(); }, [scope]);
+  const disposeCached = (): void => { cachedDisposer.current?.(); cachedDisposer.current = null; };
+  useEffect(() => { alive.current = true; return () => { alive.current = false; abort.current?.abort(); disposeCached(); }; }, []);
+  useEffect(() => { abort.current?.abort(); disposeCached(); }, [scope]);
   const quote = useAssetGenerationQuote({
     api, contextKey: scope, organizationId, enabled,
     onAccepted: async (receipt, target, originKey) => {
       if (receipt.job_id === null || !alive.current || current.current.scope !== originKey) return;
-      setJob({ id: receipt.job_id, scope: originKey, revision: target.revision }); setUpload(null); setAppliedJobId(null);
+      disposeCached(); setJob({ id: receipt.job_id, scope: originKey, revision: target.revision }); setUpload(null); setAppliedJobId(null);
       await trackJob(receipt.job_id).catch(() => undefined);
       await queryClient.invalidateQueries({ queryKey: ['session', sessionKey] });
     }
@@ -84,11 +82,11 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
   const localImageMessage = localImageError?.code === 'PICKER_FAILED' ? copy.imagePickerError
     : localImageError?.code === 'MIME_UNSUPPORTED' ? copy.imageType
     : localImageError?.code === 'FILE_TOO_LARGE' ? copy.imageTooLarge
-    : localImageError?.code === 'FILE_UNREADABLE' ? copy.imageFileError : null;
+    : localImageError?.code === 'CONVERSION_FAILED' ? copy.imageConversionError : localImageError?.code === 'FILE_UNREADABLE' ? copy.imageFileError : null;
   const onBusyChange = props.onBusyChange;
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   const openQuote = async (item: Upload): Promise<void> => {
-    if (item.token === null || item.scope !== current.current.scope || !alive.current) return;
+    if (item.token === null || item.scope !== current.current.scope || item.revision !== current.current.revision || !current.current.enabled || !alive.current) return;
     await quote.controller.open({ label: props.entityName.trim() || copy.entity_import_analysis, revision: item.revision,
       request: { operation: 'entity_import_analysis', upload_token: item.token, entity_type: props.entityType, ...(props.entityId === null ? {} : { entity_id: props.entityId }) } });
   };
@@ -96,7 +94,7 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
     if (lock.current || !enabled || props.parentBusy || activeJob || acceptancePending) return;
     lock.current = true; setUploading(true); setError(null);
     const controller = new AbortController(); abort.current?.abort(); abort.current = controller;
-    const origin = scope;
+    const origin = scope; const originRevision = current.current.revision;
     try {
       let item = retry && upload?.scope === origin ? upload : null;
       if (item === null) {
@@ -109,26 +107,14 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
         if (chosen.canceled || !alive.current || current.current.scope !== origin) return;
         const asset = chosen.assets[0];
         if (asset === undefined) throw new LocalImageInputError('FILE_UNREADABLE');
-        const metadataKind = mimeType(asset);
-        let file: ReturnType<typeof createExpoBinaryUploadFile>;
+        let prepared: Awaited<ReturnType<typeof prepareEntityReferenceImage>>;
         try {
-          file = createExpoBinaryUploadFile(asset.uri);
-        } catch {
-          throw new LocalImageInputError('FILE_UNREADABLE');
-        }
-        if (!file.exists || file.sizeBytes <= 0) throw new LocalImageInputError('FILE_UNREADABLE');
-        if (file.sizeBytes > maximumImageSizeBytes) throw new LocalImageInputError('FILE_TOO_LARGE');
-        let kind = metadataKind;
-        if (kind === null) {
-          try {
-            kind = await file.detectMimeType();
-          } catch {
-            throw new LocalImageInputError('FILE_UNREADABLE');
-          }
-        }
-        if (!alive.current || current.current.scope !== origin || controller.signal.aborted) return;
-        if (kind === null) throw new LocalImageInputError('MIME_UNSUPPORTED');
-        item = { source: file.source, mimeType: kind, sizeBytes: file.sizeBytes, token: null, scope: origin, revision: current.current.revision };
+          prepared = await prepareEntityReferenceImage(asset.uri);
+        } catch (error) { if (error instanceof EntityReferenceImagePreparationError) throw new LocalImageInputError(error.code); throw new LocalImageInputError('FILE_UNREADABLE'); }
+        if (!alive.current || current.current.scope !== origin || current.current.revision !== originRevision || !current.current.enabled || controller.signal.aborted) { prepared.dispose(); return; }
+        disposeCached();
+        cachedDisposer.current = prepared.dispose;
+        item = { source: prepared.file.source, mimeType: prepared.mimeType, sizeBytes: prepared.sizeBytes, token: null, scope: origin, revision: originRevision, dispose: prepared.dispose };
         setUpload(item);
       }
       const pending = item; setProgress(0);
@@ -137,11 +123,11 @@ export function QuotedEntityImport(props: Props): React.JSX.Element {
         resumeFinalizeToken: pending.token, signal: controller.signal,
         createPresignedUpload: (body) => api.createEntityReferenceUpload(body, organizationId),
         finalizeImport: async (uploadToken) => uploadToken,
-        onFinalizeTokenReady: (uploadToken) => { if (alive.current && current.current.scope === origin) setUpload({ ...pending, token: uploadToken }); },
+        onFinalizeTokenReady: (uploadToken) => { if (alive.current && current.current.scope === origin) { disposeCached(); setUpload({ ...pending, token: uploadToken }); } },
         onProgress: (value) => { if (alive.current && current.current.scope === origin) setProgress(value); },
         onStageChange: (value) => { if (alive.current && current.current.scope === origin) setStage(value === 'finalize' ? null : value); }
       });
-      if (!alive.current || current.current.scope !== origin || controller.signal.aborted) return;
+      if (!alive.current || current.current.scope !== origin || current.current.revision !== originRevision || !current.current.enabled || controller.signal.aborted) return;
       const completed = { ...pending, token }; setUpload(completed); setStage(null);
       await openQuote(completed);
     } catch (cause) { if (alive.current && current.current.scope === origin) setError(cause); }

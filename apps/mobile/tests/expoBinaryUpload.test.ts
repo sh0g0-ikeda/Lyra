@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createExpoBinaryUploadFile, detectEntityReferenceMimeType } from '@/lib/expoBinaryUpload';
+import { createExpoBinaryUploadFile, detectEntityReferenceMimeType, isEntityReferenceHeif } from '@/lib/expoBinaryUpload';
 
 const mocks = vi.hoisted(() => ({ File: vi.fn(), bytes: vi.fn(), createUploadTask: vi.fn() }));
 
@@ -24,6 +24,13 @@ describe('Expo binary upload file', () => {
     expect(detectEntityReferenceMimeType(bytes)).toBeNull();
   });
 
+  it('bounded HEIF ftyp brandだけを変換候補として識別しAVIFを誤受理しない', () => {
+    const heic = Uint8Array.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0, 0x6d, 0x69, 0x66, 0x31, 0, 0, 0, 0]);
+    const avifWithHeicCompatible = Uint8Array.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66, 0, 0, 0, 0, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0]);
+    const malformed = Uint8Array.from([0, 0, 0, 64, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0]);
+    expect(isEntityReferenceHeif(heic)).toBe(true); expect(isEntityReferenceHeif(avifWithHeicCompatible)).toBe(false); expect(isEntityReferenceHeif(malformed)).toBe(false);
+  });
+
   it('同じcaptured FileのbytesだけでMIMEを検査しupload taskもそのFileに束縛する', async () => {
     const file = { exists: true, size: 42, bytes: mocks.bytes, createUploadTask: mocks.createUploadTask };
     mocks.File.mockImplementation(() => file);
@@ -31,9 +38,10 @@ describe('Expo binary upload file', () => {
     const upload = createExpoBinaryUploadFile('content://opaque');
 
     await expect(upload.detectMimeType()).resolves.toBe('image/png');
+    await expect(upload.readBytes()).resolves.toEqual(expect.any(Uint8Array));
     upload.source.createUploadTask({ url: 'https://uploads.example.test/opaque', headers: {}, mimeType: 'image/png', onProgress: vi.fn() });
     expect(mocks.File).toHaveBeenCalledWith('content://opaque');
-    expect(mocks.bytes).toHaveBeenCalledOnce();
+    expect(mocks.bytes).toHaveBeenCalledTimes(2);
     expect(mocks.createUploadTask).toHaveBeenCalledOnce();
   });
 
