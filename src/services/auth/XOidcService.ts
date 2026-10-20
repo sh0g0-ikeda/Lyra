@@ -9,7 +9,8 @@ const randomToken = (): string => randomBytes(32).toString('base64url');
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 const profileSchema = z.object({ subject: z.string().regex(/^\d{1,30}$/u), email: z.string().email().max(320), name: z.string().min(1).max(200) });
 const flowSchema = z.object({ state: z.string().min(1).max(500), nonce: z.string().min(1).max(500).optional(), verifier: z.string(), codeChallenge: z.string().optional() });
-const grantSchema = flowSchema.omit({ verifier: true }).extend({ profile: profileSchema });
+const emailChallengeSchema = flowSchema.omit({ verifier: true }).extend({ profile: profileSchema });
+const grantSchema = emailChallengeSchema.extend({ authenticatedAt: z.number().int().positive() });
 interface Cookie { name: string; value: string; maxAge: number }
 interface XOidcPorts {
   repository: XArtifactRepository; oauth: XOAuthPort; crypto: XOidcCryptoPort;
@@ -70,11 +71,12 @@ export class XOidcService {
     if (!validToken(challenge) || !validToken(cookie) || !/^\d{6}$/u.test(code)) throw new XOidcError('invalid_grant');
     const saved = await ports.repository.consume('email', hash(challenge), hash(cookie), this.proof(challenge, code));
     if (!saved) throw new XOidcError('invalid_grant');
-    const grant = grantSchema.parse(ports.crypto.open(saved.ciphertext));
+    const authenticatedAt = Math.floor(Date.now() / 1000);
+    const grant = emailChallengeSchema.parse(ports.crypto.open(saved.ciphertext));
     // Recheck after the email challenge: another signup can occur meanwhile.
     try { await ports.assertProfileAllowed(grant.profile); } catch { throw new XOidcError('access_denied'); }
     const authorizationCode = randomToken();
-    await this.save('code', authorizationCode, config.clientId, grant, CODE_TTL_SECONDS);
+    await this.save('code', authorizationCode, config.clientId, { ...grant, authenticatedAt }, CODE_TTL_SECONDS);
     const redirect = new URL(config.cognitoRedirectUri);
     redirect.searchParams.set('code', authorizationCode); redirect.searchParams.set('state', grant.state);
     return redirect.toString();
@@ -89,7 +91,7 @@ export class XOidcService {
     if (grant.codeChallenge && (!input.code_verifier || !/^[A-Za-z0-9._~-]{43,128}$/u.test(input.code_verifier) || createHash('sha256').update(input.code_verifier).digest('base64url') !== grant.codeChallenge)) throw new XOidcError('invalid_grant');
     if (!(await ports.repository.consume('code', hash(input.code), hash(config.clientId)))) throw new XOidcError('invalid_grant');
     const accessToken = randomToken();
-    const idToken = await ports.crypto.signIdentity(grant.profile, grant.nonce, Math.floor(Date.now() / 1000));
+    const idToken = await ports.crypto.signIdentity(grant.profile, grant.nonce, grant.authenticatedAt);
     await this.save('access', accessToken, config.clientId, grant.profile, ACCESS_TTL_SECONDS);
     return { access_token: accessToken, id_token: idToken, token_type: 'Bearer', expires_in: ACCESS_TTL_SECONDS };
   }

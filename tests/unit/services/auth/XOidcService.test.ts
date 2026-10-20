@@ -81,6 +81,18 @@ describe('X OIDC', () => {
     await expect(f.service.callback({ state: new URL(next.url).searchParams.get('state')!, error: 'access_denied' }, next.cookie.value)).rejects.toMatchObject({ code: 'access_denied' });
     expect(f.exchange).not.toHaveBeenCalled(); expect(f.sendCode).not.toHaveBeenCalled();
   });
+  it('コード交換が遅れた場合にもメール確認の時刻を再認証時刻に保つ', async () => {
+    const proofTime = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(proofTime);
+    try {
+      const f = fixture(), start = await f.service.start(params());
+      const challenge = await f.service.callback({ state: new URL(start.url).searchParams.get('state')!, code: 'x-code' }, start.cookie.value);
+      const redirect = new URL(await f.service.verify(challenge.challenge, '123456', challenge.cookie.value));
+      clock.mockReturnValue(proofTime + 30_000);
+      await f.service.token(new URLSearchParams({ grant_type: 'authorization_code', client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: config.cognitoRedirectUri, code: redirect.searchParams.get('code')! }));
+      expect(f.signIdentity).toHaveBeenCalledWith(profile, 'cognito-nonce', Math.floor(proofTime / 1000));
+    } finally { clock.mockRestore(); }
+  });
 });
 
 const config: XOidcConfig = { issuer: 'https://lyra.example/api/auth/x', clientId: 'cognito-bridge-client', clientSecret: 'bridge-client-secret'.repeat(3), cognitoRedirectUri: 'https://lyra.auth.ap-northeast-1.amazoncognito.com/oauth2/idpresponse', proofSecret: 'proof-secret'.repeat(4), androidEnabled: true };
