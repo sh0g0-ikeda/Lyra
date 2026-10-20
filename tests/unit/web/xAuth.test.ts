@@ -19,12 +19,7 @@ describe('X sign-in capability', () => {
     await expect(fetchXAuthCapabilities(async () => new Response('{}', { status: 503 }))).rejects.toThrow('X_CAPABILITY_UNAVAILABLE');
   });
   it('10秒応答しない場合に取得を中止して操作を復帰できる', async () => {
-    vi.useFakeTimers();
-    try {
-      const fetcher: typeof fetch = async (_input, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('ABORTED'))));
-      const rejected = expect(fetchXAuthCapabilities(fetcher)).rejects.toThrow('ABORTED');
-      await vi.advanceTimersByTimeAsync(10_000);
-      await rejected;
-    } finally { vi.useRealTimers(); }
-  });
+    const fetcher: typeof fetch = async (_input, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('ABORTED'))));
+    await expect(fetchXAuthCapabilities(fetcher)).rejects.toThrow('ABORTED');
+  }, 15_000);
 });

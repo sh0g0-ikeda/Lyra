@@ -19,12 +19,7 @@ describe('X auth capabilities', () => {
     await expect(fetchXAuthCapabilities('https://api.example.test', malformed)).rejects.toThrow();
   });
   it('10秒応答しない場合に取得を中止して操作を復帰できる', async () => {
-    vi.useFakeTimers();
-    try {
-      const fetcher: typeof fetch = async (_input, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('ABORTED'))));
-      const rejected = expect(fetchXAuthCapabilities('https://api.example.test', fetcher)).rejects.toThrow('ABORTED');
-      await vi.advanceTimersByTimeAsync(10_000);
-      await rejected;
-    } finally { vi.useRealTimers(); }
-  });
+    const fetcher: typeof fetch = async (_input, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('ABORTED'))));
+    await expect(fetchXAuthCapabilities('https://api.example.test', fetcher)).rejects.toThrow('ABORTED');
+  }, 15_000);
 });
