@@ -260,6 +260,79 @@ LOCAL_ASSET_BASE_URL=http://127.0.0.1:3000/local-assets
 
 この設定ではプロバイダー料金が発生します。`.env` はコミットせず、公開環境の認証情報をローカルへ貼り付けないでください。
 
+## Xログインの設定（実装済み・初期状態OFF）
+
+Web / Android向けの新規登録と、Xで作成したアカウントへの再ログインです。
+通常ログイン・Googleログインは引き続き使えます。既存アカウントへのX追加連携とiOSのXログインは今回の対象外です。
+同じメールを使う既存アカウントがある場合は、これまでの方法でログインしてください。メール一致で自動統合しません。
+
+流れは **Lyra → Cognito → X → 確認メールの6桁コード → Cognito → Lyra** です。
+Xのログイン済みブラウザーだけで退会などの新しい再認証が成立しないよう、確認メールは毎回必要です。
+Xから確認済みメールを取得できない場合は登録できません。架空のメールアドレスで代替しません。
+
+### 1. X Developerアプリを作る
+
+1. [X Developer Console](https://developer.x.com/)でLyra用アプリを作成し、User authentication settingsでOAuth 2.0を有効にします。
+2. サーバーでSecretを保持する **Web App（confidential client）** として設定します。WebとAndroidは同じサーバーブリッジを経由します。
+3. アプリ名・公式サイト・利用規約・プライバシーポリシーには実際のLyraのURLを登録します。
+4. Callback URLは **`<X_OIDC_ISSUER>/callback`** です。Cognitoやモバイルの戻りURLをここには登録しません。
+5. OAuth 2.0のClient ID / Client Secretを、下表のサーバー用設定へ登録します。API KeyやApp-only Bearer Tokenとは別の値です。
+6. 実際のアプリで`users.read users.email`と`GET /2/users/me?user.fields=confirmed_email`を利用できることを確認します。取得権限やX側の利用条件は、作成時のConsole表示を正として確認してください。
+
+仕様根拠: [X OAuth 2.0 PKCE](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code)、[認証ユーザー情報](https://docs.x.com/x-api/users/get-my-user)。
+投稿・DM・フォロー操作や継続アクセスの権限は要求しません。
+
+### 2. サーバー設定とCognitoを準備する
+
+秘密情報は既存のSecrets Manager等へ保存し、チャット・Git・ログへ貼り付けません。
+
+| 設定 | 内容 |
+|---|---|
+| `X_SIGN_IN_ENABLED` | まず`false`。下記の順序で検証後に`true` |
+| `X_ANDROID_ENABLED` | Androidで有効化するときだけ`true` |
+| `X_COGNITO_GUARD_REVIEWED` | Xのメール衝突ガードを既存トリガーに合成・検証後に`true` |
+| `X_OAUTH_CLIENT_ID` / `X_OAUTH_CLIENT_SECRET` | X Developerで発行したOAuth 2.0認証情報 |
+| `X_OIDC_ISSUER` | 公開HTTPS APIの固定URL。例:`https://<アプリの公開ホスト>/api/auth/x`。末尾スラッシュなし |
+| `X_OIDC_CLIENT_ID` / `X_OIDC_CLIENT_SECRET` | Cognitoがブリッジに接続する専用IDと独立したランダムSecret。XのID/Secretとは別 |
+| `X_OIDC_COGNITO_DOMAIN` | 接続先Cognito Hosted UIの`https://<実際のドメイン>`。パスなし |
+| `X_OIDC_SIGNING_KEY_BASE64` | RSA 2048bit以上のPKCS#8秘密鍵PEMをBase64化した値 |
+| `X_OIDC_KEY_ID` | 現在の署名鍵を識別する一意のkid |
+| `X_OIDC_PREVIOUS_PUBLIC_JWKS` | ローテーション中に残す旧公開JWKのJSON配列。最大3件、秘密鍵成分禁止 |
+| `X_OIDC_ENCRYPTION_SECRET` | 保存artifactの暗号化専用。32文字以上の独立したランダム値 |
+| `X_OIDC_PROOF_SECRET` | メール確認と送信制限のHMAC専用。32文字以上の独立したランダム値 |
+| `AUTH_PROVIDER` / `COGNITO_USER_POOL_ID` | 既存の`cognito`と対象プールID |
+| `AWS_REGION` / `SES_FROM_EMAIL` | 同じ環境のSES送信用設定。検証済み送信元を使用 |
+
+`X_OIDC_CLIENT_SECRET`も32文字以上とし、各Secretを使い回しません。
+RSA秘密鍵と暗号化Secretは全APIレプリカで同じ値を使います。鍵は管理環境で生成し、ファイルをGit管理下へ置きません。
+SESのSandbox制限・送信権限・Cognitoの`ListUsers`権限を検証環境で確認します。
+
+Cognitoには次の **OIDCプロバイダー名`X`** を追加します。既存プロバイダー設定を上書きしません。
+
+- Issuer: `X_OIDC_ISSUER`。Discoveryは`<issuer>/.well-known/openid-configuration`。
+- 専用Client ID / Secret: `X_OIDC_CLIENT_ID` / `X_OIDC_CLIENT_SECRET`。
+- Authorized scopes: `openid email profile`。Token認証は`client_secret_post`。
+- 属性: `email←email`、`email_verified←email_verified`、必要なら`name←name`。`sub`はCognitoがXの安定IDとしてマップします。
+- WebとAndroidの既存Cognito app clientに`X`を追加し、既存`COGNITO`や`Google`を保持します。iOS専用clientには追加しません。
+- ブリッジに許す唯一の戻り先は`<X_OIDC_COGNITO_DOMAIN>/oauth2/idpresponse`です。
+- Pre Sign-up Lambdaの既存処理へ`guardXPreSignUp`を合成します。既存の`CognitoGooglePreSignUpGuard.handler`はXガードも呼ぶ構成です。現在のLambdaの他の処理を捨てず、同じメールのnative / Google双方を拒否できることを先に検証します。
+
+[Cognito OIDC設定の公式手順](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-oidc-idp.html)も参照してください。
+CloudFront等は`/api/auth/x/*`をキャッシュせず、query・Cookie・Authorization・form bodyを転送します。
+Discovery/JWKS/token/userinfoにはCognitoからもHTTPSで到達できる必要があります。
+
+### 3. 有効化と受け入れ確認
+
+1. `X_SIGN_IN_ENABLED=false`のまま互換コードを反映します。
+2. 環境を照合したうえで加算migration **052** を適用し、起動時のschema attestationが`xOidc`を認識することを確認します。既存のmigrationを編集しません。
+3. 検証環境でAPIを有効化し、Discovery/JWKSを取得してCognitoプロバイダーと衝突ガードを設定・確認します。設定中はapp clientへのX追加を最後にし、一般利用者へ公開しません。
+4. 検証用Xユーザーで新規登録→メール確認→再ログイン、キャンセル、誤コード、期限切れ、同一メール衝突を確認します。WebとAndroidから同じCognito契約で戻り、通常・Googleログインと退会の再認証が保たれることも確認します。
+5. 確認後に本番設定と配備を別途実施します。コードのmerge/PRは本番有効化ではありません。iOSの提出や設定は変更しません。
+
+`GET /api/auth/x/capabilities`が画面の表示可否を返します。未設定・無効・取得失敗時はXボタンを表示しません。
+停止時は`X_SIGN_IN_ENABLED=false`とCognito app client側のX無効化を行い、通常ログインを維持します。052やアカウントデータは削除しません。
+暗号化鍵の交換は進行中の認証を失効させるため待機期間を設け、署名鍵の交換は旧公開鍵を併記して短命トークンの猶予を確保します。
+
 ## テスト
 
 CIは、バックエンド、Database、フロントエンド、ブラウザの各層を検証します。

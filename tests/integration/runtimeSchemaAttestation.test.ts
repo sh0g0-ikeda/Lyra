@@ -61,6 +61,28 @@ describePostgres('runtime schema attestation PostgreSQL boundary', () => {
     expect(() => assertAttestedRuntimeCapabilities(attestedSecurityRuntime, {})).not.toThrow();
   }, 120_000);
 
+  it('052のX OIDC schemaだけを厳密に認定しdefault・constraint・余剰index改変を拒否する', async () => {
+    const { pool, database } = await isolatedDatabase('x_oidc');
+    await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database));
+
+    await expect(attestRuntimeSchema(database)).resolves.toMatchObject({
+      capabilities: { xOidc: true },
+    });
+
+    await pool.query('ALTER TABLE x_oidc_artifacts ALTER COLUMN attempts DROP DEFAULT');
+    await expect(attestRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+    await pool.query('ALTER TABLE x_oidc_artifacts ALTER COLUMN attempts SET DEFAULT 0');
+    await expect(attestRuntimeSchema(database)).resolves.toMatchObject({ capabilities: { xOidc: true } });
+
+    await pool.query('ALTER TABLE x_oidc_artifacts DROP CONSTRAINT x_oidc_artifacts_kind_check');
+    await expect(attestRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+    await pool.query("ALTER TABLE x_oidc_artifacts ADD CONSTRAINT x_oidc_artifacts_kind_check CHECK (kind IN ('state', 'email', 'code', 'access', 'delivery'))");
+    await expect(attestRuntimeSchema(database)).resolves.toMatchObject({ capabilities: { xOidc: true } });
+
+    await pool.query('CREATE INDEX x_oidc_artifacts_unexpected_idx ON x_oidc_artifacts (created_at)');
+    await expect(attestRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+  }, 120_000);
+
   it('049までの別schemaは履歴として認識するが050なしでは起動を拒否する', async () => {
     const { database } = await isolatedDatabase('historical49');
     const directory = await mkdtemp(join(tmpdir(), 'lyra-migrations-'));

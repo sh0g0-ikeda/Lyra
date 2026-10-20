@@ -5,6 +5,7 @@ import { PRODUCTION44_EXPANSION_MIGRATIONS } from './production44ExpandedRuntime
 import { describeProduction44ExpansionCheckpoint } from './production44ExpandedRuntimeSchemaAttestation.js';
 import { WORK_DELETION_SCHEMA } from './workDeletionSchemaDescriptor.js';
 import { STRIPE_RECOVERY_SCHEMA } from './stripeRecoverySchemaDescriptor.js';
+import { X_OIDC_SCHEMA } from './xOidcSchemaDescriptor.js';
 
 export const CANONICAL_RUNTIME_MIGRATIONS = [
   '001_initial_schema.sql',
@@ -60,6 +61,7 @@ export const CANONICAL_RUNTIME_MIGRATIONS = [
 export const SECURITY_RUNTIME_MIGRATIONS = [...CANONICAL_RUNTIME_MIGRATIONS, '049_add_stripe_credit_recovery.sql'] as const;
 export const WORK_DELETION_RUNTIME_MIGRATIONS = [...SECURITY_RUNTIME_MIGRATIONS, '050_add_work_deletion.sql'] as const;
 export const GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS = [...WORK_DELETION_RUNTIME_MIGRATIONS, '051_add_google_link_recovery.sql'] as const;
+export const X_OIDC_RUNTIME_MIGRATIONS = [...GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, '052_add_x_oidc_artifacts.sql'] as const;
 
 export interface RuntimeSchemaCatalog {
   migrationFilenames: string[];
@@ -218,6 +220,9 @@ const POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM = 180000;
 const runtimeSchemaPostgresVersions = new WeakMap<RuntimeSchemaCatalog, number>();
 
 export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSchemaDescription {
+  const xOidc = projectXOidcSchema(catalog);
+  if (xOidc === null) return { kind: 'unsupported', failures: ['X_OIDC_SCHEMA_MISMATCH'] };
+  if (xOidc.enabled) return describeRuntimeSchema(xOidc.catalog);
   const recovery = projectGoogleIdentityRecovery(catalog);
   if (recovery === null) return { kind: 'unsupported', failures: ['GOOGLE_IDENTITY_RECOVERY_SCHEMA_MISMATCH'] };
   if (recovery.enabled) return describeRuntimeSchema(recovery.catalog);
@@ -515,17 +520,21 @@ export interface AttestedCanonicalRuntime {
 export type AttestedRuntime = Readonly<{
   descriptor: 'canonical_fresh_v1';
   repositoryProfile: 'canonical';
-  capabilities: Readonly<{ entityStateMonotonicRevision: boolean; stripeCreditRecovery?: boolean; workDeletion?: boolean; googleIdentityRecovery?: boolean }>;
+  capabilities: Readonly<{ entityStateMonotonicRevision: boolean; stripeCreditRecovery?: boolean; workDeletion?: boolean; googleIdentityRecovery?: boolean; xOidc?: boolean }>;
 } | {
   descriptor: 'production44_expanded_pg18_v1';
   repositoryProfile: 'production44_expanded_pg18_v1';
-  capabilities: Readonly<{ entityStateMonotonicRevision: true; stripeCreditRecovery?: boolean; workDeletion?: boolean; googleIdentityRecovery?: boolean }>;
+  capabilities: Readonly<{ entityStateMonotonicRevision: true; stripeCreditRecovery?: boolean; workDeletion?: boolean; googleIdentityRecovery?: boolean; xOidc?: boolean }>;
 }>;
 
 const verifiedRuntimeProofs = new WeakSet<object>();
 
 /** The frozen proof is issued from catalog evidence, never an environment selection. */
 function runtimeProof(catalog: RuntimeSchemaCatalog): AttestedRuntime | null {
+  const xOidc = projectXOidcSchema(catalog);
+  if (xOidc === null) return null;
+  catalog = xOidc.catalog;
+  const xOidcCapability = xOidc.enabled ? { xOidc: true } : {};
   const recovery = projectGoogleIdentityRecovery(catalog);
   if (recovery === null) return null;
   catalog = recovery.catalog;
@@ -533,8 +542,8 @@ function runtimeProof(catalog: RuntimeSchemaCatalog): AttestedRuntime | null {
   const canonical = describeRuntimeSchema(catalog).kind === 'canonical_fresh_v1';
   if (!canonical && describeProduction44ExpansionCheckpoint(catalog) !== PRODUCTION44_EXPANSION_MIGRATIONS.length) return null;
   const proof: AttestedRuntime = canonical
-    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql'), stripeCreditRecovery: catalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql'), workDeletion: catalog.migrationFilenames.includes('050_add_work_deletion.sql'), ...recoveryCapability }) })
-    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true, stripeCreditRecovery: true, workDeletion: true, ...recoveryCapability }) });
+    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql'), stripeCreditRecovery: catalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql'), workDeletion: catalog.migrationFilenames.includes('050_add_work_deletion.sql'), ...recoveryCapability, ...xOidcCapability }) })
+    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true, stripeCreditRecovery: true, workDeletion: true, ...recoveryCapability, ...xOidcCapability }) });
   verifiedRuntimeProofs.add(proof);
   return proof;
 }
@@ -700,6 +709,48 @@ function sameStrings(actual: readonly string[], expected: readonly string[]): bo
 
 function isTriggerEnabled(enabled: string): boolean {
   return enabled === 'O' || enabled === 'A';
+}
+
+const X_OIDC_MIGRATION = '052_add_x_oidc_artifacts.sql';
+const X_OIDC_TABLE = 'x_oidc_artifacts';
+
+/**
+ * Removes migration 052 only after its complete additive footprint is proven.
+ * The remaining catalog is then checked by the pre-052 canonical/expanded
+ * descriptors, so this projection cannot admit unrelated schema drift.
+ */
+function projectXOidcSchema(catalog: RuntimeSchemaCatalog): { catalog: RuntimeSchemaCatalog; enabled: boolean } | null {
+  const ownsRelation = (row: RuntimeSchemaCatalog['relations'][number]): boolean => row.name === X_OIDC_TABLE;
+  const ownsTableRow = (row: { relation: string }): boolean => row.relation === X_OIDC_TABLE;
+  const recordedCount = catalog.migrationFilenames.filter(filename => filename === X_OIDC_MIGRATION).length;
+  if (recordedCount === 0) {
+    if (catalog.relations.some(ownsRelation) || catalog.columns.some(ownsTableRow)
+      || catalog.constraints.some(ownsTableRow) || catalog.indexes.some(ownsTableRow)
+      || catalog.triggers.some(ownsTableRow)) return null;
+    return { catalog, enabled: false };
+  }
+  if (recordedCount !== 1 || !catalog.migrationFilenames.includes(GOOGLE_IDENTITY_RECOVERY_MIGRATION)) return null;
+  const version = runtimeSchemaPostgresVersions.get(catalog);
+  if (version === undefined || version < MIN_SUPPORTED_POSTGRES_VERSION_NUM) return null;
+  const expectedConstraints = version >= POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM
+    ? X_OIDC_SCHEMA.constraints
+    : X_OIDC_SCHEMA.constraints.filter(row => row.type !== 'n');
+  if (!sameCatalogRows(catalog.relations.filter(ownsRelation), X_OIDC_SCHEMA.relations)
+    || !sameCatalogRows(catalog.columns.filter(ownsTableRow), X_OIDC_SCHEMA.columns)
+    || !sameCatalogRows(catalog.constraints.filter(ownsTableRow), expectedConstraints)
+    || !sameCatalogRows(catalog.indexes.filter(ownsTableRow), X_OIDC_SCHEMA.indexes)
+    || catalog.triggers.some(ownsTableRow)) return null;
+  const baseline: RuntimeSchemaCatalog = {
+    ...catalog,
+    migrationFilenames: catalog.migrationFilenames.filter(filename => filename !== X_OIDC_MIGRATION),
+    relations: catalog.relations.filter(row => !ownsRelation(row)),
+    columns: catalog.columns.filter(row => !ownsTableRow(row)),
+    constraints: catalog.constraints.filter(row => !ownsTableRow(row)),
+    indexes: catalog.indexes.filter(row => !ownsTableRow(row)),
+    triggers: catalog.triggers.filter(row => !ownsTableRow(row)),
+  };
+  runtimeSchemaPostgresVersions.set(baseline, version);
+  return { catalog: baseline, enabled: true };
 }
 
 const GOOGLE_IDENTITY_RECOVERY_MIGRATION = '051_add_google_link_recovery.sql';

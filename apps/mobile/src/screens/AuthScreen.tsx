@@ -21,8 +21,11 @@ import { t } from '@/lib/i18n';
 import { signInWithCognito } from '@/lib/auth';
 import { userErrorMessage } from '@/lib/userMessages';
 import { useGoogleAuthCapabilities } from '@/hooks/useGoogleAuthCapabilities';
+import { useXAuthCapabilities } from '@/hooks/useXAuthCapabilities';
 import { googleAuthMessages } from '@/lib/googleAuthMessages';
 import { googleAllowedOnPlatform } from '@/lib/googleIdentityLink';
+import { xAllowedOnMobile } from '@/lib/xAuth';
+import { xAuthMessages } from '@/lib/xAuthMessages';
 import { useAppState } from '@/state/appState';
 
 const heroImage = require('../../assets/start_lyra.jpg') as ImageSourcePropType;
@@ -48,8 +51,11 @@ interface AuthScreenProps {
 export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): React.JSX.Element {
   const { language, setTokens } = useAppState();
   const capabilities = useGoogleAuthCapabilities();
+  const xCapabilities = useXAuthCapabilities();
   const copy = googleAuthMessages(language);
+  const xCopy = xAuthMessages(language);
   const googleEnabled = !capabilities.isError && googleAllowedOnPlatform(capabilities.data, Platform.OS, 'google_sign_in');
+  const xEnabled = !xCapabilities.isError && xAllowedOnMobile(xCapabilities.data, Platform.OS);
   const signingIn = useRef(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -68,22 +74,26 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
     return () => clearTimeout(timeoutId);
   }, [splashOpacity]);
 
-  const signIn = async (google = false): Promise<void> => {
+  const signIn = async (provider: 'Google' | 'X' | undefined = undefined): Promise<void> => {
     if (signingIn.current) return;
     signingIn.current = true;
     setLoading(true);
     setErrorMessage(null);
     try {
-      if (google) {
+      if (provider === 'Google') {
         const current = await capabilities.refetch();
         if (current.isError || !googleAllowedOnPlatform(current.data, Platform.OS, 'google_sign_in')) throw new Error('GOOGLE_DISABLED');
       }
+      if (provider === 'X') {
+        const current = await xCapabilities.refetch();
+        if (current.isError || !xAllowedOnMobile(current.data, Platform.OS)) throw new Error('X_DISABLED');
+      }
       const tokens = await signInWithCognito(
-        google ? { identityProvider: 'Google', language } : { language }
+        provider === undefined ? { language } : { identityProvider: provider, language }
       );
       await setTokens(tokens);
     } catch (error) {
-      setErrorMessage(google ? copy.unavailable : userErrorMessage(error, language));
+      setErrorMessage(provider === 'Google' ? copy.unavailable : provider === 'X' ? xCopy.unavailable : userErrorMessage(error, language));
     } finally {
       signingIn.current = false;
       setLoading(false);
@@ -134,8 +144,13 @@ export function AuthScreen({ pendingInvitation = false }: AuthScreenProps): Reac
         testID="auth-login-button"
       />
       {googleEnabled ? <>
-        <PrimaryButton disabled={!isAuthConfigured() || loading} label={copy.google} onPress={() => void signIn(true)} testID="auth-google-button" variant="secondary" />
+        <PrimaryButton disabled={!isAuthConfigured() || loading} label={copy.google} onPress={() => void signIn('Google')} testID="auth-google-button" variant="secondary" />
         <Text style={styles.subtitle}>{copy.existing}</Text>
+      </> : null}
+      {xEnabled ? <>
+        <PrimaryButton disabled={!isAuthConfigured() || loading} label={xCopy.signIn} onPress={() => void signIn('X')} testID="auth-x-button" variant="secondary" />
+        <Text style={styles.subtitle}>{xCopy.confirmation}</Text>
+        <Text style={styles.subtitle}>{xCopy.existing}</Text>
       </> : null}
       <View accessibilityLabel={t(language, "generated.screens.AuthScreen.legal.and.support.d411b8e1")} style={styles.legalLinks}>
         <Pressable
