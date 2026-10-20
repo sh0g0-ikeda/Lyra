@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: ['**/.tmp/**'],
+  testIgnore: ['**/.tmp/**', '**/x-login.spec.ts'],
   timeout: 30_000,
   fullyParallel: true,
   workers: 2,

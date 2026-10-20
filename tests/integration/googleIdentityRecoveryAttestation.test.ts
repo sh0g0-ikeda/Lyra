@@ -74,7 +74,7 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`Google recovery
             expect(result).toMatchObject({ ok: true, violations: [] });
         });
     }    it('051以前のschemaは復旧capabilityなしで従来通り認定する', async () => {
-        await withChangedSchema("DROP TABLE retired_auth_subjects; ALTER TABLE oauth_identity_links DROP COLUMN operation_phase, DROP COLUMN source_subject_key; DELETE FROM schema_migrations WHERE filename='051_add_google_link_recovery.sql'", async runner => {
+        await withChangedSchema("DROP TABLE IF EXISTS x_oidc_artifacts; DROP TABLE retired_auth_subjects; ALTER TABLE oauth_identity_links DROP COLUMN operation_phase, DROP COLUMN source_subject_key; DELETE FROM schema_migrations WHERE filename IN ('051_add_google_link_recovery.sql','052_add_x_oidc_artifacts.sql')", async runner => {
             expect((await attestRuntimeSchema(runner)).capabilities.googleIdentityRecovery ?? false).toBe(false);
         });
     });

@@ -35,7 +35,7 @@ const GENERATION_JOB_CONSUME_LEDGER_EXISTS_SQL = `EXISTS (SELECT 1 FROM credit_l
 export const SCHEMA_026_DEPLOYMENT_DATA_INVARIANT_QUERIES: readonly DeploymentDataInvariantQuery[] = [
   {
     name: 'database.invalid_indexes',
-    sql: "SELECT pg_class.relname::text AS id FROM pg_index JOIN pg_class ON pg_class.oid = pg_index.indexrelid JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE NOT pg_index.indisvalid AND pg_namespace.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY pg_class.relname LIMIT $1",
+    sql: 'SELECT pg_class.relname::text AS id FROM pg_index JOIN pg_class ON pg_class.oid = pg_index.indexrelid JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE NOT pg_index.indisvalid AND pg_namespace.nspname = CURRENT_SCHEMA() ORDER BY pg_class.relname LIMIT $1',
   },
   {
     name: 'works.status',

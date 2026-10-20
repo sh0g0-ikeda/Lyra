@@ -2,6 +2,7 @@ import { isOlderEditorRevision, reconcileSavedEditorDraft } from './domain/edito
 import { useRetainedSelection } from './hooks/useRetainedSelection';
 import { reconcileSavedStoryDraft, sameStoryDraft } from './domain/storyDraftSave';
 import { GoogleSignInButton, GoogleIdentityLinkPanel } from './components/GoogleAuthControls';
+import { XSignInButton } from './components/XSignInButton';
 import { canReadWebImage, imageDeliveryNotice, mergeImageDeliveryMetadata, type ImageDeliveryMetadata } from './domain/imageDelivery';
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import {
@@ -2070,6 +2071,7 @@ function AuthScreen(props: {
               {translateUiString(language, 'Sign in or create an account')}
             </button>
             <GoogleSignInButton config={props.cognitoAuthConfig} language={language} />
+            <XSignInButton config={props.cognitoAuthConfig} language={language} />
           </div>
         ) : null}
         {props.supabaseClient !== null ? (

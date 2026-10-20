@@ -88,7 +88,7 @@ type TokenFetcher = (
 export const COGNITO_SESSION_STORAGE_KEY = 'lyra:web:cognito-session';
 const COGNITO_PKCE_STORAGE_KEY = 'lyra:web:cognito-pkce';
 const COGNITO_REAUTH_PKCE_STORAGE_KEY = 'lyra:web:cognito-reauth-pkce';
-export interface CognitoLoginOptions { identityProvider?: 'Google' | 'COGNITO'; freshLogin?: boolean; mode?: 'reauthentication' }
+export interface CognitoLoginOptions { identityProvider?: 'Google' | 'X' | 'COGNITO'; freshLogin?: boolean; mode?: 'reauthentication' }
 interface CognitoCompletionOptions { mode?: 'reauthentication'; persistSession?: boolean }
 const DEFAULT_COGNITO_SCOPES = ['openid', 'email', 'profile'];
 const COGNITO_PKCE_STATE_TTL_MS = 10 * 60 * 1000;

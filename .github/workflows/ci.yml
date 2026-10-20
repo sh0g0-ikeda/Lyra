@@ -109,6 +109,10 @@ jobs:
       - name: Run browser smoke tests
         run: npm --prefix apps/web run e2e
 
+      - name: Run X authentication browser smoke
+        working-directory: apps/web
+        run: npx playwright test --config playwright.x-auth.config.ts
+
   mobile-verify:
     runs-on: ubuntu-latest
     env:

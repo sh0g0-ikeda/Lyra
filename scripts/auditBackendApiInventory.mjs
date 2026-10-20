@@ -25,6 +25,7 @@ const routeMethods = new Set([
 ]);
 
 const routeMountPrefixes = new Map([
+  ['xOidc.ts', '/api/auth/x'],
   ['accountDeletion.ts', '/api'],
   ['workDeletion.ts', '/api'],
   ['pushTokens.ts', '/api'],
@@ -57,6 +58,15 @@ const routeMountPrefixes = new Map([
 ]);
 
 const explicitResponseClassifications = new Map([
+  ['GET /api/auth/x/capabilities', { response: 'Operational JSON', detail: 'Public default-OFF X sign-in and Android capability; iOS always disabled' }],
+  ['GET /api/auth/x/.well-known/openid-configuration', { response: 'Operational JSON', detail: 'X bridge OIDC discovery for Cognito' }],
+  ['GET /api/auth/x/jwks', { response: 'Operational JSON', detail: 'Public RSA signing keys only' }],
+  ['GET /api/auth/x/authorize', { response: 'Redirect', detail: 'Fixed Cognito client/redirect validation; browser-bound X PKCE start' }],
+  ['GET /api/auth/x/callback', { response: 'Redirect', detail: 'One-time X callback; encrypted email challenge, no provider tokens returned' }],
+  ['GET /api/auth/x/verify', { response: 'HTML', detail: 'Browser-bound email-code confirmation form' }],
+  ['POST /api/auth/x/verify', { response: 'Redirect', detail: 'Single-use email proof with five-attempt limit; fixed Cognito return' }],
+  ['POST /api/auth/x/token', { response: 'Operational JSON', detail: 'Cognito confidential-client authentication and single-use authorization code' }],
+  ['GET /api/auth/x/userinfo', { response: 'Operational JSON', detail: 'Short-lived opaque Bearer token; confirmed X profile' }],
   ['GET /api/story/page-skeleton-capabilities', { response: 'Operational JSON', detail: 'Authenticated edit-work capability for generated-image-preserving skeleton overwrite' }],
   ['DELETE /api/works/:id', { response: 'Operational JSON', detail: 'Scoped permanent deletion receipt; durable pending/completed status (202/200)' }],
   ['GET /api/work-deletions', { response: 'Operational JSON', detail: 'Scoped nonterminal deletion receipts; bounded to 50' }],

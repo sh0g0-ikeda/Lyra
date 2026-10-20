@@ -302,7 +302,8 @@ describe('checkDeploymentDataInvariants', () => {
     expect(refundOverConsumedQuery).toContain('GROUP BY user_id, job_id');
     expect(refundOverConsumedQuery).toContain('organization_id IS NOT NULL');
     expect(refundOverConsumedQuery).toContain('GROUP BY organization_id, job_id');
-    expect(database.queries.some((query) => query.includes('FROM pg_index'))).toBe(true);
+    const invalidIndexQuery = database.queries.find((query) => query.includes('FROM pg_index'));
+    expect(invalidIndexQuery).toContain('pg_namespace.nspname = CURRENT_SCHEMA()');
     expect(
       database.queries.some((query) =>
         query.includes('FROM mobile_store_purchases') &&

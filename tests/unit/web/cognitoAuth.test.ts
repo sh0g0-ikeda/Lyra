@@ -380,6 +380,12 @@ describe('Google and isolated native reauthentication PKCE', () => {
   const native = new URL(buildCognitoAuthorizeUrl(cognitoConfig,'state','pkce',{identityProvider:'COGNITO',freshLogin:true}));
   expect(native.searchParams.get('identity_provider')).toBe('COGNITO'); expect(native.searchParams.get('prompt')).toBe('login'); expect(native.searchParams.get('max_age')).toBe('0');
  });
+ it('adds X only on the requested normal sign-in while preserving the PKCE flow', () => {
+  const x = new URL(buildCognitoAuthorizeUrl(cognitoConfig,'state','pkce',{identityProvider:'X'}));
+  expect(x.searchParams.get('identity_provider')).toBe('X');
+  expect(x.searchParams.get('code_challenge')).toBe('pkce');
+  expect(x.searchParams.get('code_challenge_method')).toBe('S256');
+ });
  it('never exchanges a code on the Google link return path', async () => {
   let exchanged=false;
   const result=await completeCognitoRedirectIfPresent(cognitoConfig,new FakeStorage(),{...createCallbackLocation(),pathname:'/auth/identity-link'},createHistory([]),async()=>{exchanged=true;throw new Error('no');});

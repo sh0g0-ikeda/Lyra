@@ -27,7 +27,9 @@ describe('Cognito sign-in options', () => {
     expect(mocks.request.mock.calls[1]?.[0]).toMatchObject({ extraParams: { lang: 'en' }, usePKCE: true });
     await signInWithCognito({ identityProvider: 'Google', language: 'ja' });
     expect(mocks.request.mock.calls[2]?.[0]).toMatchObject({ extraParams: { identity_provider: 'Google', lang: 'ja' }, usePKCE: true });
-    expect(mocks.save).toHaveBeenCalledTimes(3);
+    await signInWithCognito({ identityProvider: 'X', language: 'en' });
+    expect(mocks.request.mock.calls[3]?.[0]).toMatchObject({ extraParams: { identity_provider: 'X', lang: 'en' }, usePKCE: true });
+    expect(mocks.save).toHaveBeenCalledTimes(4);
     expect(mocks.fetch.mock.calls[1]?.[0]).toBe('https://auth.example.test/oauth2/token');
   });
   it('既存callerのfresh再認証はproviderを強制せずprompt login・max_age0で既存保存tokenを置換しない', async () => {

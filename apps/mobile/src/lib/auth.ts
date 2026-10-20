@@ -121,7 +121,7 @@ const refreshAuthTokensOnce = async (tokens: AuthTokens): Promise<AuthTokens> =>
 export const refreshAuthTokens = createSingleFlight(refreshAuthTokensOnce);
 
 interface CognitoSignInOptions {
-  identityProvider?: 'Google';
+  identityProvider?: 'Google' | 'X';
   language?: UiLanguage;
 }
 
@@ -135,8 +135,8 @@ const authorizeWithCognito = async (options: CognitoAuthorizationOptions = {}): 
     ...(options.reauthenticate ? { max_age: '0' } : {}),
     ...(options.nativeIdentityProvider === 'COGNITO'
       ? { identity_provider: 'COGNITO' }
-      : options.identityProvider === 'Google'
-        ? { identity_provider: 'Google' }
+      : options.identityProvider === 'Google' || options.identityProvider === 'X'
+        ? { identity_provider: options.identityProvider }
         : {}),
     ...(options.language === undefined ? {} : { lang: options.language })
   };

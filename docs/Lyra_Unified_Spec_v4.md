@@ -53,6 +53,32 @@ authentication and resource authorization. A resource lookup must be scoped thro
 the requesting user's personal ownership or active organization membership; knowing
 an ID is never sufficient authorization.
 
+X sign-in is an optional, default-OFF OIDC bridge at `/api/auth/x`. Clients still
+receive and use Cognito JWTs. Web and Android select the fixed Cognito provider
+`X`; iOS and linking X to an existing account are disabled in this initial slice.
+The bridge requests only X `users.read users.email`, exchanges an S256-PKCE code
+server-side, and requires a valid `confirmed_email`. It never synthesizes an email
+or merges identities based on email equality. Native or other-provider email
+collisions are rejected before profile creation and by existing provisioning.
+
+Every X login additionally requires a single-use six-digit code sent to that
+confirmed email, so an ambient X session alone cannot mint a fresh Cognito session
+for destructive actions. The browser-bound flow lasts at most four minutes and
+allows five email-code attempts. A durable per-email reservation limits delivery
+to one per minute across API replicas. State, grant and opaque access artifacts
+are encrypted, hashed, expiry-bound and atomically consumed where single use is
+required. Authorization grants last 60 seconds; ID and userinfo access tokens
+last 120 seconds. Raw X tokens are never persisted or returned to clients.
+
+The explicit public bridge endpoints are discovery, JWKS, authorize, callback,
+email verification and capability. The token endpoint requires confidential-client
+`client_secret_post`; userinfo requires the bridge's opaque Bearer token. All
+bridge responses are no-store and use bounded inputs and IP rate limits.
+Signing keys support overlapping previous public keys. Enabling the bridge requires
+the attested additive migration 052, composed Cognito collision trigger, reviewed
+configuration, SES email delivery and live X/Cognito acceptance. See README for
+configuration and activation order. Other login methods remain available.
+
 Account deletion stores a keyed one-way identity tombstone before anonymizing the
 Cognito subject. Provisioning must reject a subject whose deletion is processing,
 pending recovery, or completed, so an unexpired token cannot recreate the Lyra user.

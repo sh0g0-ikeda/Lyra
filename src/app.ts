@@ -3,6 +3,9 @@ import {createWorkDeletionRoutes} from './routes/workDeletion.js';
 import {createWorkDeletionAccessGuard,isDeletionGuardError} from './routes/workDeletionAccessGuard.js';
 import type {WorkDeletionServicePort} from './services/work/WorkDeletionService.js';
 import { TransactionalUserProvisioningService } from './services/auth/TransactionalUserProvisioningService.js';
+import { createXOidcRuntime } from './infrastructure/auth/XOidcRuntime.js';
+import { createXOidcRoutes } from './routes/xOidc.js';
+import type { XOidcService } from './services/auth/XOidcService.js';
 import { BillingCreditAdjustmentService } from './services/credit/BillingCreditAdjustmentService.js';
 import { resolveEpisodeOpenAIModelProfile } from './infrastructure/openai/EpisodeOpenAIModelProfile.js';
 import { resolveEpisodeExportQueueConfig } from './lib/episodeExportRuntime.js';
@@ -338,6 +341,7 @@ import {
 } from './infrastructure/state/FencedStateReferenceRuntime.js';
 
 export interface AppDependencies {
+  xOidcService?: XOidcService;
   /** Supplied by verified boot entrypoints; omitted by existing isolated test DI. */
   attestedRuntime?: import('./lib/runtimeSchemaAttestation.js').AttestedRuntime;
   aiContentReportService?: AiContentReportServicePort;
@@ -484,6 +488,10 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     signInEnabled: env.GOOGLE_SIGN_IN_ENABLED,
     iosEnabled: env.GOOGLE_IOS_ENABLED,
     authMiddleware, rateLimitMiddleware, publicRateLimitMiddleware: publicReadRateLimitMiddleware,
+  }));
+  app.route('/api/auth/x', createXOidcRoutes({
+    service: dependencies.xOidcService ?? createXOidcRuntime(env, db, dependencies.attestedRuntime),
+    rateLimitMiddleware: publicReadRateLimitMiddleware,
   }));
   if (localAssetConfig !== null) {
     app.route('/', createLocalAssetRoutes(localAssetConfig.rootDir));
@@ -857,6 +865,7 @@ function resolveDependencies(
       | 'readinessCheck'
       | 'fencedStateReferenceRuntime'
       | 'attestedRuntime'
+      | 'xOidcService'
     >
   >,
   'storyEpisodeImprovementPlanner'

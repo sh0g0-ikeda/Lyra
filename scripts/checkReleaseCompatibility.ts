@@ -10,7 +10,7 @@ import type { DatabaseClient, TransactionRunner } from '../src/lib/db.js';
 import type { Env } from '../src/lib/env.js';
 import { checkDeploymentDataInvariants } from './checkDeploymentDataInvariants.js';
 
-import { GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, WORK_DELETION_RUNTIME_MIGRATIONS, attestRuntimeSchema } from '../src/lib/runtimeSchemaAttestation.js';
+import { GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, X_OIDC_RUNTIME_MIGRATIONS, WORK_DELETION_RUNTIME_MIGRATIONS, attestRuntimeSchema } from '../src/lib/runtimeSchemaAttestation.js';
 
 
 import type { RepositorySchemaProfile } from '../src/repositories/RepositorySchemaProfile.js';
@@ -160,7 +160,7 @@ export function runtimeFromEnv(environment: Env): ReleaseCompatibilityRuntime {
 
 async function expectedMigrationFilenames(migrationsDir: string): Promise<string[]> {
   const filenames = (await readdir(migrationsDir)).filter((filename) => /^\d{3}_.+\.sql$/u.test(filename)).sort();
-  const supported = [WORK_DELETION_RUNTIME_MIGRATIONS, GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS];
+  const supported = [WORK_DELETION_RUNTIME_MIGRATIONS, GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, X_OIDC_RUNTIME_MIGRATIONS];
   if (!supported.some(expected => filenames.length === expected.length && filenames.every((filename, index) => filename === expected[index]))) {
     throw new Error('Current release migration files are unavailable');
   }

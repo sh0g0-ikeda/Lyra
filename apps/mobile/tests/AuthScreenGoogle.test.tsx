@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   platform: { OS: 'android' },
   caps: { data: { google_sign_in: false, google_linking: false, google_ios: false }, isError: false, refetch: vi.fn() },
+  xCaps: { data: { x_sign_in: false, x_android: false, x_ios: false }, isError: false, refetch: vi.fn() },
   signIn: vi.fn(), setTokens: vi.fn()
 }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -21,6 +22,7 @@ vi.mock('@/components/PrimaryButton', () => ({ PrimaryButton: (props: Record<str
 vi.mock('@/lib/auth', () => ({ signInWithCognito: mocks.signIn }));
 vi.mock('@/lib/config', () => ({ isAuthConfigured: () => true }));
 vi.mock('@/hooks/useGoogleAuthCapabilities', () => ({ useGoogleAuthCapabilities: () => mocks.caps }));
+vi.mock('@/hooks/useXAuthCapabilities', () => ({ useXAuthCapabilities: () => mocks.xCaps }));
 vi.mock('@/state/appState', () => ({ useAppState: () => ({ language: 'en', setTokens: mocks.setTokens }) }));
 const { AuthScreen } = await import('@/screens/AuthScreen');
 let renderer: ReactTestRenderer;
@@ -32,6 +34,8 @@ const press = async (testID: string): Promise<void> => { await act(async () => {
 beforeEach(() => {
   vi.clearAllMocks(); vi.useFakeTimers(); mocks.platform.OS = 'android'; mocks.caps.isError = false;
   mocks.caps.data = { google_sign_in: false, google_linking: false, google_ios: false };
+  mocks.xCaps.isError = false;
+  mocks.xCaps.data = { x_sign_in: false, x_android: false, x_ios: false };
   mocks.signIn.mockResolvedValue({ idToken: 'cognito-token' });
   mocks.caps.refetch.mockResolvedValue({ data: { google_sign_in: true, google_linking: true, google_ios: false }, isError: false });
 });
@@ -76,5 +80,25 @@ describe('AuthScreen Google capability gate', () => {
     expect(mocks.signIn).not.toHaveBeenCalled();
     expect(renderer.root.findByProps({ testID: 'auth-login-button' })).toBeDefined();
     expect(JSON.stringify(renderer.toJSON())).toContain('existing email sign-in');
+  });
+  it('AndroidでX capabilityを再確認してからCognito X PKCEを開始し、既存アカウントの案内を表示する', async () => {
+    mocks.xCaps.data = { x_sign_in: true, x_android: true, x_ios: false };
+    mocks.xCaps.refetch.mockResolvedValue({ data: mocks.xCaps.data, isError: false });
+    await render();
+    expect(renderer.root.findAllByProps({ testID: 'auth-x-button' })).not.toHaveLength(0);
+    await press('auth-x-button');
+    expect(mocks.xCaps.refetch).toHaveBeenCalledTimes(1);
+    expect(mocks.signIn).toHaveBeenCalledWith({ identityProvider: 'X', language: 'en' });
+    expect(JSON.stringify(renderer.toJSON())).toContain('Already use Lyra?');
+  });
+  it('X capabilityが無効、確認不能、またはiOSではCTAを表示せず既存ログインを維持する', async () => {
+    mocks.xCaps.data = { x_sign_in: true, x_android: true, x_ios: false };
+    mocks.platform.OS = 'ios';
+    await render();
+    expect(renderer.root.findAllByProps({ testID: 'auth-x-button' })).toHaveLength(0);
+    mocks.platform.OS = 'android';
+    mocks.xCaps.data = { x_sign_in: true, x_android: false, x_ios: false };
+    act(() => renderer.update(<AuthScreen />));
+    expect(renderer.root.findAllByProps({ testID: 'auth-x-button' })).toHaveLength(0);
   });
 });

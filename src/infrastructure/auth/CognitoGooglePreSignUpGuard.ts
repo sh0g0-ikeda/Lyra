@@ -1,5 +1,6 @@
 import { CognitoIdentityProviderClient, ListUsersCommand, type ListUsersCommandOutput } from '@aws-sdk/client-cognito-identity-provider';
 import { guardGooglePreSignUp, type PreSignUpEvent } from '../../services/auth/GooglePreSignUpGuard.js';
+import { guardXPreSignUp, hasOtherCognitoEmail } from './XCognitoIdentityGuard.js';
 interface CognitoUserLookupClient { send(command: ListUsersCommand, options: { abortSignal: AbortSignal }): Promise<ListUsersCommandOutput>; }
 // AWS documents case-insensitive user-attribute searches. Use an exact email
 // filter rather than reading the whole pool; still compare normalized values and
@@ -22,5 +23,6 @@ export async function hasNativeCognitoEmail(client: CognitoUserLookupClient, use
 // not modify a pool, create IAM permissions, or register a trigger.
 const client = new CognitoIdentityProviderClient({ maxAttempts: 1 });
 export async function handler<T extends PreSignUpEvent>(event: T): Promise<T> {
-    return guardGooglePreSignUp(event, { hasNativeUserWithEmail: (pool, email) => hasNativeCognitoEmail(client, pool, email) });
+    const guarded = await guardXPreSignUp(event, (pool, email) => hasOtherCognitoEmail(client, pool, email));
+    return guardGooglePreSignUp(guarded, { hasNativeUserWithEmail: (pool, email) => hasNativeCognitoEmail(client, pool, email) });
 }
