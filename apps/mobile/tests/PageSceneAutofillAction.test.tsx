@@ -36,7 +36,7 @@ const renderAction = (
         loading={false}
         onPress={vi.fn()}
         pageNumber={3}
-        sourceSceneLabels={['シーン 1: 駅前', 'シーン 2: ホーム']}
+        sourceSceneLabels={['設定 1: 駅前', '設定 2: ホーム']}
         {...overrides}
       />
     );
@@ -51,15 +51,15 @@ describe('PageSceneAutofillAction', () => {
     const text = JSON.stringify(rendered.toJSON());
 
     expect(text).toContain('選択中のページ: 3');
-    expect(text).toContain('シーン 1: 駅前');
-    expect(text).toContain('シーンからページ内容を反映');
+    expect(text).toContain('設定 1: 駅前');
+    expect(text).toContain('背景や時間帯の設定をページへ反映');
     act(() => rendered.root.findByType('button').props.onClick());
     expect(onPress).toHaveBeenCalledOnce();
   });
 
   it.each([
-    { hasActiveJob: true, isEditableDraft: true, sourceSceneLabels: ['シーン 1'] },
-    { hasActiveJob: false, isEditableDraft: false, sourceSceneLabels: ['シーン 1'] },
+    { hasActiveJob: true, isEditableDraft: true, sourceSceneLabels: ['設定 1'] },
+    { hasActiveJob: false, isEditableDraft: false, sourceSceneLabels: ['設定 1'] },
     { hasActiveJob: false, isEditableDraft: true, sourceSceneLabels: [] }
   ])('生成中・編集不可・シーン出典なしでは開始できない', (overrides) => {
     const rendered = renderAction(overrides);

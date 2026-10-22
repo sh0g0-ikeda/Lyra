@@ -33,6 +33,7 @@ import { entityTypes, type LabelOption } from '@/constants/options';
 import { characterContinuityStateUiEnabled } from '@/constants/mobileFeatureVisibility';
 import { colors, spacing, textStyles } from '@/constants/theme';
 import { mergeCharacterClothingDescription } from '@/domain/characterClothing';
+import { resolveCharacterWorkflowNextStep } from '@/domain/creationWorkflowGuidance';
 import {
   buildCreateEntityPayload,
   buildUpdateEntityPayload,
@@ -68,6 +69,7 @@ import {
   type DirectEntityUploadStage
 } from '@/lib/directEntityReferenceUpload';
 import {
+  activeResourceJobQueryKey,
   entitiesInfiniteQueryKey,
   entitiesQueryKey,
   entityDetailQueryKey,
@@ -439,23 +441,6 @@ function ConfirmedReferencePreview({
   );
 }
 
-const formatReferenceStatus = (status: string | undefined, language: 'ja' | 'en'): string => {
-  if (status === undefined) {
-    return '-';
-  }
-
-  const labels: Record<string, ScreenTranslationKey> = {
-    empty: 'screen.characters.referenceStatus.empty',
-    partial: 'screen.characters.referenceStatus.partial',
-    ready: 'screen.characters.referenceStatus.ready'
-  };
-  const label = labels[status];
-  if (label === undefined) {
-    return status;
-  }
-  return t(language, label);
-};
-
 const generationBlockerMessage = (
   code: EntityReferenceGenerationBlockerCode,
   language: 'ja' | 'en'
@@ -550,23 +535,6 @@ const genericFieldLabels: Record<string, ScreenTranslationKey> = {
   movement: 'screen.characters.genericField.movement',
   visual_anchor: 'screen.characters.genericField.visualAnchor'
 };
-
-const recommendedCharacterKeys = [
-  'gender_expression',
-  'age_range',
-  'first_impression',
-  'default_expression',
-  'height',
-  'build',
-  'visual_anchor',
-  'signature_feature',
-  'hair_color',
-  'hair_length',
-  'hair_style',
-  'clothing_category',
-  'clothing_main_color',
-  'clothing_description'
-];
 
 const nonhumanBaseForms = ['dragon', 'wolf', 'spirit', 'robot', 'zombie', 'deity', 'custom'] as const;
 const nonhumanSizes = ['tiny', 'small', 'human_scale', 'large', 'enormous'] as const;
@@ -1784,6 +1752,7 @@ export function CharactersScreen(): React.JSX.Element {
   const [importResult, setImportResult] = useState<string | null>(null);
   const [lastImportedCandidateToken, setLastImportedCandidateToken] = useState<string | null>(null);
   const [lastImportedCandidateEntityId, setLastImportedCandidateEntityId] = useState<string | null>(null);
+  const [lastConfirmedPreviewEntityId, setLastConfirmedPreviewEntityId] = useState<string | null>(null);
   const [pendingEntityReferenceUpload, setPendingEntityReferenceUpload] =
     useState<PendingEntityReferenceUpload | null>(null);
   const [entityReferenceUploadProgress, setEntityReferenceUploadProgress] = useState(0);
@@ -2044,6 +2013,10 @@ export function CharactersScreen(): React.JSX.Element {
   }, [selectedEntity?.id]);
 
   useEffect(() => {
+    setLastConfirmedPreviewEntityId(null);
+  }, [selectedEntity?.id]);
+
+  useEffect(() => {
     if (lastSyncedEntityStateId.current === selectedEntityStateId) {
       return;
     }
@@ -2073,6 +2046,18 @@ export function CharactersScreen(): React.JSX.Element {
 
   const invalidateReference = async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: entityReferenceSetQueryKey(sessionKey, selectedEntity?.id ?? null, organizationId) });
+  };
+
+  const invalidateActiveReferenceJob = async (): Promise<void> => {
+    await queryClient.invalidateQueries({
+      queryKey: activeResourceJobQueryKey(
+        sessionKey,
+        organizationId,
+        'entity_id',
+        selectedEntity?.id ?? null,
+        'entity_generate'
+      )
+    });
   };
 
   const invalidateEntityStates = async (): Promise<void> => {
@@ -2403,13 +2388,21 @@ export function CharactersScreen(): React.JSX.Element {
       setLastImportedCandidateToken(null);
       setLastImportedCandidateEntityId(null);
       setLocalJob(null);
-      await Promise.all([invalidateEntities(), invalidateReference()]);
+      setLastConfirmedPreviewEntityId(selectedEntity?.id ?? null);
+      await Promise.all([
+        invalidateActiveReferenceJob(),
+        invalidateEntities(),
+        invalidateReference()
+      ]);
     }
   });
 
   const deleteReferenceMutation = useMutation({
     mutationFn: (refId: string) => api.deleteEntityReference(selectedEntity?.id ?? '', refId, organizationId),
-    onSuccess: invalidateReference
+    onSuccess: async () => {
+      setLastConfirmedPreviewEntityId(null);
+      await invalidateReference();
+    }
   });
 
   const downloadReferenceMutation = useMutation({
@@ -2653,12 +2646,6 @@ export function CharactersScreen(): React.JSX.Element {
     value: option.value,
     label: language === 'ja' ? option.labelJa : option.labelEn
   }));
-  const filledStructuredCount = activeFieldKeys.filter((key) => (structuredDraft[key] ?? '').trim().length > 0).length;
-  const filledRecommendedCount =
-    entityType === 'character'
-      ? recommendedCharacterKeys.filter((key) => (structuredDraft[key] ?? '').trim().length > 0).length
-      : filledStructuredCount;
-  const recommendedTotal = entityType === 'character' ? recommendedCharacterKeys.length : activeFieldKeys.length;
   const refreshCharacters = (): void => {
     void invalidateEntities();
     void invalidateReference();
@@ -2667,6 +2654,23 @@ export function CharactersScreen(): React.JSX.Element {
     void generationAvailabilityQuery.refetch();
     void jobQuery.refetch();
   };
+  const characterWorkflowNextStep = resolveCharacterWorkflowNextStep({
+    confirmedPreviewCount: referenceQuery.data?.reference_images.length ?? 0,
+    hasActivePreviewJob,
+    hasJustConfirmedPreview: lastConfirmedPreviewEntityId === selectedEntity?.id,
+    hasPreviewCandidate: activeReferenceCandidate !== null,
+    hasResolvedPreviewState: referenceQuery.data !== undefined,
+    hasSavedCharacter: selectedEntity !== null && entityEditorMode === 'edit',
+    hasUnsavedChanges: entityDirty
+  });
+  const characterWorkflowMessageKey: ScreenTranslationKey | null =
+    characterWorkflowNextStep === 'create-preview'
+      ? 'screen.characters.next.createPreview'
+      : characterWorkflowNextStep === 'confirm-preview'
+        ? 'screen.characters.next.confirmPreview'
+        : characterWorkflowNextStep === 'open-pages'
+          ? 'screen.characters.next.openPages'
+          : null;
 
   return (
     <Screen
@@ -2821,20 +2825,6 @@ export function CharactersScreen(): React.JSX.Element {
             <Notice message={t(language, "generated.screens.CharactersScreen.suggested.fields.were.applied.to.the.for.1570bad8")} tone="info" />
           )}
         </View>
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.required.64cf5d7a")}</Text>
-            <Text style={styles.metric}>{name.trim().length > 0 ? t(language, "generated.screens.CharactersScreen.name.ok.9d30f555") : t(language, "generated.screens.CharactersScreen.name.required.4b1380a3")}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.recommended.655b10bd")}</Text>
-            <Text style={styles.metric}>{filledRecommendedCount}/{recommendedTotal}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, 'referenceSet')}</Text>
-            <Text style={styles.metric}>{formatReferenceStatus(referenceQuery.data?.status, language)}</Text>
-          </View>
-        </View>
         {entityType === 'character' ? (
           <>
             <CollapsibleGroup title={t(language, "generated.screens.CharactersScreen.identity.90859a65")}>
@@ -2932,25 +2922,11 @@ export function CharactersScreen(): React.JSX.Element {
         </View>
       </Section>
 
-      <Section collapsible persistKey="characters:reference-set" subtitle={t(language, "generated.screens.CharactersScreen.page.generation.uses.confirmed.reference.6e2b8447")} title={t(language, 'referenceSet')}>
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.status.bd826326")}</Text>
-            <Text style={styles.metric}>{formatReferenceStatus(referenceQuery.data?.status, language)}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.primary.a481ddc0")}</Text>
-            <Text style={styles.metric}>
-              {referenceQuery.data?.primary_ref_id === null || referenceQuery.data?.primary_ref_id === undefined
-                ? t(language, "generated.screens.CharactersScreen.not.set.3ecccf12")
-                : t(language, "generated.screens.CharactersScreen.set.d44ebb68")}
-            </Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.caption}>{t(language, "generated.screens.CharactersScreen.images.716d1857")}</Text>
-            <Text style={styles.metric}>{referenceQuery.data?.reference_images.length ?? 0}</Text>
-          </View>
-        </View>
+      {characterWorkflowMessageKey === null ? null : (
+        <Notice message={t(language, characterWorkflowMessageKey)} tone="success" />
+      )}
+
+      <Section collapsible persistKey="characters:reference-set" subtitle={t(language, 'screen.characters.preview.subtitle')} title={t(language, 'referenceSet')}>
         {activeReferenceCandidate === null && (referenceQuery.data?.reference_images.length ?? 0) === 0 ? (
           <Notice
             message={t(language, "generated.screens.CharactersScreen.imported.generated.and.confirmed.referen.b5e84403")}
@@ -3362,26 +3338,6 @@ const styles = StyleSheet.create({
     ...textStyles.caption,
     color: colors.ink,
     fontWeight: '700'
-  },
-  metric: {
-    ...textStyles.body,
-    flexShrink: 1,
-    fontWeight: '700'
-  },
-  metricCard: {
-    backgroundColor: 'rgba(16, 16, 16, 0.82)',
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    gap: 4,
-    minWidth: 88,
-    padding: spacing.sm
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm
   },
   referenceCard: {
     backgroundColor: colors.surfaceAlt,

@@ -24,7 +24,7 @@ export function ConfirmedPageSummary({
         {t(language, 'component.confirmedPageSummary.pageNumber', { pageNumber: page.page_number })}
       </Text>
       <SummaryRow
-        label={t(language, "generated.components.ConfirmedPageSummary.story.sources.82e34b3e")}
+        label={t(language, 'screen.pages.flowOverview')}
         value={
           sourceSceneLabels.length === 0
             ? t(language, "generated.components.ConfirmedPageSummary.none.56ce12f1")
