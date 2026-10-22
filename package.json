@@ -39,6 +39,7 @@
     "worker:account-deletion": "tsx scripts/runAccountDeletionWorker.ts",
     "db:check-invariants:prod": "bun dist/scripts/checkDeploymentDataInvariants.js",
     "db:check-pre-migration:prod": "bun dist/scripts/checkPreProductionMigrationInvariants.js",
+    "ops:preflight-account-deletion-worker": "tsx scripts/preflightAccountDeletionWorkerArtifact.ts",
     "worker:generation:prod": "bun dist/scripts/startProductionWorker.js",
     "worker:episode-export:prod": "bun dist/scripts/startProductionEpisodeExportWorker.js",
     "worker:account-deletion:prod": "bun dist/scripts/startProductionAccountDeletionWorker.js",
