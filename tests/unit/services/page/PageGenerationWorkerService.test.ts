@@ -127,7 +127,7 @@ class FakePromptCompiler implements PagePromptCompilerPort {
       prompt: this.compiledPromptText,
       compilerProvider: 'openai' as const,
       compilerModel: 'gpt-5.4-mini',
-      compilerPromptVersion: 'page_prompt_v2',
+      compilerPromptVersion: 'page_prompt_v3',
     };
   }
 }
@@ -328,7 +328,7 @@ describe('PageGenerationWorkerService', () => {
         compiledPromptUsed: true,
         promptCompilerProvider: 'openai',
         compilerModel: 'gpt-5.4-mini',
-        compilerPromptVersion: 'page_prompt_v2',
+        compilerPromptVersion: 'page_prompt_v3',
         compilerError: null,
       },
     });

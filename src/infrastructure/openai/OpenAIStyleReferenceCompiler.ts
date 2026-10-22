@@ -11,6 +11,7 @@ import type {
   StyleReferenceCompilerPort,
 } from '../../services/style/StyleReferenceCompiler.js';
 import { OpenAIClient } from './OpenAIClient.js';
+import { OPENAI_STYLE_REFERENCE_PERSON_GUIDANCE } from './OpenAIImagePromptGuidance.js';
 
 interface OpenAICompilerResponse {
   output_text?: unknown;
@@ -77,8 +78,9 @@ function buildSystemPrompt(): string {
     'Keep the named title itself explicit in the compiled_brief because it is a hard style constraint.',
     'Translate the title into reusable rendering traits with stable anchors for line quality, shape language, face rendering treatment, eye rendering treatment, hair rendering treatment, clothing rendering treatment, background rendering, shading, texture and finish, motion treatment, dialogue and balloon treatment, and atmosphere.',
     'Treat face_rendering, eye_rendering, hair_rendering, and clothing_rendering as rendering treatment only, not as identity redesign. Do not change face shape, eye shape, hair silhouette, body proportions, or outfit silhouette.',
-    'Do not discuss policy, copyright, legality, or training data.',
-    'Do not mention specific copyrighted characters or scenes from the named work. Focus on reusable visual traits only.',
+    ...OPENAI_STYLE_REFERENCE_PERSON_GUIDANCE,
+    'Keep the response entirely within reusable visual art direction, with no meta-commentary about the source.',
+    'Do not name or reproduce characters or scenes from the referenced work. Focus on reusable visual traits only.',
     'For character_reference targets, optimize for full-body character consistency and silhouette readability.',
     'For manga_page targets, optimize for panel readability, page-wide consistency, environment treatment, action clarity, and dialogue legibility.',
     'Use precise, concrete art-direction language and avoid vague quality words like masterpiece, cinematic, beautiful, cool, or stunning.',
