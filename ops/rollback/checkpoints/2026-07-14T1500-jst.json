@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "checkpointId": "20260714T1500JST",
+  "confirmationToken": "20260714T1500JST",
+  "capturedAt": "2026-07-14T15:00:00+09:00",
+  "git": {
+    "commit": "bfea1329f151d76a335d8bbbc59c624c54b7f4e3"
+  },
+  "aws": {
+    "accountId": "452284481392",
+    "region": "ap-northeast-1",
+    "clusterName": "lyra-prod",
+    "services": {
+      "api": {
+        "serviceName": "lyra-prod-api",
+        "taskDefinition": "lyra-prod-api:75",
+        "containerName": "api",
+        "desiredCount": 1,
+        "imageUri": "452284481392.dkr.ecr.ap-northeast-1.amazonaws.com/lyra-prod-api:continuity-v3-bfea132-20260714",
+        "cpuArchitecture": "ARM64"
+      },
+      "worker": {
+        "serviceName": "lyra-prod-worker",
+        "taskDefinition": "lyra-prod-worker:48",
+        "containerName": "worker",
+        "desiredCount": 1,
+        "imageUri": "452284481392.dkr.ecr.ap-northeast-1.amazonaws.com/lyra-prod-worker:continuity-v3-bfea132-20260714",
+        "cpuArchitecture": "ARM64"
+      }
+    },
+    "ecrImages": {
+      "api": {
+        "repositoryName": "lyra-prod-api",
+        "releaseTag": "continuity-v3-bfea132-20260714",
+        "checkpointTag": "checkpoint-20260714-1500-jst",
+        "digest": "sha256:7b0562f727e0eeca712a255dc08d15f94c2f8e5ef2d996e321517b98f210ac19"
+      },
+      "worker": {
+        "repositoryName": "lyra-prod-worker",
+        "releaseTag": "continuity-v3-bfea132-20260714",
+        "checkpointTag": "checkpoint-20260714-1500-jst",
+        "digest": "sha256:7b0562f727e0eeca712a255dc08d15f94c2f8e5ef2d996e321517b98f210ac19"
+      }
+    },
+    "secret": {
+      "secretId": "lyra/prod/app",
+      "versionId": "6982a44b-0425-406a-8704-f0b73f9dfefb",
+      "checkpointStage": "LYRA_CHECKPOINT_20260714_1500_JST"
+    },
+    "queue": {
+      "name": "lyra-prod-generation"
+    },
+    "cloudFront": {
+      "distributionId": "E3B8V7G1NPTTMS",
+      "healthUrl": "https://app.lyra-editor.com/healthz",
+      "readinessUrl": "https://app.lyra-editor.com/readyz"
+    },
+    "workerScaling": {
+      "serviceNamespace": "ecs",
+      "scalableDimension": "ecs:service:DesiredCount",
+      "resourceId": "service/lyra-prod/lyra-prod-worker",
+      "minCapacity": 1,
+      "maxCapacity": 3,
+      "suspendedState": {
+        "dynamicScalingInSuspended": false,
+        "dynamicScalingOutSuspended": false,
+        "scheduledScalingSuspended": false
+      },
+      "policies": [
+        {
+          "name": "lyra-worker-scale-out-on-queue",
+          "policyType": "StepScaling",
+          "adjustmentType": "ChangeInCapacity",
+          "cooldown": 60,
+          "metricAggregationType": "Average",
+          "stepAdjustments": [
+            {
+              "metricIntervalLowerBound": 0,
+              "scalingAdjustment": 1
+            }
+          ]
+        },
+        {
+          "name": "lyra-worker-scale-in-when-empty",
+          "policyType": "StepScaling",
+          "adjustmentType": "ExactCapacity",
+          "cooldown": 300,
+          "metricAggregationType": "Average",
+          "stepAdjustments": [
+            {
+              "metricIntervalUpperBound": 0,
+              "scalingAdjustment": 0
+            }
+          ]
+        }
+      ],
+      "scheduledActions": [
+        {
+          "name": "lyra-worker-jst-0900-min1",
+          "schedule": "cron(0 0 * * ? *)",
+          "minCapacity": 1,
+          "maxCapacity": 3
+        },
+        {
+          "name": "lyra-worker-jst-midnight-min0",
+          "schedule": "cron(0 15 * * ? *)",
+          "minCapacity": 0,
+          "maxCapacity": 3
+        }
+      ]
+    }
+  },
+  "database": {
+    "checkpointMigrations": [
+      "001_initial_schema.sql",
+      "002_add_episode_story_input_mode.sql",
+      "003_add_generation_active_resource_locks.sql",
+      "004_add_rate_limit_buckets.sql",
+      "005_add_billing_idempotency_indexes.sql",
+      "006_add_generation_job_retention_index.sql",
+      "007_add_credit_refund_job_idempotency_index.sql",
+      "008_add_credit_ledger_bucket_deltas.sql",
+      "009_add_generation_job_state_constraints.sql",
+      "010_add_billing_state_constraints.sql",
+      "011_add_core_app_state_constraints.sql",
+      "012_add_credit_ledger_amount_sign_constraint.sql",
+      "013_add_subscription_status_constraint.sql",
+      "014_add_payment_record_external_id_constraint.sql",
+      "015_add_episode_story_autofill_job_type.sql",
+      "016_add_episode_story_autofill_active_lock.sql",
+      "017_add_episode_page_skeleton_job_type.sql",
+      "018_allow_enterprise_billing_plan_codes.sql",
+      "019_add_organization_workspaces.sql",
+      "020_add_payment_record_invoice_url.sql",
+      "021_add_organization_workspace_indexes.sql",
+      "022_add_organization_invitation_delivery.sql",
+      "023_merge_creator_role_into_editor.sql"
+    ],
+    "allowedForwardCompatibleMigrations": [
+      "024_add_generation_job_cancellation.sql",
+      "025_include_cancelled_jobs_in_retention_index.sql"
+    ]
+  }
+}

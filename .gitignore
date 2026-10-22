@@ -14,3 +14,4 @@ apps/web/test-results/
 dev-server.*.log
 web-dev.*.log
 api-dev.*.log
+.rollback-receipts/

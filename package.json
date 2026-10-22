@@ -48,7 +48,8 @@
     "admin:refund-credits": "tsx scripts/adminRefundCredits.ts",
     "admin:prune-images": "tsx scripts/pruneImageStorage.ts",
     "admin:prune-jobs": "tsx scripts/pruneGenerationJobs.ts",
-    "admin:prune-rate-limits": "tsx scripts/pruneRateLimitBuckets.ts"
+    "admin:prune-rate-limits": "tsx scripts/pruneRateLimitBuckets.ts",
+    "prod:rollback:20260714": "tsx scripts/rollbackProductionCheckpoint.ts"
   },
   "dependencies": {
     "@apple/app-store-server-library": "3.1.0",

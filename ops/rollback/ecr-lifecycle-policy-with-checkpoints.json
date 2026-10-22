@@ -1,0 +1,44 @@
+{
+  "rules": [
+    {
+      "rulePriority": 1,
+      "description": "Protect rollback checkpoint tags",
+      "selection": {
+        "tagStatus": "tagged",
+        "tagPrefixList": [
+          "checkpoint-"
+        ],
+        "countType": "imageCountMoreThan",
+        "countNumber": 9999
+      },
+      "action": {
+        "type": "expire"
+      }
+    },
+    {
+      "rulePriority": 2,
+      "description": "Expire untagged images older than 1 day",
+      "selection": {
+        "tagStatus": "untagged",
+        "countType": "sinceImagePushed",
+        "countUnit": "days",
+        "countNumber": 1
+      },
+      "action": {
+        "type": "expire"
+      }
+    },
+    {
+      "rulePriority": 10,
+      "description": "Keep only the latest 10 non-checkpoint images",
+      "selection": {
+        "tagStatus": "any",
+        "countType": "imageCountMoreThan",
+        "countNumber": 10
+      },
+      "action": {
+        "type": "expire"
+      }
+    }
+  ]
+}
