@@ -13,8 +13,9 @@ const LEGACY_MIGRATIONS = join(process.cwd(), 'tests/fixtures/production-lineage
 
 // Design contract: explicit legacy personal Page settings writes acquire
 // users -> account_deletion_requests before the existing scoped UPDATE, and
-// the UPDATE plus result read remain on the same transaction client. Canonical
-// and organization writes retain their existing query and transaction shape.
+// authorization, edit admission, UPDATE, and result read remain on the same
+// transaction client. Canonical and organization writes omit the legacy
+// deletion query while preserving that single-client transaction boundary.
 describePostgres('legacy normal Page write admission fence', () => {
   let admin: Pool;
   let pool: Pool;
@@ -141,7 +142,7 @@ describePostgres('legacy normal Page write admission fence', () => {
     expect(await readDialogueMode(pool, fixture.pageId)).toBe('image_baked');
   });
 
-  it('max1 poolはlegacyで同一client 1TX、canonicalで退会queryと追加TX 0を保つ', async () => {
+  it('max1 poolはlegacyとcanonicalのPage書き込みを同一client 1TXで完結する', async () => {
     const legacyFixture = await insertFixture(pool);
     const canonicalFixture = await insertFixture(pool);
     const singlePool = new Pool({
@@ -167,8 +168,10 @@ describePostgres('legacy normal Page write admission fence', () => {
         { dialogueMode: 'mixed' },
       );
       expect(canonical?.dialogueMode).toBe('mixed');
-      expect(canonicalDatabase.transactionCount).toBe(0);
-      expect(canonicalDatabase.allQueries).toHaveLength(2);
+      expect(canonicalDatabase.transactionCount).toBe(1);
+      expect(canonicalDatabase.baseQueriesDuringTransaction).toBe(0);
+      expect(canonicalDatabase.transactionQueries).toHaveLength(3);
+      expect(canonicalDatabase.allQueries).toEqual(canonicalDatabase.transactionQueries);
       expect(canonicalDatabase.allQueries.join('\n')).not.toContain('account_deletion_requests');
     } finally {
       await singlePool.end();

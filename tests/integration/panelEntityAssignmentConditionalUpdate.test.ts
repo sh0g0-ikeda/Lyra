@@ -476,30 +476,60 @@ describePostgres('panel entity assignment conditional update', () => {
     }
   }, 30_000);
 
-  it.each(['confirmed', 'generating'] as const)(
-    '%s Pageではassignmentを変更しない',
-    async (status) => {
-      const ids = createFixtureIds();
-      const service = createService(pool);
+  it('confirmed Pageはassignment保存と同一transactionでeditingへ戻る', async () => {
+    const ids = createFixtureIds();
+    const service = createService(pool);
 
-      try {
-        await insertFixture(pool, ids);
-        await pool.query('UPDATE pages SET status = $2 WHERE id = $1::uuid', [ids.pageId, status]);
-        const expected = [assignment(ids.entityId, ids.stateId)];
+    try {
+      await insertFixture(pool, ids);
+      await pool.query("UPDATE pages SET status = 'confirmed' WHERE id = $1::uuid", [ids.pageId]);
+      const expected = [assignment(ids.entityId, ids.stateId)];
+      const replacement = [assignment(ids.entityId, ids.stateId, { role: 'secondary' })];
 
-        expect(await rejectionOf(service.replacePanelEntityAssignments(
-          ids.userId,
-          ids.panelId,
-          [assignment(ids.entityId, ids.stateId, { role: 'secondary' })],
-          null,
-          expected,
-        ))).toMatchObject({ code: 'CONFLICT' });
-        expect(await (readAssignments(pool, ids.panelId))).toEqual(expected);
-      } finally {
-        await removeFixture(pool, ids);
-      }
-    },
-  );
+      expect(await service.replacePanelEntityAssignments(
+        ids.userId,
+        ids.panelId,
+        replacement,
+        null,
+        expected,
+      )).toEqual(replacement);
+      expect(await readAssignments(pool, ids.panelId)).toEqual(replacement);
+      const page = await pool.query<{ status: string }>(
+        'SELECT status FROM pages WHERE id = $1::uuid',
+        [ids.pageId],
+      );
+      expect(page.rows[0]?.status).toBe('editing');
+    } finally {
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it('generating Pageではassignmentを変更しない', async () => {
+    const ids = createFixtureIds();
+    const service = createService(pool);
+
+    try {
+      await insertFixture(pool, ids);
+      await pool.query("UPDATE pages SET status = 'generating' WHERE id = $1::uuid", [ids.pageId]);
+      const expected = [assignment(ids.entityId, ids.stateId)];
+
+      expect(await rejectionOf(service.replacePanelEntityAssignments(
+        ids.userId,
+        ids.panelId,
+        [assignment(ids.entityId, ids.stateId, { role: 'secondary' })],
+        null,
+        expected,
+      ))).toMatchObject({ code: 'CONFLICT' });
+      expect(await readAssignments(pool, ids.panelId)).toEqual(expected);
+      const page = await pool.query<{ status: string }>(
+        'SELECT status FROM pages WHERE id = $1::uuid',
+        [ids.pageId],
+      );
+      expect(page.rows[0]?.status).toBe('generating');
+    } finally {
+      await removeFixture(pool, ids);
+    }
+  });
 
   it('同じworkの保存済み話者を画面外にしても会話IDは保持する', async () => {
     const ids = createFixtureIds();

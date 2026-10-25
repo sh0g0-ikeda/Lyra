@@ -936,8 +936,11 @@ restore operation and official Apple/Google subscription-management URLs.
 Plans and credit packs are shown separately. Missing or disabled server catalog
 configuration displays disabled purchase actions and a reason; it never grants
 credits or redirects to a different environment. The staging Android package and
-iOS bundle identifier are separate from production, so both test apps can coexist
-with the published apps. Internal iOS builds target registered physical devices.
+iOS internal-build bundle identifier are separate from production, so those test
+apps can coexist with published apps. The dedicated TestFlight profile instead
+uses the existing `jp.lyra.mobile` App Store identity, staging API/Cognito/scheme,
+and `ux-review` channel. It does not publish production OTA updates or submit an
+App Review version. Internal iOS builds target registered physical devices.
 Staging needs its own store testing configuration before a real native checkout
 can be accepted.
 Tutorial content follows the same persisted language without resetting progress.
