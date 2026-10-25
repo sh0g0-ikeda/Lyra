@@ -82,6 +82,19 @@ describe('PanelFrameService', () => {
     await expect(service.listPageFrames(userId, pageId)).rejects.toBeInstanceOf(NotFoundError);
   });
 
+  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
+    '%s pageでも所有者はPanelFrameを参照できる',
+    async (pageStatus) => {
+      const repository = new FakePanelFrameRepository();
+      repository.pageContext = { pageId, workId, pageStatus };
+      const service = new PanelFrameService(repository);
+
+      await expect(service.listPageFrames(userId, pageId)).resolves.toEqual([
+        expect.objectContaining({ pageId }),
+      ]);
+    },
+  );
+
   it('指定panel_idがページに属さない場合にVALIDATION_ERRORになる', async () => {
     const repository = new FakePanelFrameRepository();
     repository.ownedPanelIds = [];
@@ -114,31 +127,44 @@ describe('PanelFrameService', () => {
     });
     expect(repository.savedLayoutUpdate?.frameDefinitions).toHaveLength(4);
   });
-  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
-    '%s page cannot replace frames',
-    async (pageStatus) => {
-      const repository = new FakePanelFrameRepository();
-      repository.pageContext = { pageId, workId, pageStatus };
-      const service = new PanelFrameService(repository);
+  it('confirmed pageへの明示保存はrepositoryの同一transactionへ委譲する', async () => {
+    const repository = new FakePanelFrameRepository();
+    repository.pageContext = { pageId, workId, pageStatus: 'confirmed' };
+    const service = new PanelFrameService(repository);
 
-      await expect(service.replacePageFrames(userId, pageId, [frame])).rejects.toBeInstanceOf(
-        ConflictError,
-      );
-    },
-  );
+    await expect(service.replacePageFrames(userId, pageId, [frame])).resolves.toHaveLength(1);
+    expect(repository.savedFrames).toEqual([frame]);
+  });
 
-  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
-    '%s page cannot apply templates',
-    async (pageStatus) => {
-      const repository = new FakePanelFrameRepository();
-      repository.pageContext = { pageId, workId, pageStatus };
-      const service = new PanelFrameService(repository);
+  it('generating page cannot replace frames', async () => {
+    const repository = new FakePanelFrameRepository();
+    repository.pageContext = { pageId, workId, pageStatus: 'generating' };
+    const service = new PanelFrameService(repository);
 
-      await expect(service.applyTemplate(userId, pageId, 'standard_4')).rejects.toBeInstanceOf(
-        ConflictError,
-      );
-    },
-  );
+    await expect(service.replacePageFrames(userId, pageId, [frame])).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+  });
+
+  it('confirmed pageへの明示テンプレート適用はrepositoryの同一transactionへ委譲する', async () => {
+    const repository = new FakePanelFrameRepository();
+    repository.pageContext = { pageId, workId, pageStatus: 'confirmed' };
+    const service = new PanelFrameService(repository);
+
+    await expect(service.applyTemplate(userId, pageId, 'standard_4')).resolves.toMatchObject({
+      templateId: 'standard_4',
+    });
+  });
+
+  it('generating page cannot apply templates', async () => {
+    const repository = new FakePanelFrameRepository();
+    repository.pageContext = { pageId, workId, pageStatus: 'generating' };
+    const service = new PanelFrameService(repository);
+
+    await expect(service.applyTemplate(userId, pageId, 'standard_4')).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+  });
 });
 
 function buildFrameInput(overrides: Partial<UpsertPanelFrameInput> = {}): UpsertPanelFrameInput {

@@ -28,18 +28,21 @@ async function render(context: OperationErrorContext, language: 'ja' | 'en' = 'e
   await act(async () => {
     tree = create(<ActionableErrorNotice actions={{ retry: refresh, jobs }} context={context} error={error} language={language} retryMode="refresh" />);
   });
-  return { notice: tree!.root.findByType('notice'), refresh, jobs };
+  return { notices: tree!.root.findAllByType('notice'), refresh, jobs };
 }
 
 describe('operation error context rendering', () => {
   it.each(['ja', 'en'] as const)('keeps the episode save and retained fields identifiable in %s', async (language) => {
-    const { notice, refresh } = await render({ operation: 'saveEpisode', retainedDraft: 'episode' }, language);
+    const { notices, refresh } = await render({ operation: 'saveEpisode', retainedDraft: 'episode' }, language);
+    const notice = notices[0]!;
     const text = notice.props.message as string;
     for (const phrase of language === 'ja'
-      ? ['話の保存', 'タイトル', '本文', '想定ページ数', '開始状態', '画面内', '未確認']
-      : ['Save episode', 'title', 'story', 'estimated pages', 'starting states', 'on this screen', 'unconfirmed']) {
+      ? ['話の保存', '一時的に利用できません']
+      : ['Save episode', 'temporarily unavailable']) {
       expect(text).toContain(phrase);
     }
+    expect(text.split('\n')).toHaveLength(2);
+    expect(text).not.toContain(language === 'ja' ? '画面内' : 'on this screen');
     expect(text).not.toContain('secret provider detail');
     expect(notice.props.actionLabel).toBe(language === 'ja' ? '状態を更新' : 'Refresh status');
     expect(notice.props.announce).toBe(true);
@@ -48,24 +51,26 @@ describe('operation error context rendering', () => {
   });
 
   it('distinguishes a failed read from a write and does not invent retained input', async () => {
-    const { notice } = await render({ operation: 'loadPages' }, 'en', new TypeError('Network request failed'));
-    expect(notice.props.message).toContain('Load pages');
-    expect(notice.props.message).toContain('This read did not submit changes');
-    expect(notice.props.message).not.toContain('on this screen');
-    expect(notice.props.actionLabel).toBe('Refresh status');
+    const { notices } = await render({ operation: 'loadPages' }, 'en', new TypeError('Network request failed'));
+    expect(notices).toHaveLength(0);
+    const essential = await render({ operation: 'loadPages', essential: true }, 'en', new TypeError('Network request failed'));
+    expect(essential.notices[0]!.props.message).toContain('Load pages');
+    expect(essential.notices[0]!.props.actionLabel).toBe('Refresh status');
   });
   it('keeps a confirmed hierarchy write distinct from its later refresh failure', async () => {
-    const { notice } = await render({ operation: 'renameWork', confirmed: true, targetLabel: 'My work' });
+    const { notices } = await render({ operation: 'renameWork', confirmed: true, targetLabel: 'My work' });
+    const notice = notices[0]!;
     expect(notice.props.message).toContain('Save work title (My work)');
-    expect(notice.props.message).toContain('The server confirmed this operation');
-    expect(notice.props.message).toContain('without submitting it again');
+    expect(notice.props.message).toContain('was confirmed');
+    expect(notice.props.message).toContain('refresh');
     expect(notice.props.message).not.toContain('Save status is unconfirmed');
     expect(notice.props.message).not.toContain('on this screen');
   });
 
   it('routes a save timeout to status refresh without claiming no save or no charge', async () => {
-    const { notice, refresh, jobs } = await render({ operation: 'saveEpisode', retainedDraft: 'episode' }, 'en', new ApiError('timeout', 0, 'REQUEST_TIMEOUT'));
-    expect(notice.props.message).toContain('unconfirmed');
+    const { notices, refresh, jobs } = await render({ operation: 'saveEpisode', retainedDraft: 'episode' }, 'en', new ApiError('timeout', 0, 'REQUEST_TIMEOUT'));
+    const notice = notices[0]!;
+    expect(notice.props.message).toContain('result could not be confirmed');
     expect(notice.props.message).not.toMatch(/not saved|not charged|refunded|saved successfully/i);
     await act(async () => notice.props.onAction());
     expect(refresh).toHaveBeenCalledOnce();
@@ -74,20 +79,20 @@ describe('operation error context rendering', () => {
 
   it('describes free text AI separately from uncertain paid image settlement', async () => {
     const free = await render({ operation: 'improveEpisode', retainedDraft: 'episode' });
-    expect(free.notice.props.message).toContain('Text AI is free');
-    expect(free.notice.props.message).toContain('Save status is unconfirmed');
+    expect(free.notices[0]!.props.message).toContain('Improve story with AI');
+    expect(free.notices[0]!.props.message).toContain('temporarily unavailable');
     const paid = await render({ operation: 'generatePage' }, 'en', new ApiError('timeout', 0, 'REQUEST_TIMEOUT'));
-    expect(paid.notice.props.message).toContain('Charge/refund status is unconfirmed');
-    expect(paid.notice.props.message).toContain('job');
-    expect(paid.notice.props.message).not.toMatch(/\b\d+ credits|not charged|refunded/i);
-    expect(paid.notice.props.actionLabel).toBe('Review jobs');
+    expect(paid.notices[0]!.props.message).toContain('result could not be confirmed');
+    expect(paid.notices[0]!.props.message).toContain('job status');
+    expect(paid.notices[0]!.props.message).not.toMatch(/\b\d+ credits|not charged|refunded/i);
+    expect(paid.notices[0]!.props.actionLabel).toBe('Review jobs');
   });
 
   it('does not equate a failed cancellation with a stopped job or a refund', async () => {
-    const { notice } = await render({ operation: 'cancelPageDesign' });
+    const { notices } = await render({ operation: 'cancelPageDesign' });
+    const notice = notices[0]!;
     expect(notice.props.message).toContain('Cancel page design');
-    expect(notice.props.message).toContain('Cancellation is unconfirmed');
-    expect(notice.props.message).toContain('may still be running');
+    expect(notice.props.message).toContain('Check job status');
     expect(notice.props.message).not.toMatch(/cancelled successfully|refunded|not charged/i);
   });
 
@@ -99,8 +104,6 @@ describe('operation error context rendering', () => {
     });
     const notice = tree!.root.findByType('notice');
     expect(notice.props.message).toContain('Save panel');
-    expect(notice.props.message).toContain('dialogue');
-    expect(notice.props.message).toContain('replace');
     expect(notice.props.message).not.toContain('raw secret');
     await act(async () => notice.props.onAction());
     expect(reload).not.toHaveBeenCalled();
@@ -108,7 +111,7 @@ describe('operation error context rendering', () => {
     expect(reload).toHaveBeenCalledOnce();
   });
 
-  it('deduplicates one nested failure without hiding distinct operations with the same safe reason', () => {
+  it('同じ失敗を重複表示せず、mutationをpassive readより優先して1件だけ返す', () => {
     const first = new Error('same');
     const second = new Error('same');
     const failures = collectOperationFailures([
@@ -117,6 +120,16 @@ describe('operation error context rendering', () => {
       operationFailure('saveScene', second, 'scene'),
       operationFailure('loadPages', null)
     ]);
-    expect(failures.map(failure => failure.context.operation)).toEqual(['saveEpisode', 'saveScene']);
+    expect(failures.map(failure => failure.context.operation)).toEqual(['saveEpisode']);
+  });
+
+  it('同じ操作・対象・エラーコードの別Errorも1件にまとめる', () => {
+    const failures = collectOperationFailures([
+      { context: { operation: 'saveEpisode', targetLabel: 'Episode 1' } as const, error: new ApiError('first raw detail', 409, 'RESOURCE_STALE') },
+      { context: { operation: 'saveEpisode', targetLabel: 'Episode 1' } as const, error: new ApiError('second raw detail', 409, 'RESOURCE_STALE') },
+      { context: { operation: 'saveScene', targetLabel: 'Scene 1' } as const, error: new ApiError('other operation', 409, 'RESOURCE_STALE') }
+    ]);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.context.operation).toBe('saveEpisode');
   });
 });

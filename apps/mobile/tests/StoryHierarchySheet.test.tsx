@@ -40,8 +40,8 @@ vi.mock('react-native', () => ({
   ),
   KeyboardAvoidingView: ({ children, ...props }: { children: React.ReactNode }) =>
     React.createElement('keyboard-avoiding-view', props, children),
-  Modal: ({ children, visible }: { children: React.ReactNode; visible: boolean }) =>
-    visible ? React.createElement('modal', null, children) : null,
+  Modal: ({ children, visible, ...props }: { children: React.ReactNode; visible: boolean; onRequestClose?: () => void }) =>
+    visible ? React.createElement('modal', props, children) : null,
   Platform: { OS: 'android' },
   Pressable: ({
     children,
@@ -307,6 +307,37 @@ describe('StoryHierarchySheet', () => {
       await flushQueries();
     });
     expect(api.getChapters).toHaveBeenCalledWith('work-2', null);
+  });
+
+  it('章や話の追加をキャンセルして再度開く場合にnative Modalが一枚で操作可能なままになる', async () => {
+    const renderer = await renderSheet();
+    for (const label of ['この作品に章を追加', 'この章に話を追加', 'この作品に章を追加']) {
+      await act(async () => renderer.root.findByProps({ accessibilityLabel: label }).props.onPress());
+      expect(renderer.root.findAllByType('modal')).toHaveLength(1);
+      expect(renderer.root.findAllByType('input')).toHaveLength(1);
+      await act(async () => renderer.root.findByType('input').props.onChange('破棄する入力'));
+      await act(async () => renderer.root.findAllByType('button').find((node) => node.children.join('') === 'キャンセル')!.props.onClick());
+      expect(renderer.root.findAllByType('input')).toHaveLength(0);
+      expect(renderer.root.findAllByType('modal')).toHaveLength(1);
+    }
+    expect(api.createChapter).not.toHaveBeenCalled();
+    expect(api.createEpisode).not.toHaveBeenCalled();
+  });
+
+  it('入力中に戻る場合に階層一覧を閉じず最前面の入力だけを閉じる', async () => {
+    const onClose = vi.fn();
+    const renderer = await renderSheet(true, { onClose });
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: 'この作品に章を追加' }).props.onPress());
+    await act(async () => renderer.root.findAllByType('modal')[0].props.onRequestClose());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+    await act(async () => renderer.root.findByType('modal').props.onRequestClose());
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('端末の上下左右の安全領域内に一覧と入力を配置する', async () => {
+    const renderer = await renderSheet();
+    expect(renderer.root.findByType('safe-area-view').props.edges).toEqual(['top', 'right', 'bottom', 'left']);
   });
 
   // Expanded branches expose creation at the list boundary so users do not need the overflow menu.
@@ -701,7 +732,7 @@ describe('StoryHierarchySheet', () => {
     expect(renderer.root.findAllByType('notice')).toHaveLength(1);
     expect(notices[0].children.join('')).toContain('作品名の保存');
     expect(notices[0].children.join('')).toContain('作品A');
-    expect(notices[0].children.join('')).toContain('未確認');
+    expect(notices[0].children.join('').split('\n').length).toBeLessThanOrEqual(2);
     expect(notices[0].children.join('')).not.toContain('private provider detail');
     expect(titleModal.findByType('input').props.value).toBe('入力を保持');
     expect(api.updateWork).toHaveBeenCalledOnce();
@@ -718,7 +749,7 @@ describe('StoryHierarchySheet', () => {
         await flushQueries();
       });
       const notice = renderer.root.findByType('notice');
-      expect(notice.children.join('')).toContain('サーバーで操作の完了を確認');
+      expect(notice.children.join('')).toContain('保存は確認済み');
       expect(renderer.root.findAllByType('button').find(button => button.children.join('') === '追加')?.props.disabled).toBe(true);
       expect(notice.props.actionLabel).toBe('状態を更新');
       await act(async () => { notice.props.onAction(); await flushQueries(); });
@@ -773,15 +804,16 @@ describe('StoryHierarchySheet', () => {
     const renderer = await renderSheet();
 
     expect(renderer.root.findAllByType('safe-area-view')).toHaveLength(1);
-    expect(renderer.root.findByType('safe-area-view').props.edges).toEqual(['top', 'bottom']);
+    expect(renderer.root.findByType('safe-area-view').props.edges).toEqual(['top', 'right', 'bottom', 'left']);
 
     await act(async () => {
       renderer.root.findByProps({ accessibilityLabel: '1. 第一章の操作' }).props.onPress();
     });
 
     const safeAreas = renderer.root.findAllByType('safe-area-view');
-    expect(safeAreas).toHaveLength(2);
-    expect(safeAreas[1]?.props.edges).toEqual(['bottom']);
+    expect(safeAreas).toHaveLength(1);
+    expect(safeAreas[0]?.props.edges).toEqual(['top', 'right', 'bottom', 'left']);
+    expect(renderer.root.findAllByType('modal')).toHaveLength(1);
   });
 
   it('話追加ダイアログをAndroidのSafe Area内の中上部に表示する', async () => {
@@ -795,11 +827,10 @@ describe('StoryHierarchySheet', () => {
     });
 
     const safeAreas = renderer.root.findAllByType('safe-area-view');
-    expect(safeAreas).toHaveLength(2);
-    expect(safeAreas[1]?.props.edges).toEqual(['top', 'bottom']);
-    expect(safeAreas[1]?.props.style).toMatchObject({
-      justifyContent: 'flex-start'
-    });
+    expect(safeAreas).toHaveLength(1);
+    expect(safeAreas[0]?.props.edges).toEqual(['top', 'right', 'bottom', 'left']);
+    expect(renderer.root.findAllByType('modal')).toHaveLength(1);
+    expect(renderer.root.findAllByType('view').some((node) => node.props.style?.justifyContent === 'flex-start')).toBe(true);
     expect(renderer.root.findByType('keyboard-avoiding-view').props.behavior).toBe('height');
     expect(renderer.root.findByProps({ accessibilityLabel: '話を追加' })).toBeDefined();
   });
@@ -911,8 +942,8 @@ describe('StoryHierarchySheet', () => {
     await act(async () => { renderer.root.findByProps({ accessibilityLabel: '作品を永久削除' }).props.onPress(); await flushQueries(); });
 
     const notice = String(renderer.root.findByType('notice').props.children);
-    expect(notice).toContain('安全確認が必要');
-    expect(notice).toContain('サポートへお問い合わせください');
+    expect(notice).toContain('操作を完了できません');
+    expect(notice).not.toMatch(/削除しました|返金済み/);
     expect(api.deleteWork).toHaveBeenCalledOnce();
   });
 });

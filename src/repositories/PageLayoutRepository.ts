@@ -15,6 +15,7 @@ import {
   type RepositorySchemaProfile,
 } from './RepositorySchemaProfile.js';
 import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
+import { transitionLockedPageForExplicitEdit } from './PageEditAdmission.js';
 
 export interface ApplyPageLayoutTemplateInput {
   templateId: PanelFrameTemplateId;
@@ -164,13 +165,10 @@ async function ensureEditableOwnedPage(
     throw new NotFoundError('Page not found');
   }
 
-  if (page.page_status === 'confirmed') {
-    throw new ConflictError('Confirmed pages must be reopened before changing layout');
-  }
-
   if (page.page_status === 'generating') {
     throw new ConflictError('Pages cannot change layout while generation is in progress');
   }
+  await transitionLockedPageForExplicitEdit(client, page.page_id, page.page_status);
 }
 
 async function listPanelsForUpdate(client: DatabaseClient, pageId: string): Promise<PanelOrderRow[]> {
@@ -357,7 +355,10 @@ async function updatePageLayoutConfig(
           'frame_definitions', $3::jsonb,
           'template_id', $4::text
         ),
-        updated_at = NOW()
+        updated_at = GREATEST(
+          date_trunc('milliseconds', clock_timestamp()),
+          date_trunc('milliseconds', pages.updated_at) + INTERVAL '1 millisecond'
+        )
     WHERE id = $1
     `,
     [pageId, panelCount, JSON.stringify(toLayoutFrameDefinitions(frames)), templateId],

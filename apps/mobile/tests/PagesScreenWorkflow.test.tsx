@@ -15,8 +15,12 @@ let workspaceSelection = { selectedWorkId: 'work', selectedEpisodeId: 'episode' 
 let activeDesignJobId: string | null = null;
 let skeletonCapability: { preserve_generated_images: boolean } | undefined;
 let currentSessionKey = 'user';
+let automaticReopen = true;
+let startingAvailable = false;
+let startingEpisode: { id: string; chapter_id: string; updated_at: string; starting_entity_states: { entity_id: string; state_id: string | null }[] } | undefined;
+const updateStartingStates = vi.fn();
 const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl, confirmAction, generatePageSkeleton, autofillStory, replaceFrames, updateSelection, invalidateQueries } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn(), openUrl: vi.fn().mockResolvedValue(undefined), confirmAction: vi.fn(), generatePageSkeleton: vi.fn(), autofillStory: vi.fn(), replaceFrames: vi.fn(), updateSelection: vi.fn(), invalidateQueries: vi.fn().mockResolvedValue(undefined) }));
-const api = { updatePage: action, updatePanel: action, generatePage: action, generatePageSkeleton, autofillEpisodePagesFromStory: autofillStory, replaceFrames };
+const api = { updatePage: action, updatePanel: action, updateEpisode: updateStartingStates, generatePage: action, generatePageSkeleton, autofillEpisodePagesFromStory: autofillStory, replaceFrames };
 let root: ReactTestRenderer | undefined;
 vi.mock('@react-navigation/native', () => ({ useNavigation: () => ({ navigate: action }), useIsFocused: () => true }));
 vi.mock('react-native', () => ({ PanResponder: { create: () => ({ panHandlers: {} }) }, Keyboard: { dismiss: vi.fn() }, Linking: { openURL: openUrl }, Modal: 'modal', Pressable: 'button', ScrollView: 'scroll', Text: 'text', View: 'view', StyleSheet: { create: <T,>(styles: T): T => styles } }));
@@ -34,7 +38,7 @@ vi.mock('@tanstack/react-query', () => ({
     return { mutate: (...args: unknown[]) => { void run(...args).catch(() => undefined); }, mutateAsync: run, isPending: false, error, reset: () => setError(null) };
   }
 }));
-vi.mock('@/state/appState', () => ({ useAppState: () => ({ api, hasCapability: () => true, language: 'ja', logout: action, selection: screenSelection, session: { capabilities: { generation_quotes: true } }, sessionKey: currentSessionKey, tokens: null, trackJob: action, updateSelection }) }));
+vi.mock('@/state/appState', () => ({ useAppState: () => ({ api, hasCapability: () => true, language: 'ja', logout: action, selection: screenSelection, session: { capabilities: { generation_quotes: true, automatic_page_reopen_on_write: automaticReopen, episode_state_autofill_v1: startingAvailable } }, sessionKey: currentSessionKey, tokens: null, trackJob: action, updateSelection }) }));
 vi.mock('@/state/dirtyState', () => ({ useDirtyEditorRegistration: dirtyRegistration, useDirtyState: () => ({ resolveDirtyEditors: vi.fn().mockResolvedValue(true), hasDirtyEditors: false }) }));
 vi.mock('@/state/mangaWorkflow', () => ({ useMangaWorkflow: () => ({ activeStep: 'pages' }) }));
 vi.mock('@/hooks/usePageGenerationQuote', () => ({ usePageGenerationQuote: () => ({ state: { phase: 'closed', visible: false, target: null, quote: null }, controller: { open: quoteOpen, close: vi.fn(), accept: vi.fn(), reconcile: vi.fn(), canAccept: () => false } }) }));
@@ -51,7 +55,8 @@ vi.mock('@/lib/confirmStoryStateAutofill', () => ({
 vi.mock('@/lib/api', () => ({ ApiError: class ApiError extends Error {} }));
 vi.mock('@/lib/config', () => ({ config: { apiBaseUrl: 'https://example.test', webEditorUrl: 'https://d2dw83tkmziksr.cloudfront.net/', episodeExportEnabled: false } }));
 vi.mock('@/lib/download', () => ({ appendOrganizationQuery: vi.fn(), downloadAuthenticatedFile: action }));
-vi.mock('@/components/WorkspaceContextPicker', () => ({ useWorkspaceContextSelection: () => workspaceSelection }));
+vi.mock('@/components/WorkspaceContextPicker', () => ({ useWorkspaceContextSelection: () => ({ ...workspaceSelection, episodes: startingEpisode === undefined ? [] : [startingEpisode] }) }));
+vi.mock('@/components/EpisodeStartingStatesEditor', () => ({ EpisodeStartingStatesEditor: (props: Record<string, unknown> & { children?: React.ReactNode }) => React.createElement('starting-states', props, props.children) }));
 vi.mock('@/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('@/components/Section', () => ({ Section: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('@/components/FormField', () => ({ FormField: (props: Record<string, unknown>) => React.createElement('field', props) }));
@@ -82,6 +87,7 @@ vi.mock('@/components/StoryGenerationControls', () => ({ StoryGenerationControls
 vi.mock('@/components/WorkspaceHierarchyNavigator', () => ({ WorkspaceHierarchyNavigator: (props: Record<string, unknown>) => React.createElement('WorkspaceHierarchyNavigator', props) }));
 
 beforeEach(() => {
+  automaticReopen = true; startingAvailable = false; startingEpisode = undefined; page.status = 'designing'; updateStartingStates.mockReset();
   action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); confirmAction.mockReset(); generatePageSkeleton.mockReset(); autofillStory.mockReset(); replaceFrames.mockReset(); updateSelection.mockReset(); invalidateQueries.mockReset();
   screenSelection = { organizationId: null, workId: 'work', chapterId: 'chapter', episodeId: 'episode', pageId: 'page', entityId: null };
   workspaceSelection = { selectedWorkId: 'work', selectedEpisodeId: 'episode' };
@@ -98,6 +104,36 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root?.unmount()); });
 describe('実際のPagesScreenの工程構成', () => {
+  it('手動のページ確定・解除と重複する番号・矢印操作を表示しない', async () => {
+    await act(async () => { root = create(<PagesScreen />); });
+    expect(root!.root.findAllByProps({ testID: 'page-confirm-action' })).toHaveLength(0);
+    expect(root!.root.findAllByProps({ testID: 'page-reopen-action' })).toHaveLength(0);
+    expect(root!.root.findAllByProps({ testID: 'page-swipe-navigation' })).toHaveLength(0);
+    expect(root!.root.findByType('PageThumbnailPicker').props.hideStatus).toBe(true);
+  });
+
+  it('新serverの確定済みページは確定解除を要求せず編集できる', async () => {
+    page.status = 'confirmed';
+    await act(async () => { root = create(<PagesScreen />); });
+    expect(root!.root.findAllByType('field').find((node) => node.props.label === '参考にしたい作品・画風')?.props.editable).toBe(true);
+    expect(root!.root.findAllByType('ConfirmedPageSummary')).toHaveLength(0);
+  });
+
+  it('開始状態を自動入力より前に保存し保存失敗では自動入力を送信しない', async () => {
+    startingAvailable = true;
+    startingEpisode = { id: 'episode', chapter_id: 'chapter', updated_at: 'episode-revision', starting_entity_states: [] };
+    updateStartingStates.mockResolvedValue({ ...startingEpisode, starting_entity_states: [{ entity_id: 'hero', state_id: null }] });
+    await act(async () => { root = create(<PagesScreen />); });
+    await act(async () => root!.root.findByType('starting-states').props.onChange([{ entity_id: 'hero', state_id: null }]));
+    updateStartingStates.mockRejectedValue(new Error('save rejected'));
+    const autofill = root!.root.findAllByType('button').find((node) => node.props.testID === 'page-story-autofill-primary');
+    expect(autofill).toBeDefined();
+    await act(async () => { autofill!.props.onPress(); await Promise.resolve(); });
+    expect(updateStartingStates).toHaveBeenCalledWith('episode', { starting_entity_states: [{ entity_id: 'hero', state_id: null }], expected_updated_at: 'episode-revision' }, null);
+    expect(generatePageSkeleton).not.toHaveBeenCalled();
+    expect(autofillStory).not.toHaveBeenCalled();
+    expect(root!.root.findByType('starting-states').props.value).toEqual([{ entity_id: 'hero', state_id: null }]);
+  });
   it('ページ未選択で開くと最初のページとコマを編集対象にする', async () => {
     screenSelection = { ...screenSelection, pageId: null };
     await act(async () => { root = create(<PagesScreen />); await Promise.resolve(); });
@@ -231,12 +267,12 @@ describe('実際のPagesScreenの工程構成', () => {
     expect(style().props.value).toBe('');
     expect(action).not.toHaveBeenCalled();
   });
-  it('上部CTAを一本化しpage number選択とcolor/monochrome入口を維持する', async () => {
+  it('上部CTAを一本化し番号選択を省いてcolorとmonochrome入口を維持する', async () => {
     await act(async () => { root = create(<PagesScreen />); });
     expect(root!.root.findAllByType('button').filter((node) => node.props.testID === 'page-story-autofill-primary')).toHaveLength(1);
     expect(root!.root.findAllByType('StoryGenerationControls')).toHaveLength(0);
     const picker = root!.root.findAllByType('picker').find((node) => node.props.items?.some((item: { id: string }) => item.id === 'page'));
-    expect(picker?.props.labelForItem(page)).toBe('1ページ');
+    expect(picker).toBeUndefined();
     const generation = root!.root.findByProps({ testID: 'page-monochrome-generation-action' });
     await act(async () => generation.props.onPress());
     expect(quoteOpen).toHaveBeenCalledWith({ pageId: 'page', pageNumber: 1, renderStyle: 'monochrome' });

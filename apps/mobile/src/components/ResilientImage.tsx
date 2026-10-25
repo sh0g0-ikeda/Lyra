@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Image,
   type ImageProps
@@ -23,12 +23,18 @@ export function ResilientImage({
 }: ResilientImageProps): React.JSX.Element | null {
   const sourceIdentity = imageSourceListIdentity(sources);
   const [attempt, setAttempt] = useState<{
+    exhausted: boolean;
     sourceIdentity: string;
     sourceIndex: number;
   } | null>(null);
+  const exhaustedSourceIdentityRef = useRef<string | null>(null);
   const sourceIndex =
     attempt?.sourceIdentity === sourceIdentity ? attempt.sourceIndex : 0;
   const source = sources[sourceIndex] ?? null;
+
+  useEffect(() => {
+    exhaustedSourceIdentityRef.current = null;
+  }, [sourceIdentity]);
 
   useEffect(() => {
     if (source !== null) {
@@ -44,13 +50,23 @@ export function ResilientImage({
     <Image
       {...imageProps}
       onError={() => {
+        if (exhaustedSourceIdentityRef.current === sourceIdentity) {
+          return;
+        }
         if (sourceIndex + 1 < sources.length) {
           setAttempt({
+            exhausted: false,
             sourceIdentity,
             sourceIndex: sourceIndex + 1
           });
           return;
         }
+        exhaustedSourceIdentityRef.current = sourceIdentity;
+        setAttempt({
+          exhausted: true,
+          sourceIdentity,
+          sourceIndex
+        });
         onExhausted?.();
       }}
       recyclingKey={source.cacheKey ?? imageProps.recyclingKey}

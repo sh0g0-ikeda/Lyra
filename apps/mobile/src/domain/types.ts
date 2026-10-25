@@ -525,6 +525,7 @@ export interface CurrentSessionRecord {
   capabilities?: {
     generation_quotes?: boolean;
     push_notifications?: boolean;
+    automatic_page_reopen_on_write?: boolean;
     entity_state_reference_generation: boolean;
     episode_state_autofill_v1: boolean;
     entity_state_preview_credit_cost?: number;

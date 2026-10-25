@@ -3,7 +3,7 @@ import type { pagePanelStructureRequestSchema, pagePanelStructureResponseSchema 
 import type { PageRecord, PanelRecord } from '@/domain/types';
 
 export type PanelStructureResult = z.infer<typeof pagePanelStructureResponseSchema>;
-type PanelStructurePayload = z.infer<typeof pagePanelStructureRequestSchema>;
+export type PanelStructurePayload = z.infer<typeof pagePanelStructureRequestSchema>;
 export type InsertPanelAfterPayload = PanelStructurePayload & {
   operation: Extract<PanelStructurePayload['operation'], { type: 'insert_after' }>;
 };
@@ -29,10 +29,11 @@ export function panelInsertionBlocker(input: {
   canEdit: boolean; pageId: string | null; selectedPanelId: string | null;
   panels: readonly OrderedPanel[] | undefined; dirty: boolean; busy: boolean;
   status: PageRecord['status'] | undefined;
+  automaticReopen?: boolean;
 }): PanelInsertionBlocker | null {
   if (!input.canEdit) return 'permission';
   if (input.busy || input.status === 'generating') return 'busy';
-  if (input.status === 'confirmed') return 'confirmed';
+  if (input.status === 'confirmed' && !input.automaticReopen) return 'confirmed';
   if (input.pageId === null || input.selectedPanelId === null || input.panels === undefined ||
       !input.panels.some((panel) => panel.id === input.selectedPanelId)) return 'selection';
   if (input.dirty) return 'dirty';

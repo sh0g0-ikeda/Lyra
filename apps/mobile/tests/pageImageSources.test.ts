@@ -52,7 +52,7 @@ describe('page image sources', () => {
     expect(sources.map((source) => source.uri).join('\n')).not.toContain('/thumbnail');
   });
 
-  it('一覧画像はCDN、認証付き原寸APIの順で候補を返し、存在しないthumbnail endpointを試さない', () => {
+  it('一覧画像は認証済みthumbnail、署名済みCDN原寸の順で候補を返し、export権限を要求しない', () => {
     const sources = buildPageThumbnailImageSources({
       apiBaseUrl: 'https://app.lyra-editor.com',
       authorizationHeader: 'Bearer token',
@@ -62,12 +62,15 @@ describe('page image sources', () => {
     });
 
     expect(sources).toHaveLength(2);
-    expect(sources[0]).toMatchObject({
+    expect(sources[0]?.uri).toContain('/api/pages/page-1/thumbnail?');
+    expect(sources[0]?.headers).toEqual({ Authorization: 'Bearer token' });
+    expect(sources[0]?.cacheKey).toContain('page-image:thumbnail:user-1:personal:page-1:');
+    expect(sources[1]).toMatchObject({
       uri: 'https://cdn.lyra.test/full-page.png?Signature=signed',
     });
-    expect(sources[1]?.uri).toContain('/api/pages/page-1/export-image?');
-    expect(sources[1]?.headers).toEqual({ Authorization: 'Bearer token' });
-    expect(sources.map((source) => source.uri).join('\n')).not.toContain('/thumbnail');
+    expect(sources[1]?.headers).toBeUndefined();
+    expect(sources[1]?.cacheKey).toContain('page-image:full:user-1:personal:page-1:');
+    expect(sources.map((source) => source.uri).join('\n')).not.toContain('/export-image');
   });
 
   it('選択ページのfull画像だけ署名済みCDN URLを使う', () => {
@@ -86,7 +89,7 @@ describe('page image sources', () => {
     });
   });
 
-  it('一覧thumbnailはCDN原画像を優先し、scope付き認証原寸endpointへfallbackする', () => {
+  it('一覧thumbnailはview_work scope付きthumbnailを優先し、CDN fallbackにはfull cache keyを使う', () => {
     const source = buildPageThumbnailImageSource({
       apiBaseUrl: 'https://app.lyra-editor.com/',
       authorizationHeader: 'Bearer token',
@@ -95,14 +98,16 @@ describe('page image sources', () => {
       sessionKey: 'user-1',
     });
 
-    expect(source.uri).toBe('https://cdn.lyra.test/full-page.png?Signature=signed');
-    expect(source.headers).toBeUndefined();
+    expect(source.uri).toMatch(
+      /^https:\/\/app\.lyra-editor\.com\/api\/pages\/page-1\/thumbnail\?organization_id=organization-1&image_revision=2026-07-25T00%3A00%3A00\.000Z&image_scope=[0-9a-f]{8}$/u,
+    );
+    expect(source.headers).toEqual({ Authorization: 'Bearer token' });
     expect(source.cacheKey).toBe(
       'page-image:thumbnail:user-1:organization-1:page-1:2026-07-25T00%3A00%3A00.000Z',
     );
   });
 
-  it('一覧thumbnailはCDN URLがない場合にscope付き認証原寸endpointへfallbackする', () => {
+  it('一覧thumbnailはCDN URLがなくてもview_work scope付きthumbnailだけを使いexportを試さない', () => {
     const source = buildPageThumbnailImageSource({
       apiBaseUrl: 'https://app.lyra-editor.com/',
       authorizationHeader: 'Bearer token',
@@ -118,7 +123,7 @@ describe('page image sources', () => {
     });
 
     expect(source.uri).toMatch(
-      /^https:\/\/app\.lyra-editor\.com\/api\/pages\/page-1\/export-image\?organization_id=organization-1&image_revision=2026-07-25T00%3A00%3A00\.000Z&image_scope=[0-9a-f]{8}$/u,
+      /^https:\/\/app\.lyra-editor\.com\/api\/pages\/page-1\/thumbnail\?organization_id=organization-1&image_revision=2026-07-25T00%3A00%3A00\.000Z&image_scope=[0-9a-f]{8}$/u,
     );
     expect(source.headers).toEqual({ Authorization: 'Bearer token' });
     expect(source.cacheKey).toBe(

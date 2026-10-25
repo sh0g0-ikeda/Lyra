@@ -59,7 +59,7 @@ describe('Notice', () => {
     expect(tree!.root.findAllByType('pressable')).toHaveLength(0);
   });
 
-  it('renders danger messages with the review-safe warning palette', async () => {
+  it('renders danger messages with a distinct danger palette', async () => {
     let tree: ReturnType<typeof create> | null = null;
 
     await act(async () => {
@@ -68,7 +68,7 @@ describe('Notice', () => {
 
     const container = tree!.root.findByType('view');
     const message = tree!.root.findByType('text');
-    expect(JSON.stringify(container.props.style)).not.toContain('244, 67, 54');
-    expect(JSON.stringify(message.props.style)).not.toContain('FF9E96');
+    expect(JSON.stringify(container.props.style)).toContain('207, 80, 80');
+    expect(JSON.stringify(message.props.style)).toContain('FF9A9A');
   });
 });

@@ -12,6 +12,7 @@ interface Input {
   workId: string | null; episodeId: string | null; pageId: string | null;
   selectedPanelId: string | null; panels: readonly PanelRecord[] | undefined;
   canEdit: boolean; dirty: boolean; busy: boolean; status: PageRecord['status'] | undefined;
+  automaticReopen?: boolean;
   onSelect: (panelId: string) => void;
 }
 interface Request {

@@ -12,6 +12,8 @@ export interface OperationErrorContext {
   retainedDraft?: ErrorDraftScope | undefined;
   targetLabel?: string | undefined;
   confirmed?: boolean;
+  /** A failed read may interrupt the screen only when no usable initial data exists. */
+  essential?: boolean;
 }
 
 export interface OperationFailure {
@@ -25,17 +27,36 @@ export const operationFailure = (
   retainedDraft?: ErrorDraftScope
 ): OperationFailure => ({ context: { operation, retainedDraft }, error });
 
-export const collectOperationFailures = <T extends { error: unknown }>(failures: readonly T[]): (T & { error: Error })[] => {
+export const collectOperationFailures = <T extends { error: unknown; context?: OperationErrorContext }>(failures: readonly T[]): (T & { error: Error })[] => {
   const seen = new Set<Error>();
-  return failures.filter((failure): failure is T & { error: Error } => {
+  const identities = new Set<string>();
+  const deduplicated = failures.filter((failure): failure is T & { error: Error } => {
     if (!(failure.error instanceof Error) || seen.has(failure.error)) return false;
+    const context = failure.context;
+    const code = failure.error instanceof ApiError ? failure.error.code ?? '' : '';
+    const identity = context === undefined ? undefined : `${context.operation}\u0000${context.targetLabel ?? ''}\u0000${code}`;
+    if (identity !== undefined && identities.has(identity)) return false;
     seen.add(failure.error);
+    if (identity !== undefined) identities.add(identity);
     return true;
   });
+
+  const priority = (failure: T & { error: Error }): number => {
+    const context = failure.context;
+    if (context === undefined) return 0;
+    const kind = operations[context.operation][2];
+    return kind === 'read' ? (context.essential === true ? 1 : 0) : 2;
+  };
+  const highest = deduplicated.reduce<(T & { error: Error }) | undefined>((selected, failure) =>
+    selected === undefined || priority(failure) > priority(selected) ? failure : selected, undefined);
+  return highest === undefined ? [] : [highest];
 };
 
 export const errorRefreshLabel = (language: UiLanguage): string =>
   operationErrorMessages[language].refresh;
+
+export const isReadOperation = (context: OperationErrorContext): boolean =>
+  operations[context.operation][2] === 'read';
 
 const isUnconfirmedTransport = (error: unknown): boolean =>
   (error instanceof ApiError && (error.code === 'REQUEST_TIMEOUT' || error.status === 0)) ||
@@ -75,28 +96,17 @@ export const operationErrorMessage = (
   const japanese = language === 'ja';
   const copy = operationErrorMessages[language];
   const operationLabel = `${japanese ? ja : en}${context.targetLabel === undefined ? '' : ` (${context.targetLabel})`}`;
+  if (context.confirmed === true) {
+    return `${operationLabel}: ${copy.confirmed}`;
+  }
   const lines = [`${operationLabel}: ${operationErrorReason(error, language)}`];
-  if (kind === 'read') {
-    lines.push(copy.read);
-  } else if (context.confirmed === true) {
-    lines.push(copy.confirmed);
-  } else if (kind === 'cancel') {
-    lines.push(copy.cancel);
+  if (kind === 'paidJob' || kind === 'textJob' || kind === 'cancel') {
+    lines.push(copy.jobsNext);
+  } else if (kind === 'read') {
+    lines.push(copy.refreshNext);
   } else if (kind !== 'local') {
-    lines.push(copy.write);
+    lines.push(copy.mutationNext);
   }
-  if (context.retainedDraft !== undefined) {
-    const fields = draftFields[context.retainedDraft][japanese ? 0 : 1];
-    lines.push(copy.retained.replace('{fields}', fields));
-  }
-  if (kind === 'paidJob' || kind === 'cancel') {
-    lines.push(copy.settlement);
-  } else if (kind === 'textAi' || kind === 'textJob') {
-    lines.push(copy.freeAi);
-  } else if (kind === 'history') {
-    lines.push(copy.history);
-  }
-  lines.push(context.confirmed === true ? copy.confirmedNext : kind === 'read' ? copy.refreshNext : copy.mutationNext);
-  if (recoveryMessage !== undefined) lines.push(recoveryMessage);
+  if (recoveryMessage !== undefined && lines.length < 2) lines.push(recoveryMessage);
   return lines.join('\n');
 };

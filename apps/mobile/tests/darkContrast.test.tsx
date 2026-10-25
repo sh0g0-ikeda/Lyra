@@ -15,7 +15,7 @@ import { composite, contrastRatio, parseColor, renderedColors, renderedContrast,
 // U19 / design/05 §§1,7: measure actual rendered text and essential input
 // boundaries over their ancestors, including alpha and pressed-state opacity.
 // These local color checks do not certify device rendering, scaling or WCAG.
-// Disabled controls are not text-contrast acceptance targets; active help is.
+// Disabled controls are not text-contrast acceptance targets.
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.mock('react-native', () => ({
   AccessibilityInfo: { setAccessibilityFocus: vi.fn() }, findNodeHandle: () => null,
@@ -72,10 +72,10 @@ describe('dark UI の局所コントラスト', () => {
     expect(renderedContrast(textNode(renderer, 'Alpha'))).toBeCloseTo(5.281, 3);
   });
 
-  it.each(['default', 'highlight', 'subtle'] as const)('%s sectionの場合に入力help・counter・labelが4.5:1以上になる', (tone) => {
+  it.each(['default', 'highlight', 'subtle'] as const)('%s sectionの場合に表示される入力counter・labelが4.5:1以上になる', (tone) => {
     const renderer = render(<FormField label="Title" help="Writing help" helpDisclosureLabel="Hints" maxLength={200} onChangeText={vi.fn()} value="" />, tone);
-    act(() => renderer.root.findAllByType('pressable').find((node) => node.props.accessibilityLabel === 'Hints')!.props.onPress());
-    for (const value of ['Title', 'Writing help', 'Hints', '0/200']) {
+    expect(renderer.root.findAllByType('pressable').filter((node) => node.props.accessibilityLabel === 'Hints')).toHaveLength(0);
+    for (const value of ['Title', '0/200']) {
       expect(renderedContrast(textNode(renderer, value)), value).toBeGreaterThanOrEqual(4.5);
     }
   });

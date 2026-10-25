@@ -14,7 +14,11 @@ class RecordingClient implements DatabaseClient, TransactionRunner {
 
   public async query<T extends QueryResultRow = QueryResultRow>(text: string): Promise<QueryResult<T>> {
     this.queries.push(text);
-    const rows = text.includes('FROM users') ? [{ id: 'user-1' }] : [];
+    const rows = text.includes('FROM users')
+      ? [{ id: 'user-1' }]
+      : text.includes('FOR UPDATE OF pages')
+        ? [{ page_id: 'page-1', page_status: 'editing' }]
+        : [];
     return {
       command: text.includes('UPDATE pages') ? 'UPDATE' : 'SELECT',
       rowCount: rows.length,
@@ -45,11 +49,12 @@ describe('PostgresPageRepository legacy schema profile', () => {
     expect(client.transactionCount).toBe(1);
     expect(client.queries[0]).toContain('FROM users');
     expect(client.queries[1]).toContain('account_deletion_requests');
-    expect(client.queries[2]).toContain('UPDATE pages');
-    expect(client.queries[3]).toContain('SELECT pages.id');
+    expect(client.queries[2]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[3]).toContain('UPDATE pages');
+    expect(client.queries[4]).toContain('SELECT pages.id');
   });
 
-  it('canonicalとlegacy organization page更新は退会queryと追加transactionを発行しない', async () => {
+  it('canonicalとlegacy organization page更新もatomic reopen用transaction内で実行する', async () => {
     for (const [mode, organizationId] of [
       ['canonical', null],
       ['legacy_2debe_v1', '11111111-1111-4111-8111-111111111111'],
@@ -59,8 +64,9 @@ describe('PostgresPageRepository legacy schema profile', () => {
 
       await repository.updatePageSettings('page-1', 'user-1', { dialogueMode: 'mixed' }, organizationId);
 
-      expect(client.transactionCount).toBe(0);
-      expect(client.queries).toHaveLength(2);
+      expect(client.transactionCount).toBe(1);
+      expect(client.queries).toHaveLength(3);
+      expect(client.queries[0]).toContain('FOR UPDATE OF pages');
       expect(client.queries.join('\n')).not.toContain('account_deletion_requests');
     }
   });

@@ -35,4 +35,9 @@ describe('atomic panel insertion', () => {
     expect(canSelectInsertedPanel({ ...input, currentPanelId: 'b' })).toBe(false);
     expect(canSelectInsertedPanel({ ...input, panels })).toBe(false);
   });
+  it('serverが原子的な再編集を提供する場合だけ確定済みページへコマを追加できる', () => {
+    expect(panelInsertionBlocker({ ...ready, status: 'confirmed', automaticReopen: true })).toBeNull();
+    expect(panelInsertionBlocker({ ...ready, status: 'confirmed', automaticReopen: false })).toBe('confirmed');
+    expect(panelInsertionBlocker({ ...ready, status: 'generating', automaticReopen: true })).toBe('busy');
+  });
 });

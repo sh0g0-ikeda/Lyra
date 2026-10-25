@@ -83,11 +83,10 @@ describe('Story stale draft retry', () => {
   });
   afterEach(async () => { await act(async () => root?.unmount()); root = undefined; });
 
-  it('新しい版を読んで現在のtitle本文開始状態を一度だけCAS保存する', async () => {
+  it('新しい版を読んで現在のtitleと本文を一度だけCAS保存し開始状態を送らない', async () => {
     await render();
     await act(async () => field('タイトル').props.onChangeText('Local title'));
     await act(async () => body().props.onChangeText('Local story'));
-    await act(async () => root!.root.findByType('starting-states').props.onChange([]));
     await makeStale();
     let resolveRead!: (value: { episodes: EpisodeRecord[] }) => void;
     fetchQuery.mockImplementation(() => new Promise((resolve) => { resolveRead = resolve; }));
@@ -95,10 +94,10 @@ describe('Story stale draft retry', () => {
     expect(fetchQuery).toHaveBeenCalledOnce();
     await act(async () => resolveRead({ episodes: [{ ...episode, version: 2, updated_at: 'fresh-revision' }] }));
     expect(updateEpisode).toHaveBeenCalledOnce();
-    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({ title: 'Local title', story_full_draft: 'Local story', starting_entity_states: [], expected_updated_at: 'fresh-revision' }), null);
+    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({ title: 'Local title', story_full_draft: 'Local story', expected_updated_at: 'fresh-revision' }), null);
+    expect(updateEpisode.mock.calls[0]?.[1]).not.toHaveProperty('starting_entity_states');
     expect(field('タイトル').props.value).toBe('Local title');
     expect(body().props.value).toBe('Local story');
-    expect(root!.root.findByType('starting-states').props.value).toEqual([]);
   });
 
   it('retry時の409は入力と再試行操作を保持する', async () => {
@@ -201,17 +200,17 @@ describe('Story stale draft retry', () => {
     expect(root!.root.findAllByType('error-notice')).toHaveLength(0);
   });
 
-  it('読込中に開始状態を変更した場合は旧状態を保存しない', async () => {
+  it('読込中に本文を変更した場合は旧draftを保存しない', async () => {
     await render();
     await act(async () => field('タイトル').props.onChangeText('Local title'));
     await makeStale();
     let resolveRead!: (value: { episodes: EpisodeRecord[] }) => void;
     fetchQuery.mockImplementation(() => new Promise((resolve) => { resolveRead = resolve; }));
     await act(async () => retry().props.onPress());
-    await act(async () => root!.root.findByType('starting-states').props.onChange([]));
+    await act(async () => body().props.onChangeText('Newer local story'));
     await act(async () => resolveRead({ episodes: [{ ...episode, updated_at: 'fresh-revision' }] }));
     expect(updateEpisode).not.toHaveBeenCalled();
-    expect(root!.root.findByType('starting-states').props.value).toEqual([]);
+    expect(body().props.value).toBe('Newer local story');
   });
 
   it('保存中の追加編集は保存応答で消えず二重保存もしない', async () => {

@@ -5,6 +5,7 @@ import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresPageLayoutRepository } from '../../../src/repositories/PageLayoutRepository.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
+  public pageStatus: 'editing' | 'confirmed' | 'generating' = 'editing';
   public queries: string[] = [];
   public transactionCount = 0;
   public valuesList: Array<readonly unknown[] | undefined> = [];
@@ -26,7 +27,11 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
     }
 
     if (text.includes('FOR UPDATE OF pages')) {
-      return rows<T>([{ page_id: 'page-1', page_status: 'editing' }]);
+      return rows<T>([{ page_id: 'page-1', page_status: this.pageStatus }]);
+    }
+
+    if (text.includes("SET status = 'editing'")) {
+      return rows<T>([{ id: 'page-1' }]);
     }
 
     if (text.includes('FROM panels') && text.includes('FOR UPDATE')) {
@@ -122,12 +127,29 @@ describe('PostgresPageLayoutRepository', () => {
     expect(deletePanelsIndex).toBeGreaterThan(deleteFramesIndex);
 
     const layoutUpdateIndex = client.queries.findIndex((query) => query.includes('UPDATE pages'));
+    expect(client.queries[layoutUpdateIndex]).toContain('GREATEST(');
     expect(client.valuesList[layoutUpdateIndex]?.[3]).toBe('top_wide_3');
     expect(JSON.parse(String(client.valuesList[layoutUpdateIndex]?.[2]))).toMatchObject([
       { panel_id: 'panel-1', reading_order: 1 },
       { panel_id: 'panel-2', reading_order: 2 },
       { panel_id: 'panel-3', reading_order: 3 },
     ]);
+  });
+
+  it('confirmedページのテンプレート適用は同じtransactionでeditingへ遷移する', async () => {
+    const client = new QueryCapturingClient();
+    client.pageStatus = 'confirmed';
+    const repository = new PostgresPageLayoutRepository(client);
+
+    await repository.applyTemplateAndSyncPanels('user-1', 'page-1', {
+      templateId: 'top_wide_3',
+      targetPanelCount: 3,
+      frameDefinitions: frameDefinitions(3),
+      allowPanelTruncation: true,
+    });
+
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries.some((query) => query.includes("SET status = 'editing'"))).toBe(true);
   });
 });
 

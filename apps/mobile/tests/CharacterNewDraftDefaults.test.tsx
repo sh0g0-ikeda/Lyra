@@ -10,6 +10,7 @@ let selection: { workId: string; entityId: string | null; organizationId: string
 let sessionKey: string;
 let entityDetail: EntityRecord | undefined;
 let entityDetailError: Error | null;
+let entitiesError: Error | null;
 let language: 'ja' | 'en';
 const refetchEntity = vi.fn();
 let pages: { entities: EntityRecord[] }[];
@@ -23,7 +24,7 @@ const query=(data:unknown):Record<string,unknown>=>({data,error:null,isFetching:
 vi.mock('react-native',()=>({Pressable:'button',ScrollView:'scroll',View:'view',Text:'text',StyleSheet:{create:<T,>(styles:T):T=>styles}}));
 vi.mock('@react-navigation/native',()=>({useNavigation:()=>({navigate})}));
 vi.mock('@tanstack/react-query',()=>({useQueryClient:()=>queryClient,
- useInfiniteQuery:()=>({...query({pages}),hasNextPage:false,isFetchingNextPage:false,fetchNextPage:vi.fn()}),
+ useInfiniteQuery:()=>({...query({pages}),error:entitiesError,hasNextPage:false,isFetchingNextPage:false,fetchNextPage:vi.fn()}),
  useQuery:(options:{queryKey:readonly unknown[]})=>options.queryKey[0] === 'entity-detail'
    ? {...query(entityDetail),error:entityDetailError,refetch:refetchEntity} : query(undefined),
  useMutation:(options:{mutationFn:(variables?:unknown)=>Promise<unknown>;onSuccess?:(value:unknown,variables?:unknown)=>Promise<void>;onError?:(error:unknown)=>void})=>{
@@ -41,7 +42,7 @@ vi.mock('@/lib/download',()=>({appendOrganizationQuery:vi.fn(),downloadAuthentic
 vi.mock('@/lib/confirm',()=>({confirmAction:vi.fn(),confirmDestructiveAction:vi.fn()}));
 vi.mock('@/lib/confirmStaleDraftReload',()=>({confirmStaleDraftReload:vi.fn()}));
 vi.mock('@/components/Screen',()=>({Screen:({children}:{children:React.ReactNode})=>children}));
-vi.mock('@/components/Section',()=>({Section:({children}:{children:React.ReactNode})=>children}));
+vi.mock('@/components/Section',()=>({Section:({children,...props}:{children:React.ReactNode})=>React.createElement('Section',props,children)}));
 vi.mock('@/components/ActionableErrorNotice',()=>({ActionableErrorNotice:(props:Record<string,unknown>)=>React.createElement('ActionableErrorNotice',props)}));
 vi.mock('@/components/CharacterChoiceField',()=>({CharacterChoiceField:(props:Record<string,unknown>)=>React.createElement('CharacterChoiceField',props)}));
 vi.mock('@/components/CharacterOutfitField',()=>({CharacterOutfitField:(props:Record<string,unknown>)=>React.createElement('CharacterOutfitField',props)}));
@@ -76,6 +77,7 @@ beforeEach(() => {
   language = 'ja';
   entityDetail = undefined;
   entityDetailError = null;
+  entitiesError = null;
   refetchEntity.mockReset();
   entity = { id: 'entity', work_id: 'work', name: 'Saved hero', entity_type: 'character',
     free_description: null, prompt_supplement: null, speech_profile: {},
@@ -103,6 +105,24 @@ const openNew = async (): Promise<void> => {
 };
 
 describe('新規人物だけの編集可能な初期値', () => {
+  it('キャラ選択は補助文なしで表示し、任意入力の案内を基本グループ直下に置く', async () => {
+    await render();
+
+    expect(root!.root.findAllByType('RecordPicker')[0]?.props.helperText).toBeUndefined();
+    const rendered = JSON.stringify(root!.toJSON());
+    expect(rendered.indexOf('基本')).toBeLessThan(rendered.indexOf('すべての項目を埋める必要はありません'));
+    expect(rendered.indexOf('すべての項目を埋める必要はありません')).toBeLessThan(rendered.indexOf('性別表現'));
+  });
+
+  it('キャラ一覧の初期データがない読み込み失敗だけを必須エラーとして表示する', async () => {
+    entitiesError = new Error('offline');
+    pages = [{ entities: [] }];
+    await render();
+
+    const failure = root!.root.findAllByType('ActionableErrorNotice').find((node) => node.props.context.operation === 'loadCharacters')!;
+    expect(failure.props.context.essential).toBe(true);
+  });
+
   it('新規人物は六つの基本初期値を表示し、未編集ならdirtyにも自動保存にもならない', async () => {
     await render();
     expect(defaultLabels.map(label => choice(label).props.value)).toEqual(Object.values(expectedDefaults));

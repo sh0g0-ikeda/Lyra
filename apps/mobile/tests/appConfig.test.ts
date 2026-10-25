@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
@@ -119,8 +120,8 @@ describe('Expo app config', () => {
     });
   });
 
-  // Staging is independently installable alongside production on both platforms. Its backend and OAuth
-  // identifiers arrive only from explicitly supplied EAS environment values.
+  // Staging is independently installable alongside production on both platforms. TestFlight retains
+  // Apple's registered bundle ID, but both test variants require isolated backend and OAuth values.
   it('stagingでは独立package・bundle ID・scheme・callbackとstaging App Linkを出力する', () => {
     process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
     process.env.EXPO_PUBLIC_APP_VARIANT = 'staging';
@@ -188,6 +189,58 @@ describe('Expo app config', () => {
     process.env.GOOGLE_SERVICES_JSON = '/eas/secrets/production-google-services.json';
 
     expect(createExpoConfig({ config: baseConfig }).android).not.toHaveProperty('googleServicesFile');
+  });
+
+  it('testflightは登録済みiOS bundle IDを保ちつつstaging表示・schemeと接続先を強制する', () => {
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
+    process.env.EXPO_PUBLIC_APP_VARIANT = 'testflight';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_COGNITO_DOMAIN = 'https://staging.auth.example.com';
+    process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID = 'stagingclientid123';
+    process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/callback';
+    process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/logout';
+
+    expect(createExpoConfig({ config: baseConfig })).toMatchObject({
+      name: 'Lyra Mobile Staging',
+      scheme: 'lyra-mobile-staging',
+      ios: { bundleIdentifier: 'jp.lyra.mobile' },
+      android: { package: 'com.lyra.mobile.staging' },
+    });
+  });
+
+  it.each([
+    ['EXPO_PUBLIC_API_BASE_URL', 'https://app.lyra-editor.com'],
+    ['EXPO_PUBLIC_COGNITO_DOMAIN', 'https://ap-northeast-1wizlzlgmm.auth.ap-northeast-1.amazoncognito.com'],
+    ['EXPO_PUBLIC_COGNITO_CLIENT_ID', '6b2h941o888u2l7ejhv5jog94'],
+  ])('testflightで本番の%sをfail-fastで拒否する', (key, value) => {
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
+    process.env.EXPO_PUBLIC_APP_VARIANT = 'testflight';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_COGNITO_DOMAIN = 'https://staging.auth.example.com';
+    process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID = 'stagingclientid123';
+    process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/callback';
+    process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/logout';
+    process.env[key] = value;
+
+    expect(() => createExpoConfig({ config: baseConfig })).toThrow(/staging/);
+  });
+
+  it('testflightとux-previewがproduction channel・backendを継承しないEAS profileになる', () => {
+    const eas = JSON.parse(readFileSync(new URL('../eas.json', import.meta.url), 'utf8')) as {
+      build: Record<string, Record<string, unknown>>;
+      submit: Record<string, { ios?: Record<string, unknown>; android?: unknown }>;
+    };
+
+    expect(eas.build['ux-preview']).toMatchObject({
+      extends: 'staging', channel: 'ux-review', autoIncrement: true,
+    });
+    expect(eas.build.testflight).toMatchObject({
+      extends: 'staging', distribution: 'store', channel: 'ux-review', autoIncrement: true,
+      environment: 'preview', env: { EXPO_PUBLIC_APP_VARIANT: 'testflight' },
+    });
+    expect(eas.submit.testflight).toEqual({ ios: { ascAppId: '6797564060' } });
   });
 
   it('productionは固定のapp link host以外をfail-fastで拒否する', () => {

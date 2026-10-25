@@ -351,7 +351,7 @@ function ChapterNode({
               <Text style={styles.loadingLabel}>{t(language, "generated.components.StoryHierarchySheet.loading.episodes.e4ed2ecc")}</Text>
             </View>
           ) : null}
-          {episodesError === null ? null : (
+          {episodesError === null || episodesQuery.data !== undefined ? null : (
             <Notice
               actionLabel={errorRefreshLabel(language)}
               message={operationErrorMessage(episodesError, { operation: 'loadHierarchy' }, language)}
@@ -461,7 +461,7 @@ function WorkNode({
               <Text style={styles.loadingLabel}>{t(language, "generated.components.StoryHierarchySheet.loading.chapters.62730c70")}</Text>
             </View>
           ) : null}
-          {chaptersError === null ? null : (
+          {chaptersError === null || chaptersQuery.data !== undefined ? null : (
             <Notice
               actionLabel={errorRefreshLabel(language)}
               message={operationErrorMessage(chaptersError, { operation: 'loadHierarchy' }, language)}
@@ -1263,16 +1263,35 @@ export function StoryHierarchySheet({
               ? t(language, "generated.components.StoryHierarchySheet.add.episode.ad67475b")
               : t(language, "generated.components.StoryHierarchySheet.rename.episode.4736dfbc");
 
+  const dismissTitle = (): void => {
+    if (pending) return;
+    liveTitleContextRef.current = { ...liveTitleContextRef.current, intent: null };
+    setTitleIntent(null);
+    setTitleValue('');
+    setFailure(null);
+  };
+  const closeTopmostOverlay = (): void => {
+    if (pending) return;
+    if (titleIntent !== null) { dismissTitle(); return; }
+    if (menuTarget !== null) { setMenuTarget(null); return; }
+    onClose();
+  };
+  const overlayVisible = menuTarget !== null || titleIntent !== null;
+
+  // One native presentation owns all safe-area insets. Menu/title overlays share
+  // that coordinate space, so dismissing them cannot leave an iOS modal barrier.
   return (
     <>
-      <Modal animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen" visible={visible}>
+      <Modal animationType="slide" onRequestClose={closeTopmostOverlay} presentationStyle="fullScreen" visible={visible}>
         <SafeAreaView
           accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.story.hierarchy.28f3f754")}
           accessibilityViewIsModal
-          edges={['top', 'bottom']}
-          onAccessibilityEscape={onClose}
+          edges={['top', 'right', 'bottom', 'left']}
+          onAccessibilityEscape={closeTopmostOverlay}
           style={styles.sheet}
         >
+        <View style={styles.sheetViewport}>
+        <View accessibilityElementsHidden={overlayVisible} importantForAccessibility={overlayVisible ? 'no-hide-descendants' : 'auto'} pointerEvents={overlayVisible ? 'none' : 'auto'} style={styles.sheetBody}>
           <View style={styles.sheetHeader}>
             <View style={styles.sheetHeading}>
               <Text style={styles.eyebrow}>{t(language, "generated.components.StoryHierarchySheet.story.hierarchy.28f3f754")}</Text>
@@ -1293,7 +1312,8 @@ export function StoryHierarchySheet({
               <Pressable
                 accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.close.603bc62f")}
                 accessibilityRole="button"
-                onPress={onClose}
+                disabled={pending}
+                onPress={closeTopmostOverlay}
                 style={styles.headerIconButton}
               >
                 <X color={colors.ink} size={23} strokeWidth={2.2} />
@@ -1307,7 +1327,7 @@ export function StoryHierarchySheet({
               tone="info"
             />
           ) : null}
-          {hierarchyError === null ? null : (
+          {hierarchyError === null || sortedWorks.length > 0 ? null : (
             <Notice
               actionLabel={onRetryHierarchy === undefined ? undefined : errorRefreshLabel(language)}
               message={operationErrorMessage(hierarchyError, { operation: 'loadHierarchy' }, language)}
@@ -1386,22 +1406,16 @@ export function StoryHierarchySheet({
               <Text style={styles.pendingLabel}>{t(language, "generated.components.StoryHierarchySheet.updating.246dcabf")}</Text>
             </View>
           ) : null}
-        </SafeAreaView>
-      </Modal>
+        </View>
 
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setMenuTarget(null)}
-        transparent
-        visible={menuTarget !== null}
-      >
+      {menuTarget === null ? null : (
         <Pressable
           accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.close.603bc62f")}
           accessibilityRole="button"
           onPress={() => setMenuTarget(null)}
-          style={styles.backdrop}
+          style={[styles.overlay, styles.backdrop]}
         >
-          <SafeAreaView edges={['bottom']} style={styles.bottomModalSafeArea}>
+          <View style={styles.bottomModalSafeArea}>
             <View
               accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.story.hierarchy.28f3f754")}
               accessibilityViewIsModal
@@ -1420,31 +1434,26 @@ export function StoryHierarchySheet({
               </Text>
               {renderMenuItems()}
             </View>
-          </SafeAreaView>
+          </View>
         </Pressable>
-      </Modal>
+      )}
 
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setTitleIntent(null)}
-        transparent
-        visible={titleIntent !== null}
-      >
+      {titleIntent === null ? null : (
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.titleKeyboardAvoider}
+          style={[styles.overlay, styles.titleKeyboardAvoider]}
         >
           <Pressable
             accessibilityLabel={t(language, "generated.components.StoryHierarchySheet.close.603bc62f")}
             accessibilityRole="button"
-            onPress={() => setTitleIntent(null)}
+            onPress={dismissTitle}
             style={styles.titleBackdrop}
           >
-            <SafeAreaView edges={['top', 'bottom']} style={styles.titleModalSafeArea}>
+            <View style={styles.titleModalSafeArea}>
               <View
                 accessibilityLabel={titleDialogHeading}
                 accessibilityViewIsModal
-                onAccessibilityEscape={() => setTitleIntent(null)}
+                onAccessibilityEscape={dismissTitle}
                 onStartShouldSetResponder={() => true}
                 style={styles.titleDialog}
               >
@@ -1481,7 +1490,7 @@ export function StoryHierarchySheet({
                   <PrimaryButton
                     disabled={pending}
                     label={t(language, "generated.components.StoryHierarchySheet.cancel.3672b0b9")}
-                    onPress={() => setTitleIntent(null)}
+                    onPress={dismissTitle}
                     variant="ghost"
                   />
                   <PrimaryButton
@@ -1494,15 +1503,21 @@ export function StoryHierarchySheet({
                   />
                 </View>
               </View>
-            </SafeAreaView>
+            </View>
           </Pressable>
         </KeyboardAvoidingView>
+      )}
+        </View>
+        </SafeAreaView>
       </Modal>
     </>
   );
 }
 
 const styles = StyleSheet.create({
+  sheetViewport: { flex: 1, position: 'relative' },
+  sheetBody: { flex: 1, minHeight: 0 },
+  overlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   backdrop: {
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.82)',
@@ -1697,7 +1712,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     justifyContent: 'flex-start',
-    paddingTop: spacing.xxl * 2,
+    paddingTop: spacing.xxl * 2 - spacing.md,
     width: '100%'
   },
   titleInput: {

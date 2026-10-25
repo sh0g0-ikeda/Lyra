@@ -121,6 +121,29 @@ describePostgres('atomic generation quotes', () => {
     expect((await pool.query(`SELECT dispatch_state FROM generation_quotes WHERE id=$1`,[issued.quote.id])).rows[0]).toEqual({dispatch_state:'pending'});
     expect((await pool.query(`SELECT params->>'render_style' AS style FROM generation_jobs WHERE id=$1`,[repeated.quote.acceptedJobId])).rows[0]).toEqual({style:'monochrome'});
   });
+  it('confirmed ページはquote発行では再開せず受付と同一transactionでgeneratingへ遷移する', async () => {
+    const ids=await fixture();const instance=service();
+    await pool.query(
+      `UPDATE pages SET status='confirmed', generated_image=$2::jsonb WHERE id=$1`,
+      [ids.pageId,JSON.stringify({
+        s3_key:`saved/${ids.userId}/pages/${ids.pageId}/previous.png`,
+        cdn_url:null,
+        generation_mode:'standard',
+        generated_at:'2026-10-26T00:00:00.000Z',
+      })],
+    );
+
+    const issued=await instance.issue(ids.userId,{operation:'page_regenerate',targetId:ids.pageId});
+    expect((await pool.query('SELECT status FROM pages WHERE id=$1',[ids.pageId])).rows[0]).toEqual({status:'confirmed'});
+
+    const accepted=await instance.accept(ids.userId,issued.quote.id,issued.quoteToken,randomUUID());
+    expect((await pool.query('SELECT status FROM pages WHERE id=$1',[ids.pageId])).rows[0]).toEqual({status:'generating'});
+    expect((await pool.query(
+      `SELECT params->>'previous_page_status' AS previous_status FROM generation_jobs WHERE id=$1`,
+      [accepted.quote.acceptedJobId],
+    )).rows[0]).toEqual({previous_status:'confirmed'});
+    expect(await money(ids.userId)).toEqual({purchased_credits:27,debits:1,jobs:1});
+  });
   it('内容変更・期限切れ・他人・異なるtokenは一切控除しない', async () => {
     const ids=await fixture(); const instance=service();
     const stale=await instance.issue(ids.userId,{operation:'page_generate',targetId:ids.pageId});

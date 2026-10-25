@@ -94,7 +94,7 @@ export class PageAtomicGenerationService implements PageAtomicGenerationServiceP
       const current = await pageRepository.findPageByIdAndUserId(pageId, userId, organizationId);
       if (!current) throw new NotFoundError('Page not found');
       if (current.updatedAt.getTime() !== new Date(input.expectedUpdatedAt).getTime()) throw new PageStaleError();
-      if (current.status === 'confirmed' || current.status === 'generating') throw new ConflictError('Page must be editable before generation');
+      if (current.status === 'generating') throw new ConflictError('Page must be editable before generation');
       await this.saveDrafts(client, userId, pageId, organizationId, current, {...input, page: pageInput});
       const readiness = await assessSavedPageGeneration(client, userId, pageId, organizationId, true, false, this.dependencies.persistenceProfile);
       if (readiness.blockers.some((blocker) => blocker.code === 'CHARACTER_REFERENCE_MODEL_INCOMPATIBLE')) {

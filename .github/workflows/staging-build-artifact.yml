@@ -1,0 +1,93 @@
+name: Staging image artifact
+
+on:
+  push:
+    branches:
+      - codex/mobile-ux-stability-20261026
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-artifact:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    env:
+      ECR_REPOSITORY_URI: 452284481392.dkr.ecr.ap-northeast-1.amazonaws.com/lyra-staging-20261003-api
+      IMAGE_TAG: ${{ github.sha }}
+      STAGING_API_URL: https://d2dw83tkmziksr.cloudfront.net
+      STAGING_COGNITO_DOMAIN: https://lyra-staging-20261003-auth.auth.ap-northeast-1.amazoncognito.com
+      STAGING_WEB_CLIENT_ID: 7oma7s7gkoo5au4jk4ak9mkihd
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate staging inputs and native architecture
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$IMAGE_TAG"
+          test "$(uname -m)" = aarch64
+          node ops/staging/build.env.guard.mjs
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build staging image without registry credentials
+        run: |
+          set -euo pipefail
+          docker buildx build --platform linux/arm64 --load \
+            --build-arg VITE_API_BASE_URL="$STAGING_API_URL" \
+            --build-arg VITE_COGNITO_DOMAIN="$STAGING_COGNITO_DOMAIN" \
+            --build-arg VITE_COGNITO_CLIENT_ID="$STAGING_WEB_CLIENT_ID" \
+            --build-arg VITE_COGNITO_REDIRECT_URI="${STAGING_API_URL}/auth/callback" \
+            --build-arg VITE_COGNITO_LOGOUT_URI="$STAGING_API_URL" \
+            --build-arg VITE_COGNITO_SCOPES='openid email' \
+            --build-arg VITE_COGNITO_API_TOKEN_USE=id \
+            --build-arg VITE_ORGANIZATION_FEATURES_ENABLED=true \
+            --label "org.opencontainers.image.revision=$IMAGE_TAG" \
+            -t "lyra-staging:$IMAGE_TAG" .
+
+      - name: Verify ARM64 nonroot native image runtime
+        run: |
+          set -euo pipefail
+          docker run --rm --network none "lyra-staging:$IMAGE_TAG" \
+            /usr/local/bin/bun -e 'import sharp from "sharp";
+            if(process.arch!=="arm64"||process.getuid?.()!==65532)throw new Error("Unexpected runtime identity");
+            const image=await sharp({create:{width:2,height:3,channels:4,background:{r:0,g:0,b:0,alpha:1}}}).png().toBuffer();
+            const result=await sharp(image).metadata();
+            if(result.format!=="png"||result.width!==2||result.height!==3)throw new Error("Native image runtime failed");
+            console.log(JSON.stringify({runtime:Bun.version,architecture:process.arch,uid:process.getuid(),imageDecode:"passed"}));' \
+            | tee runtime-proof.json
+
+      - name: Verify compiled support for the existing staging profile
+        run: |
+          set -euo pipefail
+          docker run --rm --network none -e OPENAI_EPISODE_TEXT_PROFILE=balanced_v2 "lyra-staging:$IMAGE_TAG" \
+            /usr/local/bin/bun -e 'import {env} from "./dist/src/lib/env.js";
+            if(env.OPENAI_EPISODE_TEXT_PROFILE!=="balanced_v2")throw new Error("Existing staging profile is unsupported");
+            console.log(JSON.stringify({episodeTextProfile:env.OPENAI_EPISODE_TEXT_PROFILE,network:"none",configValidation:"passed"}));' \
+            | tee runtime-config-proof.json
+
+      - name: Save immutable image and receipt
+        run: |
+          set -euo pipefail
+          mkdir artifact
+          mv runtime-proof.json artifact/
+          mv runtime-config-proof.json artifact/
+          docker image inspect "lyra-staging:$IMAGE_TAG" > artifact/image-inspect.json
+          docker save "lyra-staging:$IMAGE_TAG" -o artifact/staging-image.tar
+          printf '%s\n' "$IMAGE_TAG" > artifact/source-commit.txt
+          (cd artifact && sha256sum staging-image.tar image-inspect.json runtime-proof.json runtime-config-proof.json source-commit.txt > SHA256SUMS)
+
+      - name: Upload private build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-image-${{ github.sha }}
+          path: artifact/
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error

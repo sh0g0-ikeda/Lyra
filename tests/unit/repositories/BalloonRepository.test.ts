@@ -9,6 +9,8 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public values: readonly unknown[] | undefined;
   public valuesList: Array<readonly unknown[] | undefined> = [];
   public currentPanelIds = ['panel-1', 'panel-2', 'panel-3'];
+  public pageStatus: 'editing' | 'confirmed' | 'generating' = 'editing';
+  public transactionCount = 0;
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -19,7 +21,11 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
     this.valuesList.push(values);
 
     if (text.includes('FOR UPDATE OF pages')) {
-      return resultRows<T>([row()]);
+      return resultRows<T>([{ ...row(), status: this.pageStatus }]);
+    }
+
+    if (text.includes('UPDATE pages') && text.includes("status = 'editing'")) {
+      return resultRows<T>([{ id: 'page-1' }]);
     }
 
     if (text.includes('SELECT panels.id') && text.includes('FOR KEY SHARE')) {
@@ -38,6 +44,7 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   }
 
   public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
     return work(this);
   }
 }
@@ -250,6 +257,54 @@ describe('PostgresBalloonRepository', () => {
     )).rejects.toBeInstanceOf(ConflictError);
 
     expect(client.queries.some((query) => query.includes('DELETE FROM balloons'))).toBe(false);
+  });
+
+  it('confirmed ページへの作成は同一 transaction 内で editing へ遷移する', async () => {
+    const client = new QueryCapturingClient();
+    client.pageStatus = 'confirmed';
+    const repository = new PostgresBalloonRepository(client);
+
+    await repository.createBalloon('page-1', 'user-1', createInput(1));
+
+    const transitionIndex = client.queries.findIndex(
+      (query) => query.includes('UPDATE pages') && query.includes("status = 'editing'"),
+    );
+    const insertIndex = client.queries.findIndex((query) => query.includes('INSERT INTO balloons'));
+    expect(client.transactionCount).toBe(1);
+    expect(transitionIndex).toBeGreaterThanOrEqual(0);
+    expect(insertIndex).toBeGreaterThan(transitionIndex);
+  });
+
+  it('generating ページへの作成はpage lock後に拒否してINSERTしない', async () => {
+    const client = new QueryCapturingClient();
+    client.pageStatus = 'generating';
+    const repository = new PostgresBalloonRepository(client);
+
+    await expect(repository.createBalloon('page-1', 'user-1', createInput(1))).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+
+    expect(client.queries.some((query) => query.includes('FOR UPDATE OF pages'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('INSERT INTO balloons'))).toBe(false);
+  });
+
+  it('Balloon 削除も page lock と同一 transaction で実行する', async () => {
+    const client = new QueryCapturingClient();
+    client.pageStatus = 'confirmed';
+    const repository = new PostgresBalloonRepository(client);
+
+    await repository.deleteBalloon('balloon-1', 'user-1');
+
+    const pageLookupIndex = client.queries.findIndex((query) => query.includes('SELECT balloons.page_id AS page_id'));
+    const pageLockIndex = client.queries.findIndex((query) => query.includes('FOR UPDATE OF pages'));
+    const transitionIndex = client.queries.findIndex(
+      (query) => query.includes('UPDATE pages') && query.includes("status = 'editing'"),
+    );
+    const deleteIndex = client.queries.findIndex((query) => query.includes('DELETE FROM balloons'));
+    expect(client.transactionCount).toBe(1);
+    expect(pageLockIndex).toBeGreaterThan(pageLookupIndex);
+    expect(transitionIndex).toBeGreaterThan(pageLockIndex);
+    expect(deleteIndex).toBeGreaterThan(transitionIndex);
   });
 });
 

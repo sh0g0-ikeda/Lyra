@@ -4,7 +4,7 @@ import type { GenerationQuote, GenerationQuoteReceipt, GenerationQuoteAcceptance
 import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStartBody, type GoogleLinkStatus } from '@/domain/googleAuth';
 import { z, type ZodType } from 'zod';
 import type { EditableEntityState, NamedEntityStatePayload } from '@/domain/entityStateEditor';
-import type { InsertPanelAfterPayload, PanelStructureResult } from '@/domain/panelInsertion';
+import type { InsertPanelAfterPayload, PanelStructurePayload, PanelStructureResult } from '@/domain/panelInsertion';
 import type { EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
 import { onlineManager } from '@tanstack/react-query';
 
@@ -1369,6 +1369,12 @@ export class LyraMobileApiClient {
     return this.request(`/api/pages/${pageId}/panel-structure${organizationQuery(organizationId)}`, pagePanelStructureResponseSchema, {
       method: 'PUT',
       body
+    });
+  }
+
+  public updatePanelStructure(pageId: string, body: PanelStructurePayload, organizationId?: string | null): Promise<PanelStructureResult> {
+    return this.request(`/api/pages/${pageId}/panel-structure${organizationQuery(organizationId)}`, pagePanelStructureResponseSchema, {
+      method: 'PUT', body
     });
   }
 

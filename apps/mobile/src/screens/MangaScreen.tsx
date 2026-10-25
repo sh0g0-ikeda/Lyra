@@ -38,7 +38,7 @@ export function MangaScreen(): React.JSX.Element {
   const { resolveDirtyEditors } = useDirtyState();
   const focused = useIsFocused();
   const route = useRoute<RouteProp<MobileTabParamList, 'Story'>>();
-  const { top } = useSafeAreaInsets();
+  const { top, left, right } = useSafeAreaInsets();
   const context = useWorkspaceContextSelection();
   const scopeKey = mangaWorkflowScopeKey(sessionKey, selection);
   const [workflow, setWorkflow] = useState<WorkflowView>({ scopeKey, step: null, visited: [] });
@@ -126,7 +126,7 @@ export function MangaScreen(): React.JSX.Element {
   const hidden = (target: MangaCreationStep): boolean => !focused || step !== target;
   return (
     <MangaWorkflowContext.Provider value={{ requestStateCandidate, registerPageBackHandler, activeStep: focused ? step : null }}>
-    <View style={styles.root} testID="manga-workflow">
+    <View style={[styles.root, step === null ? null : { paddingLeft: left, paddingRight: right }]} testID="manga-workflow">
       {step === null ? (
         <MangaLibrary
           context={context}

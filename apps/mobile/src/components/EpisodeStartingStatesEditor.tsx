@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { EntityStatePicker } from '@/components/EntityStatePicker';
@@ -18,16 +19,15 @@ interface EpisodeStartingStatesEditorProps {
   hasMoreEntities?: boolean;
   loadingEntities?: boolean;
   onLoadMoreEntities?: () => void;
+  children?: ReactNode;
 }
 
 // Controlled input only. Opening/changing this UI never saves, generates an
 // image, or silently drops a saved assignment absent from the current page.
-export function EpisodeStartingStatesEditor({ language, entities, value, onChange, disabled = false, hasMoreEntities, loadingEntities, onLoadMoreEntities }: EpisodeStartingStatesEditorProps): React.JSX.Element {
+export function EpisodeStartingStatesEditor({ language, entities, value, onChange, disabled = false, hasMoreEntities, loadingEntities, onLoadMoreEntities, children }: EpisodeStartingStatesEditorProps): React.JSX.Element {
   const availableEntities = entities.filter((entity) => !value.some((state) => state.entity_id === entity.id));
   return (
     <Section collapsible defaultCollapsed persistKey="story:starting-states" title={message(language, 'startingTitle')}>
-      <Text style={styles.help}>{message(language, 'startingHelp')}</Text>
-      {value.length === 0 ? <Text style={styles.help}>{message(language, 'startingEmpty')}</Text> : null}
       {value.map((state, index) => {
         const entity = entities.find((item) => item.id === state.entity_id);
         return (
@@ -58,6 +58,7 @@ export function EpisodeStartingStatesEditor({ language, entities, value, onChang
         </>
       )}
       <PrimaryButton disabled={disabled} label={message(language, 'startingReset')} onPress={() => onChange([])} variant="secondary" testID="starting-state-reset" />
+      {children}
     </Section>
   );
 }

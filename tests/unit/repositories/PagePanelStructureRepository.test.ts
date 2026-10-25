@@ -161,6 +161,7 @@ describe('PostgresPagePanelStructureRepository', () => {
     expect(pageLockIndex).toBeGreaterThan(admissionLockIndex);
     expect(panelInsertIndex).toBeGreaterThan(pageLockIndex);
     expect(client.queries.filter((query) => query.includes('INSERT INTO panel_frames'))).toHaveLength(2);
+    expect(client.queries.find((query) => query.includes('UPDATE pages'))).toContain('GREATEST(');
   });
 
   it('削除の場合に同じPanelを指す吹き出しだけ解除し後続参照を詰める', async () => {

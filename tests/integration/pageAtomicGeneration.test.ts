@@ -52,6 +52,21 @@ run('legacy atomic save-and-generate compatibility',()=>{
   expect(await rejectionOf(instance.saveAndGenerate(ids.userId,ids.pageId,{...ids.input,page:{storyPagePurpose:'different'}}))).toMatchObject({code:'CONFLICT'});
   expect((await state(ids)).debits).toBe(1);
  });
+ it('confirmed pageへの保存生成は同じtransactionでdraft保存とgeneration admissionを行う',async()=>{
+  const ids=await fixture();
+  await pool.query("UPDATE pages SET status='confirmed' WHERE id=$1",[ids.pageId]);
+  const instance=service();
+  const readiness=await instance.getGenerationReadiness(ids.userId,ids.pageId);
+  expect(readiness).toMatchObject({ready:true,blockers:[]});
+  await expect(instance.saveAndGenerate(ids.userId,ids.pageId,ids.input)).resolves.toMatchObject({jobId:expect.any(String)});
+  expect(await state(ids)).toMatchObject({status:'generating',scene:'approved saved scene',credits:27,jobs:1,debits:1});
+ });
+ it('confirmed pageのatomic save失敗はconfirmed状態とdraftをまとめてrollbackする',async()=>{
+  const ids=await fixture();
+  await pool.query("UPDATE pages SET status='confirmed' WHERE id=$1",[ids.pageId]);
+  expect(await throwingRejectionOf(service('UPDATE panels').saveAndGenerate(ids.userId,ids.pageId,ids.input))).toThrow('Injected atomic failure');
+  expect(await state(ids)).toMatchObject({status:'confirmed',scene:'before',credits:30,jobs:0,debits:0});
+ });
  it.each(['UPDATE panels','INSERT INTO panel_frames','INSERT INTO generation_jobs','INSERT INTO credit_ledger','SET accepted_job_id','SET params=params ||'])('%s失敗ならdraft・job・charge・receiptをまとめてrollbackする',async(failSql)=>{
   const ids=await fixture();expect(await throwingRejectionOf(service(failSql).saveAndGenerate(ids.userId,ids.pageId,ids.input))).toThrow('Injected atomic failure');expect(await state(ids)).toMatchObject({status:'editing',scene:'before',credits:30,jobs:0,debits:0});
   expect((await pool.query('SELECT id FROM generation_quotes WHERE user_id=$1',[ids.userId])).rows).toEqual([]);

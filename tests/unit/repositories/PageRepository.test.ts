@@ -1,13 +1,20 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { DatabaseClient } from '../../../src/lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresPageRepository } from '../../../src/repositories/PageRepository.js';
 
-class QueryCapturingClient implements DatabaseClient {
+class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
+  public pageStatus: 'editing' | 'confirmed' | 'generating' = 'editing';
   public hasVariantState = false;
   public valueHistory: Array<readonly unknown[] | undefined> = [];
   public values: readonly unknown[] | undefined;
+  public transactionCount = 0;
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    this.transactionCount += 1;
+    return work(this);
+  }
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -16,6 +23,13 @@ class QueryCapturingClient implements DatabaseClient {
     this.queries.push(text);
     this.values = values;
     this.valueHistory.push(values);
+
+    if (text.includes('FOR UPDATE OF pages')) {
+      return {
+        command: 'SELECT', rowCount: 1, oid: 0, fields: [],
+        rows: [{ page_id: 'page-1', page_status: this.pageStatus }] as unknown as T[],
+      };
+    }
 
     if (text.includes('UPDATE pages')) {
       return {
@@ -288,8 +302,9 @@ describe('PostgresPageRepository', () => {
       },
     });
 
-    expect(client.queries[0]).toContain('UPDATE pages');
-    expect(client.valueHistory[0]).toEqual([
+    expect(client.queries[0]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[1]).toContain('UPDATE pages');
+    expect(client.valueHistory[1]).toEqual([
       'page-1',
       'user-1',
       'balloon_only',
@@ -312,6 +327,21 @@ describe('PostgresPageRepository', () => {
       dialogueMode: 'mixed',
       pageDialogueToggle: true,
     });
+    expect(client.transactionCount).toBe(1);
+  });
+
+  it('confirmed page settings更新は同じtransactionでeditingへ遷移する', async () => {
+    const client = new QueryCapturingClient();
+    client.pageStatus = 'confirmed';
+    const repository = new PostgresPageRepository(client);
+
+    await repository.updatePageSettings('page-1', 'user-1', { dialogueMode: 'mixed' });
+
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries[0]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[1]).toContain("SET status = 'editing'");
+    expect(client.queries[2]).toContain('dialogue_mode = COALESCE');
+    expect(client.queries[2]).toContain("GREATEST(");
   });
 
   it('generated_image と status をまとめて更新する', async () => {

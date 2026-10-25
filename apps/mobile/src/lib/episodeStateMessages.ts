@@ -2,7 +2,7 @@ import type { UiLanguage } from '@/domain/types';
 
 const messages = {
   ja: {
-    startingTitle: '話の開始状態',
+    startingTitle: 'キャラクターの開始状態',
     startingHelp: 'この話が始まる時点の人物の状態です。指定がない人物はdefaultから始まります。前の話から自動で引き継ぎません。',
     startingEmpty: '全員defaultから開始します。',
     startingAdd: '開始状態を指定する人物',
@@ -32,7 +32,7 @@ const messages = {
     candidateUnavailable: 'この人物を現在の作品で確認できません。作品と状態一覧を再読み込みしてください。'
   },
   en: {
-    startingTitle: 'Episode starting states',
+    startingTitle: 'Character starting states',
     startingHelp: 'Choose character states at the start of this episode. Unspecified characters start at default. States are not inherited from the previous episode.',
     startingEmpty: 'Everyone starts at default.',
     startingAdd: 'Choose a character for a starting state',

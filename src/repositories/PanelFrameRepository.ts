@@ -6,7 +6,7 @@ import type {
   PanelFrameVertex,
   UpsertPanelFrameInput,
 } from '../domain/types/panelFrame.js';
-import { ValidationError } from '../domain/errors/index.js';
+import { NotFoundError, ValidationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import type { PageStatus } from '../domain/types/page.js';
 import {
@@ -14,6 +14,7 @@ import {
   type RepositorySchemaProfile,
 } from './RepositorySchemaProfile.js';
 import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
+import { prepareAuthorizedPageEditByPageId } from './PageEditAdmission.js';
 
 export type { PanelFrame, UpsertPanelFrameInput };
 
@@ -208,6 +209,15 @@ export class PostgresPanelFrameRepository implements PanelFrameRepository {
       if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
         await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
       }
+      const editablePage = await prepareAuthorizedPageEditByPageId(
+        transactionClient,
+        pageId,
+        userId,
+        organizationId,
+      );
+      if (editablePage === null) {
+        throw new NotFoundError('Page not found');
+      }
       await transactionClient.query(
         `
         DELETE FROM panel_frames
@@ -342,7 +352,10 @@ async function updatePageFrameLayoutConfig(
           WHEN $6::text IS NULL THEN '{}'::jsonb
           ELSE jsonb_build_object('template_id', $6)
         END,
-        updated_at = NOW()
+        updated_at = GREATEST(
+          date_trunc('milliseconds', clock_timestamp()),
+          date_trunc('milliseconds', pages.updated_at) + INTERVAL '1 millisecond'
+        )
     FROM episodes
     INNER JOIN chapters ON chapters.id = episodes.chapter_id
     INNER JOIN works ON works.id = chapters.work_id

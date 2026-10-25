@@ -118,7 +118,7 @@ describe('production app metadata', () => {
   });
 
   it('runtime version と安全な OTA fallback policy を固定する', () => {
-    expect(config.expo.version).toBe('1.0.9');
+    expect(config.expo.version).toBe('1.0.10');
     expect(config.expo.ios?.bundleIdentifier).toBe('jp.lyra.mobile');
     expect(config.expo.android?.package).toBe('com.lyra.mobile');
     expect(config.expo.runtimeVersion?.policy).toBe('appVersion');

@@ -28,14 +28,17 @@ describe('page editor revision contract', () => {
     expect(source).toContain('setPageImageDownloadError(null)');
   });
 
-  it('ページ確定前に未保存のページ入力を保存する', () => {
+  it('手動の確定UIを省いて生成前の未保存入力保存を維持する', () => {
     const source = readFileSync(
       resolve(process.cwd(), 'src/screens/PagesScreen.tsx'),
       'utf8'
     );
 
-    expect(source).toMatch(
-      /const confirmPageMutation = useMutation\(\{\s*mutationFn: async \(\) => \{\s*await saveAllPageDrafts\(\);\s*return api\.confirmPage/
+    expect(source).not.toContain('<PageConfirmationAction');
+    expect(source).toContain('await saveAllPageDrafts();');
+    const quotePreparation = source.slice(source.indexOf('prepare: async (target) =>'));
+    expect(quotePreparation.indexOf('await saveAllPageDrafts();')).toBeLessThan(
+      quotePreparation.indexOf('await api.getPage(target.pageId')
     );
   });
 });

@@ -91,33 +91,19 @@ export const operationErrorMessages = {
     transport: '通信が完了せず、結果を確認できませんでした。',
     server: 'サービスが一時的に利用できません。',
     stale: 'サーバー上の内容が更新されています。',
-    read: 'この読み込み操作で変更は送信していません。表示内容は最新ではない可能性があります。',
-    confirmed: 'サーバーで操作の完了を確認しました。その後の表示更新を確認できていません。',
-    cancel: '取消結果は未確認です。ジョブが続いている可能性があります。再度取り消す前にジョブ状態を確認してください。',
-    write: '保存・受付結果は未確認です。再実行前に最新の保存状態を確認してください。',
-    retained: '画面内に現在の入力を保持しています：{fields}。未保存の変更はバックアップされていません。',
-    settlement: '課金・返金状況はこのエラーでは未確認です。見積・ジョブ画面の記録を確認してください。',
-    freeAi: '本文AI・自動入力は無料です。',
-    history: '履歴の表示だけを変更する操作です。ジョブの状態やクレジットは変更しません。',
     refreshNext: '接続と権限を確認して、状態を更新してください。',
-    confirmedNext: '操作は完了しています。再送信せず、最新の表示を読み込んでください。',
-    mutationNext: 'この画面では保存・生成・取消を自動で再送信しません。状態の更新は読み込みのみです。入力と現在の状態を確認した後、元の操作から再試行してください。'
+    confirmed: '保存は確認済みですが、表示を更新できませんでした。',
+    mutationNext: '結果を確認してから、必要なら元の操作をやり直してください。',
+    jobsNext: 'ジョブの状態を確認してから、必要なら元の操作をやり直してください。'
   },
   en: {
     refresh: 'Refresh status',
     transport: 'The connection did not complete, so the result could not be confirmed.',
     server: 'The service is temporarily unavailable.',
     stale: 'The saved content has changed on the server.',
-    read: 'This read did not submit changes. Displayed data may be out of date.',
-    confirmed: 'The server confirmed this operation. The subsequent display refresh could not be confirmed.',
-    cancel: 'Cancellation is unconfirmed. The job may still be running. Check job status before requesting cancellation again.',
-    write: 'Save status is unconfirmed. Check the latest saved state before submitting again.',
-    retained: 'Current local values remain on this screen: {fields}. Unsaved changes are not backed up.',
-    settlement: 'Charge/refund status is unconfirmed by this error. Review the records in the quote and job screens.',
-    freeAi: 'Text AI is free.',
-    history: 'This operation changes history visibility only; it does not change job status or credits.',
     refreshNext: 'Check the connection and permissions, then refresh status.',
-    confirmedNext: 'The operation completed. Refresh the display without submitting it again.',
-    mutationNext: 'This screen does not automatically resubmit saves, generation, or cancellation. Refreshing status only reads data. After checking input and current status, retry from the original action.'
+    confirmed: 'The save was confirmed, but the display could not be refreshed.',
+    mutationNext: 'Check the current result before retrying the original action.',
+    jobsNext: 'Check job status before retrying the original action.'
   }
 } as const;

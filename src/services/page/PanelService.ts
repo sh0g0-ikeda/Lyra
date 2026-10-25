@@ -429,10 +429,6 @@ function requiresSpeaker(type: PanelDialogueLine['type']): boolean {
 }
 
 function ensurePageEditable(pageStatus: PageStatus, scope: string): void {
-  if (pageStatus === 'confirmed') {
-    throw new ConflictError(`Confirmed pages must be reopened before editing ${scope}`);
-  }
-
   if (pageStatus === 'generating') {
     throw new ConflictError(`Pages cannot edit ${scope} while generation is in progress`);
   }

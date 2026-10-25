@@ -5,7 +5,7 @@ const APP_LINK_PATHS = [
 ];
 
 const BUILD_ENVIRONMENTS = new Set(['development', 'preview', 'production']);
-const APP_VARIANTS = new Set(['default', 'staging']);
+const APP_VARIANTS = new Set(['default', 'staging', 'testflight']);
 const PRODUCTION_APP_LINK_HOST = 'app.lyra-editor.com';
 const PRODUCTION_API_ORIGIN = 'https://app.lyra-editor.com';
 const PRODUCTION_COGNITO_DOMAIN = 'https://ap-northeast-1wizlzlgmm.auth.ap-northeast-1.amazoncognito.com';
@@ -32,7 +32,7 @@ function getBuildEnvironment() {
 function getAppVariant() {
   const variant = process.env.EXPO_PUBLIC_APP_VARIANT?.trim() || 'default';
   if (!APP_VARIANTS.has(variant)) {
-    throw new Error('EXPO_PUBLIC_APP_VARIANT must be default or staging');
+    throw new Error('EXPO_PUBLIC_APP_VARIANT must be default, staging, or testflight');
   }
   return variant;
 }
@@ -50,11 +50,15 @@ function getAppLinkHost(environment, variant) {
   if (environment === 'production' && host !== PRODUCTION_APP_LINK_HOST) {
     throw new Error(`EXPO_PUBLIC_APP_LINK_HOST must be ${PRODUCTION_APP_LINK_HOST} for production`);
   }
-  if (variant === 'staging' && host === PRODUCTION_APP_LINK_HOST) {
+  if (isStagingVariant(variant) && host === PRODUCTION_APP_LINK_HOST) {
     throw new Error('EXPO_PUBLIC_APP_LINK_HOST must not use the production host for staging');
   }
 
   return host;
+}
+
+function isStagingVariant(variant) {
+  return variant === 'staging' || variant === 'testflight';
 }
 
 function getRequiredStagingEnvironmentValue(name) {
@@ -113,17 +117,17 @@ module.exports = ({ config }) => {
   const environment = getBuildEnvironment();
   const variant = getAppVariant();
   const appLinkHost = getAppLinkHost(environment, variant);
-  if (variant === 'staging') {
+  if (isStagingVariant(variant)) {
     assertStagingEnvironment();
   }
-  const googleServicesFile = variant === 'staging' ? undefined : process.env.GOOGLE_SERVICES_JSON?.trim();
+  const googleServicesFile = isStagingVariant(variant) ? undefined : process.env.GOOGLE_SERVICES_JSON?.trim();
   const iOSAssociatedDomainsEnabled = process.env.EXPO_PUBLIC_IOS_ASSOCIATED_DOMAINS_ENABLED === 'true';
   const { associatedDomains: _associatedDomains, ...ios } = config.ios ?? {};
   const { intentFilters: _intentFilters, ...android } = config.android ?? {};
 
   return {
     ...config,
-    ...(variant === 'staging' ? { name: STAGING_APP_NAME, scheme: STAGING_SCHEME } : {}),
+    ...(isStagingVariant(variant) ? { name: STAGING_APP_NAME, scheme: STAGING_SCHEME } : {}),
     ios: {
       ...ios,
       ...(variant === 'staging' ? { bundleIdentifier: STAGING_IOS_BUNDLE_IDENTIFIER } : {}),
@@ -131,7 +135,7 @@ module.exports = ({ config }) => {
     },
     android: {
       ...android,
-      ...(variant === 'staging' ? { package: STAGING_ANDROID_PACKAGE } : {}),
+      ...(isStagingVariant(variant) ? { package: STAGING_ANDROID_PACKAGE } : {}),
       ...(appLinkHost ? { intentFilters: createIntentFilters(appLinkHost) } : {}),
       ...(googleServicesFile ? { googleServicesFile } : {}),
     },

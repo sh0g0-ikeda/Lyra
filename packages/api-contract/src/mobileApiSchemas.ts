@@ -235,6 +235,7 @@ export const currentSessionSchema = z.object({
     generation_quotes: z.boolean().optional(),
     push_notifications: z.boolean().optional(),
     web_image_delivery: z.boolean().optional(),
+    automatic_page_reopen_on_write: z.boolean().default(false),
     entity_state_reference_generation: z.boolean().default(false),
     episode_state_autofill_v1: z.boolean().default(false),
     entity_state_preview_credit_cost: z.number().int().nonnegative().optional(),

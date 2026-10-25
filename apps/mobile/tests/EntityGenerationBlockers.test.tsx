@@ -25,7 +25,7 @@ vi.mock('@/components/PrimaryButton', () => ({
 }));
 
 describe('EntityGenerationBlockers', () => {
-  it('解決可能なblockerに該当sectionまたはAccountへのactionを出す', () => {
+  it('blockerを常時バナーや入力欄への移動actionとして表示しない', () => {
     const onAction = vi.fn();
     let renderer: ReturnType<typeof create>;
     act(() => {
@@ -45,20 +45,7 @@ describe('EntityGenerationBlockers', () => {
       );
     });
 
-    const rendered = JSON.stringify(renderer!.toJSON());
-    expect(rendered).toContain('入力欄へ移動');
-    expect(rendered).toContain('画像取り込みへ移動');
-    expect(rendered).toContain('クレジットを確認');
-    expect(rendered).toContain('ジョブを確認');
-    expect(rendered).toContain('ワークスペースを確認');
-    expect(renderer!.root.findAllByType('button')).toHaveLength(5);
-
-    act(() => {
-      renderer!.root
-        .findAllByType('button')
-        .find((button) => button.children.includes('入力欄へ移動'))!
-        .props.onClick();
-    });
-    expect(onAction).toHaveBeenCalledWith('ENTITY_SAVE_REQUIRED');
+    expect(renderer!.toJSON()).toBeNull();
+    expect(onAction).not.toHaveBeenCalled();
   });
 });

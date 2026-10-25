@@ -1,16 +1,19 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
-import { AccessibilityInfo, ActivityIndicator, findNodeHandle, Image, Modal, Pressable, StyleSheet, Text, useWindowDimensions, View, type GestureResponderEvent } from 'react-native';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { AccessibilityInfo, ActivityIndicator, findNodeHandle, Modal, Pressable, StyleSheet, Text, useWindowDimensions, View, type GestureResponderEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing, textStyles } from '@/constants/theme';
 import { AiContentReportButton } from '@/components/AiContentReportButton';
+import { ResilientImage } from '@/components/ResilientImage';
+import { imageSourceListIdentity, type RemoteImageSource } from '@/domain/imageSourceCandidates';
 import { downloadExternalFile } from '@/lib/download';
 import { t } from '@/lib/i18n';
 
 interface ImagePreviewModalProps {
   contentId?: string | null;
-  uri: string | null;
+  uri?: string | null;
   headers?: Record<string, string>;
+  sources?: readonly RemoteImageSource[];
   language: 'ja' | 'en';
   onClose: () => void;
   restoreFocusRef?: RefObject<View | null>;
@@ -46,20 +49,39 @@ function constrain(value: number, limit: number): number {
   return Math.max(-limit, Math.min(limit, value));
 }
 
-export function ImagePreviewModal({ contentId, uri, headers, language, onClose, restoreFocusRef }: ImagePreviewModalProps): React.JSX.Element {
+export function ImagePreviewModal({ contentId, uri = null, headers, language, onClose, restoreFocusRef, sources }: ImagePreviewModalProps): React.JSX.Element {
+  const previewSources = sources ?? (uri === null ? [] : [{ uri, ...(headers === undefined ? {} : { headers }) }]);
+  const sourceIdentity = imageSourceListIdentity(previewSources);
+  const visible = previewSources.length > 0;
+  const [resolvedSource, setResolvedSource] = useState<{
+    source: RemoteImageSource;
+    sourceIdentity: string;
+  } | null>(null);
+  const activeSource = resolvedSource?.sourceIdentity === sourceIdentity
+    ? resolvedSource.source
+    : previewSources[0] ?? null;
   const [sharing, setSharing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const previewWidth = Math.min(520, Math.max(240, windowWidth - spacing.lg * 2));
   const previewHeight = Math.min(720, Math.max(240, windowHeight - 250));
-  const wasVisibleRef = useRef(uri !== null);
+  const wasVisibleRef = useRef(visible);
   const [zoom, setZoom] = useState(MIN_ZOOM);
   const [translation, setTranslation] = useState<PreviewPoint>({ x: 0, y: 0 });
   const zoomRef = useRef(MIN_ZOOM);
   const translationRef = useRef<PreviewPoint>({ x: 0, y: 0 });
   const gestureRef = useRef<PreviewGesture | null>(null);
   const lastTapAtRef = useRef(0);
-  const resetIdentityRef = useRef(`${uri ?? 'closed'}:${previewWidth}:${previewHeight}`);
+  const resetIdentityRef = useRef(`${sourceIdentity || 'closed'}:${previewWidth}:${previewHeight}`);
+
+  const handleSourceChange = useCallback((source: RemoteImageSource): void => {
+    setResolvedSource((current) => {
+      if (current?.sourceIdentity === sourceIdentity && imageSourceListIdentity([current.source]) === imageSourceListIdentity([source])) {
+        return current;
+      }
+      return { source, sourceIdentity };
+    });
+  }, [sourceIdentity]);
 
   const resetZoom = (): void => {
     zoomRef.current = MIN_ZOOM;
@@ -148,39 +170,39 @@ export function ImagePreviewModal({ contentId, uri, headers, language, onClose, 
   };
 
   useEffect(() => {
-    const resetIdentity = `${uri ?? 'closed'}:${previewWidth}:${previewHeight}`;
+    const resetIdentity = `${sourceIdentity || 'closed'}:${previewWidth}:${previewHeight}`;
     if (resetIdentityRef.current === resetIdentity) {
       return;
     }
     resetIdentityRef.current = resetIdentity;
     const resetTimer = setTimeout(resetZoom, 0);
     return () => clearTimeout(resetTimer);
-  }, [previewHeight, previewWidth, uri]);
+  }, [previewHeight, previewWidth, sourceIdentity]);
 
   useEffect(() => {
-    if (uri === null && wasVisibleRef.current && restoreFocusRef !== undefined) {
+    if (!visible && wasVisibleRef.current && restoreFocusRef !== undefined) {
       const triggerNode = findNodeHandle(restoreFocusRef.current);
       if (triggerNode !== null) {
         AccessibilityInfo.setAccessibilityFocus(triggerNode);
       }
     }
-    wasVisibleRef.current = uri !== null;
-  }, [restoreFocusRef, uri]);
+    wasVisibleRef.current = visible;
+  }, [restoreFocusRef, visible]);
 
   const shareImage = async (): Promise<void> => {
-    if (uri === null || sharing) {
+    if (activeSource === null || sharing) {
       return;
     }
 
     setSharing(true);
     setErrorMessage(null);
     try {
-      const extension = uri.toLowerCase().includes('.jpg') || uri.toLowerCase().includes('.jpeg') ? 'jpg' : 'png';
+      const extension = activeSource.uri.toLowerCase().includes('.jpg') || activeSource.uri.toLowerCase().includes('.jpeg') ? 'jpg' : 'png';
       await downloadExternalFile({
         filename: `lyra-preview-${Date.now()}.${extension}`,
-        headers,
+        headers: activeSource.headers,
         mimeType: extension === 'jpg' ? 'image/jpeg' : 'image/png',
-        url: uri
+        url: activeSource.uri
       });
     } catch {
       setErrorMessage(t(language, "generated.components.ImagePreviewModal.failed.to.share.or.save.the.image.752f4863"));
@@ -190,7 +212,7 @@ export function ImagePreviewModal({ contentId, uri, headers, language, onClose, 
   };
 
   return (
-    <Modal animationType="fade" transparent visible={uri !== null} onRequestClose={onClose}>
+    <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
         <View style={styles.backdrop}>
           <Pressable
@@ -216,7 +238,7 @@ export function ImagePreviewModal({ contentId, uri, headers, language, onClose, 
               <Text style={styles.closeText}>{t(language, "generated.components.ImagePreviewModal.close.603bc62f")}</Text>
             </Pressable>
           </View>
-          {uri === null ? null : (
+          {activeSource === null ? null : (
             <View
               onMoveShouldSetResponder={() => true}
               onResponderGrant={beginGesture}
@@ -227,9 +249,12 @@ export function ImagePreviewModal({ contentId, uri, headers, language, onClose, 
               style={[styles.zoomSurface, { height: previewHeight, width: previewWidth }]}
               testID="image-preview-zoom-surface"
             >
-              <Image
-                resizeMode="contain"
-                source={headers === undefined ? { uri } : { uri, headers }}
+              <ResilientImage
+                cachePolicy="memory-disk"
+                contentFit="contain"
+                onSourceChange={handleSourceChange}
+                priority="high"
+                sources={previewSources}
                 style={[
                   styles.previewImage,
                   {
@@ -251,7 +276,7 @@ export function ImagePreviewModal({ contentId, uri, headers, language, onClose, 
             <Pressable
               accessibilityLabel={t(language, "generated.components.ImagePreviewModal.share.or.save.image.9f845398")}
               accessibilityRole="button"
-              disabled={sharing || uri === null}
+              disabled={sharing || activeSource === null}
               onPress={() => void shareImage()}
               style={styles.shareButton}
             >

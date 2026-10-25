@@ -10,7 +10,7 @@ import { useNetworkStatus } from '@/state/networkStatus';
 
 const EmbeddedScreenContext = createContext(false);
 
-// The workflow shell owns its top safe area; ordinary screens keep both edges.
+// The workflow shell owns all safe-area edges; standalone screens own every edge.
 export function EmbeddedScreenProvider({ children }: PropsWithChildren): React.JSX.Element {
   return <EmbeddedScreenContext.Provider value>{children}</EmbeddedScreenContext.Provider>;
 }
@@ -49,7 +49,7 @@ export function Screen({
   const showLanguageSwitcher = chrome === 'language' || (chrome === 'auto' && session === null);
   const showChrome = !embedded && chrome !== 'none' && showLanguageSwitcher;
   return (
-    <SafeAreaView edges={embedded ? [] : ['top', 'bottom']} style={styles.safeArea} testID={testID}>
+    <SafeAreaView edges={embedded ? [] : ['top', 'bottom', 'left', 'right']} style={styles.safeArea} testID={testID}>
       <StatusBar backgroundColor={colors.canvas} barStyle="light-content" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardAvoider}>
         {!showChrome ? null : <View style={styles.chrome}>

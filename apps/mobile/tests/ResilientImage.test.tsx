@@ -72,7 +72,48 @@ describe('ResilientImage', () => {
 
     act(() => {
       renderer!.root.findByType('expo-image').props.onError();
+      renderer!.root.findByType('expo-image').props.onError();
     });
     expect(onExhausted).toHaveBeenCalledOnce();
+  });
+
+  it('別候補を経た同じsource identityでは再度の読込失敗を通知する', () => {
+    const onExhausted = vi.fn();
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <ResilientImage
+          onExhausted={onExhausted}
+          sources={[{ uri: 'https://cdn.lyra.test/a.png' }]}
+          style={{ height: 100, width: 100 }}
+        />,
+      );
+    });
+    act(() => renderer!.root.findByType('expo-image').props.onError());
+    expect(onExhausted).toHaveBeenCalledOnce();
+
+    act(() => {
+      renderer!.update(
+        <ResilientImage
+          onExhausted={onExhausted}
+          sources={[{ uri: 'https://cdn.lyra.test/b.png' }]}
+          style={{ height: 100, width: 100 }}
+        />,
+      );
+    });
+    act(() => {
+      renderer!.update(
+        <ResilientImage
+          onExhausted={onExhausted}
+          sources={[{ uri: 'https://cdn.lyra.test/a.png' }]}
+          style={{ height: 100, width: 100 }}
+        />,
+      );
+    });
+    act(() => {
+      renderer!.root.findByType('expo-image').props.onError();
+    });
+
+    expect(onExhausted).toHaveBeenCalledTimes(2);
   });
 });

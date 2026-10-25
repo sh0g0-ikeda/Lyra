@@ -189,9 +189,9 @@ describe('AccountScreen organization feature guard', () => {
   });
 
   it.each([
-    ['cancelJob', 'Cancel job', 'Cancellation is unconfirmed'],
-    ['hideJob', 'Hide job history', 'history visibility only'],
-    ['retryGenerationJob', 'Retry job', 'Charge/refund status is unconfirmed']
+    ['cancelJob', 'Cancel job', 'Check job status before retrying'],
+    ['hideJob', 'Hide job history', 'Check the current result before retrying'],
+    ['retryGenerationJob', 'Retry job', 'Check job status before retrying']
   ])('identifies %s and its exact job while recovery refreshes without replaying it', async (method, label, guidance) => {
     const refetch = vi.fn().mockResolvedValue(undefined);
     mocks.useInfiniteQuery.mockReturnValue({ data: { pages: [{ jobs: [] }] }, refetch });
@@ -215,6 +215,8 @@ describe('AccountScreen organization feature guard', () => {
     expect(notice).toBeDefined();
     expect(notice!.props.message).toContain('job-target-42');
     expect(notice!.props.message).toContain(guidance);
+    expect(notice!.props.message).toContain('result could not be confirmed');
+    expect(notice!.props.message).not.toMatch(/not charged|refunded|completed successfully/i);
     expect(notice!.props.message).not.toContain('private backend detail');
     expect(notice!.props.actionLabel).toBe('Refresh status');
     await act(async () => notice!.props.onAction());

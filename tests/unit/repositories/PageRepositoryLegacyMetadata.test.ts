@@ -1,7 +1,7 @@
 import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 
-import type { DatabaseClient } from '../../../src/lib/db.js';
+import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresPageRepository } from '../../../src/repositories/PageRepository.js';
 
 const pageId = '55555555-5555-4555-8555-555555555555';
@@ -15,9 +15,13 @@ type LegacyRepositoryConstructor = new (
   mode: 'legacyPhysical',
 ) => PostgresPageRepository;
 
-class PhysicalMetadataClient implements DatabaseClient {
+class PhysicalMetadataClient implements DatabaseClient, TransactionRunner {
   public readonly queries: string[] = [];
   public readonly values: Array<readonly unknown[] | undefined> = [];
+
+  public async transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    return work(this);
+  }
 
   public async query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -49,6 +53,7 @@ class PhysicalMetadataClient implements DatabaseClient {
     return {
       id: pageId,
       page_id: pageId,
+      page_status: 'designing',
       episode_id: episodeId,
       work_id: 'work-1',
       page_number: 1,

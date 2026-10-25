@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { ConflictError, NotFoundError, ValidationError } from '../../../../src/domain/errors/index.js';
 import type { CreatePanelInput, Panel, UpdatePanelInput } from '../../../../src/domain/types/panel.js';
 import type { PageLayoutFrameUpdate, PanelFrame } from '../../../../src/domain/types/panelFrame.js';
-import type { PageStatus } from '../../../../src/domain/types/page.js';
 import type { EntityReferenceReader } from '../../../../src/repositories/EntityRepository.js';
 import type { PanelFrameRepository, UpsertPanelFrameInput } from '../../../../src/repositories/PanelFrameRepository.js';
 import type { PagePanelContext, PanelContext, PanelRepository } from '../../../../src/repositories/PanelRepository.js';
@@ -407,53 +406,42 @@ describe('PanelService', () => {
     expect(repository.reorderedPanelIds).toEqual(['panel-3', panelId]);
   });
 
-  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
-    '%s page cannot create panels',
-    async (pageStatus) => {
+  it.each(['create', 'update', 'delete', 'reorder'] as const)(
+    'confirmed pageへの明示%sはrepositoryの同一transactionへ委譲する',
+    async (operation) => {
       const repository = new FakePanelRepository();
-      repository.pageContext = { pageId, workId, pageStatus };
+      repository.pageContext = { pageId, workId, pageStatus: 'confirmed' };
+      repository.panelContext = { panelId, pageId, panelOrder: 2, workId, pageStatus: 'confirmed' };
       const service = new PanelService(repository, new FakeEntityReader(), new FakePanelFrameRepository());
 
-      await expect(service.createPanel(userId, pageId, buildCreateInput())).rejects.toBeInstanceOf(
-        ConflictError,
-      );
+      if (operation === 'create') {
+        await expect(service.createPanel(userId, pageId, buildCreateInput())).resolves.toBeDefined();
+      } else if (operation === 'update') {
+        await expect(service.updatePanel(userId, panelId, { panelNotes: 'updated' })).resolves.toBeDefined();
+      } else if (operation === 'delete') {
+        await expect(service.deletePanel(userId, panelId)).resolves.toBeUndefined();
+      } else {
+        await expect(service.reorderPanels(userId, pageId, [panelId, 'panel-3'])).resolves.toBeDefined();
+      }
     },
   );
 
-  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
-    '%s page cannot update panels',
-    async (pageStatus) => {
+  it.each(['create', 'update', 'delete', 'reorder'] as const)(
+    'generating page cannot %s panels',
+    async (operation) => {
       const repository = new FakePanelRepository();
-      repository.panelContext = { panelId, pageId, panelOrder: 2, workId, pageStatus };
+      repository.pageContext = { pageId, workId, pageStatus: 'generating' };
+      repository.panelContext = { panelId, pageId, panelOrder: 2, workId, pageStatus: 'generating' };
       const service = new PanelService(repository, new FakeEntityReader(), new FakePanelFrameRepository());
 
-      await expect(
-        service.updatePanel(userId, panelId, { panelNotes: 'updated' }),
-      ).rejects.toBeInstanceOf(ConflictError);
-    },
-  );
-
-  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
-    '%s page cannot delete panels',
-    async (pageStatus) => {
-      const repository = new FakePanelRepository();
-      repository.panelContext = { panelId, pageId, panelOrder: 2, workId, pageStatus };
-      const service = new PanelService(repository, new FakeEntityReader(), new FakePanelFrameRepository());
-
-      await expect(service.deletePanel(userId, panelId)).rejects.toBeInstanceOf(ConflictError);
-    },
-  );
-
-  it.each(['confirmed', 'generating'] satisfies PageStatus[])(
-    '%s page cannot reorder panels',
-    async (pageStatus) => {
-      const repository = new FakePanelRepository();
-      repository.pageContext = { pageId, workId, pageStatus };
-      const service = new PanelService(repository, new FakeEntityReader(), new FakePanelFrameRepository());
-
-      await expect(
-        service.reorderPanels(userId, pageId, [panelId, 'panel-3']),
-      ).rejects.toBeInstanceOf(ConflictError);
+      const promise = operation === 'create'
+        ? service.createPanel(userId, pageId, buildCreateInput())
+        : operation === 'update'
+          ? service.updatePanel(userId, panelId, { panelNotes: 'updated' })
+          : operation === 'delete'
+            ? service.deletePanel(userId, panelId)
+            : service.reorderPanels(userId, pageId, [panelId, 'panel-3']);
+      await expect(promise).rejects.toBeInstanceOf(ConflictError);
     },
   );
 });

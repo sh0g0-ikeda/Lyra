@@ -51,7 +51,6 @@ export async function assessSavedPageGeneration(client: DatabaseClient, userId: 
   if(page.frameCount!==panels.length)add('FRAME_PANEL_MISMATCH','frames','open_layout','page.blocker.framePanelMismatch');
   if(![...panels].sort((a,b)=>a.order-b.order).every((panel,index)=>panel.order===index+1))add('PANEL_ORDER_INVALID','panels','open_panels','page.blocker.panelOrderInvalid');
   if(page.status==='generating')add('PAGE_GENERATING','status','wait_for_generation','page.blocker.pageGenerating');
-  if(page.status==='confirmed')add('PAGE_REOPEN_REQUIRED','status','reopen_page','page.blocker.pageReopenRequired');
   const active=await client.query(`SELECT id FROM generation_jobs WHERE status IN ('queued','processing') AND ((job_type='page_generate' AND params->>'page_id'=$1) OR (job_type IN ('episode_story_autofill','episode_page_skeleton') AND params->>'episode_id'=$2)) LIMIT 1`,[pageId,page.episodeId]);
   if(active.rows.length)add('ACTIVE_GENERATION_JOB','generation','wait_for_generation','page.blocker.activeGenerationJob');
   const context=await new PostgresPageRepository(bound,persistenceProfile).findGenerationContextByIdAndUserId(pageId,userId,organizationId);

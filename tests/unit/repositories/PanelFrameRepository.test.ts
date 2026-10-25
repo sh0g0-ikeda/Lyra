@@ -4,6 +4,7 @@ import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresPanelFrameRepository } from '../../../src/repositories/PanelFrameRepository.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
+  public pageStatus: 'editing' | 'confirmed' | 'generating' = 'editing';
   public queries: string[] = [];
   public transactionCount = 0;
   public values: readonly unknown[] | undefined;
@@ -16,6 +17,19 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
     this.queries.push(text);
     this.values = values;
     this.valuesList.push(values);
+
+    if (text.includes('FOR UPDATE OF pages')) {
+      return {
+        command: 'SELECT', rowCount: 1, oid: 0, fields: [],
+        rows: [{ page_id: 'page-1', page_status: this.pageStatus }] as unknown as T[],
+      };
+    }
+    if (text.includes("SET status = 'editing'")) {
+      return {
+        command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
+        rows: [{ id: 'page-1' }] as unknown as T[],
+      };
+    }
 
     return {
       command: 'SELECT',
@@ -42,7 +56,8 @@ describe('PostgresPanelFrameRepository', () => {
     expect(client.transactionCount).toBe(1);
     expect(client.queries[0]).toContain('FROM users');
     expect(client.queries[1]).toContain('account_deletion_requests');
-    expect(client.queries[2]).toContain('DELETE FROM panel_frames');
+    expect(client.queries[2]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[3]).toContain('DELETE FROM panel_frames');
   });
 
   it('user_idでページ所有者を絞ってPanelFrameを取得する', async () => {
@@ -84,11 +99,12 @@ describe('PostgresPanelFrameRepository', () => {
       },
     ]);
 
-    expect(client.queries[0]).toContain('DELETE FROM panel_frames');
-    expect(client.queries[0]).toContain('works.user_id = $2');
-    expect(client.queries[1]).toContain('INSERT INTO panel_frames');
-    expect(client.queries[1]).toContain('works.user_id = $10');
-    expect(client.queries[1]).toContain('organization_members.user_id = $10');
+    expect(client.queries[0]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[1]).toContain('DELETE FROM panel_frames');
+    expect(client.queries[1]).toContain('works.user_id = $2');
+    expect(client.queries[2]).toContain('INSERT INTO panel_frames');
+    expect(client.queries[2]).toContain('works.user_id = $10');
+    expect(client.queries[2]).toContain('organization_members.user_id = $10');
     expect(client.values).toEqual([
       null,
       'page-1',
@@ -157,11 +173,14 @@ describe('PostgresPanelFrameRepository', () => {
       },
     );
 
-    expect(client.queries[2]).toContain('UPDATE pages');
-    expect(client.queries[2]).toContain("COALESCE(pages.layout_config, '{}'::jsonb) - 'template_id'");
-    expect(client.queries[2]).toContain('layout_config');
-    expect(client.queries[2]).toContain('works.user_id = $2');
-    expect(client.valuesList[2]).toEqual([
+    const layoutUpdateIndex = client.queries.findIndex((query) =>
+      query.includes("COALESCE(pages.layout_config, '{}'::jsonb) - 'template_id'"),
+    );
+    expect(layoutUpdateIndex).toBeGreaterThanOrEqual(0);
+    expect(client.queries[layoutUpdateIndex]).toContain('layout_config');
+    expect(client.queries[layoutUpdateIndex]).toContain('GREATEST(');
+    expect(client.queries[layoutUpdateIndex]).toContain('works.user_id = $2');
+    expect(client.valuesList[layoutUpdateIndex]).toEqual([
       'page-1',
       'user-1',
       'template',
@@ -231,10 +250,12 @@ describe('PostgresPanelFrameRepository', () => {
       },
     );
 
-    expect(client.queries[2]).toContain("COALESCE(pages.layout_config, '{}'::jsonb) - 'template_id'");
-    expect(client.valuesList[2]?.slice(0, 4)).toEqual(['page-1', 'user-1', 'custom', 1]);
-    expect(client.valuesList[2]?.[5]).toBeNull();
-    expect(JSON.parse(String(client.valuesList[2]?.[4]))).toEqual([
+    const layoutUpdateIndex = client.queries.findIndex((query) =>
+      query.includes("COALESCE(pages.layout_config, '{}'::jsonb) - 'template_id'"),
+    );
+    expect(client.valuesList[layoutUpdateIndex]?.slice(0, 4)).toEqual(['page-1', 'user-1', 'custom', 1]);
+    expect(client.valuesList[layoutUpdateIndex]?.[5]).toBeNull();
+    expect(JSON.parse(String(client.valuesList[layoutUpdateIndex]?.[4]))).toEqual([
       {
         vertices: [
           { x: 0, y: 0 },
@@ -250,6 +271,17 @@ describe('PostgresPanelFrameRepository', () => {
         panel_id: 'panel-1',
       },
     ]);
+  });
+
+  it('confirmedページのFrame保存は同じtransactionでeditingへ遷移する', async () => {
+    const client = new QueryCapturingClient();
+    client.pageStatus = 'confirmed';
+    const repository = new PostgresPanelFrameRepository(client);
+
+    await repository.replaceFramesByPageIdAndUserId('page-1', 'user-1', []);
+
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries.some((query) => query.includes("SET status = 'editing'"))).toBe(true);
   });
 });
 

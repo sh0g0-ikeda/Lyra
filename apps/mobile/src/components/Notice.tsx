@@ -19,12 +19,14 @@ export function Notice({
   onAction,
   tone = 'info'
 }: NoticeProps): React.JSX.Element {
-  const visualTone = tone === 'danger' ? 'warning' : tone;
+  const visualTone = tone;
   const textToneStyle =
     visualTone === 'warning'
       ? styles.warningText
       : visualTone === 'success'
           ? styles.successText
+          : visualTone === 'danger'
+            ? styles.dangerText
           : styles.infoText;
 
   return (
@@ -32,6 +34,7 @@ export function Notice({
       style={[
         styles.notice,
         visualTone === 'warning' ? styles.warning : null,
+        visualTone === 'danger' ? styles.danger : null,
         visualTone === 'success' ? styles.success : null
       ]}
     >
@@ -80,11 +83,11 @@ const styles = StyleSheet.create({
     opacity: 0.72
   },
   infoText: {
-    color: '#E4D08A'
+    color: colors.muted
   },
   notice: {
-    backgroundColor: 'rgba(229, 199, 107, 0.10)',
-    borderColor: 'rgba(229, 199, 107, 0.18)',
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.controlBorder,
     borderRadius: radius.md,
     borderWidth: 1,
     paddingHorizontal: spacing.md,
@@ -93,6 +96,13 @@ const styles = StyleSheet.create({
   success: {
     backgroundColor: colors.successSurface,
     borderColor: 'rgba(76, 175, 80, 0.28)'
+  },
+  danger: {
+    backgroundColor: 'rgba(207, 80, 80, 0.15)',
+    borderColor: 'rgba(207, 80, 80, 0.42)'
+  },
+  dangerText: {
+    color: '#FF9A9A'
   },
   successText: {
     color: '#88D989'

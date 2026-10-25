@@ -23,4 +23,14 @@ describe('panel insertion API', () => {
     await expect(client.insertPanelAfter('page-1', payload)).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+  it('削除と並べ替えは期待するコマ順付きの原子的な命令として一度だけ送る', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...response, created_panel_id: null }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new LyraMobileApiClient(() => 'token');
+    const command = { expected_panel_ids: ['a', 'b'], operation: { type: 'delete' as const, panel_id: 'b' } };
+    await client.updatePanelStructure('page-1', command, 'org-1');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/pages/page-1/panel-structure?organization_id=org-1');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(command);
+  });
 });

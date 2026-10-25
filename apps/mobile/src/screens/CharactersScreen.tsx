@@ -15,7 +15,6 @@ import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
 import { CharacterChoiceField as ChoiceField } from '@/components/CharacterChoiceField';
 import { editorMessage } from '@/lib/editorUiMessages';
 import { CharacterOutfitField } from '@/components/CharacterOutfitField';
-import { EntityGenerationBlockers } from '@/components/EntityGenerationBlockers';
 import { AssetGenerationQuoteDialog } from '@/components/AssetGenerationQuoteDialog';
 import { QuotedEntityImport } from '@/components/QuotedEntityImport';
 import { FormField } from '@/components/FormField';
@@ -79,9 +78,6 @@ import {
 } from '@/lib/queryKeys';
 import { t } from '@/lib/i18n';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
-import {
-  entityGenerationBlockerRecoveryTarget
-} from '@/lib/errorRecovery';
 import { appendOrganizationQuery, downloadAuthenticatedFile } from '@/lib/download';
 import { ApiError } from '@/lib/api';
 import {
@@ -298,7 +294,7 @@ interface ReferenceCandidatePreviewProps {
   fallbackUri: string | null;
   headers: ImageRequestHeaders | undefined;
   language: 'ja' | 'en';
-  onOpen: (uri: string, headers?: ImageRequestHeaders) => void;
+  onOpen: (sources: readonly RemoteImageSource[]) => void;
 }
 
 function ReferenceCandidatePreview({
@@ -347,7 +343,7 @@ function ReferenceCandidatePreview({
     <Pressable
       accessibilityLabel={t(language, "generated.components.ImagePreviewModal.image.preview.0f884bd2")}
       accessibilityRole="imagebutton"
-      onPress={() => onOpen(activeSource.uri, activeSource.headers)}
+      onPress={() => onOpen(sources)}
     >
       <ResilientImage
         contentFit="cover"
@@ -371,7 +367,7 @@ function ConfirmedReferencePreview({
   sources
 }: {
   language: 'ja' | 'en';
-  onOpen: (uri: string, headers?: ImageRequestHeaders) => void;
+  onOpen: (sources: readonly RemoteImageSource[]) => void;
   sources: readonly RemoteImageSource[];
 }): React.JSX.Element {
   const sourceIdentity = imageSourceListIdentity(sources);
@@ -399,7 +395,7 @@ function ConfirmedReferencePreview({
     <Pressable
       accessibilityLabel={t(language, "generated.components.ImagePreviewModal.image.preview.0f884bd2")}
       accessibilityRole="imagebutton"
-      onPress={() => onOpen(activeSource.uri, activeSource.headers)}
+      onPress={() => onOpen(sources)}
     >
       <ResilientImage
         contentFit="cover"
@@ -1655,8 +1651,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     id: string;
     resourceId: string;
   } | null>(null);
-  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
-  const [previewImageHeaders, setPreviewImageHeaders] = useState<ImageRequestHeaders | undefined>(undefined);
+  const [previewImageSources, setPreviewImageSources] = useState<readonly RemoteImageSource[]>([]);
   const [selectedEntityStateId, setSelectedEntityStateId] = useState<string | null>(null);
   const [entityStateDraft, setEntityStateDraft] = useState<EntityStateDraft>(emptyEntityStateDraft);
   const lastSyncedEntityId = useRef<string | null>(null);
@@ -1870,14 +1865,12 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     (jobQuery.data === undefined ||
       jobQuery.data.status === 'queued' ||
       jobQuery.data.status === 'processing');
-  const openImagePreview = (uri: string, headers?: ImageRequestHeaders): void => {
-    setPreviewImageHeaders(headers);
-    setPreviewImageUri(uri);
+  const openImagePreview = (sources: readonly RemoteImageSource[]): void => {
+    setPreviewImageSources(sources);
   };
 
   const closeImagePreview = (): void => {
-    setPreviewImageHeaders(undefined);
-    setPreviewImageUri(null);
+    setPreviewImageSources([]);
   };
 
   const applyEntitySnapshot = useCallback((snapshot: EntityRecord | null): void => {
@@ -2280,41 +2273,6 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     });
   };
 
-  const handleGenerationBlockerAction = (
-    code: EntityReferenceGenerationBlockerCode,
-  ): void => {
-    const recoveryTarget = entityGenerationBlockerRecoveryTarget(code);
-    if (
-      recoveryTarget === 'credits' ||
-      recoveryTarget === 'jobs' ||
-      recoveryTarget === 'workspace'
-    ) {
-      void resolveDirtyEditors(language).then((canLeave) => {
-        if (canLeave) {
-          navigation.navigate('Account');
-        }
-      });
-      return;
-    }
-
-    switch (code) {
-      case 'ENTITY_SAVE_REQUIRED':
-      case 'NAME_REQUIRED':
-      case 'UNSUPPORTED_TYPE':
-        scrollToCharacterSection('editor');
-        return;
-      case 'IMPORT_IN_PROGRESS':
-        scrollToCharacterSection('import');
-        return;
-      case 'ACTIVE_PREVIEW_JOB':
-      case 'INSUFFICIENT_CREDITS':
-      case 'PERMISSION_REQUIRED':
-        return;
-      case 'FEATURE_DISABLED':
-        return;
-    }
-  };
-
   const confirmDeleteEntity = (): void => {
     if (selectedEntity === null) {
       return;
@@ -2439,7 +2397,12 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   ]);
   const entityStateDirty = JSON.stringify(entityStateDraft) !== JSON.stringify(entityStateDraftFromRecord(selectedEntityState));
   const characterErrors = collectOperationFailures([
-    operationFailure('loadCharacters', entitiesQuery.error),
+    ...(entities.length === 0
+      ? [{
+          ...operationFailure('loadCharacters', entitiesQuery.error),
+          context: { operation: 'loadCharacters' as const, essential: true },
+        }]
+      : []),
     operationFailure('loadCharacters', selectedEntityQuery.error),
     operationFailure('loadGenerationAvailability', generationAvailabilityQuery.error),
     operationFailure('loadReference', referenceQuery.error),
@@ -2556,7 +2519,6 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         <RecordPicker
           emptyLabel={t(language, 'emptyCharacters')}
           hasNextPage={entitiesQuery.hasNextPage}
-          helperText={t(language, "generated.screens.CharactersScreen.choose.a.character.to.edit.unsaved.edits.c0acfd1a")}
           isFetchingNextPage={entitiesQuery.isFetchingNextPage}
           items={[
             {
@@ -2583,7 +2545,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
       </Section>
 
       <View onLayout={recordSectionOffset('editor')}>
-        <Section collapsible persistKey="characters:editor" subtitle={editorMessage(language, 'optionalFields')} title={entityEditorMode === 'create' ? editorMessage(language, 'createCharacter') : t(language, "generated.screens.CharactersScreen.character.editor.669746e4")}>
+        <Section collapsible persistKey="characters:editor" title={entityEditorMode === 'create' ? editorMessage(language, 'createCharacter') : t(language, "generated.screens.CharactersScreen.character.editor.669746e4")}>
         {selection.entityId !== null && selectedEntity === null ? (
           <Notice
             announce
@@ -2623,6 +2585,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         {entityType === 'character' ? (
           <>
             <CollapsibleGroup title={t(language, "generated.screens.CharactersScreen.identity.90859a65")}>
+              <Text style={styles.caption}>{editorMessage(language, 'optionalFields')}</Text>
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.gender.cbf7a6be")} language={language} onChange={(value) => setStructuredValue('gender_expression', value)} options={genderOptions} value={structuredDraft.gender_expression ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.age.range.3bfd3fb9")} language={language} onChange={(value) => setStructuredValue('age_range', value)} options={ageOptions} value={structuredDraft.age_range ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.skin.tone.a4e7759d")} language={language} onChange={(value) => setStructuredValue('skin_tone', value)} options={skinToneOptions} value={structuredDraft.skin_tone ?? ''} />
@@ -2768,12 +2731,6 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
           </>
         )}
         {blockedPreviewCandidates ? <Notice message={imageAccessNotice(language)} tone="warning" /> : null}
-        <EntityGenerationBlockers
-          blockers={generationBlockers}
-          language={language}
-          messageForCode={(code) => generationBlockerMessage(code, language)}
-          onAction={handleGenerationBlockerAction}
-        />
         <PrimaryButton
           disabled={entityStale || generationBlockers.length > 0 || previewBusy}
           disabledReason={paidGenerationBlockedReason ?? (entityStale ? t(language, "generated.screens.CharactersScreen.reload.the.latest.state.8874ff96") : generationBlockers.length === 0 ? undefined : generationBlockerMessage(generationBlockers[0].code, language))}
@@ -2928,7 +2885,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         onAccept={() => { void assetQuote.controller.accept(); }} onClose={() => assetQuote.controller.close()}
         onReconcile={() => { void assetQuote.controller.reconcile(); }}
         onRequote={confirmGenerateReference} />
-      <ImagePreviewModal contentId={selectedEntity?.id} headers={previewImageHeaders} language={language} onClose={closeImagePreview} uri={previewImageUri} />
+      <ImagePreviewModal contentId={selectedEntity?.id} language={language} onClose={closeImagePreview} sources={previewImageSources} />
     </Screen>
   );
 }

@@ -237,11 +237,46 @@ describe('BalloonService', () => {
     } satisfies Partial<AppError>);
   });
 
-  it('confirmed ページでは reopen 前に編集できない', async () => {
+  it('confirmed ページでも明示的な Balloon 作成は受け付ける', async () => {
     const { service, repository } = createService();
     repository.addPageContext('user-1', {
       ...basePageContext,
       status: 'confirmed',
+    });
+
+    await expect(service.createBalloon('user-1', 'page-1', buildCreateInput())).resolves.toMatchObject({
+      pageId: 'page-1',
+      text: 'hello',
+    });
+  });
+
+  it('confirmed ページの Balloon 一覧取得は読み取りなので拒否しない', async () => {
+    const { service, repository } = createService();
+    repository.addPageContext('user-1', {
+      ...basePageContext,
+      status: 'confirmed',
+    });
+    repository.seedBalloon(buildBalloon({ id: 'balloon-1' }));
+
+    await expect(service.listBalloons('user-1', 'page-1')).resolves.toHaveLength(1);
+  });
+
+  it('generating ページの Balloon 一覧も読み取りなので拒否しない', async () => {
+    const { service, repository } = createService();
+    repository.addPageContext('user-1', {
+      ...basePageContext,
+      status: 'generating',
+    });
+    repository.seedBalloon(buildBalloon({ id: 'balloon-1' }));
+
+    await expect(service.listBalloons('user-1', 'page-1')).resolves.toHaveLength(1);
+  });
+
+  it('generating ページでは Balloon を作成できない', async () => {
+    const { service, repository } = createService();
+    repository.addPageContext('user-1', {
+      ...basePageContext,
+      status: 'generating',
     });
 
     await expect(service.createBalloon('user-1', 'page-1', buildCreateInput())).rejects.toMatchObject({
