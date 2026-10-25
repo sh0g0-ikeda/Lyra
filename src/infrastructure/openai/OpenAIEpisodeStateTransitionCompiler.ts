@@ -19,6 +19,7 @@ import { OpenAIClient } from './OpenAIClient.js';
 import {
   requestStructuredOpenAIResponse,
   StructuredOpenAIResponseError,
+  type OpenAIReasoningEffort,
 } from './StructuredOpenAIResponse.js';
 
 const EPISODE_STATE_TRANSITION_COMPILER_MODEL = 'gpt-5';
@@ -32,6 +33,7 @@ export class OpenAIEpisodeStateTransitionCompiler implements EpisodeStateTransit
   public constructor(
     private readonly client: OpenAIClient,
     private readonly model = EPISODE_STATE_TRANSITION_COMPILER_MODEL,
+    private readonly reasoningEffort?: OpenAIReasoningEffort,
   ) {}
 
   public async compileStateTransitions(
@@ -59,6 +61,7 @@ export class OpenAIEpisodeStateTransitionCompiler implements EpisodeStateTransit
         validated = await requestStructuredOpenAIResponse({
           client: this.client,
           model: this.model,
+          reasoningEffort: this.reasoningEffort,
           maxOutputTokens: EPISODE_STATE_TRANSITION_COMPILER_MAX_TOKENS,
           schemaName: 'episode_state_transition_plan',
           jsonSchema: buildEpisodeStateTransitionJsonSchema(input),

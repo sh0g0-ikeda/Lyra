@@ -408,6 +408,8 @@ export interface AppDependencies {
 export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   assertProductionRuntimeConfig(env);
   if (dependencies.attestedRuntime !== undefined) assertAttestedRuntimeCapabilities(dependencies.attestedRuntime, env);
+  if (env.GOOGLE_LINK_SOURCE_RECOVERY_ENABLED && dependencies.attestedRuntime?.capabilities.googleIdentityRecovery !== true)
+    throw new ConfigurationError('Google source recovery requires an attested identity recovery schema');
   resolveFencedStateReferenceConfig(env);
 
   const resolvedDependencies = resolveDependencies(dependencies);
@@ -911,8 +913,10 @@ function resolveDependencies(
   const pushTokenRegistryService = dependencies.pushTokenRegistryService ?? resolveConfiguredPushTokenRegistryService();
   const googleLinkConfig = resolveGoogleIdentityLinkConfig(env);
   const googleIdentityLinkService = dependencies.googleIdentityLinkService ?? new GoogleIdentityLinkService({
-    repository: new PostgresGoogleIdentityLinkRepository(db), config: googleLinkConfig,
+    repository: new PostgresGoogleIdentityLinkRepository(db, env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET), config: googleLinkConfig,
     gateway: googleLinkConfig === null ? {
+      getGoogleProfile: async () => { throw new ConfigurationError('Google identity linking is disabled'); },
+      deleteGoogleProfile: async () => { throw new ConfigurationError('Google identity linking is disabled'); },
       getNativeIdentity: async () => { throw new ConfigurationError('Google identity linking is disabled'); },
       exchangeCode: async () => { throw new ConfigurationError('Google identity linking is disabled'); },
       linkGoogleIdentity: async () => { throw new ConfigurationError('Google identity linking is disabled'); },
@@ -1298,6 +1302,7 @@ function resolveDependencies(
       db,
       env.ACCOUNT_DELETION_IDENTITY_HASH_SECRET,
       persistenceProfile,
+      dependencies.attestedRuntime?.capabilities.googleIdentityRecovery === true,
     );
   const rateLimitStore = dependencies.rateLimitStore ?? resolveRateLimitStore();
 

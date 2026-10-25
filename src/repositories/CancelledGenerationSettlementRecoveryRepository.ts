@@ -2,7 +2,7 @@ import { GENERATION_RECOVERY_BATCH_LIMIT } from '../domain/constants/generation.
 import { ConfigurationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { attestProduction44RuntimeSchema } from '../lib/production44RuntimeSchemaAttestation.js';
-import { attestProduction44ExpandedRuntimeSchema } from '../lib/production44ExpandedRuntimeSchemaAttestation.js';
+import { attestRuntimeSchema } from '../lib/runtimeSchemaAttestation.js';
 import { isProduction44RepositorySchemaProfile, type Production44RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import { PostgresGenerationJobRepository } from './GenerationJobRepository.js';
 
@@ -39,7 +39,10 @@ export async function createCancelledGenerationSettlementRecoveryRepository(
     throw new ConfigurationError('Cancelled settlement recovery requires verified production44 persistence');
   }
   if (profile === 'production44_pg18_v1') await attestProduction44RuntimeSchema(database);
-  else await attestProduction44ExpandedRuntimeSchema(database);
+  else {
+    const runtime = await attestRuntimeSchema(database);
+    if (runtime.repositoryProfile !== profile) throw new ConfigurationError('Runtime schema attestation failed: SCHEMA_UNSUPPORTED');
+  }
   return Object.freeze(new PostgresCancelledGenerationSettlementRecoveryRepository(database, profile));
 }
 

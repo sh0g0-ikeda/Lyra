@@ -92,6 +92,21 @@ failure cannot discard a previously attempted start's request key or permit a ne
 start while that result is unknown. Recovery status failures, including cold
 returns, retain the existing challenge and never claim that no request was sent.
 
+Google linking recovery design (2026-10-15): preserve the destination Lyra user,
+subject, works and credits. A fresh native proof plus the dedicated verified
+Google challenge remain mandatory; email equality alone never authorizes a link.
+Normalize the Google provider prefix in the pre-signup collision guard. Recover
+only an independently verified, unowned external Google authentication profile;
+never delete or merge a source with a Lyra user, deletion tombstone, or another
+owner. Persist and serialize recovery intent, reconcile ambiguous provider results
+by reads, and let a consumed callback return to its fixed status destination
+without replaying OAuth exchange or provider mutations. Keep mobile contracts and
+frontend unchanged. Implement service/repository/provider regression tests before
+behavior changes, including account preservation, stale reservations, concurrent
+callbacks, rejected ownership, provider uncertainty and lowercase Google names.
+This work branches from deployed 69785dc instead of main to preserve submitted
+release fixes; unrelated changes in the primary checkout remain untouched.
+
 Account-deletion POST additionally requires a signature-verified Cognito identity
 for the same authenticated subject with auth_time within 300 seconds (at most
 60 seconds of future clock skew). Token refresh is not recent authentication.
@@ -300,6 +315,19 @@ acceptance, and its validated result replaces draft fields only after a separate
 apply confirmation. Version 1.0.8 must not receive an OTA update requiring the
 new native image conversion module.
 
+The October 2026 model migration is limited to provider routing and reasoning
+settings. The rollbackable balanced_v2 episode profile retains GPT-5.6 Terra with
+medium reasoning for beat planning, uses GPT-6.1 Sol with low reasoning for state
+extraction and the existing single audit, and GPT-6 Luna with low reasoning for detail.
+The same synthetic 16-page fixture took 158 seconds for a Sol beat request versus
+39 seconds for a Terra beat request, so the proposed beat-model change is withheld. Legacy and balanced_v1 retain their prior routing.
+Image import analysis uses GPT-5.4 Mini without reasoning; already accepted GPT-4o
+analysis quotes retain that exact provider model. Output schemas, source/state
+ownership validation, bounded retries, atomic saves, credit prices, image rendering
+and client contracts remain unchanged. Verification covers exact request routing,
+old accepted-quote execution, 16-page state continuity and existing failure/refund
+paths before rollout. This change branches from the submitted mobile release HEAD
+to preserve its fixes that are not yet on main.
 Story-to-page autofill plans beat ownership across the complete episode before
 expanding the existing pages. The normal path first requests the full-episode beat
 plan once. Beat and outline response schemas use the episode page limit (32), not the per-page panel limit (8); every existing page must remain covered exactly once. Only a confirmed beat structured-output capacity failure activates the

@@ -1,10 +1,10 @@
-import { AdminGetUserCommand, AdminLinkProviderForUserCommand, CognitoIdentityProviderClient, type AdminGetUserCommandOutput } from '@aws-sdk/client-cognito-identity-provider';
+import { AdminDeleteUserCommand, AdminGetUserCommand, AdminLinkProviderForUserCommand, CognitoIdentityProviderClient, type AdminGetUserCommandOutput } from '@aws-sdk/client-cognito-identity-provider';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { secureHashEquals } from '../../domain/auth/GoogleLinkProtocol.js';
-import { UnauthorizedError } from '../../domain/errors/index.js';
-import type { GoogleIdentityLinkGateway, NativeCognitoIdentity } from '../../services/auth/GoogleIdentityLinkService.js';
+import { AppError, UnauthorizedError } from '../../domain/errors/index.js';
+import type { GoogleCognitoProfile, GoogleIdentityLinkGateway, NativeCognitoIdentity } from '../../services/auth/GoogleIdentityLinkService.js';
 interface CognitoLinkClient {
-    send(command: AdminGetUserCommand | AdminLinkProviderForUserCommand, options: {
+    send(command: AdminGetUserCommand | AdminDeleteUserCommand | AdminLinkProviderForUserCommand, options: {
         abortSignal: AbortSignal;
     }): Promise<unknown>;
 }
@@ -71,12 +71,62 @@ export class VerifiedGoogleIdentityLinkGateway implements GoogleIdentityLinkGate
             throw new UnauthorizedError('Existing identity could not be verified');
         }
     }
+    public async getGoogleProfile(googleSubject: string): Promise<GoogleCognitoProfile | null> {
+        try {
+            if (googleSubject.length < 1 || googleSubject.length > 255)
+                throw new Error('Invalid subject');
+            const output = await this.cognito.send(new AdminGetUserCommand({ UserPoolId: this.config.userPoolId,
+                Username: `Google_${googleSubject}` }), { abortSignal: AbortSignal.timeout(this.timeoutMs) }) as AdminGetUserCommandOutput;
+            const attrs = new Map((output.UserAttributes ?? []).map(attribute => [attribute.Name, attribute.Value]));
+            const subject = attrs.get('sub'), email = attrs.get('email'), identities = attrs.get('identities');
+            const username = output.Username;
+            if (!username || !/^Google_/iu.test(username) || username.slice('Google_'.length) !== googleSubject
+                || output.Enabled !== true || output.UserStatus !== 'EXTERNAL_PROVIDER'
+                || !subject || subject.length > 256 || !email || email.length > 320 || attrs.get('email_verified') !== 'true' || !identities)
+                throw new Error('Invalid Google profile');
+            const parsed: unknown = JSON.parse(identities);
+            if (!Array.isArray(parsed) || parsed.length !== 1)
+                throw new Error('Invalid identities');
+            const identity: unknown = parsed[0];
+            if (typeof identity !== 'object' || identity === null || !('providerName' in identity) || identity.providerName !== 'Google'
+                || !('userId' in identity) || identity.userId !== googleSubject)
+                throw new Error('Invalid Google identity');
+            return { username, subject, email, googleSubject };
+        }
+        catch (error) {
+            if (hasErrorName(error, 'UserNotFoundException')) return null;
+            throw new UnauthorizedError('Google profile could not be verified');
+        }
+    }
+    public async deleteGoogleProfile(profile: GoogleCognitoProfile): Promise<void> {
+        // The repository must first durably fence this unused Cognito subject.
+        // Revalidate the immutable anchor rather than deleting by an email alias.
+        const current = await this.getGoogleProfile(profile.googleSubject);
+        if (current === null) return;
+        if (current.username !== profile.username || current.subject !== profile.subject || current.email !== profile.email)
+            throw new UnauthorizedError('Google profile could not be verified');
+        try {
+            await this.cognito.send(new AdminDeleteUserCommand({ UserPoolId: this.config.userPoolId,
+                Username: current.username }), { abortSignal: AbortSignal.timeout(this.timeoutMs) });
+        }
+        catch (error) {
+            if (hasErrorName(error, 'UserNotFoundException')) return;
+            throw new AppError('GOOGLE_PROFILE_DELETE_FAILED', 'Google profile removal could not be confirmed', 503);
+        }
+    }
     public async linkGoogleIdentity(nativeUsername: string, googleSubject: string): Promise<void> {
         // The destination is Cognito's immutable native username, never an email alias
         // or a Google profile. The caller has verified both identities independently.
-        await this.cognito.send(new AdminLinkProviderForUserCommand({ UserPoolId: this.config.userPoolId,
-            DestinationUser: { ProviderName: 'Cognito', ProviderAttributeValue: nativeUsername },
-            SourceUser: { ProviderName: 'Google', ProviderAttributeName: 'Cognito_Subject', ProviderAttributeValue: googleSubject } }), { abortSignal: AbortSignal.timeout(this.timeoutMs) });
+        try {
+            await this.cognito.send(new AdminLinkProviderForUserCommand({ UserPoolId: this.config.userPoolId,
+                DestinationUser: { ProviderName: 'Cognito', ProviderAttributeValue: nativeUsername },
+                SourceUser: { ProviderName: 'Google', ProviderAttributeName: 'Cognito_Subject', ProviderAttributeValue: googleSubject } }), { abortSignal: AbortSignal.timeout(this.timeoutMs) });
+        }
+        catch (error) {
+            if (['InvalidParameterException', 'UserNotFoundException', 'NotAuthorizedException'].some(name => hasErrorName(error, name)))
+                throw new AppError('GOOGLE_LINK_REJECTED', 'Google identity linking was rejected', 409);
+            throw error;
+        }
     }
 }
 export function createGoogleIdentityLinkGateway(config: {
@@ -87,4 +137,8 @@ export function createGoogleIdentityLinkGateway(config: {
     region: string;
 }): VerifiedGoogleIdentityLinkGateway {
     return new VerifiedGoogleIdentityLinkGateway(config, new CognitoIdentityProviderClient({ region: config.region, maxAttempts: 1 }));
+}
+
+function hasErrorName(error: unknown, name: string): boolean {
+    return typeof error === 'object' && error !== null && 'name' in error && error.name === name;
 }

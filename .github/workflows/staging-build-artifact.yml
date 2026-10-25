@@ -63,15 +63,25 @@ jobs:
             console.log(JSON.stringify({runtime:Bun.version,architecture:process.arch,uid:process.getuid(),imageDecode:"passed"}));' \
             | tee runtime-proof.json
 
+      - name: Verify compiled support for the existing staging profile
+        run: |
+          set -euo pipefail
+          docker run --rm --network none -e OPENAI_EPISODE_TEXT_PROFILE=balanced_v2 "lyra-staging:$IMAGE_TAG" \
+            /usr/local/bin/bun -e 'import {env} from "./dist/src/lib/env.js";
+            if(env.OPENAI_EPISODE_TEXT_PROFILE!=="balanced_v2")throw new Error("Existing staging profile is unsupported");
+            console.log(JSON.stringify({episodeTextProfile:env.OPENAI_EPISODE_TEXT_PROFILE,network:"none",configValidation:"passed"}));' \
+            | tee runtime-config-proof.json
+
       - name: Save immutable image and receipt
         run: |
           set -euo pipefail
           mkdir artifact
           mv runtime-proof.json artifact/
+          mv runtime-config-proof.json artifact/
           docker image inspect "lyra-staging:$IMAGE_TAG" > artifact/image-inspect.json
           docker save "lyra-staging:$IMAGE_TAG" -o artifact/staging-image.tar
           printf '%s\n' "$IMAGE_TAG" > artifact/source-commit.txt
-          (cd artifact && sha256sum staging-image.tar image-inspect.json runtime-proof.json source-commit.txt > SHA256SUMS)
+          (cd artifact && sha256sum staging-image.tar image-inspect.json runtime-proof.json runtime-config-proof.json source-commit.txt > SHA256SUMS)
 
       - name: Upload private build artifact
         uses: actions/upload-artifact@v4

@@ -1720,6 +1720,118 @@ describe('PageService', () => {
     expect(panelRepository.updatedPanels).toHaveLength(16);
   });
 
+  it('状態付き16ページは抽出と監査を各1回に保ち3ページ目のREADY状態を最終ページまで保存する', async () => {
+    const entityId = '11111111-1111-4111-8111-111111111111';
+    const readyStateId = '22222222-2222-4222-8222-222222222222';
+    const context = buildMultiPageEpisodePlanningContext(16);
+    context.scenes[0]!.entityStates = [];
+    context.stateLibrary = [{
+      entityId,
+      stateId: readyStateId,
+      name: '負傷後',
+      description: '左腕に包帯を巻いている',
+      revision: '2026-10-15T00:00:00.000Z',
+      baseRefId: 'base-ref',
+      baseRefUpdatedAt: '2026-10-15T00:00:00.000Z',
+      referenceReady: true,
+      referenceImage: {
+        refId: 'ready-ref',
+        s3Key: 'private/ready.png',
+        storageOwnerUserId: entityId,
+        imageModel: 'gpt-image-2',
+        baseRefId: 'base-ref',
+        createdAt: '2026-10-15T00:00:00.000Z',
+        inputFingerprint: 'ready-fingerprint',
+      },
+    }];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPageRepository = new FakePageRepository();
+    const transactionPanelRepository = new FakePanelRepository();
+    const transactionAssignments = new FakePanelEntityAssignmentService();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: transactionPageRepository,
+      panelRepository: transactionPanelRepository,
+      panelEntityAssignmentService: transactionAssignments,
+      completeStoryAutofillJob: async () => true,
+    });
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    let stateCompilerCalls = 0;
+    const stateCompiler = {
+      compileStateTransitions: async (input: CompileEpisodeStateTransitionInput) => {
+        stateCompilerCalls += 1;
+        expect(input.context.pages).toHaveLength(16);
+        return {
+          plan: {
+            transitions: [{
+              entityId,
+              stateId: readyStateId,
+              startsAtPanelId: 'panel-3',
+              sourceSceneId: null,
+              sourceField: 'middle' as const,
+              sourceQuote: 'Tension rises',
+            }],
+            unresolved: [],
+          },
+          compilerProvider: 'openai' as const,
+          compilerModel: 'test-state-model',
+          compilerPromptVersion: 'episode_state_transition_v3',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      new ChunkAwareEpisodePagePlanCompiler(),
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+      { inlineRepairEnabled: true },
+      persistence,
+      stateCompiler,
+    );
+    let beginCommitCount = 0;
+
+    const result = await service.autofillEpisodeFromStory(
+      'user-1',
+      'episode-1',
+      'ja',
+      undefined,
+      null,
+      {
+        jobId: 'job-1',
+        checkpoint: async () => undefined,
+        beginCommit: async () => { beginCommitCount += 1; },
+      },
+      {
+        statePlanVersion: 'episode_state_plan_v1',
+        stateAssignmentPolicy: 'overwrite_existing',
+      },
+    );
+
+    expect(result).toMatchObject({
+      updatedPageCount: 16,
+      updatedPanelCount: 16,
+      updatedAssignmentCount: 16,
+    });
+    expect(stateCompilerCalls).toBe(1);
+    expect(auditCompiler.inputs).toHaveLength(1);
+    expect(beginCommitCount).toBe(1);
+    expect(persistence.calls).toHaveLength(1);
+    expect(transactionPageRepository.updatedInputs).toHaveLength(16);
+    expect(transactionPanelRepository.updatedPanels.map((update) => update.panelId)).toEqual(
+      Array.from({ length: 16 }, (_value, index) => `panel-${index + 1}`),
+    );
+    expect(transactionAssignments.updates).toHaveLength(16);
+    expect(transactionAssignments.updates.slice(0, 2).map((update) => update.assignments[0]?.stateId ?? null))
+      .toEqual([null, null]);
+    expect(transactionAssignments.updates.slice(2).map((update) => update.assignments[0]?.stateId))
+      .toEqual(Array.from({ length: 14 }, () => readyStateId));
+  });
+
   it('continuity v3 は上限に達した台帳パックだけを半分に分け、成功済みパックを再生成しない', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = buildMultiPageEpisodePlanningContext(10);

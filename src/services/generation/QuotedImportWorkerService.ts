@@ -1,7 +1,9 @@
 import type { RepositorySchemaProfile } from '../../repositories/RepositorySchemaProfile.js';
 import { createHash } from 'node:crypto';
 import { ConfigurationError } from '../../domain/errors/index.js';
-import { ENTITY_IMPORT_ANALYSIS_MODEL } from '../../domain/constants/entityReference.js';
+import { isEntityImportAnalysisModel, type EntityImportAnalysisModel } from '../../domain/constants/entityReference.js';
+import type { GenerationQuote } from '../../domain/types/generationQuote.js';
+import type { GenerationJob } from '../../domain/types/job.js';
 import { extensionForEntityReferenceUploadMimeType, imageDataMatchesEntityReferenceUploadMimeType } from '../../domain/constants/entityReferenceUpload.js';
 import type { DatabaseClient, TransactionRunner } from '../../lib/db.js';
 import { parseStructuredFields } from '../../lib/validators/entity.schema.js';
@@ -27,7 +29,7 @@ export class QuotedImportWorkerService {
     try{
       await execution.touchProgress(jobId);
       const quote=await new PostgresGenerationQuoteRepository(this.database).findAcceptedJob(jobId);
-      assertQuotedJobMatches(job,quote,ENTITY_IMPORT_ANALYSIS_MODEL);
+      const analysisModel=assertQuotedImportJobMatches(job,quote);
       const snapshot=quote.plan.snapshot;
       if(snapshot.kind!=='import') throw new ConfigurationError('Import snapshot is invalid');
       const source=snapshot.source;
@@ -48,7 +50,7 @@ export class QuotedImportWorkerService {
       const stabilized=await this.storage.stabilizeUploadedImage({sourceS3Key:source.s3Key,destinationS3Key:destination,mimeType:source.mimeType,eTag:source.eTag});
       if(stabilized.s3Key!==destination) throw new ConfigurationError('Import storage returned an unexpected destination');
       if(await jobs.finalizeCancellation(jobId)) return {status:'processed',jobStatus:'cancelled'};
-      const analysis=await this.analyzer.analyze({entityType:snapshot.entityType,dataUrl:`data:${image.mimeType};base64,${image.imageData.toString('base64')}`});
+      const analysis=await this.analyzer.analyze({entityType:snapshot.entityType,dataUrl:`data:${image.mimeType};base64,${image.imageData.toString('base64')}`,model:analysisModel});
       if(await jobs.finalizeCancellation(jobId)) return {status:'processed',jobStatus:'cancelled'};
       if(!await jobs.beginCommit(jobId)) return {status:'skipped'};
       const completed=await execution.complete(job,{suggestedFields:parseStructuredFields(snapshot.entityType,analysis.suggestedFields),
@@ -62,4 +64,13 @@ export class QuotedImportWorkerService {
       clearInterval(heartbeat);
     }
   }
+}
+
+export function assertQuotedImportJobMatches(job: GenerationJob, quote: GenerationQuote): EntityImportAnalysisModel {
+  const model = quote.plan.providerModelId;
+  if (!isEntityImportAnalysisModel(model)) {
+    throw new ConfigurationError('Quoted import provider model is unsupported');
+  }
+  assertQuotedJobMatches(job, quote, model);
+  return model;
 }

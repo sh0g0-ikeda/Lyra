@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { ConfigurationError } from '../domain/errors/index.js';
 import type { DatabaseClient, TransactionRunner } from './db.js';
 import { PRODUCTION44_EXPANSION_MIGRATIONS } from './production44ExpandedRuntimeSchemaDescriptor.js';
@@ -58,6 +59,7 @@ export const CANONICAL_RUNTIME_MIGRATIONS = [
 
 export const SECURITY_RUNTIME_MIGRATIONS = [...CANONICAL_RUNTIME_MIGRATIONS, '049_add_stripe_credit_recovery.sql'] as const;
 export const WORK_DELETION_RUNTIME_MIGRATIONS = [...SECURITY_RUNTIME_MIGRATIONS, '050_add_work_deletion.sql'] as const;
+export const GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS = [...WORK_DELETION_RUNTIME_MIGRATIONS, '051_add_google_link_recovery.sql'] as const;
 
 export interface RuntimeSchemaCatalog {
   migrationFilenames: string[];
@@ -216,6 +218,9 @@ const POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM = 180000;
 const runtimeSchemaPostgresVersions = new WeakMap<RuntimeSchemaCatalog, number>();
 
 export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSchemaDescription {
+  const recovery = projectGoogleIdentityRecovery(catalog);
+  if (recovery === null) return { kind: 'unsupported', failures: ['GOOGLE_IDENTITY_RECOVERY_SCHEMA_MISMATCH'] };
+  if (recovery.enabled) return describeRuntimeSchema(recovery.catalog);
   if (
     catalog.migrationFilenames.length === 0
     && catalog.relations.every(({ name, kind }) => EMPTY_RELATIONS.has(name) && kind === 'r')
@@ -510,22 +515,26 @@ export interface AttestedCanonicalRuntime {
 export type AttestedRuntime = Readonly<{
   descriptor: 'canonical_fresh_v1';
   repositoryProfile: 'canonical';
-  capabilities: Readonly<{ entityStateMonotonicRevision: boolean; stripeCreditRecovery?: boolean; workDeletion?: boolean }>;
+  capabilities: Readonly<{ entityStateMonotonicRevision: boolean; stripeCreditRecovery?: boolean; workDeletion?: boolean; googleIdentityRecovery?: boolean }>;
 } | {
   descriptor: 'production44_expanded_pg18_v1';
   repositoryProfile: 'production44_expanded_pg18_v1';
-  capabilities: Readonly<{ entityStateMonotonicRevision: true; stripeCreditRecovery?: boolean; workDeletion?: boolean }>;
+  capabilities: Readonly<{ entityStateMonotonicRevision: true; stripeCreditRecovery?: boolean; workDeletion?: boolean; googleIdentityRecovery?: boolean }>;
 }>;
 
 const verifiedRuntimeProofs = new WeakSet<object>();
 
 /** The frozen proof is issued from catalog evidence, never an environment selection. */
 function runtimeProof(catalog: RuntimeSchemaCatalog): AttestedRuntime | null {
+  const recovery = projectGoogleIdentityRecovery(catalog);
+  if (recovery === null) return null;
+  catalog = recovery.catalog;
+  const recoveryCapability = recovery.enabled ? { googleIdentityRecovery: true } : {};
   const canonical = describeRuntimeSchema(catalog).kind === 'canonical_fresh_v1';
   if (!canonical && describeProduction44ExpansionCheckpoint(catalog) !== PRODUCTION44_EXPANSION_MIGRATIONS.length) return null;
   const proof: AttestedRuntime = canonical
-    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql'), stripeCreditRecovery: catalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql'), workDeletion: catalog.migrationFilenames.includes('050_add_work_deletion.sql') }) })
-    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true, stripeCreditRecovery: true, workDeletion: true }) });
+    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql'), stripeCreditRecovery: catalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql'), workDeletion: catalog.migrationFilenames.includes('050_add_work_deletion.sql'), ...recoveryCapability }) })
+    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true, stripeCreditRecovery: true, workDeletion: true, ...recoveryCapability }) });
   verifiedRuntimeProofs.add(proof);
   return proof;
 }
@@ -691,4 +700,75 @@ function sameStrings(actual: readonly string[], expected: readonly string[]): bo
 
 function isTriggerEnabled(enabled: string): boolean {
   return enabled === 'O' || enabled === 'A';
+}
+
+const GOOGLE_IDENTITY_RECOVERY_MIGRATION = '051_add_google_link_recovery.sql';
+const GOOGLE_RECOVERY_TABLE = 'retired_auth_subjects';
+const GOOGLE_RECOVERY_COLUMNS = ['operation_phase', 'source_subject_key'];
+const googleRecoveryDigest = (value: string): string => createHash('sha256').update(value).digest('hex');
+// These definitions were checked against isolated PostgreSQL 18.3 running 051.
+// Projection is permitted only after the whole additive footprint is verified.
+// All pre-051 descriptor checks and expanded catalog fingerprints stay intact.
+const GOOGLE_RECOVERY_COLUMN_ROWS = [
+  ['retired_auth_subjects', 'subject_key', 'text', false, null],
+  ['retired_auth_subjects', 'destination_user_id', 'uuid', false, null],
+  ['retired_auth_subjects', 'created_at', 'timestamp with time zone', false, 'now()'],
+  ['oauth_identity_links', 'operation_phase', 'text', false, "'attempted'::text"],
+  ['oauth_identity_links', 'source_subject_key', 'text', true, null],
+] as const;
+const GOOGLE_RECOVERY_CONSTRAINT_ROWS = [
+  ['retired_auth_subjects', 'retired_auth_subjects_pkey', 'p', 'PRIMARY KEY (subject_key)'],
+  ['retired_auth_subjects', 'retired_auth_subjects_subject_key_check', 'c', 'CHECK (char_length(subject_key) = 43)'],
+  ['retired_auth_subjects', 'retired_auth_subjects_destination_user_id_fkey', 'f', 'FOREIGN KEY (destination_user_id) REFERENCES users(id) ON DELETE RESTRICT'],
+  ['retired_auth_subjects', 'retired_auth_subjects_subject_key_not_null', 'n', 'NOT NULL subject_key'],
+  ['retired_auth_subjects', 'retired_auth_subjects_destination_user_id_not_null', 'n', 'NOT NULL destination_user_id'],
+  ['retired_auth_subjects', 'retired_auth_subjects_created_at_not_null', 'n', 'NOT NULL created_at'],
+  ['oauth_identity_links', 'oauth_identity_links_operation_phase_not_null', 'n', 'NOT NULL operation_phase'],
+  ['oauth_identity_links', 'oauth_identity_links_operation_phase_check', 'c', "CHECK (operation_phase = ANY (ARRAY['ready'::text, 'attempted'::text, 'rejected'::text, 'linked'::text]))"],
+  ['oauth_identity_links', 'oauth_identity_links_source_subject_key_check', 'c', 'CHECK (source_subject_key IS NULL OR char_length(source_subject_key) = 43)'],
+] as const;
+
+function projectGoogleIdentityRecovery(catalog: RuntimeSchemaCatalog): { catalog: RuntimeSchemaCatalog; enabled: boolean } | null {
+  const ownsColumn = (row: RuntimeSchemaCatalog['columns'][number]): boolean => row.relation === GOOGLE_RECOVERY_TABLE
+    || (row.relation === 'oauth_identity_links' && GOOGLE_RECOVERY_COLUMNS.includes(row.name));
+  const ownsConstraint = (row: RuntimeSchemaCatalog['constraints'][number]): boolean => row.relation === GOOGLE_RECOVERY_TABLE
+    || GOOGLE_RECOVERY_CONSTRAINT_ROWS.some(([relation, name]) => row.relation === relation && row.name === name);
+  const recorded = catalog.migrationFilenames.includes(GOOGLE_IDENTITY_RECOVERY_MIGRATION);
+  if (!recorded) {
+    if (catalog.relations.some(row => row.name === GOOGLE_RECOVERY_TABLE) || catalog.columns.some(ownsColumn)
+      || catalog.constraints.some(ownsConstraint) || catalog.indexes.some(row => row.relation === GOOGLE_RECOVERY_TABLE)
+      || catalog.triggers.some(row => row.relation === GOOGLE_RECOVERY_TABLE)) return null;
+    return { catalog, enabled: false };
+  }
+  const version = runtimeSchemaPostgresVersions.get(catalog);
+  if (version === undefined || version < MIN_SUPPORTED_POSTGRES_VERSION_NUM) return null;
+  const columns = GOOGLE_RECOVERY_COLUMN_ROWS.map(([relation, name, type, nullable, expression]) => ({
+    relation, name, type, nullable, defaultExpressionSha256: expression === null ? null : googleRecoveryDigest(expression),
+    identityGeneration: null, generatedExpressionSha256: null,
+  }));
+  const constraints = GOOGLE_RECOVERY_CONSTRAINT_ROWS.filter(([, , type]) => version >= POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM || type !== 'n')
+    .map(([relation, name, type, definition]) => ({ relation, name, type, validated: true, definitionSha256: googleRecoveryDigest(definition) }));
+  if (!sameCatalogRows(catalog.relations.filter(row => row.name === GOOGLE_RECOVERY_TABLE), [
+    { name: GOOGLE_RECOVERY_TABLE, kind: 'r', rowSecurity: false, forceRowSecurity: false },
+  ]) || !sameCatalogRows(catalog.columns.filter(ownsColumn), columns)
+    || !sameCatalogRows(catalog.constraints.filter(ownsConstraint), constraints)
+    || !sameCatalogRows(catalog.indexes.filter(row => row.relation === GOOGLE_RECOVERY_TABLE), [
+      { relation: GOOGLE_RECOVERY_TABLE, name: 'retired_auth_subjects_pkey', unique: true, valid: true, definitionSha256: googleRecoveryDigest('[["subject_key"], ""]') },
+    ]) || catalog.triggers.some(row => row.relation === GOOGLE_RECOVERY_TABLE)) return null;
+  const baseline: RuntimeSchemaCatalog = {
+    ...catalog,
+    migrationFilenames: catalog.migrationFilenames.filter(filename => filename !== GOOGLE_IDENTITY_RECOVERY_MIGRATION),
+    relations: catalog.relations.filter(row => row.name !== GOOGLE_RECOVERY_TABLE),
+    columns: catalog.columns.filter(row => !ownsColumn(row)),
+    constraints: catalog.constraints.filter(row => !ownsConstraint(row)),
+    indexes: catalog.indexes.filter(row => row.relation !== GOOGLE_RECOVERY_TABLE),
+  };
+  if (catalog.migrationFilenames.filter(filename => filename === GOOGLE_IDENTITY_RECOVERY_MIGRATION).length !== 1
+    || !baseline.migrationFilenames.includes('050_add_work_deletion.sql')) return null;
+  runtimeSchemaPostgresVersions.set(baseline, version);
+  return { catalog: baseline, enabled: true };
+}
+function sameCatalogRows(actual: readonly object[], expected: readonly object[]): boolean {
+  const signatures = (rows: readonly object[]): string[] => rows.map(row => JSON.stringify(Object.entries(row).sort(([a], [b]) => a.localeCompare(b)))).sort();
+  return sameStrings(signatures(actual), signatures(expected));
 }

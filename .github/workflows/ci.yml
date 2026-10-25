@@ -72,6 +72,7 @@ jobs:
           --exclude tests/integration/production44Expansion.test.ts
           --exclude tests/integration/production44PersistenceProfile.test.ts
           --exclude tests/integration/production44TerminalNotificationRecovery.test.ts
+          --exclude tests/integration/googleIdentityRecoveryAttestation.test.ts
 
       - name: Run release DB regressions on production PostgreSQL version
         env:

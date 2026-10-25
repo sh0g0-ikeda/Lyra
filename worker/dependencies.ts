@@ -568,7 +568,8 @@ function resolveEpisodeStateTransitionCompiler(): EpisodeStateTransitionCompiler
       },
     };
   }
-  return new OpenAIEpisodeStateTransitionCompiler(client);
+  const profile = resolveEpisodeOpenAIModelProfile(env.OPENAI_EPISODE_TEXT_PROFILE).state;
+  return new OpenAIEpisodeStateTransitionCompiler(client, profile.model, profile.reasoningEffort);
 }
 
 function resolveStoryAiClient(): StoryAiClientPort {

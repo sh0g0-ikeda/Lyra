@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { AppError } from '../../../../src/domain/errors/index.js';
 import { GoogleIdentityLinkService } from '../../../../src/services/auth/GoogleIdentityLinkService.js';
 import type { GoogleIdentityLinkRepository } from '../../../../src/repositories/GoogleIdentityLinkRepository.js';
 import type { GoogleLinkChallenge, VerifiedCognitoIdentity } from '../../../../src/domain/types/googleIdentityLink.js';
@@ -6,25 +7,30 @@ const user = { id: '11111111-1111-4111-8111-111111111111', supabaseId: 'native-s
 const now = new Date('2026-10-01T13:00:00Z');
 const proof: VerifiedCognitoIdentity = { subject: user.supabaseId, username: 'native-user', email: user.email, authTime: now.getTime() / 1000, tokenFingerprint: 'token-hash' };
 const key = '22222222-2222-4222-8222-222222222222';
-function fixture(enabled = true, nativeReturnUri = 'lyra-mobile://auth/identity-link') {
+function fixture(enabled = true, nativeReturnUri = 'lyra-mobile://auth/identity-link', sourceRecoveryEnabled = true) {
     const rows = new Map<string, GoogleLinkChallenge>();
     const reserveIdentity = vi.fn<GoogleIdentityLinkRepository['reserveIdentity']>(async (id, hash) => { const row = rows.get(id)!; row.providerSubjectHash = hash; row.exchangeMaterial = null; });
+    const prepareSourceRetirement = vi.fn<GoogleIdentityLinkRepository['prepareSourceRetirement']>(async () => {});
     const repo: GoogleIdentityLinkRepository = {
         findRequest: vi.fn(async (uid, k) => [...rows.values()].find(x => x.userId === uid && x.requestKey === k) ?? null),
         create: vi.fn(async (row) => { rows.set(row.id, row); return row; }),
         findForUser: vi.fn(async (id, uid) => { const row = rows.get(id); return row?.userId === uid ? row ?? null : null; }),
         claimState: vi.fn(async (hash) => { const row = [...rows.values()].find(x => x.stateHash === hash && x.status === 'pending'); if (!row)
             return null; row.status = 'processing'; return row; }),
+        findConsumedState: vi.fn(async hash => [...rows.values()].find(x => x.stateHash === hash && x.status !== 'pending') ?? null),
+        prepareSourceRetirement,
+        performSourceRetirement: vi.fn(async (_id, _hash, _subject, operation) => operation()),
+        rejectLink: vi.fn(async id => { rows.get(id)!.status = 'failed'; }),
         reserveIdentity,
         performLink: vi.fn(async (id, _hash, op) => { await op(); rows.get(id)!.status = 'linked'; }),
         finish: vi.fn(async (id, status, message) => { const row = rows.get(id)!; row.status = status; row.messageCode = message ?? null; row.exchangeMaterial = null; }),
         completeReconciliation: vi.fn(async (id) => { rows.get(id)!.status = 'linked'; }), expirePending: vi.fn(async () => 0),
     };
     const native = { subject: proof.subject, email: user.email, enabled: true, status: 'CONFIRMED', googleSubjects: [] as string[] };
-    const gateway = { getNativeIdentity: vi.fn(async () => native), linkGoogleIdentity: vi.fn(async () => { }), exchangeCode: vi.fn(async () => ({ subject: 'google-sub', email: user.email })) };
+    const gateway = { getGoogleProfile: vi.fn<import('../../../../src/services/auth/GoogleIdentityLinkService.js').GoogleIdentityLinkGateway['getGoogleProfile']>(async () => null), deleteGoogleProfile: vi.fn(async () => {}), getNativeIdentity: vi.fn(async () => native), linkGoogleIdentity: vi.fn(async () => { }), exchangeCode: vi.fn(async () => ({ subject: 'google-sub', email: user.email })) };
     let clock = now;
-    const service = new GoogleIdentityLinkService({ repository: repo, gateway, config: enabled ? { clientId: 'dedicated-link-client', redirectUri: 'https://api.example.com/api/auth/identity-links/google/callback', webReturnUri: 'https://app.example.com/auth/identity-link', nativeReturnUri, encryptionSecret: 's'.repeat(40) } : null, now: () => clock });
-    return { service, repo, reserveIdentity, gateway, native, rows, setClock: (d: Date) => { clock = d; } };
+    const service = new GoogleIdentityLinkService({ repository: repo, gateway, config: enabled ? { clientId: 'dedicated-link-client', redirectUri: 'https://api.example.com/api/auth/identity-links/google/callback', webReturnUri: 'https://app.example.com/auth/identity-link', nativeReturnUri, sourceRecoveryEnabled, encryptionSecret: 's'.repeat(40) } : null, now: () => clock });
+    return { service, repo, reserveIdentity, prepareSourceRetirement, gateway, native, rows, setClock: (d: Date) => { clock = d; } };
 }
 describe('GoogleIdentityLinkService', () => {
     it('検証APKで連携を取り消した場合に公開アプリではなく検証アプリへ戻る', async () => {
@@ -50,8 +56,63 @@ describe('GoogleIdentityLinkService', () => {
         await expect(f.service.start(user, proof, { platform: 'web', request_key: key })).rejects.toMatchObject({ code: 'IDENTITY_LINK_CONFLICT' });
         expect(f.repo.create).not.toHaveBeenCalled();
     } });
-    it('callback is single-use, checks email, commits intent before provider mutation and returns no token', async () => { const f = fixture(); const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key }); const state = new URL(started.authorization_url!).searchParams.get('state')!; const redirect = await f.service.callback({ state, code: 'one-time-code' }); expect(redirect).toBe(`lyra-mobile://auth/identity-link?challenge_id=${started.challenge_id}`); expect(f.reserveIdentity.mock.invocationCallOrder[0]).toBeLessThan(f.gateway.linkGoogleIdentity.mock.invocationCallOrder[0]!); expect(f.rows.get(started.challenge_id)!.status).toBe('linked'); expect(await f.service.callback({ state, code: 'same-code' })).toBeNull(); expect(f.gateway.linkGoogleIdentity).toHaveBeenCalledTimes(1); });
+    it('callback is single-use, checks email, commits intent before provider mutation and returns no token', async () => { const f = fixture(); const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key }); const state = new URL(started.authorization_url!).searchParams.get('state')!; const redirect = await f.service.callback({ state, code: 'one-time-code' }); expect(redirect).toBe(`lyra-mobile://auth/identity-link?challenge_id=${started.challenge_id}`); expect(f.reserveIdentity.mock.invocationCallOrder[0]).toBeLessThan(f.gateway.linkGoogleIdentity.mock.invocationCallOrder[0]!); expect(f.rows.get(started.challenge_id)!.status).toBe('linked'); expect(await f.service.callback({ state, code: 'same-code' })).toBe(`lyra-mobile://auth/identity-link?challenge_id=${started.challenge_id}`); expect(f.gateway.exchangeCode).toHaveBeenCalledTimes(1); expect(f.gateway.linkGoogleIdentity).toHaveBeenCalledTimes(1); });
     it('rejects a different verified Google email without linking or persisting raw identity', async () => { const f = fixture(); f.gateway.exchangeCode.mockResolvedValue({ subject: 'google-sub', email: 'other@example.com' }); const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key }); await f.service.callback({ state: new URL(started.authorization_url!).searchParams.get('state')!, code: 'code' }); expect(f.gateway.linkGoogleIdentity).not.toHaveBeenCalled(); expect(f.rows.get(started.challenge_id)?.messageCode).toBe('EMAIL_MISMATCH'); });
     it('unknown provider outcome is reconciled only by read, never retried as mutation', async () => { const f = fixture(); f.gateway.linkGoogleIdentity.mockRejectedValue(new Error('provider response secret')); const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key }); await f.service.callback({ state: new URL(started.authorization_url!).searchParams.get('state')!, code: 'code' }); expect(f.rows.get(started.challenge_id)?.status).toBe('recovery_required'); f.native.googleSubjects = ['google-sub']; const status = await f.service.status(user, started.challenge_id); expect(status.status).toBe('linked'); expect(JSON.stringify(status)).not.toContain('secret'); expect(f.gateway.linkGoogleIdentity).toHaveBeenCalledTimes(1); });
+    it('未使用Google認証を退避してから削除と既存アカウントへの連携を行う', async () => {
+        const f = fixture();
+        const profile = { username: 'google_google-sub', subject: 'orphan-sub', email: user.email, googleSubject: 'google-sub' };
+        f.gateway.getGoogleProfile.mockResolvedValue(profile);
+        const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key });
+        await f.service.callback({ state: new URL(started.authorization_url!).searchParams.get('state')!, code: 'code' });
+        expect(f.repo.prepareSourceRetirement).toHaveBeenCalledWith(started.challenge_id, expect.any(String), 'orphan-sub');
+        expect(f.gateway.deleteGoogleProfile).toHaveBeenCalledWith(profile);
+        expect(f.prepareSourceRetirement.mock.invocationCallOrder[0]).toBeLessThan(f.gateway.deleteGoogleProfile.mock.invocationCallOrder[0]!);
+        expect(f.gateway.deleteGoogleProfile.mock.invocationCallOrder[0]).toBeLessThan(f.gateway.linkGoogleIdentity.mock.invocationCallOrder[0]!);
+        expect(f.rows.get(started.challenge_id)?.status).toBe('linked');
+    });
+    it('Google側のLyraユーザーが存在する場合は認証削除も連携も行わない', async () => {
+        const f = fixture();
+        f.gateway.getGoogleProfile.mockResolvedValue({ username: 'google_google-sub', subject: 'owned-sub', email: user.email, googleSubject: 'google-sub' });
+        f.prepareSourceRetirement.mockRejectedValue(new Error('owned identity'));
+        const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key });
+        await f.service.callback({ state: new URL(started.authorization_url!).searchParams.get('state')!, code: 'code' });
+        expect(f.gateway.deleteGoogleProfile).not.toHaveBeenCalled();
+        expect(f.gateway.linkGoogleIdentity).not.toHaveBeenCalled();
+    });
+    it('AWSが連携を確定拒否した場合は不明結果と区別して次の認証を可能にする', async () => {
+        const f = fixture();
+        f.gateway.linkGoogleIdentity.mockRejectedValue(new AppError('GOOGLE_LINK_REJECTED', 'safe message', 409));
+        const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key });
+        await f.service.callback({ state: new URL(started.authorization_url!).searchParams.get('state')!, code: 'code' });
+        expect(f.repo.rejectLink).toHaveBeenCalledWith(started.challenge_id, expect.any(String));
+        expect(f.rows.get(started.challenge_id)?.status).toBe('failed');
+    });
+    it('連携済みGoogle識別子を確認できた場合は削除や再連携を行わない', async () => {
+        const f = fixture(); f.native.googleSubjects = ['google-sub'];
+        const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key });
+        await f.service.callback({ state: new URL(started.authorization_url!).searchParams.get('state')!, code: 'code' });
+        expect(f.gateway.deleteGoogleProfile).not.toHaveBeenCalled();
+        expect(f.gateway.linkGoogleIdentity).not.toHaveBeenCalled();
+        expect(f.rows.get(started.challenge_id)?.status).toBe('linked');
+    });
+    it('回復機能OFFの場合は既存のGoogle認証を削除しない', async () => {
+        const f = fixture(true, 'lyra-mobile://auth/identity-link', false);
+        f.gateway.getGoogleProfile.mockResolvedValue({ username: 'google_google-sub', subject: 'orphan-sub', email: user.email, googleSubject: 'google-sub' });
+        const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key });
+        await f.service.callback({ state: new URL(started.authorization_url!).searchParams.get('state')!, code: 'code' });
+        expect(f.repo.prepareSourceRetirement).not.toHaveBeenCalled();
+        expect(f.gateway.deleteGoogleProfile).not.toHaveBeenCalled();
+        expect(f.gateway.linkGoogleIdentity).not.toHaveBeenCalled();
+    });
+    it('消費済みでも有効期限を超えたcallbackは認証や連携を再実行しない', async () => {
+        const f = fixture(); const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key });
+        const state = new URL(started.authorization_url!).searchParams.get('state')!;
+        await f.service.callback({ state, code: 'code' });
+        f.setClock(new Date(now.getTime() + 601000));
+        expect(await f.service.callback({ state, code: 'code' })).toBeNull();
+        expect(f.gateway.exchangeCode).toHaveBeenCalledTimes(1);
+        expect(f.gateway.linkGoogleIdentity).toHaveBeenCalledTimes(1);
+    });
     it('status is owner-scoped', async () => { const f = fixture(); const started = await f.service.start(user, proof, { platform: 'mobile', request_key: key }); await expect(f.service.status({ ...user, id: 'different' }, started.challenge_id)).rejects.toMatchObject({ statusCode: 404 }); });
 });

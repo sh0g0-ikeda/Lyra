@@ -10,8 +10,8 @@ const state = ({
 vi.mock('../../../src/lib/production44RuntimeSchemaAttestation.js', () => ({
   attestProduction44RuntimeSchema: state.attest,
 }));
-vi.mock('../../../src/lib/production44ExpandedRuntimeSchemaAttestation.js', () => ({
-  attestProduction44ExpandedRuntimeSchema: state.attestExpanded,
+vi.mock('../../../src/lib/runtimeSchemaAttestation.js', () => ({
+  attestRuntimeSchema: state.attestExpanded,
 }));
 vi.mock('../../../src/repositories/PushNotificationOutboxRepository.js', () => ({
   PostgresPushNotificationOutboxRepository: class {
@@ -49,7 +49,7 @@ afterAll(restoreBunModuleMocks);
 
 describe('終端生成通知recovery repository', () => {
   it('expandedは専用exact attestorをawaitして同profileのrepositoryを返す', async () => {
-    state.attestExpanded.mockResolvedValue('production44_expanded_pg18_v1');
+    state.attestExpanded.mockResolvedValue({ repositoryProfile: 'production44_expanded_pg18_v1' });
     const repository=await createTerminalGenerationNotificationRecoveryRepository(database,'production44_expanded_pg18_v1');
     expect(state.attestExpanded).toHaveBeenCalledTimes(1);
     expect(state.attestExpanded).toHaveBeenCalledWith(database);
@@ -58,7 +58,11 @@ describe('終端生成通知recovery repository', () => {
     state.attestExpanded.mockRejectedValue(new Error('SCHEMA_UNSUPPORTED'));
     await expect(createTerminalGenerationNotificationRecoveryRepository(database,'production44_expanded_pg18_v1')).rejects.toThrow('SCHEMA_UNSUPPORTED');
   });
-  it('production44文字列だけではSQLを許可せずexact attestation後に同DB outboxを固定生成する', async () => {
+  it('runtime認定のprofileが異なる場合にexpanded repositoryを生成しない', async () => {
+    state.attestExpanded.mockResolvedValue({ repositoryProfile: 'canonical' });
+    await expect(createTerminalGenerationNotificationRecoveryRepository(database, 'production44_expanded_pg18_v1')).rejects.toThrow('SCHEMA_UNSUPPORTED');
+    expect(state.construct).not.toHaveBeenCalled();
+  });  it('production44文字列だけではSQLを許可せずexact attestation後に同DB outboxを固定生成する', async () => {
     let finish!: () => void;
     state.attest.mockReturnValue(new Promise(resolve => { finish = () => resolve('production44_pg18_v1'); }));
     const pending = createTerminalGenerationNotificationRecoveryRepository(database, 'production44_pg18_v1');
