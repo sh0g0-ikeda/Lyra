@@ -12,6 +12,7 @@ import type {
 } from '../domain/types/balloon.js';
 import type { PageDialogueMode, PageStatus } from '../domain/types/page.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
+import { transitionLockedPageForExplicitEdit } from './PageEditAdmission.js';
 
 export interface PageBalloonContext {
   pageId: string;
@@ -570,34 +571,37 @@ export class PostgresBalloonRepository implements BalloonRepository {
     userId: string,
     organizationId: string | null = null,
   ): Promise<boolean> {
-    const result = await this.client.query(
-      `
-      DELETE FROM balloons
-      USING pages, episodes, chapters, works
-      WHERE balloons.id = $1
-        AND balloons.page_id = pages.id
-        AND pages.episode_id = episodes.id
-        AND episodes.chapter_id = chapters.id
-        AND chapters.work_id = works.id
-        AND (
-          ($3::uuid IS NULL AND works.user_id = $2 AND works.organization_id IS NULL)
-          OR (
-            $3::uuid IS NOT NULL
-            AND works.organization_id = $3::uuid
-            AND EXISTS (
-              SELECT 1
-              FROM organization_members
-              WHERE organization_members.organization_id = works.organization_id
-                AND organization_members.user_id = $2
-                AND organization_members.status = 'active'
-            )
-          )
-        )
-      `,
-      [balloonId, userId, organizationId],
-    );
+    return this.client.transaction(async (transactionClient) => {
+      const pageId = await findAuthorizedBalloonPageId(
+        transactionClient,
+        balloonId,
+        userId,
+        organizationId,
+      );
+      if (pageId === null) {
+        return false;
+      }
 
-    return (result.rowCount ?? 0) > 0;
+      const panelIds = await lockEditablePageAndPanels(
+        transactionClient,
+        pageId,
+        userId,
+        organizationId,
+      );
+      if (panelIds === null) {
+        return false;
+      }
+
+      const result = await transactionClient.query(
+        `
+        DELETE FROM balloons
+        WHERE id = $1::uuid
+          AND page_id = $2::uuid
+        `,
+        [balloonId, pageId],
+      );
+      return (result.rowCount ?? 0) > 0;
+    });
   }
 }
 
@@ -687,6 +691,7 @@ async function lockEditablePageAndPanels(
     `,
     [pageId],
   );
+  await transitionLockedPageForExplicitEdit(client, page.page_id, page.status);
   return panelResult.rows.map((panel) => panel.id);
 }
 
@@ -716,9 +721,6 @@ function ensurePanelOrderReferenceWithinBounds(
 function ensureBalloonWriteEnabled(
   page: Pick<LockedBalloonPageRow, 'status' | 'dialogue_mode' | 'generated_image'>,
 ): void {
-  if (page.status === 'confirmed') {
-    throw new ConflictError('Confirmed pages must be reopened before editing balloons');
-  }
   if (page.status === 'generating') {
     throw new ConflictError('Balloons cannot change while page generation is in progress');
   }

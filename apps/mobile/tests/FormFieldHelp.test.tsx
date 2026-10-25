@@ -1,13 +1,12 @@
 import React from 'react';
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FormField } from '@/components/FormField';
 import { colors } from '@/constants/theme';
 
-// U06 / Unified Spec §§2, 8: help is an optional, local presentation toggle.
-// Keep the controlled input mounted with its existing bounds and focus behavior;
-// opening help must never mutate drafts, call editing handlers, or make requests.
+// Unified Spec §§2, 8: field hints must not add a competing disclosure or obscure
+// the primary input. Legacy hint props remain accepted only for source compatibility.
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', () => ({
@@ -36,14 +35,6 @@ function renderField(overrides: Partial<React.ComponentProps<typeof FormField>> 
   return { renderer: renderer!, onChangeText, props };
 }
 
-function disclosure(renderer: ReactTestRenderer): ReactTestInstance {
-  return renderer.root.findByType('pressable');
-}
-
-function toggleHelp(renderer: ReactTestRenderer): void {
-  act(() => disclosure(renderer).props.onPress());
-}
-
 function hasHelp(renderer: ReactTestRenderer, text = help): boolean {
   return renderer.root.findAll((node) => node.type === 'text' && node.props.children === text).length > 0;
 }
@@ -54,56 +45,34 @@ afterEach(() => {
   }
 });
 
-describe('FormField の任意ヘルプ', () => {
-  it('開閉ラベルがある場合に初期状態では本文を隠し44pt以上のボタンを表示する', () => {
+describe('FormField の入力ヒント非表示', () => {
+  it('互換用のヒントpropsがあっても本文と開閉ボタンを表示しない', () => {
     const { renderer } = renderField();
-    const action = disclosure(renderer);
-
     expect(hasHelp(renderer)).toBe(false);
-    expect(action.props.accessibilityRole).toBe('button');
-    expect(action.props.accessibilityLabel).toBe(helpDisclosureLabel);
-    expect(action.props.accessibilityState).toMatchObject({ expanded: false });
-    const styles = [action.props.style].flat().filter(Boolean);
-    expect(styles.some((style) => style.minHeight >= 44)).toBe(true);
-    expect(styles.some((style) => style.minWidth >= 44)).toBe(true);
+    expect(renderer.root.findAllByType('pressable')).toHaveLength(0);
   });
 
-  it('ボタンを繰り返し押した場合に本文の表示とアクセシビリティの開閉状態が切り替わる', () => {
-    const { renderer } = renderField();
-
-    for (const expanded of [true, false, true, false]) {
-      toggleHelp(renderer);
-      expect(hasHelp(renderer)).toBe(expanded);
-      expect(disclosure(renderer).props.accessibilityState).toMatchObject({ expanded });
-    }
-  });
-
-  it.each(['', '  未保存の物語\n  '])('入力値が「%s」の場合に開閉しても値・入力インスタンス・フォーカス表示を保持する', (value) => {
+  it.each(['', '  未保存の物語\n  '])('入力値が「%s」の場合も値・入力インスタンス・フォーカス表示を保持する', (value) => {
     const { renderer, onChangeText } = renderField({ value, maxLength: 500, placeholder: '短い例' });
     const input = renderer.root.findByType('input');
     act(() => input.props.onFocus());
 
-    for (let count = 0; count < 4; count += 1) {
-      toggleHelp(renderer);
-      const current = renderer.root.findByType('input');
-      expect(current).toBe(input);
-      expect(current.props.value).toBe(value);
-      expect(current.props.onChangeText).toBe(onChangeText);
-      expect(current.props.placeholder).toBe('短い例');
-      expect(current.props.maxLength).toBe(500);
-      expect(current.props.style).toContainEqual(expect.objectContaining({ borderColor: colors.primary }));
-      expect(renderer.root.findAllByType('text').some((node) =>
-        node.children.join('') === `${value.length}/500`
-      )).toBe(true);
-    }
+    const current = renderer.root.findByType('input');
+    expect(current).toBe(input);
+    expect(current.props.value).toBe(value);
+    expect(current.props.onChangeText).toBe(onChangeText);
+    expect(current.props.placeholder).toBe('短い例');
+    expect(current.props.maxLength).toBe(500);
+    expect(current.props.style).toContainEqual(expect.objectContaining({ borderColor: colors.primary }));
+    expect(renderer.root.findAllByType('text').some((node) =>
+      node.children.join('') === `${value.length}/500`
+    )).toBe(true);
     expect(onChangeText).not.toHaveBeenCalled();
   });
 
-  it('言語と入力値が更新された場合に新しいラベルと本文を使い開閉状態と入力インスタンスを保持する', () => {
+  it('言語と入力値が更新されてもヒントを出さず入力インスタンスを保持する', () => {
     const { renderer, onChangeText, props } = renderField();
     const input = renderer.root.findByType('input');
-    toggleHelp(renderer);
-
     act(() => renderer.update(
       <FormField
         {...props}
@@ -114,22 +83,19 @@ describe('FormField の任意ヘルプ', () => {
       />
     ));
 
-    expect(disclosure(renderer).props.accessibilityLabel).toBe('Writing tips');
-    expect(disclosure(renderer).props.accessibilityState.expanded).toBe(true);
-    expect(hasHelp(renderer, "Describe the characters' actions and feelings")).toBe(true);
+    expect(renderer.root.findAllByType('pressable')).toHaveLength(0);
+    expect(hasHelp(renderer, "Describe the characters' actions and feelings")).toBe(false);
     expect(hasHelp(renderer)).toBe(false);
     expect(renderer.root.findByType('input')).toBe(input);
     expect(input.props.accessibilityLabel).toBe('Synopsis');
     expect(input.props.value).toBe('new unsaved text');
-    toggleHelp(renderer);
-    expect(hasHelp(renderer, "Describe the characters' actions and feelings")).toBe(false);
     expect(onChangeText).not.toHaveBeenCalled();
   });
 
-  it('開閉ラベルを指定しない場合に従来どおりヘルプ本文を常時表示する', () => {
+  it('開閉ラベルを指定しない場合もヘルプ本文を表示しない', () => {
     const { renderer, onChangeText } = renderField({ helpDisclosureLabel: undefined });
 
-    expect(hasHelp(renderer)).toBe(true);
+    expect(hasHelp(renderer)).toBe(false);
     expect(renderer.root.findAllByType('pressable')).toHaveLength(0);
     expect(onChangeText).not.toHaveBeenCalled();
   });
@@ -141,7 +107,7 @@ describe('FormField の任意ヘルプ', () => {
     expect(renderer.root.findAllByType('pressable')).toHaveLength(0);
   });
 
-  it('読み取り専用の複数行入力の場合に入力制限を保持したままヘルプを閲覧できる', () => {
+  it('読み取り専用の複数行入力でも入力制限を保持しヒントを表示しない', () => {
     const { renderer, onChangeText } = renderField({
       editable: false,
       multiline: true,
@@ -153,9 +119,7 @@ describe('FormField の任意ヘルプ', () => {
     });
     const input = renderer.root.findByType('input');
     act(() => input.props.onContentSizeChange({ nativeEvent: { contentSize: { height: 300 } } }));
-    toggleHelp(renderer);
-
-    expect(hasHelp(renderer)).toBe(true);
+    expect(hasHelp(renderer)).toBe(false);
     expect(input.props).toMatchObject({ editable: false, multiline: true, maxLength: 500, autoCorrect: false, autoCapitalize: 'none' });
     expect(input.props.style).toContainEqual({ height: 200, maxHeight: 200 });
     expect(onChangeText).not.toHaveBeenCalled();

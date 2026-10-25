@@ -45,15 +45,15 @@ describe('actionable error screen integration', () => {
     );
   });
 
-  it('gives active job, credit, and frame mismatch blockers direct actions', () => {
+  it('生成を止める条件は維持し、PagesとCharactersに受動的blockerカードを重ねない', () => {
     const pages = readMobileSource('src/screens/PagesScreen.tsx');
     const characters = readMobileSource('src/screens/CharactersScreen.tsx');
 
-    expect(pages).toContain("pageGenerationBlockerRecoveryTarget(blocker.code)");
-    expect(pages).toContain("errorRecoveryActionLabel(recoveryTarget, language)");
-    expect(characters).toContain(
-      "entityGenerationBlockerRecoveryTarget(code)"
-    );
+    expect(pages).toContain('serverGenerationBlocked ||');
+    expect(pages).toContain('generationBlockerMessage(readiness.blockers[0], language)');
+    expect(pages).not.toContain('pageGenerationBlockerRecoveryTarget(blocker.code)');
+    expect(characters).not.toContain('<EntityGenerationBlockers');
+    expect(characters).not.toContain("entityGenerationBlockerRecoveryTarget(code)");
   });
 
   it('gives the shared workspace hierarchy query its own recovery commands', () => {

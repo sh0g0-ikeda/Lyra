@@ -56,7 +56,6 @@ vi.mock('@/state/dirtyState', () => ({
   useDirtyEditorRegistration: (input: typeof registration) => { registration = input; }
 }));
 async function render(): Promise<void> { await act(async () => { if (root) root.update(<StoryScreen />); else root = create(<StoryScreen />); }); }
-async function changeStates(value: unknown): Promise<void> { await act(async () => { root?.root.findByType('starting-states').props.onChange(value); }); }
 function field(label: string): { props: Record<string, (value: string) => void> } { return root!.root.findAllByType('field').find((node) => node.props.label === label)!; }
 
 describe('Story既存保存と開始状態の統合', () => {
@@ -91,7 +90,6 @@ describe('Story既存保存と開始状態の統合', () => {
     const pagesField = (): ReactTestRenderer['root'] => root!.root.findAllByType('field').find(node => node.props.keyboardType === 'numeric')!;
     await act(async () => body().props.onChangeText('Local story'));
     await act(async () => pagesField().props.onChangeText('7'));
-    await changeStates([]);
     await act(async () => { await expect(registration.save()).rejects.toBe(failure); });
     const errors = root!.root.findAllByType('error-notice');
     expect(errors).toHaveLength(1);
@@ -100,7 +98,7 @@ describe('Story既存保存と開始状態の統合', () => {
     expect(field('タイトル').props.value).toBe('Local title');
     expect(body().props.value).toBe('Local story');
     expect(pagesField().props.value).toBe('7');
-    expect(root!.root.findByType('starting-states').props.value).toEqual([]);
+    expect(root!.root.findAllByType('starting-states')).toHaveLength(0);
     await act(async () => errors[0].props.actions.retry());
     expect(updateEpisode).toHaveBeenCalledOnce();
     expect(field('タイトル').props.value).toBe('Local title');
@@ -118,34 +116,17 @@ describe('Story既存保存と開始状態の統合', () => {
     expect(root!.root.findAllByType('error-notice')).toHaveLength(0);
     expect(field('タイトル').props.value).toBe('Next local draft');
   });
-  it('開始状態だけを明示クリアしても既存dirty保存を通り空配列を送信する', async () => {
-    await render(); await changeStates([]);
-    expect(registration.dirty).toBe(true);
+  it('開始状態UIを表示せず、他のストーリー編集で保存済み開始状態を消さない', async () => {
+    await render();
+    expect(root?.root.findAllByType('starting-states')).toHaveLength(0);
+    await act(async () => field('タイトル').props.onChangeText('Renamed'));
     await act(async () => { await registration.save(); });
-    expect(updateEpisode.mock.calls[0][1]).toMatchObject({ starting_entity_states: [], expected_updated_at: 'revision' });
-  });
-  it('破棄では開始状態を保存値へ戻し次の話へ未保存値を漏らさない', async () => {
-    await render(); await changeStates([{ entity_id: 'entity', state_id: null }]);
-    await act(async () => registration.discard());
-    expect(root?.root.findByType('starting-states').props.value).toEqual([{ entity_id: 'entity', state_id: 'saved-state' }]);
-    await changeStates([]);
-    episode = { ...episode, id: 'next', starting_entity_states: undefined };
-    selection.episodeId = 'next';
-    await render();
-    expect(root?.root.findByType('starting-states').props.value).toEqual([]);
-    expect(registration.dirty).toBe(false);
-  });
-  it('能力OFFでも保存済み状態をread-onlyで保持する', async () => {
-    available = false;
-    await render();
-    expect(root?.root.findByType('starting-states').props.disabled).toBe(true);
-    expect(root?.root.findByType('starting-states').props.value).toEqual(episode.starting_entity_states);
+    expect(updateEpisode.mock.calls[0][1]).not.toHaveProperty('starting_entity_states');
   });
   it('staleの最新読込は明示確認されるまで全draftを保持する', async () => {
     const { ApiError } = await import('@/lib/api');
     updateEpisode.mockRejectedValue(new ApiError('stale', 409, 'RESOURCE_STALE'));
     await render();
-    await changeStates([]);
     await act(async () => field('タイトル').props.onChangeText('Local title'));
     await act(async () => { await registration.save().catch(() => undefined); });
     const reload = root?.root.findAllByType('button').find((button) => button.props.label === '最新状態を読み込み');
@@ -153,15 +134,14 @@ describe('Story既存保存と開始状態の統合', () => {
     await act(async () => reload?.props.onPress());
     expect(confirmReload).toHaveBeenCalledWith(expect.objectContaining({ scope: 'story', language: 'ja' }));
     expect(fetchQuery).not.toHaveBeenCalled();
-    expect(root?.root.findByType('starting-states').props.value).toEqual([]);
     await act(async () => { confirmReload.mock.calls[0][0].onConfirm(); });
     expect(fetchQuery).toHaveBeenCalledOnce();
-    expect(root?.root.findByType('starting-states').props.value).toEqual(episode.starting_entity_states);
   });
   it('最新読込の確認後に話が変わった場合は古い確認でdraftを置き換えない', async () => {
     const { ApiError } = await import('@/lib/api');
     updateEpisode.mockRejectedValue(new ApiError('stale', 409, 'RESOURCE_STALE'));
-    await render(); await changeStates([]);
+    await render();
+    await act(async () => field('タイトル').props.onChangeText('Local title'));
     await act(async () => { await registration.save().catch(() => undefined); });
     await act(async () => root?.root.findAllByType('button').find((button) => button.props.label === '最新状態を読み込み')?.props.onPress());
     const oldConfirmation = confirmReload.mock.calls[0][0];
@@ -176,7 +156,8 @@ describe('Story既存保存と開始状態の統合', () => {
   it('最新読込中の追加編集を古い応答で上書きしない', async () => {
     const { ApiError } = await import('@/lib/api');
     updateEpisode.mockRejectedValue(new ApiError('stale', 409, 'RESOURCE_STALE'));
-    await render(); await changeStates([]);
+    await render();
+    await act(async () => field('タイトル').props.onChangeText('Local title'));
     await act(async () => { await registration.save().catch(() => undefined); });
     await act(async () => root?.root.findAllByType('button').find((button) => button.props.label === '最新状態を読み込み')?.props.onPress());
     let finish: (value: { episodes: EpisodeRecord[] }) => void = () => undefined;
@@ -185,7 +166,6 @@ describe('Story既存保存と開始状態の統合', () => {
     await act(async () => field('タイトル').props.onChangeText('Newer local title'));
     await act(async () => finish({ episodes: [{ ...episode, title: 'Server title' }] }));
     expect(root?.root.findAllByType('field').find((node) => node.props.label === 'タイトル')?.props.value).toBe('Newer local title');
-    expect(root?.root.findByType('starting-states').props.value).toEqual([]);
   });
 
 });

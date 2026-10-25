@@ -217,11 +217,28 @@ describePostgres('page panel structure safety', () => {
     }
   });
 
-  it.each(['confirmed', 'generating'])('Pageが%sの場合に直後追加を一切保存しない', async (status) => {
+  it('confirmed Pageへの直後追加は同じtransactionでeditingへ遷移する', async () => {
     const ids = createFixtureIds();
     try {
       await insertFixture(pool, ids);
-      await pool.query('UPDATE pages SET status = $2 WHERE id = $1::uuid', [ids.pageId, status]);
+      await pool.query("UPDATE pages SET status = 'confirmed' WHERE id = $1::uuid", [ids.pageId]);
+      await expect(createService(pool).apply(ids.userId, ids.pageId, {
+        expectedPanelIds: ids.panelIds,
+        operation: { type: 'insert_after', panelId: ids.panelIds[0] },
+      })).resolves.toMatchObject({ panelIds: expect.any(Array) });
+      const after = await readStructureSnapshot(pool, ids.pageId);
+      expect(after.page).toMatchObject({ status: 'editing' });
+      expect(after.panels).toHaveLength(4);
+    } finally {
+      await removeFixture(pool, ids);
+    }
+  });
+
+  it('Pageがgeneratingの場合に直後追加を一切保存しない', async () => {
+    const ids = createFixtureIds();
+    try {
+      await insertFixture(pool, ids);
+      await pool.query("UPDATE pages SET status = 'generating' WHERE id = $1::uuid", [ids.pageId]);
       const before = await readStructureSnapshot(pool, ids.pageId);
       expect(await rejectionOf(createService(pool).apply(ids.userId, ids.pageId, {
         expectedPanelIds: ids.panelIds,

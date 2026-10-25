@@ -17,6 +17,13 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
     this.queries.push(text);
     this.values = values;
 
+    if (text.includes('FOR UPDATE OF pages')) {
+      return {
+        command: 'SELECT', rowCount: 1, oid: 0, fields: [],
+        rows: [{ page_id: 'page-1', page_status: 'editing' }] as unknown as T[],
+      };
+    }
+
     return {
       command: 'SELECT',
       rowCount: 1,
@@ -42,7 +49,8 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
     expect(client.transactionCount).toBe(1);
     expect(client.queries[0]).toContain('FROM users');
     expect(client.queries[1]).toContain('account_deletion_requests');
-    expect(client.queries[2]).toContain('UPDATE panels');
+    expect(client.queries[2]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[3]).toContain('UPDATE panels');
   });
 
   it('user_idでPanel所有者を絞ってcontextを取得する', async () => {
@@ -107,8 +115,9 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
       },
     ]);
 
-    expect(client.queries[0]).toContain('UPDATE panels');
-    expect(client.queries[0]).toContain('works.user_id = $2');
+    expect(client.queries[0]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[1]).toContain('UPDATE panels');
+    expect(client.queries[1]).toContain('works.user_id = $2');
     expect(client.values).toEqual([
       'panel-1',
       'user-1',
@@ -129,7 +138,7 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
       null,
     ]);
     expect(assignments?.[0]).toMatchObject({ entityId: 'entity-1', stateId: 'state-1' });
-    expect(client.transactionCount).toBe(0);
+    expect(client.transactionCount).toBe(1);
     expect(client.queries.join('\n')).not.toContain('account_deletion_requests');
   });
 
@@ -218,25 +227,43 @@ describe('PostgresPanelEntityAssignmentRepository', () => {
     expect(client.queries.map(queryKind)).toEqual(['page-lock', 'panel-lock']);
   });
 
-  it.each(['confirmed', 'generating'] as const)(
-    '%s Pageでは条件付き保存を更新前に拒否する',
-    async (pageStatus) => {
-      const client = new ConditionalQueryClient();
-      client.pageStatus = pageStatus;
-      const repository = new PostgresPanelEntityAssignmentRepository(client);
+  it('confirmed Pageでは条件付き保存とediting遷移を同じtransactionで行う', async () => {
+    const client = new ConditionalQueryClient();
+    client.pageStatus = 'confirmed';
+    const repository = new PostgresPanelEntityAssignmentRepository(client);
 
-      const result = await repository.replacePanelEntityAssignmentsConditionally(
-        'panel-1',
-        'user-1',
-        [conditionalAssignment()],
-        [conditionalAssignment()],
-        null,
-      );
+    const result = await repository.replacePanelEntityAssignmentsConditionally(
+      'panel-1',
+      'user-1',
+      [conditionalAssignment()],
+      [conditionalAssignment()],
+      null,
+    );
 
-      expect(result).toEqual({ status: 'page_not_editable' });
-      expect(client.queries.map(queryKind)).toEqual(['page-lock']);
-    },
-  );
+    expect(result).toEqual({ status: 'saved', assignments: [conditionalAssignment()] });
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries.map(queryKind)).toEqual([
+      'page-lock',
+      'panel-lock',
+      'entity-lock',
+      'state-lock',
+      'page-transition',
+      'panel-update',
+    ]);
+  });
+
+  it('generating Pageでは条件付き保存を更新前に拒否する', async () => {
+    const client = new ConditionalQueryClient();
+    client.pageStatus = 'generating';
+    const repository = new PostgresPanelEntityAssignmentRepository(client);
+
+    const result = await repository.replacePanelEntityAssignmentsConditionally(
+      'panel-1', 'user-1', [conditionalAssignment()], [conditionalAssignment()], null,
+    );
+
+    expect(result).toEqual({ status: 'page_not_editable' });
+    expect(client.queries.map(queryKind)).toEqual(['page-lock']);
+  });
 
   it('同じworkの会話speakerは画面外にしてもIDを保持できる', async () => {
     const client = new ConditionalQueryClient();
@@ -287,6 +314,8 @@ class ConditionalQueryClient implements DatabaseClient, TransactionRunner {
           ? [{ id: 'entity-1' }]
           : kind === 'state-lock'
             ? [{ entity_id: 'entity-1', state_id: 'state-1' }]
+            : kind === 'page-transition'
+              ? [{ id: 'page-1' }]
             : kind === 'panel-update'
               ? [{ entities: JSON.parse(String(values?.[1])) as unknown }]
               : [];
@@ -312,6 +341,7 @@ function queryKind(text: string): string {
   if (text.includes('FOR UPDATE') && text.includes('FROM panels')) return 'panel-lock';
   if (text.includes('FOR KEY SHARE') && text.includes('FROM entities')) return 'entity-lock';
   if (text.includes('FOR KEY SHARE') && text.includes('entity_states')) return 'state-lock';
+  if (text.includes("SET status = 'editing'")) return 'page-transition';
   if (text.includes('UPDATE panels')) return 'panel-update';
   return 'unknown';
 }

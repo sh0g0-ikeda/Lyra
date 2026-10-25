@@ -43,6 +43,7 @@ describe('createMeRoutes', () => {
     expect(currentSessionSchema.safeParse(payload).success).toBe(true);
     expect(payload).toEqual({
       capabilities: {
+        automatic_page_reopen_on_write: true,
         generation_quotes: false,
         push_notifications: false,
         web_image_delivery: false,
@@ -93,6 +94,7 @@ describe('createMeRoutes', () => {
     expect(currentSessionSchema.safeParse(payload).success).toBe(true);
     expect(payload).toEqual({
       capabilities: {
+        automatic_page_reopen_on_write: true,
         generation_quotes: false,
         push_notifications: false,
         web_image_delivery: false,
@@ -116,6 +118,7 @@ describe('createMeRoutes', () => {
     const response = await routes.request('/me');
     const payload = currentSessionSchema.parse(await response.json());
     expect(payload.capabilities).toEqual({
+      automatic_page_reopen_on_write: true,
       generation_quotes: false,
         push_notifications: false,
         web_image_delivery: false,
@@ -132,6 +135,7 @@ describe('createMeRoutes', () => {
     });
     const response = await routes.request('/me?episode_state_autofill_v1=true');
     expect(currentSessionSchema.parse(await response.json()).capabilities).toEqual({
+      automatic_page_reopen_on_write: true,
       generation_quotes: false,
         push_notifications: false,
         web_image_delivery: false,

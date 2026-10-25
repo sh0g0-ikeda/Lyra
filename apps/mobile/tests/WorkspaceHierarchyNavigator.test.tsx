@@ -12,7 +12,9 @@ vi.mock('react-native', () => ({
   View: 'view'
 }));
 vi.mock('lucide-react-native', () => ({ BookOpen: 'book-open', ChevronRight: 'chevron-right' }));
-vi.mock('@/components/ActionableErrorNotice', () => ({ ActionableErrorNotice: () => null }));
+vi.mock('@/components/ActionableErrorNotice', () => ({
+  ActionableErrorNotice: (props: Record<string, unknown>) => React.createElement('actionable-notice', props)
+}));
 vi.mock('@/components/StoryHierarchySheet', () => ({ StoryHierarchySheet: (props: Record<string, unknown>) => React.createElement('hierarchy', props) }));
 vi.mock('@/navigation/navigationRef', () => ({ navigationRef: { isReady: () => false } }));
 const { appState, resolveDirtyEditors, updateSelection } = vi.hoisted(() => ({
@@ -55,6 +57,15 @@ describe('WorkspaceHierarchyNavigator', () => {
     expect(sheet.props.isLoadingWorks).toBe(true);
     expect(sheet.props.hierarchyError).toBe(value.error);
     expect(sheet.props.onRetryHierarchy).toBe(value.retry);
+    expect(renderer!.root.findByType('actionable-notice').props.context).toEqual({ operation: 'loadHierarchy', essential: true });
+    act(() => { renderer!.unmount(); });
+  });
+
+  it('キャッシュ済み一覧がある再取得失敗は必須初回読込として扱わない', () => {
+    const value = { ...context, error: new Error('temporarily unavailable') };
+    let renderer: ReturnType<typeof create>;
+    act(() => { renderer = create(<WorkspaceHierarchyNavigator context={value} />); });
+    expect(renderer!.root.findByType('actionable-notice').props.context).toEqual({ operation: 'loadHierarchy', essential: false });
     act(() => { renderer!.unmount(); });
   });
 

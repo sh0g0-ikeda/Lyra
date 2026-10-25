@@ -10,6 +10,7 @@ import type {
 } from '../domain/types/panelFrame.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { lockStoryEpisodeAdmission } from './StoryEpisodeAdmissionLock.js';
+import { transitionLockedPageForExplicitEdit } from './PageEditAdmission.js';
 
 const PENDING_CREATED_PANEL_ID = 'pending-created-panel';
 
@@ -90,6 +91,11 @@ export class PostgresPagePanelStructureRepository implements PagePanelStructureR
       if (await hasActiveGenerationJob(transactionClient, pageId, lockedTarget.episodeId)) {
         throw new ConflictError('Page structure cannot change while generation is active');
       }
+      await transitionLockedPageForExplicitEdit(
+        transactionClient,
+        pageId,
+        lockedTarget.pageStatus,
+      );
 
       const currentPanels = await listPanelsForUpdate(transactionClient, pageId);
       const currentPanelIds = currentPanels.map((panel) => panel.id);
@@ -577,7 +583,10 @@ async function updateTemplateLayoutConfig(
           'frame_definitions', $3::jsonb,
           'template_id', $4::text
         ),
-        updated_at = NOW()
+        updated_at = GREATEST(
+          date_trunc('milliseconds', clock_timestamp()),
+          date_trunc('milliseconds', pages.updated_at) + INTERVAL '1 millisecond'
+        )
     WHERE pages.id = $1::uuid
     `,
     [pageId, frames.length, JSON.stringify(toLayoutFrameDefinitions(frames)), templateId],
@@ -597,7 +606,10 @@ async function updatePreservedLayoutConfig(
           'panel_count', $2::int,
           'frame_definitions', $3::jsonb
         ),
-        updated_at = NOW()
+        updated_at = GREATEST(
+          date_trunc('milliseconds', clock_timestamp()),
+          date_trunc('milliseconds', pages.updated_at) + INTERVAL '1 millisecond'
+        )
     WHERE pages.id = $1::uuid
     `,
     [pageId, frames.length, JSON.stringify(toLayoutFrameDefinitions(frames))],
@@ -605,9 +617,6 @@ async function updatePreservedLayoutConfig(
 }
 
 function ensurePageStructureEditable(status: PageStatus): void {
-  if (status === 'confirmed') {
-    throw new ConflictError('Confirmed pages must be reopened before changing panel structure');
-  }
   if (status === 'generating') {
     throw new ConflictError('Page structure cannot change while generation is in progress');
   }

@@ -35,7 +35,7 @@ describe('制作工程内の画面領域', () => {
     const content = <Screen title="編集"><React.Fragment>入力内容</React.Fragment></Screen>;
     await act(async () => { renderer = create(embedded ? <EmbeddedScreenProvider>{content}</EmbeddedScreenProvider> : content); });
     expect(renderer!.root.findAllByType('credit-badge')).toHaveLength(0);
-    expect(renderer!.root.findByType('safe-area').props.edges).toEqual(embedded ? [] : ['top', 'bottom']);
+    expect(renderer!.root.findByType('safe-area').props.edges).toEqual(embedded ? [] : ['top', 'bottom', 'left', 'right']);
     expect(renderer!.root.findByType('keyboard').props.behavior).toBe('height');
     expect(renderer!.root.findByType('scroll').props.keyboardShouldPersistTaps).toBe('handled');
     await act(async () => renderer!.unmount());

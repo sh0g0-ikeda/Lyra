@@ -95,39 +95,46 @@ export function buildPageThumbnailImageSources(
     revision,
     variant: 'thumbnail',
   });
-  const authenticatedFullUrl = buildAuthenticatedImageUrl(
+  const fullCacheKey = buildPageImageCacheKey({
+    sessionKey: input.sessionKey,
+    organizationId: input.organizationId,
+    pageId: input.page.id,
+    revision,
+    variant: 'full',
+  });
+  const authenticatedThumbnailUrl = buildAuthenticatedImageUrl(
     input.apiBaseUrl,
     input.page.id,
-    'export-image',
+    'thumbnail',
     input.organizationId,
   );
   const delivery = resolvePageImageDelivery({
     cdnUrl: input.page.generated_image?.cdn_url,
-    authenticatedFallbackUrl: authenticatedFullUrl,
+    authenticatedFallbackUrl: authenticatedThumbnailUrl,
   });
   return deduplicateImageSources([
-    delivery.requiresAuthentication
-      ? null
-      : {
-          uri: delivery.uri,
-          cacheKey: thumbnailCacheKey,
-        },
     {
       uri: withPageImageRevision(
-        authenticatedFullUrl,
+        authenticatedThumbnailUrl,
         revision,
         thumbnailCacheKey,
       ),
       cacheKey: thumbnailCacheKey,
       ...authorizationHeaders(input.authorizationHeader),
     },
+    delivery.requiresAuthentication
+      ? null
+      : {
+          uri: delivery.uri,
+          cacheKey: fullCacheKey,
+        },
   ]);
 }
 
 function buildAuthenticatedImageUrl(
   apiBaseUrl: string,
   pageId: string,
-  variant: 'export-image',
+  variant: 'export-image' | 'thumbnail',
   organizationId: string | null,
 ): string {
   const baseUrl = apiBaseUrl.replace(/\/+$/u, '');

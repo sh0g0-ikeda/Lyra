@@ -56,7 +56,7 @@ export class PanelEntityAssignmentService implements PanelEntityAssignmentServic
           throw new ConflictError('Panel entity assignments changed while editing');
         case 'page_not_editable':
           throw new ConflictError(
-            'Panel entity assignments cannot be edited while the page is confirmed or generating',
+              'Panel entity assignments cannot be edited while the page is generating',
           );
         case 'dialogue_speaker_not_assigned':
           throw new ValidationError('All dialogue speakers must remain assigned to the panel');

@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, create } from 'react-test-renderer';
+import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
@@ -12,6 +12,10 @@ import { Section } from '@/components/Section';
 
 const { setAccessibilityFocus } = vi.hoisted(() => ({
   setAccessibilityFocus: vi.fn()
+}));
+
+vi.mock('expo-image', () => ({
+  Image: (props: Record<string, unknown>) => React.createElement('expo-image', props)
 }));
 
 vi.mock('react-native', () => ({
@@ -194,6 +198,31 @@ describe('shared mobile accessibility controls', () => {
     expect(share.props.style.minHeight).toBeGreaterThanOrEqual(44);
   });
 
+  it('プレビューはExpo画像キャッシュで候補を有限回だけ切り替える', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <ImagePreviewModal
+          language="en"
+          onClose={vi.fn()}
+          sources={[
+            { uri: 'https://api.example.test/pages/page-1/thumbnail', headers: { Authorization: 'Bearer token' } },
+            { cacheKey: 'full-page-1', uri: 'https://cdn.example.test/page-1.png' },
+          ]}
+        />,
+      );
+    });
+
+    const image = (): ReactTestInstance => renderer!.root.findByType('expo-image');
+    expect(image().props.cachePolicy).toBe('memory-disk');
+    expect(image().props.source).toMatchObject({ uri: 'https://api.example.test/pages/page-1/thumbnail' });
+    expect(renderer!.root.findByProps({ accessibilityLabel: 'Share or save image' }).props.disabled).toBe(false);
+    act(() => image().props.onError());
+    expect(image().props.source).toMatchObject({ uri: 'https://cdn.example.test/page-1.png' });
+    act(() => image().props.onError());
+    expect(image().props.source).toMatchObject({ uri: 'https://cdn.example.test/page-1.png' });
+  });
+
   // Android needs explicit responder handling because ScrollView zoom props are not a cross-platform pinch contract.
   it('keeps an explicit pinch, pan, and double-tap reset surface for image preview on Android', () => {
     let renderer: ReturnType<typeof create>;
@@ -212,7 +241,7 @@ describe('shared mobile accessibility controls', () => {
       surface.props.onResponderMove(event([{ pageX: 0, pageY: 0 }, { pageX: 100, pageY: 0 }]));
       surface.props.onResponderRelease();
     });
-    const image = renderer!.root.findByType('image');
+    const image = renderer!.root.findByType('expo-image');
     expect(image.props.style[1].transform).toContainEqual({ scale: 4 });
 
     const now = vi.spyOn(Date, 'now');
@@ -224,7 +253,7 @@ describe('shared mobile accessibility controls', () => {
       doubleTapSurface.props.onResponderGrant(event([{ pageX: 10, pageY: 10 }]));
       doubleTapSurface.props.onResponderRelease();
     });
-    expect(renderer!.root.findByType('image').props.style[1].transform).toContainEqual({ scale: 1 });
+    expect(renderer!.root.findByType('expo-image').props.style[1].transform).toContainEqual({ scale: 1 });
     now.mockRestore();
   });
 
@@ -246,7 +275,7 @@ describe('shared mobile accessibility controls', () => {
       surface.props.onResponderMove(event([{ pageX: 0, pageY: 0 }, { pageX: 50, pageY: 0 }]));
       surface.props.onResponderRelease();
     });
-    const zoomedOut = renderer!.root.findByType('image').props.style[1].transform;
+    const zoomedOut = renderer!.root.findByType('expo-image').props.style[1].transform;
     expect(zoomedOut).toContainEqual({ scale: 2 });
     const { width: viewportWidth } = surface.props.style[1] as { width: number };
     expect(zoomedOut).toContainEqual({ translateX: viewportWidth / 2 });
@@ -257,7 +286,7 @@ describe('shared mobile accessibility controls', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(renderer!.root.findByType('image').props.style[1].transform).toEqual([
+    expect(renderer!.root.findByType('expo-image').props.style[1].transform).toEqual([
       { translateX: 0 },
       { translateY: 0 },
       { scale: 1 }
@@ -271,7 +300,7 @@ describe('shared mobile accessibility controls', () => {
     });
 
     const safeArea = renderer!.root.findByType('safe-area-view');
-    expect(safeArea.props.edges).toEqual(['top', 'bottom']);
+    expect(safeArea.props.edges).toEqual(['top', 'bottom', 'left', 'right']);
     expect(renderer!.root.findByType('keyboard-avoiding-view').props.behavior).toBe('height');
     const scrollView = renderer!.root.findByType('scroll-view');
     expect(scrollView.props.automaticallyAdjustKeyboardInsets).toBe(true);

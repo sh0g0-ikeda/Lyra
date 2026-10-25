@@ -113,7 +113,7 @@ export function InvitationScreen({
             }
           }}
           error={previewQuery.error}
-          context={{ operation: 'loadInvitation' }}
+          context={{ operation: 'loadInvitation', essential: preview === null }}
           language={language}
           retryMode="refresh"
         />

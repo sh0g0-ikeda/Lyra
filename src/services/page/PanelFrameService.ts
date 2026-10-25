@@ -47,7 +47,7 @@ export class PanelFrameService implements PanelFrameServicePort {
     pageId: string,
     organizationId: string | null = null,
   ): Promise<PanelFrame[]> {
-    await this.ensurePageOwnedByUser(userId, pageId, organizationId);
+    await this.ensurePageReadableByUser(userId, pageId, organizationId);
     return this.panelFrameRepository.findFramesByPageIdAndUserId(pageId, userId, organizationId);
   }
 
@@ -57,7 +57,7 @@ export class PanelFrameService implements PanelFrameServicePort {
     frames: UpsertPanelFrameInput[],
     organizationId: string | null = null,
   ): Promise<PanelFrame[]> {
-    await this.ensurePageOwnedByUser(userId, pageId, organizationId);
+    await this.ensurePageMutableByUser(userId, pageId, organizationId);
     await this.ensurePanelsBelongToPage(userId, pageId, frames, organizationId);
 
     return this.panelFrameRepository.replaceFramesByPageIdAndUserId(pageId, userId, frames, {
@@ -73,7 +73,7 @@ export class PanelFrameService implements PanelFrameServicePort {
     templateId: PanelFrameTemplateId,
     organizationId: string | null = null,
   ): Promise<PanelFrameTemplateApplication> {
-    await this.ensurePageOwnedByUser(userId, pageId, organizationId);
+    await this.ensurePageMutableByUser(userId, pageId, organizationId);
 
     const template = getPanelFrameTemplate(templateId);
     const frames = buildPanelFrameTemplateInputs(templateId);
@@ -97,7 +97,23 @@ export class PanelFrameService implements PanelFrameServicePort {
     };
   }
 
-  private async ensurePageOwnedByUser(
+  private async ensurePageReadableByUser(
+    userId: string,
+    pageId: string,
+    organizationId: string | null,
+  ): Promise<void> {
+    const pageContext = await this.panelFrameRepository.findPageContextByIdAndUserId(
+      pageId,
+      userId,
+      organizationId,
+    );
+    if (pageContext === null) {
+      throw new NotFoundError('Page not found');
+    }
+
+  }
+
+  private async ensurePageMutableByUser(
     userId: string,
     pageId: string,
     organizationId: string | null,
@@ -143,10 +159,6 @@ export class PanelFrameService implements PanelFrameServicePort {
 }
 
 function ensurePageLayoutEditable(pageStatus: PageStatus): void {
-  if (pageStatus === 'confirmed') {
-    throw new ConflictError('Confirmed pages must be reopened before editing frames');
-  }
-
   if (pageStatus === 'generating') {
     throw new ConflictError('Pages cannot edit frames while generation is in progress');
   }

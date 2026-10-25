@@ -128,7 +128,7 @@ export function WorkspaceHierarchyNavigator({
             }
           }}
           error={context.error}
-          context={{ operation: 'loadHierarchy' }}
+          context={{ operation: 'loadHierarchy', essential: context.works.length === 0 }}
           language={language}
           retryMode="refresh"
         />

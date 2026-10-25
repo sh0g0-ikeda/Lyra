@@ -17,6 +17,10 @@ import {
   type RepositorySchemaProfile,
 } from './RepositorySchemaProfile.js';
 import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
+import {
+  prepareAuthorizedPageEditByPanelId,
+  transitionLockedPageForExplicitEdit,
+} from './PageEditAdmission.js';
 
 export type { PanelEntityAssignment, PanelEntityStateReference };
 
@@ -111,16 +115,13 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
     private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   ) {}
 
-  private async runLegacyWrite<T>(
+  private async runExplicitWrite<T>(
     userId: string,
     organizationId: string | null,
     operation: (client: DatabaseClient) => Promise<T>,
   ): Promise<T> {
-    if (this.schemaProfile !== 'legacy_2debe_v1') {
-      return operation(this.client);
-    }
     return this.client.transaction(async (transactionClient) => {
-      if (organizationId === null) {
+      if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
         await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
       }
       return operation(transactionClient);
@@ -242,7 +243,16 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
     assignments: PanelEntityAssignment[],
     organizationId: string | null = null,
   ): Promise<PanelEntityAssignment[] | null> {
-    return this.runLegacyWrite(userId, organizationId, async (client) => {
+    return this.runExplicitWrite(userId, organizationId, async (client) => {
+      const editablePage = await prepareAuthorizedPageEditByPanelId(
+        client,
+        panelId,
+        userId,
+        organizationId,
+      );
+      if (editablePage === null) {
+        return null;
+      }
       const result = await client.query<PanelEntitiesRow>(
       `
       UPDATE panels
@@ -322,7 +332,7 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
       if (page === undefined) {
         return { status: 'not_found' };
       }
-      if (page.page_status === 'confirmed' || page.page_status === 'generating') {
+      if (page.page_status === 'generating') {
         return { status: 'page_not_editable' };
       }
 
@@ -411,6 +421,11 @@ export class PostgresPanelEntityAssignmentRepository implements PanelEntityAssig
         }
       }
 
+      await transitionLockedPageForExplicitEdit(
+        transactionClient,
+        page.page_id,
+        page.page_status,
+      );
       const updateResult = await transactionClient.query<PanelEntitiesRow>(
         `
         UPDATE panels

@@ -600,11 +600,29 @@ zero-credit and atomic-save boundaries. Mobile uses automatic state application
 without an opt-in/overwrite checkbox or missing-state creation instructions when
 capability is advertised. Other job retry flows are unchanged.
 
-Mobile page editing provides a dedicated horizontal swipe surface and accessible
-previous/next controls. Switching pages initializes the new page's first saved
+Mobile page editing selects pages through horizontally scrollable image cards.
+The redundant page-number picker, previous/next buttons, swipe instructions and
+manual page-confirmation controls are omitted. Switching pages initializes the new page's first saved
 panel only after page-scoped data is available; a refetched empty cache is not an
 authoritative empty page. Vertical scrolling, text entry, cancelled gestures,
 multi-touch and pagination boundaries do not change the page.
+
+The additive session capability `automatic_page_reopen_on_write` defaults false
+for older servers. When advertised, explicit authorized writes to a confirmed page
+reopen it within the same transaction and page lock as the requested write. Reads
+and generation quotes never reopen pages; generating pages reject editor writes.
+Failed validation or job admission leaves status, saved inputs and credits intact.
+Existing confirmation endpoints remain available to older clients. Mobile uses the
+Page-scoped structure command for deletion and reordering to preserve atomicity.
+Character starting states are edited immediately before page story-autofill; dirty
+states use the episode revision guard and must save before autofill is admitted.
+
+Hierarchy browsing uses a single native modal with internal action/title overlays.
+Cancel and Back close the topmost overlay, retaining the underlying list, and the
+modal respects all device safe-area edges. Initial unusable reads and explicit
+failed writes retain concise recovery feedback; cached refresh failures and
+duplicate passive warnings do not occupy the editing screen. Input helper text
+is omitted without removing validation, labels or dirty-draft protection.
 
 Mobile page management initially selects the first page and its first panel after
 the current episode's data becomes available. A newly completed story-autofill run

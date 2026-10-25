@@ -1700,10 +1700,6 @@ export class PageService implements PageServicePort {
 }
 
 function ensurePageEditable(status: PageSummary['status'], actionLabel: string): void {
-  if (status === 'confirmed') {
-    throw new ConflictError(`Confirmed pages must be reopened before ${actionLabel}`);
-  }
-
   if (status === 'generating') {
     throw new ConflictError(`Pages cannot ${actionLabel} while generation is in progress`);
   }

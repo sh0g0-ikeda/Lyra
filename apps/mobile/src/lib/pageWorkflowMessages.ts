@@ -2,6 +2,7 @@ import type { UiLanguage } from '@/domain/types';
 import { formatMessageTemplate } from '@/lib/i18n';
 const copy = {
   ja: {
+    automaticEditingUnavailable: 'この接続先では、このページの閲覧のみ利用できます。',
     design: 'ページ設計', settings: '設定の入力', create: 'ページ作成', workflow: 'ページの制作工程',
     nextSettings: '次へ：設定の入力', nextCreate: '次へ：ページ作成', previous: '前の工程へ',
     stepHelp: '工程の切り替えだけでは保存・自動入力・画像生成は実行しません。',
@@ -28,6 +29,7 @@ const copy = {
     imageMissing: '画像を読み込めません。後から生成結果を開き直してください。', morePages: '次のページを確認しています…'
   },
   en: {
+    automaticEditingUnavailable: 'This server supports viewing this page only.',
     design: 'Page design', settings: 'Enter settings', create: 'Create page', workflow: 'Page creation steps',
     nextSettings: 'Next: Enter settings', nextCreate: 'Next: Create page', previous: 'Previous step',
     stepHelp: 'Switching steps does not save, autofill, or generate an image.',

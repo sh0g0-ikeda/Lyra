@@ -3,8 +3,6 @@ import { StyleSheet, View } from 'react-native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
-import { EpisodeStartingStatesEditor } from '@/components/EpisodeStartingStatesEditor';
-import { startingStateDraftIsDirty, type EpisodeStartingState } from '@/domain/episodeStartingStates';
 import { EpisodeImprovementPanel } from '@/components/EpisodeImprovementPanel';
 import { FormField } from '@/components/FormField';
 import { Notice } from '@/components/Notice';
@@ -42,8 +40,6 @@ import {
 } from '@/lib/listPagination';
 import {
   chaptersQueryKey,
-  entitiesInfiniteQueryKey,
-  entitiesQueryKey,
   episodesQueryKey,
   scenesQueryKey,
   workDetailQueryKey,
@@ -88,11 +84,10 @@ const isAbortError = (error: unknown): boolean =>
 
 export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => void } = {}): React.JSX.Element {
   const queryClient = useQueryClient();
-  const { api, hasCapability, language, logout, selection, session, sessionKey } = useAppState();
+  const { api, hasCapability, language, logout, selection, sessionKey } = useAppState();
   const { resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEdit = hasCapability('edit_work');
-  const [startingStateDraft, setStartingStateDraft] = useState<{ scopeKey: string; value: EpisodeStartingState[] } | null>(null);
   const [episodeTitle, setEpisodeTitle] = useState('');
   const [episodeDraft, setEpisodeDraft] = useState('');
   const [estimatedPages, setEstimatedPages] = useState('4');
@@ -146,23 +141,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     queryFn: () => api.getWork(selection.workId ?? '', organizationId),
   });
   const selectedWork = selectedWorkFromList ?? selectedWorkQuery.data ?? null;
-  const entitiesQuery = useInfiniteQuery({
-    enabled: selectedWork !== null,
-    queryKey: entitiesInfiniteQueryKey(sessionKey, selectedWork?.id ?? null, organizationId),
-    initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) => api.getEntitiesPage(selectedWork?.id ?? '', {
-      organizationId,
-      limit: MOBILE_LIST_PAGE_SIZE,
-      cursor: pageParam,
-    }),
-    getNextPageParam: nextCursorFromPage,
-  });
-
-  const entities = useMemo(
-    () => flattenUniqueRecords(entitiesQuery.data?.pages.map((page) => page.entities) ?? []),
-    [entitiesQuery.data?.pages],
-  );
-
   const chaptersQuery = useQuery({
     enabled: selectedWork !== null,
     queryKey: chaptersQueryKey(sessionKey, selectedWork?.id ?? null, organizationId),
@@ -197,15 +175,12 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   );
 
   const episodeScopeKey = JSON.stringify([sessionKey, organizationId, selectedEpisode?.id ?? null]);
-  const startingEntityStatesDraft = startingStateDraft?.scopeKey === episodeScopeKey ? startingStateDraft.value : undefined;
-  const startingStatesEnabled = session?.capabilities?.episode_state_autofill_v1 === true;
-  const startingStatesDirty = startingStateDraftIsDirty(selectedEpisode?.starting_entity_states, startingEntityStatesDraft);
   const episodeDirty =
     selectedEpisode === null
       ? [episodeTitle, episodeDraft, estimatedPages].some((value) => value.trim().length > 0 && value !== '4')
       : episodeTitle !== (selectedEpisode.title ?? '') ||
         episodeDraft !== episodeMobileDraft(selectedEpisode) ||
-        estimatedPages !== String(selectedEpisode.estimated_pages ?? 4) || startingStatesDirty;
+        estimatedPages !== String(selectedEpisode.estimated_pages ?? 4);
 
   const sceneDirty =
     selectedScene === null
@@ -228,7 +203,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       estimatedPages,
       id: selectedEpisode?.id ?? null,
       title: episodeTitle,
-      startingEntityStates: startingEntityStatesDraft
     },
     scene: {
       atmosphere: sceneAtmosphere,
@@ -289,10 +263,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     await queryClient.invalidateQueries({ queryKey: worksQueryKey(sessionKey, organizationId) });
   };
 
-  const invalidateEntities = async (): Promise<void> => {
-    await queryClient.invalidateQueries({ queryKey: entitiesQueryKey(sessionKey, selectedWork?.id ?? null, organizationId) });
-  };
-
   const invalidateChapters = async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: chaptersQueryKey(sessionKey, selectedWork?.id ?? null, organizationId) });
   };
@@ -323,14 +293,11 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
           estimatedPages:
             parseIntInRange(estimatedPages, 1, MAX_ESTIMATED_PAGES) ?? 4,
           title: episodeTitle,
-          startingEntityStates: startingEntityStatesDraft
         }),
         organizationId
       );
     },
     onSuccess: async (updatedEpisode) => {
-      setStartingStateDraft((current) => current?.scopeKey === episodeScopeKey &&
-        !startingStateDraftIsDirty(updatedEpisode.starting_entity_states, current.value) ? null : current);
       queryClient.setQueryData<{ episodes: EpisodeRecord[] }>(
         episodesQueryKey(sessionKey, selectedChapter?.id ?? null, organizationId),
         (current) => replaceEpisodeInResponse(current, updatedEpisode)
@@ -406,7 +373,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   const saveExistingSceneMutation = updateSceneMutation.mutateAsync;
 
   const discardStoryDrafts = useCallback((): void => {
-    setStartingStateDraft(null);
     setEpisodeTitle(selectedEpisode?.title ?? '');
     setEpisodeDraft(selectedEpisode === null ? '' : episodeMobileDraft(selectedEpisode));
     setEstimatedPages(String(selectedEpisode?.estimated_pages ?? 4));
@@ -537,7 +503,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       if (!stillApproved()) return;
       clearPendingStaleActionSaveError();
       const latest = response.episodes.find((episode) => episode.id === selectedEpisode.id);
-      setStartingStateDraft(null);
       setEpisodeTitle(latest?.title ?? '');
       setEpisodeDraft(latest === undefined ? '' : episodeMobileDraft(latest));
       setEstimatedPages(String(latest?.estimated_pages ?? 4));
@@ -560,7 +525,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       title: episodeTitle,
       draft: episodeDraft,
       estimatedPages: parseIntInRange(estimatedPages, 1, MAX_ESTIMATED_PAGES),
-      startingEntityStates: startingEntityStatesDraft,
       scope: episodeScopeKey,
       revision: storyEditorRevision,
       episodeId: selectedEpisode.id,
@@ -592,7 +556,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
         episode: latest,
         estimatedPages: submitted.estimatedPages,
         title: submitted.title,
-        startingEntityStates: submitted.startingEntityStates,
       }), organizationId);
       queryClient.setQueryData<{ episodes: EpisodeRecord[] }>(
         episodesQueryKey(sessionKey, submitted.chapterId, organizationId),
@@ -600,8 +563,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       );
       if (sameScope()) {
         clearPendingStaleActionSaveError();
-        setStartingStateDraft((current) => current?.scopeKey === submitted.scope &&
-          !startingStateDraftIsDirty(updatedEpisode.starting_entity_states, current.value) ? null : current);
         setStaleResource((current) => current?.id === submitted.episodeId ? null : current);
       }
       await queryClient.invalidateQueries({ queryKey: episodesQueryKey(sessionKey, submitted.chapterId, organizationId) });
@@ -807,7 +768,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   const storyErrors = collectOperationFailures([
     operationFailure('loadWorks', worksQuery.error),
     operationFailure('loadWorks', selectedWorkQuery.error),
-    operationFailure('loadCharacters', entitiesQuery.error),
     operationFailure('loadChapters', chaptersQuery.error),
     operationFailure('loadEpisodes', episodesQuery.error),
     operationFailure('loadScenes', scenesQuery.error),
@@ -821,13 +781,11 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
 
   const refreshing =
     worksQuery.isFetching ||
-    entitiesQuery.isFetching ||
     chaptersQuery.isFetching ||
     episodesQuery.isFetching ||
     scenesQuery.isFetching;
   const refreshStory = (): void => {
     void invalidateWorks();
-    void invalidateEntities();
     void invalidateChapters();
     void invalidateEpisodes();
     void invalidateScenes();
@@ -918,19 +876,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
         )}
       </Section>
 
-      {selectedEpisode !== null && (startingStatesEnabled || (selectedEpisode.starting_entity_states?.length ?? 0) > 0) ? (
-        <EpisodeStartingStatesEditor
-          language={language}
-          entities={entities}
-          value={startingEntityStatesDraft ?? selectedEpisode.starting_entity_states ?? []}
-          onChange={(value) => setStartingStateDraft({ scopeKey: episodeScopeKey, value })}
-          disabled={!canEdit || !startingStatesEnabled || activeStaleResource === 'episode' || updateEpisodeMutation.isPending}
-          hasMoreEntities={entitiesQuery.hasNextPage}
-          loadingEntities={entitiesQuery.isFetchingNextPage}
-          onLoadMoreEntities={() => { void entitiesQuery.fetchNextPage(); }}
-        />
-      ) : null}
-
       <Section collapsible mobileDefaultCollapsed persistKey="story:story-ai" subtitle={editorMessage(language, 'storyAiHelp')} title={editorMessage(language, 'storyAi')}>
         <EpisodeImprovementPanel
           canEdit={canEdit}
@@ -991,9 +936,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
           onSelect={switchScene}
           selectedId={sceneId}
         />
-        {selectedScene === null ? (
-          <Notice message={t(language, "generated.screens.StoryScreen.you.are.creating.a.new.scene.fill.the.fi.954a6862")} tone="info" />
-        ) : (
+        {selectedScene === null ? null : (
           <PrimaryButton disabled={!canEdit || createSceneMutation.isPending || updateSceneMutation.isPending} label={t(language, "generated.screens.StoryScreen.create.a.new.scene.5a7af1dc")} onPress={beginNewSceneDraft} variant="ghost" />
         )}
         <FormField keyboardType="numeric" label={t(language, "generated.screens.StoryScreen.order.da168b36")} placeholder={editorMessage(language, 'orderExample')} help={editorMessage(language, 'orderHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} onChangeText={setSceneOrder} value={sceneOrder} />

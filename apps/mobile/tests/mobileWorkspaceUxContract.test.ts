@@ -166,21 +166,18 @@ describe('mobile workspace navigation and editor UX contract', () => {
     expect(hierarchy).toContain('paddingTop:');
   });
 
-  it('選択中ページ画像をページ生成操作と画像保存の間に置く', () => {
+  it('選択中ページ画像をページ生成操作の直後、画像保存の前に置く', () => {
     const source = renderSource('PagesScreen');
     const pageList = source.indexOf('persistKey="pages:list"');
     const pageListEnd = source.indexOf('</Section>', pageList);
     const generate = source.indexOf('<PageGenerationStartActions');
     const image = source.indexOf('<View style={styles.pageImageFrame}>');
-    const confirm = source.indexOf('<PageConfirmationAction');
     const saveImage = source.indexOf(
       'generated.screens.PagesScreen.save.image.dd680bcb'
     );
 
     expect(source.slice(pageList, pageListEnd)).not.toContain('pageImageFrame');
     expect(image).toBeGreaterThan(generate);
-    expect(confirm).toBeGreaterThan(image);
-    expect(confirm).toBeLessThan(saveImage);
     expect(image).toBeLessThan(saveImage);
     expect(source).not.toContain('testID="page-open-result"');
   });

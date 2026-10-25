@@ -267,7 +267,7 @@ export function WorkspaceContextPicker({ context }: WorkspaceContextPickerProps)
             },
           }}
           error={context.error}
-          context={{ operation: 'loadHierarchy' }}
+          context={{ operation: 'loadHierarchy', essential: context.works.length === 0 }}
           language={language}
           retryMode="refresh"
         />

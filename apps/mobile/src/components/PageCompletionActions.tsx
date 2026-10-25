@@ -23,11 +23,11 @@ export function PageCompletionActions({
   );
 }
 
-interface PageGenerationStartActionsProps { canGenerate: boolean; disabledReason?: string; generateLoading?: boolean; generateMonochromeLoading?: boolean; language: UiLanguage; onGenerate: () => void; onGenerateMonochrome: () => void; }
+interface PageGenerationStartActionsProps { buttonRef?: RefObject<View | null>; canGenerate: boolean; disabledReason?: string; generateLoading?: boolean; generateMonochromeLoading?: boolean; language: UiLanguage; onGenerate: () => void; onGenerateMonochrome: () => void; }
 
-export function PageGenerationStartActions({ canGenerate, disabledReason, generateLoading = false, generateMonochromeLoading = false, language, onGenerate, onGenerateMonochrome }: PageGenerationStartActionsProps): React.JSX.Element {
+export function PageGenerationStartActions({ buttonRef, canGenerate, disabledReason, generateLoading = false, generateMonochromeLoading = false, language, onGenerate, onGenerateMonochrome }: PageGenerationStartActionsProps): React.JSX.Element {
   return <View style={styles.actions}>
-    <PrimaryButton disabled={!canGenerate} disabledReason={disabledReason} label={t(language, 'generate')} loading={generateLoading} onPress={onGenerate} testID="page-generation-action" />
+    <PrimaryButton buttonRef={buttonRef} disabled={!canGenerate} disabledReason={disabledReason} label={t(language, 'generate')} loading={generateLoading} onPress={onGenerate} testID="page-generation-action" />
     <PrimaryButton disabled={!canGenerate} disabledReason={disabledReason} label={t(language, 'generateMonochrome')} loading={generateMonochromeLoading} onPress={onGenerateMonochrome} testID="page-monochrome-generation-action" variant="secondary" />
   </View>;
 }

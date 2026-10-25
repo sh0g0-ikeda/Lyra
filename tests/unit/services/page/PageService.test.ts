@@ -757,14 +757,15 @@ describe('PageService', () => {
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 
-  it('confirmed ページは reopen 前に更新できない', async () => {
+  it('confirmed ページへの明示更新はrepositoryの同一transactionへ委譲する', async () => {
     const repository = new FakePageRepository();
     repository.page = { ...buildPageSummary(), status: 'confirmed' };
     const service = new PageService(repository);
 
     await expect(
       service.updatePageSettings('user-1', 'page-1', { dialogueMode: 'mixed' }),
-    ).rejects.toBeInstanceOf(ConflictError);
+    ).resolves.toMatchObject({ status: 'confirmed' });
+    expect(repository.updatedInput).toEqual({ dialogueMode: 'mixed' });
   });
 
   it('generating ページは更新できない', async () => {

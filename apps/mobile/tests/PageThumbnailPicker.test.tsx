@@ -91,6 +91,27 @@ describe('PageThumbnailPicker', () => {
     expect(JSON.stringify(renderer!.toJSON())).toContain('designing');
   });
 
+  it('hideStatus時は状態ラベルを表示しないが選択用アクセシビリティ文言は維持する', () => {
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <PageThumbnailPicker
+          emptyLabel="ページなし"
+          hideStatus
+          imageSourcesFor={() => []}
+          language="ja"
+          onSelect={vi.fn()}
+          pages={[page('page-1', 1, false)]}
+          selectedId={null}
+          statusLabelFor={(status) => status}
+        />,
+      );
+    });
+
+    expect(renderer!.root.findAllByType('text').map((node) => node.children.join(''))).not.toContain('designing');
+    expect(renderer!.root.findByProps({ accessibilityLabel: '1ページ、designing' })).toBeDefined();
+  });
+
   it('選択したページIDを返す', () => {
     const onSelect = vi.fn();
     let renderer: ReturnType<typeof create>;

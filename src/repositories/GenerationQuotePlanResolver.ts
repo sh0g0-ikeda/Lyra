@@ -106,7 +106,7 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
     const savedPanels=await new PostgresPanelRepository(bound,this.persistenceProfile).findPanelsByPageIdAndUserId(targetId,userId,organizationId);
     page.panels=savedPanels.map((panel)=>({panelId:panel.id,entities:panel.entities}));
     await this.lockWorkInputs(client,page.workId);
-    if(page.status==='generating' || page.status==='confirmed') throw new ConflictError('Page is not editable for generation');
+    if(page.status==='generating') throw new ConflictError('Page is not editable for generation');
     if(page.panels.length===0 || page.frameCount!==page.panels.length) throw new ValidationError('Page panels and frames must match before generation');
     if((request.operation==='page_regenerate') !== (page.generatedImage!==null)) throw new ConflictError('Page generation kind changed; request a new quote');
     const active=await client.query(`SELECT id FROM generation_jobs WHERE status IN ('queued','processing') AND

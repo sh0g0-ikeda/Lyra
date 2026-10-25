@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View, type NativeSyntheticEvent, type TextInputContentSizeChangeEventData, type TextInputProps } from 'react-native';
+import { StyleSheet, Text, TextInput, View, type NativeSyntheticEvent, type TextInputContentSizeChangeEventData, type TextInputProps } from 'react-native';
 
 import { colors, radius, spacing, textStyles } from '@/constants/theme';
 
@@ -29,8 +29,8 @@ export function FormField({
   onChangeText,
   editable = true,
   placeholder,
-  help,
-  helpDisclosureLabel,
+  help: _help,
+  helpDisclosureLabel: _helpDisclosureLabel,
   multiline = false,
   keyboardType = 'default',
   autoCapitalize = 'sentences',
@@ -44,8 +44,6 @@ export function FormField({
 }: FormFieldProps): React.JSX.Element {
   const [focused, setFocused] = useState(false);
   const [contentHeight, setContentHeight] = useState(multilineMinHeight);
-  // Help is presentation-only: keep the controlled input mounted and untouched.
-  const [helpExpanded, setHelpExpanded] = useState(false);
   const multilineHeight = Math.min(multilineMaxHeight, Math.max(multilineMinHeight, contentHeight));
   const onContentSizeChange = (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>): void => {
     if (!multiline) {
@@ -90,21 +88,6 @@ export function FormField({
         textContentType={textContentType}
         value={value}
       />
-      {help === undefined || helpDisclosureLabel === undefined ? null : (
-        <Pressable
-          accessibilityLabel={helpDisclosureLabel}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: helpExpanded }}
-          onPress={() => setHelpExpanded((current) => !current)}
-          style={styles.helpDisclosure}
-        >
-          <Text style={styles.helpDisclosureLabel}>{helpDisclosureLabel}</Text>
-          <Text accessible={false} style={styles.helpDisclosureLabel}>{helpExpanded ? '−' : '+'}</Text>
-        </Pressable>
-      )}
-      {help === undefined || (helpDisclosureLabel !== undefined && !helpExpanded)
-        ? null
-        : <Text style={styles.help}>{help}</Text>}
     </View>
   );
 }
@@ -148,24 +131,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     justifyContent: 'space-between'
-  },
-  help: {
-    ...textStyles.caption,
-    color: colors.muted
-  },
-  helpDisclosure: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    gap: spacing.sm,
-    minHeight: 44,
-    minWidth: 44,
-    paddingHorizontal: spacing.sm
-  },
-  helpDisclosureLabel: {
-    ...textStyles.caption,
-    color: colors.primary,
-    flexShrink: 1
   },
   multiline: {
     minHeight: 118

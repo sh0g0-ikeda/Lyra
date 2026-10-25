@@ -29,6 +29,7 @@ import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEnc
 import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
 import { parseStateReferenceDescriptor } from './EntityStateReferenceRepository.js';
 import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
+import { prepareAuthorizedPageEditByPageId } from './PageEditAdmission.js';
 
 export type { PageGenerationContext, PageGenerationStateUpdate };
 export type { PageListCursor } from '../domain/pagination.js';
@@ -211,24 +212,23 @@ export class PostgresPageRepository
     this.legacySchemaProfile = mode === 'legacy_2debe_v1';
   }
 
-  private async runLegacyPersonalPageWrite<T>(
+  private async runExplicitPageWrite<T>(
     userId: string,
     organizationId: string | null,
     work: (client: DatabaseClient) => Promise<T>,
   ): Promise<T> {
-    if (!this.legacySchemaProfile || organizationId !== null) {
-      return work(this.client);
-    }
     const runner = this.transactionRunner ?? (
       typeof this.client.transaction === 'function'
         ? { transaction: this.client.transaction.bind(this.client) }
         : undefined
     );
     if (runner === undefined) {
-      throw new ConfigurationError('Legacy personal Page writes require transaction support');
+      throw new ConfigurationError('Page writes require transaction support');
     }
     return runner.transaction(async (transactionClient) => {
-      await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      if (this.legacySchemaProfile && organizationId === null) {
+        await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      }
       return work(transactionClient);
     });
   }
@@ -1155,7 +1155,16 @@ export class PostgresPageRepository
     input: UpdatePageSettingsInput,
     organizationId: string | null = null,
   ): Promise<PageSummary | null> {
-    return this.runLegacyPersonalPageWrite(userId, organizationId, async (transactionClient) => {
+    return this.runExplicitPageWrite(userId, organizationId, async (transactionClient) => {
+      const editablePage = await prepareAuthorizedPageEditByPageId(
+        transactionClient,
+        pageId,
+        userId,
+        organizationId,
+      );
+      if (editablePage === null) {
+        return null;
+      }
       await transactionClient.query(
       `
       UPDATE pages
@@ -1165,7 +1174,10 @@ export class PostgresPageRepository
             WHEN $5::boolean = false THEN pages.layout_config
             ELSE $6::jsonb
           END,${this.storyMetadataUpdateClause()}
-          updated_at = NOW()
+          updated_at = GREATEST(
+            date_trunc('milliseconds', clock_timestamp()),
+            date_trunc('milliseconds', pages.updated_at) + INTERVAL '1 millisecond'
+          )
       FROM episodes
       INNER JOIN chapters ON chapters.id = episodes.chapter_id
       INNER JOIN works ON works.id = chapters.work_id

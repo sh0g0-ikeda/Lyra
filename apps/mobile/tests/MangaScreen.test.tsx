@@ -40,7 +40,7 @@ vi.mock('react-native', () => ({
   Pressable: 'button', Text: 'text', View: 'view',
   StyleSheet: { create: <T,>(styles: T): T => styles }
 }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 24, bottom: 34 }) }));
+vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 24, bottom: 34, left: 12, right: 16 }) }));
 vi.mock('@/components/Screen', () => ({ EmbeddedScreenProvider: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('@/components/PrimaryButton', () => ({
   PrimaryButton: (props: Record<string, unknown>) => React.createElement('button', props)
@@ -121,6 +121,16 @@ describe('漫画制作ナビゲーション', () => {
     await press('manga-previous');
     expect(root?.root.findAllByType('library')).toHaveLength(1);
     expect(resolveDirtyEditors).toHaveBeenCalled();
+  });
+
+  it('一覧はLibrary自身のsafe areaに任せ、埋め込み工程だけrootが左右insetを一度適用する', async () => {
+    await render();
+    const libraryRoot = root?.root.findByProps({ testID: 'manga-workflow' });
+    expect(libraryRoot?.props.style).not.toEqual(expect.arrayContaining([expect.objectContaining({ paddingLeft: 12, paddingRight: 16 })]));
+
+    await resume();
+    const workflowRoot = root?.root.findByProps({ testID: 'manga-workflow' });
+    expect(workflowRoot?.props.style).toEqual(expect.arrayContaining([expect.objectContaining({ paddingLeft: 12, paddingRight: 16 })]));
   });
 
   it('新しい話ではストーリーから始まり順に進んでもscope選択を変更しない', async () => {

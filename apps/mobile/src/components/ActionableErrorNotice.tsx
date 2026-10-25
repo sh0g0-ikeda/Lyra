@@ -6,7 +6,7 @@ import {
   type ErrorRecoveryTarget
 } from '@/lib/errorRecovery';
 import { userErrorMessage } from '@/lib/userMessages';
-import { errorRefreshLabel, operationErrorMessage, operationRecoveryTarget, type OperationErrorContext } from '@/lib/operationErrorContext';
+import { errorRefreshLabel, isReadOperation, operationErrorMessage, operationRecoveryTarget, type OperationErrorContext } from '@/lib/operationErrorContext';
 
 export type ErrorRecoveryActions = Partial<
   Record<ErrorRecoveryTarget, () => void>
@@ -17,7 +17,7 @@ interface ActionableErrorNoticeProps {
   error: unknown;
   language: UiLanguage;
   target?: ErrorRecoveryTarget;
-  tone?: 'warning' | 'danger';
+  tone?: 'info' | 'warning' | 'danger';
   recoveryMessage?: string;
   recoveryActionLabel?: string;
   context?: OperationErrorContext | undefined;
@@ -29,17 +29,24 @@ export function ActionableErrorNotice({
   error,
   language,
   target,
-  tone = 'warning',
+  tone = 'info',
   recoveryMessage,
   recoveryActionLabel,
   context,
   retryMode = 'action'
-}: ActionableErrorNoticeProps): React.JSX.Element {
+}: ActionableErrorNoticeProps): React.JSX.Element | null {
   const resolvedTarget = target ?? (context === undefined ? errorRecoveryTarget(error) : operationRecoveryTarget(error, context));
   const onAction =
     resolvedTarget === null || resolvedTarget === undefined
       ? undefined
       : actions[resolvedTarget];
+  const isPassiveRead = context !== undefined && context.essential !== true;
+  const isRead = context !== undefined && isReadOperation(context);
+  const hasAccessRecovery =
+    onAction !== undefined && (resolvedTarget === 'login' || resolvedTarget === 'workspace');
+  if ((context === undefined && onAction === undefined) || (isRead && isPassiveRead && !hasAccessRecovery)) {
+    return null;
+  }
 
   return (
     <Notice

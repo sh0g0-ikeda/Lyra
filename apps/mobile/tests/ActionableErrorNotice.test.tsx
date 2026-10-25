@@ -34,7 +34,7 @@ describe('ActionableErrorNotice', () => {
     expect(notice.props.message).toBe('Credit balance is insufficient. Review the required amount and your balance.');
     expect(notice.props.actionLabel).toBe('Review credits');
     expect(notice.props.onAction).toBe(onCredits);
-    expect(notice.props.tone).toBe('warning');
+    expect(notice.props.tone).toBe('info');
   });
 
   it('keeps an unknown error generic and does not invent a navigation action', async () => {
@@ -50,10 +50,7 @@ describe('ActionableErrorNotice', () => {
       );
     });
 
-    const notice = tree!.root.findByType('notice');
-    expect(notice.props.actionLabel).toBeUndefined();
-    expect(notice.props.onAction).toBeUndefined();
-    expect(notice.props.message).not.toContain('attacker.example');
+    expect(tree!.root.findAllByType('notice')).toHaveLength(0);
   });
 
   it('accepts a bounded local blocker target without deriving it from raw text', async () => {
@@ -74,5 +71,45 @@ describe('ActionableErrorNotice', () => {
     const notice = tree!.root.findByType('notice');
     expect(notice.props.actionLabel).toBe('コマ割りを確認');
     expect(notice.props.onAction).toBe(onLayout);
+  });
+
+  it('keeps a known write failure visible even without a recovery handler', async () => {
+    let tree: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      tree = create(
+        <ActionableErrorNotice
+          actions={{}}
+          context={{ operation: 'saveEpisode' }}
+          error={new Error('raw internal detail')}
+          language="en"
+        />
+      );
+    });
+
+    const notice = tree!.root.findByType('notice');
+    expect(notice.props.message).toContain('Save episode');
+    expect(notice.props.actionLabel).toBeUndefined();
+    expect(notice.props.message).not.toContain('raw internal detail');
+  });
+
+  it('keeps an actionable authentication recovery visible for a passive read', async () => {
+    const onLogin = vi.fn();
+    let tree: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      tree = create(
+        <ActionableErrorNotice
+          actions={{ login: onLogin }}
+          context={{ operation: 'loadHierarchy' }}
+          error={new ApiError('raw auth detail', 401, 'UNAUTHORIZED')}
+          language="en"
+          retryMode="refresh"
+        />
+      );
+    });
+
+    const notice = tree!.root.findByType('notice');
+    expect(notice.props.actionLabel).toBe('Sign in');
+    await act(async () => notice.props.onAction());
+    expect(onLogin).toHaveBeenCalledOnce();
   });
 });

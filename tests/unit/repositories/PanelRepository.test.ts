@@ -4,6 +4,7 @@ import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresPanelRepository } from '../../../src/repositories/PanelRepository.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
+  public pageStatus: 'editing' | 'confirmed' | 'generating' = 'editing';
   public queries: string[] = [];
   public transactionCount = 0;
   public values: readonly unknown[] | undefined;
@@ -16,6 +17,19 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
     this.queries.push(text);
     this.values = values;
     this.valuesList.push(values);
+
+    if (text.includes('FOR UPDATE OF pages')) {
+      return {
+        command: 'SELECT', rowCount: 1, oid: 0, fields: [],
+        rows: [{ page_id: 'page-1', page_status: this.pageStatus }] as unknown as T[],
+      };
+    }
+    if (text.includes("SET status = 'editing'")) {
+      return {
+        command: 'UPDATE', rowCount: 1, oid: 0, fields: [],
+        rows: [{ id: 'page-1' }] as unknown as T[],
+      };
+    }
 
     if (text.includes('DELETE FROM panels')) {
       return {
@@ -52,7 +66,8 @@ describe('PostgresPanelRepository', () => {
     expect(client.transactionCount).toBe(1);
     expect(client.queries[0]).toContain('FROM users');
     expect(client.queries[1]).toContain('account_deletion_requests');
-    expect(client.queries[2]).toContain('UPDATE panels');
+    expect(client.queries[2]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[3]).toContain('UPDATE panels');
   });
 
   it('legacy personalのcreate/compact/delete/reorderも各1 transactionの先頭でfenceする', async () => {
@@ -120,8 +135,9 @@ describe('PostgresPanelRepository', () => {
       panelNotes: 'Large reaction panel',
     });
 
-    expect(client.queries[0]).toContain('INSERT INTO panels');
-    expect(client.queries[0]).toContain('works.user_id = $2');
+    expect(client.queries[0]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[1]).toContain('INSERT INTO panels');
+    expect(client.queries[1]).toContain('works.user_id = $2');
     expect(client.values).toEqual([
       'page-1',
       'user-1',
@@ -151,7 +167,7 @@ describe('PostgresPanelRepository', () => {
       'Large reaction panel',
       null,
     ]);
-    expect(client.transactionCount).toBe(0);
+    expect(client.transactionCount).toBe(1);
     expect(client.queries.join('\n')).not.toContain('account_deletion_requests');
   });
 
@@ -179,12 +195,13 @@ describe('PostgresPanelRepository', () => {
       panelNotes: 'Updated panel note',
     });
 
-    expect(client.queries[0]).toContain('UPDATE panels');
-    expect(client.queries[0]).toContain('works.user_id = $2');
-    expect(client.valuesList[0]?.[0]).toBe('panel-1');
-    expect(client.valuesList[0]?.[1]).toBe('user-1');
-    expect(client.valuesList[0]?.[7]).toBe(true);
-    expect(client.valuesList[0]?.[8]).toBe(
+    expect(client.queries[0]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[1]).toContain('UPDATE panels');
+    expect(client.queries[1]).toContain('works.user_id = $2');
+    expect(client.valuesList[1]?.[0]).toBe('panel-1');
+    expect(client.valuesList[1]?.[1]).toBe('user-1');
+    expect(client.valuesList[1]?.[7]).toBe(true);
+    expect(client.valuesList[1]?.[8]).toBe(
       JSON.stringify({
         source: 'custom',
         gallery_item_id: null,
@@ -194,8 +211,8 @@ describe('PostgresPanelRepository', () => {
         custom_note: null,
       }),
     );
-    expect(client.valuesList[0]?.[11]).toBe(true);
-    expect(client.valuesList[0]?.[12]).toBe(
+    expect(client.valuesList[1]?.[11]).toBe(true);
+    expect(client.valuesList[1]?.[12]).toBe(
       JSON.stringify([
         {
           entity_id: null,
@@ -207,6 +224,21 @@ describe('PostgresPanelRepository', () => {
     );
   });
 
+  it('confirmedページのPanel更新は同じtransactionでeditingへ遷移する', async () => {
+    const client = new QueryCapturingClient();
+    client.pageStatus = 'confirmed';
+    const repository = new PostgresPanelRepository(client);
+
+    await repository.updatePanel('panel-1', 'user-1', { panelNotes: 'updated' });
+
+    expect(client.transactionCount).toBe(1);
+    expect(client.queries.map((query) =>
+      query.includes('FOR UPDATE OF pages') ? 'lock'
+        : query.includes("SET status = 'editing'") ? 'transition'
+          : query.includes('UPDATE panels') ? 'mutation' : 'other',
+    )).toEqual(['lock', 'transition', 'mutation']);
+  });
+
   it('Panel削除時に関連するpanel_frame参照を外してから削除する', async () => {
     const client = new QueryCapturingClient();
     const repository = new PostgresPanelRepository(client);
@@ -214,10 +246,11 @@ describe('PostgresPanelRepository', () => {
     const deleted = await repository.deletePanel('panel-1', 'user-1');
 
     expect(deleted).toBe(true);
-    expect(client.queries[0]).toContain('UPDATE panel_frames');
-    expect(client.queries[0]).toContain('SET panel_id = NULL');
-    expect(client.queries[1]).toContain('DELETE FROM panels');
-    expect(client.queries[1]).toContain('works.user_id = $2');
+    expect(client.queries[0]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[1]).toContain('UPDATE panel_frames');
+    expect(client.queries[1]).toContain('SET panel_id = NULL');
+    expect(client.queries[2]).toContain('DELETE FROM panels');
+    expect(client.queries[2]).toContain('works.user_id = $2');
   });
 
   it('compacts later panel orders after a panel is deleted', async () => {
@@ -226,8 +259,9 @@ describe('PostgresPanelRepository', () => {
 
     await repository.compactPanelOrdersAfterDelete('page-1', 'user-1', 2);
 
-    expect(client.queries[0]).toContain('UPDATE panels');
-    expect(client.queries[0]).toContain('panels."order" > $3');
+    expect(client.queries[0]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[1]).toContain('UPDATE panels');
+    expect(client.queries[1]).toContain('panels."order" > $3');
     expect(client.values).toEqual(['page-1', 'user-1', 2, null]);
   });
 
@@ -237,13 +271,14 @@ describe('PostgresPanelRepository', () => {
 
     await repository.reorderPanels('page-1', 'user-1', ['panel-3', 'panel-1', 'panel-2']);
 
-    expect(client.queries[0]).toContain('WITH requested_order');
-    expect(client.queries[0]).toContain('SET "order" = -requested_order.new_order');
-    expect(client.queries[0]).toContain('works.user_id = $2');
-    expect(client.valuesList[0]).toEqual(['page-1', 'user-1', ['panel-3', 'panel-1', 'panel-2'], null]);
-    expect(client.queries[1]).toContain('SET "order" = -panels."order"');
+    expect(client.queries[0]).toContain('FOR UPDATE OF pages');
+    expect(client.queries[1]).toContain('WITH requested_order');
+    expect(client.queries[1]).toContain('SET "order" = -requested_order.new_order');
     expect(client.queries[1]).toContain('works.user_id = $2');
-    expect(client.queries[2]).toContain('ORDER BY panels."order" ASC');
+    expect(client.valuesList[1]).toEqual(['page-1', 'user-1', ['panel-3', 'panel-1', 'panel-2'], null]);
+    expect(client.queries[2]).toContain('SET "order" = -panels."order"');
+    expect(client.queries[2]).toContain('works.user_id = $2');
+    expect(client.queries[3]).toContain('ORDER BY panels."order" ASC');
   });
 
   it('legacy skeleton entity payload without new optional keys is still readable', async () => {

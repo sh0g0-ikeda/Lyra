@@ -3,12 +3,15 @@ import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'r
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Image as ExpoImage } from 'expo-image';
 
 import { PageErrorRecoveryNotice } from '@/components/PageErrorRecoveryNotice';
 import { ExportJobCard } from '@/components/ExportJobCard';
 import { ExcessPanelDeletionPlan } from '@/components/ExcessPanelDeletionPlan';
-import { ConfirmedPageSummary } from '@/components/ConfirmedPageSummary';
+import { EpisodeStartingStatesEditor } from '@/components/EpisodeStartingStatesEditor';
+import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
+import { useStartingStatesDraft } from '@/hooks/useStartingStatesDraft';
+import { canEditPageStatus } from '@/domain/pageEditing';
+import type { EpisodeStartingState } from '@/domain/episodeStartingStates';
 import { FormField } from '@/components/FormField';
 import { ImagePreviewModal } from '@/components/ImagePreviewModal';
 import { JobStatusCard } from '@/components/JobStatusCard';
@@ -24,7 +27,7 @@ import { usePageGenerationQuote } from '@/hooks/usePageGenerationQuote';
 import { usePageCompletion } from '@/hooks/usePageCompletion';
 import { useConfirmationPresentation } from '@/lib/confirmationPresentation';
 import { useMangaWorkflow } from '@/state/mangaWorkflow';
-import { PageCompletionActions, PageConfirmationAction, PageGenerationStartActions } from '@/components/PageCompletionActions';
+import { PageCompletionActions, PageGenerationStartActions } from '@/components/PageCompletionActions';
 import { PageImageViewer } from '@/components/PageImageViewer';
 import { PageSceneAutofillAction } from '@/components/PageSceneAutofillAction';
 import { PageThumbnailPicker } from '@/components/PageThumbnailPicker';
@@ -63,24 +66,21 @@ import {
   editorDraftHasUnsavedChanges,
   shouldHydrateEditorDraft
 } from '@/domain/editorDraftSyncPolicy';
-import {
-  imageSourceListIdentity,
-  type RemoteImageSource
-} from '@/domain/imageSourceCandidates';
+import { imageSourceListIdentity } from '@/domain/imageSourceCandidates';
 import { isPanelDialogueSpeakerValid } from '@/domain/panelDialoguePolicy';
 import { canDisplayMobileImage, imageAccessNotice } from '@/domain/imageAccess';
 import { canUseMobilePageImage, mobilePageExportCandidates } from '@/domain/mobilePageImageAccess';
 import { buildEpisodeExportPayload } from '@/domain/pageExport';
 import { createSafeLayoutTemplatePayload, selectExcessPanels } from '@/domain/pageSafety';
-import { adjacentPage, initialPageAndPanel, selectPageForEpisode } from '@/domain/pageSelection';
+import { initialPageAndPanel, selectPageForEpisode } from '@/domain/pageSelection';
 import { usePagePanelSelection } from '@/hooks/usePagePanelSelection';
-import { PageSwipeNavigator } from '@/components/PageSwipeNavigator';
 import {
   buildFullPageImageSources,
   buildPageThumbnailImageSources
 } from '@/domain/pageImageSources';
 import type {
   EntityRecord,
+  EpisodeRecord,
   ExportFormat,
   GenerationJobRecord,
   PageGenerationBlockerRecord,
@@ -101,8 +101,7 @@ import { config } from '@/lib/config';
 import { appendOrganizationQuery, downloadAuthenticatedFile } from '@/lib/download';
 import { fileTransferErrorMessage } from '@/lib/fileTransferError';
 import {
-  errorRecoveryActionLabel,
-  pageGenerationBlockerRecoveryTarget
+  errorRecoveryActionLabel
 } from '@/lib/errorRecovery';
 import { t } from '@/lib/i18n';
 import { editorMessage } from '@/lib/editorUiMessages';
@@ -125,7 +124,8 @@ import {
   pagesQueryKey,
   panelsQueryKey,
   jobsQueryKey,
-  scenesQueryKey
+  scenesQueryKey,
+  episodesQueryKey
 } from '@/lib/queryKeys';
 import {
   currentQueryError,
@@ -169,6 +169,7 @@ interface FrameDraft {
 }
 
 interface FrameSaveRequest {
+  episodeId: string | null;
   frames: PanelFrameUpdateInput[];
   organizationId: string | null;
   pageId: string;
@@ -306,27 +307,6 @@ const generationBlockerMessage = (
   language: 'ja' | 'en'
 ): string => t(language, generationBlockerMessages[blocker.code]);
 
-const generationBlockerActionLabel = (
-  blocker: PageGenerationBlockerRecord,
-  language: 'ja' | 'en'
-): string | null => {
-  const recoveryTarget = pageGenerationBlockerRecoveryTarget(blocker.code);
-  if (recoveryTarget !== null) {
-    return errorRecoveryActionLabel(recoveryTarget, language);
-  }
-  const labels: Record<
-    Exclude<PageGenerationBlockerRecord['action'], 'wait_for_generation' | 'none'>,
-    ScreenTranslationKey
-  > = {
-    open_layout: 'screen.pages.blockerAction.openLayout',
-    open_panels: 'screen.pages.blockerAction.openPanels',
-    open_characters: 'screen.pages.blockerAction.openCharacters',
-    reopen_page: 'screen.pages.blockerAction.reopenPage'
-  };
-  return blocker.action === 'wait_for_generation' || blocker.action === 'none'
-    ? null
-    : t(language, labels[blocker.action]);
-};
 const labelOptions = <T extends string>(
   options: { value: T; labelJa: string; labelEn: string }[],
   language: 'ja' | 'en'
@@ -673,7 +653,8 @@ export function PagesScreen(): React.JSX.Element {
   const { api, hasCapability, language, logout, selection, session, sessionKey, tokens, trackJob, updateSelection } = useAppState();
   const { hasDirtyEditors, resolveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
-  const canEdit = hasCapability('edit_work');
+  const canEditWork = hasCapability('edit_work');
+  const automaticReopen = session?.capabilities?.automatic_page_reopen_on_write === true;
   const paidGenerationBlocked = selection.organizationId === null
     ? session?.personal_credits?.paid_generation_blocked === true
     : session?.organizations.find((organization) => organization.id === selection.organizationId)?.paid_generation_blocked === true;
@@ -747,12 +728,23 @@ export function PagesScreen(): React.JSX.Element {
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
   const activeEpisodeId = workspaceContext.selectedEpisodeId;
+  const startingEpisode = workspaceContext.episodes?.find((episode) => episode.id === activeEpisodeId) ?? null;
+  const persistStartingStates = useCallback(async (episodeId: string, payload: { starting_entity_states: EpisodeStartingState[]; expected_updated_at: string }): Promise<void> => {
+    const updated = await api.updateEpisode(episodeId, payload, organizationId);
+    const key = episodesQueryKey(sessionKey, updated.chapter_id, organizationId);
+    queryClient.setQueryData<{ episodes: EpisodeRecord[] }>(key, (current) => current === undefined ? current : {
+      ...current, episodes: current.episodes.map((episode) => episode.id === updated.id ? updated : episode)
+    });
+    await queryClient.invalidateQueries({ queryKey: key });
+  }, [api, organizationId, queryClient, sessionKey]);
+  const startingStatesDraft = useStartingStatesDraft({ scope: stateAutofillScope, episode: startingEpisode,
+    canEdit: canEditWork, enabled: stateAutofillAvailable, onSave: persistStartingStates });
+  useDirtyEditorRegistration({ id: `page-starting-states:${stateAutofillScope}`, dirty: startingStatesDraft.dirty,
+    revision: JSON.stringify(startingStatesDraft.value), save: startingStatesDraft.save, discard: startingStatesDraft.discard });
   const initialPageSelectionScope = JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId]);
   const pageWorkflowScope = JSON.stringify([sessionKey, organizationId, activeWorkId, activeEpisodeId, selection.pageId]);
   const latestPageWorkflowScope = useRef(pageWorkflowScope);
   const pageQuoteIntent = useRef(0);
-  const [pageNavigationLookup, setPageNavigationLookup] = useState<{ scope: string; loading: boolean; error: boolean } | null>(null);
-  const pageNavigationIntent = useRef(0);
   const [nextPageLookup, setNextPageLookup] = useState<{ scope: string; error: boolean; loading: boolean } | null>(null);
   useLayoutEffect(() => {
     latestPageWorkflowScope.current = pageWorkflowScope;
@@ -813,6 +805,7 @@ export function PagesScreen(): React.JSX.Element {
     selectedPageCandidate?.episode_id === activeEpisodeId
       ? selectedPageCandidate
       : null;
+  const canEdit = canEditWork && (selectedPage === null || canEditPageStatus(selectedPage.status, automaticReopen));
   useEffect(() => {
     if (activeEpisodeId === null || !pagesQuery.isSuccess) return;
     if (initialSelectionScopeRef.current === initialPageSelectionScope) return;
@@ -967,29 +960,6 @@ export function PagesScreen(): React.JSX.Element {
   const pageImageFailed =
     failedPageImageSourceIdentity === selectedPageImageSourceIdentity;
 
-  useEffect(() => {
-    if (selectedPage === null) {
-      return;
-    }
-    const selectedIndex = pages.findIndex((page) => page.id === selectedPage.id);
-    if (selectedIndex < 0) {
-      return;
-    }
-    const adjacentSources = [pages[selectedIndex - 1], pages[selectedIndex + 1]]
-      .filter((page): page is PageRecord => page?.generated_image !== null && page !== undefined)
-      .map((page) => pageThumbnailImageSourcesFor(page)[0])
-      .filter((source): source is RemoteImageSource => source !== undefined);
-    if (adjacentSources.length > 0) {
-      void Promise.all(
-        adjacentSources.map((source) =>
-          ExpoImage.prefetch(source.uri, {
-            cachePolicy: 'disk',
-            headers: source.headers
-          }).catch(() => false)
-        )
-      );
-    }
-  }, [pageThumbnailImageSourcesFor, pages, selectedPage]);
 
   const pageHierarchyReady =
     activeEpisodeId !== null && pagesQuery.isSuccess;
@@ -1109,7 +1079,7 @@ export function PagesScreen(): React.JSX.Element {
     frame.vertices.length !== 4 ||
     frame.vertices.some((vertex) => !isNumberInRangeText(vertex.x, 0, 1) || !isNumberInRangeText(vertex.y, 0, 1))
   );
-  const framePanelMismatch = frameDrafts.length !== (panelsQuery.data?.panels.length ?? 0);
+  const framePanelMismatch = framesQuery.isSuccess && panelsQuery.isSuccess && frameDrafts.length !== (panelsQuery.data?.panels.length ?? 0);
   const panelPayloadInvalid =
     dialogues.filter((dialogue) => dialogue.text.trim().length > 0).length > 20 ||
     dialogues.some(
@@ -1404,7 +1374,7 @@ export function PagesScreen(): React.JSX.Element {
   const applyFrameTemplateMutation = useMutation({
     mutationFn: () => api.applyFrameTemplate(selectedPage?.id ?? '', templateId, organizationId),
     onSuccess: async () => {
-      await invalidateFrames();
+      await Promise.all([invalidatePages(), invalidateFrames()]);
     }
   });
 
@@ -1461,7 +1431,7 @@ export function PagesScreen(): React.JSX.Element {
     },
     onSuccess: async (panel) => {
       setPanelId(panel.id);
-      await invalidatePanels();
+      await Promise.all([invalidatePages(), invalidatePanels()]);
     }
   });
 
@@ -1475,16 +1445,22 @@ export function PagesScreen(): React.JSX.Element {
       );
       return updated;
     },
-    onSuccess: invalidatePanels
+    onSuccess: async () => { await Promise.all([invalidatePages(), invalidatePanels()]); }
   });
 
   const deletePanelMutation = useMutation({
-    mutationFn: (targetPanelId: string) => api.deletePanel(targetPanelId, organizationId),
+    mutationFn: (targetPanelId: string) => {
+      if (selectedPage === null) throw new Error(t(language, "generated.screens.PagesScreen.select.a.page.first.50276876"));
+      return api.updatePanelStructure(selectedPage.id, {
+        expected_panel_ids: [...(panelsQuery.data?.panels ?? [])].sort((left, right) => left.order - right.order).map((panel) => panel.id),
+        operation: { type: 'delete', panel_id: targetPanelId }
+      }, organizationId);
+    },
     onSuccess: async (_, targetPanelId) => {
       if (panelId === targetPanelId) {
         setPanelId(null);
       }
-      await invalidatePanels();
+      await Promise.all([invalidatePages(), invalidatePanels()]);
       await invalidateFrames();
     }
   });
@@ -1512,10 +1488,12 @@ export function PagesScreen(): React.JSX.Element {
         return panels;
       }
       nextPanels.splice(targetIndex, 0, movedPanel);
-      const result = await api.reorderPanels(selectedPage.id, nextPanels.map((panel) => panel.id), organizationId);
-      return result.panels;
+      return api.updatePanelStructure(selectedPage.id, {
+        expected_panel_ids: panels.map((panel) => panel.id),
+        operation: { type: 'reorder', panel_ids: nextPanels.map((panel) => panel.id) }
+      }, organizationId);
     },
-    onSuccess: invalidatePanels
+    onSuccess: async () => { await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]); }
   });
 
   const changePanelRoleMutation = useMutation({
@@ -1530,7 +1508,7 @@ export function PagesScreen(): React.JSX.Element {
       if (panel.id === panelId) {
         setPanelRole(panel.panel_role);
       }
-      await invalidatePanels();
+      await Promise.all([invalidatePages(), invalidatePanels()]);
     }
   });
 
@@ -1584,6 +1562,7 @@ export function PagesScreen(): React.JSX.Element {
     }
     const frames = frameDrafts.map(toFrameUpdateInput);
     return {
+      episodeId: activeEpisodeId,
       frames,
       organizationId,
       pageId: selectedPage.id,
@@ -1591,7 +1570,7 @@ export function PagesScreen(): React.JSX.Element {
       scope: frameDraftScope,
       sessionKey,
     };
-  }, [frameDraftRevision, frameDraftScope, frameDrafts, language, lastSyncedFrameScope, organizationId, selectedPage, sessionKey]);
+  }, [activeEpisodeId, frameDraftRevision, frameDraftScope, frameDrafts, language, lastSyncedFrameScope, organizationId, selectedPage, sessionKey]);
 
   const replaceFramesMutation = useMutation({
     mutationFn: (request: FrameSaveRequest) => {
@@ -1613,6 +1592,8 @@ export function PagesScreen(): React.JSX.Element {
         setLastSyncedFrameRevision(request.revision);
       }
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: pagesQueryKey(request.sessionKey, request.episodeId, request.organizationId) }),
+        queryClient.invalidateQueries({ queryKey: pageDetailQueryKey(request.sessionKey, request.pageId, request.organizationId) }),
         queryClient.invalidateQueries({
           queryKey: framesQueryKey(
             request.sessionKey,
@@ -1880,20 +1861,6 @@ export function PagesScreen(): React.JSX.Element {
   const generateMonochromePageMutation = { isPending: quoteBusy && generationQuote.state.target?.renderStyle === 'monochrome', error: null, reset: closeGenerationQuote };
   const pageGenerationPending = quoteBusy;
 
-  const confirmPageMutation = useMutation({
-    mutationFn: async () => {
-      await saveAllPageDrafts();
-      return api.confirmPage(selectedPage?.id ?? '', organizationId);
-    },
-    onSuccess: async () => {
-      await Promise.all([invalidatePages(), invalidatePanels(), invalidateFrames()]);
-    }
-  });
-
-  const reopenPageMutation = useMutation({
-    mutationFn: () => api.reopenPage(selectedPage?.id ?? '', organizationId),
-    onSuccess: invalidatePages
-  });
 
   const downloadPageMutation = useMutation({
     mutationFn: () => {
@@ -2003,8 +1970,6 @@ export function PagesScreen(): React.JSX.Element {
     cancelPageDesignJobMutation.reset,
     generatePageMutation.reset,
     generateMonochromePageMutation.reset,
-    confirmPageMutation.reset,
-    reopenPageMutation.reset,
     exportPagesMutation.reset,
     downloadPageMutation.reset,
     () => setPageImageDownloadError(null),
@@ -2042,39 +2007,12 @@ export function PagesScreen(): React.JSX.Element {
     // The page-scoped hook initializes after authoritative data, including cache hits.
     void updateSelection({ pageId });
   }, [updateSelection]);
-  const { hasNextPage: hasMorePages, fetchNextPage: fetchMorePages } = pagesQuery;
-  const movePage = useCallback((direction: -1 | 1): void => {
-    if (selectedPage === null || activeEpisodeId === null || (pageNavigationLookup?.scope === pageWorkflowScope && pageNavigationLookup.loading)) return;
-    const target = adjacentPage(pages, selectedPage.id, direction);
-    if (target !== null) { switchPage(target.id); return; }
-    const selectedIsLoaded = pages.some((page) => page.id === selectedPage.id);
-    if (selectedIsLoaded && (direction === -1 || !hasMorePages)) return;
-    const scope = pageWorkflowScope;
-    const selectedId = selectedPage.id;
-    const episodeId = activeEpisodeId;
-    const intent = ++pageNavigationIntent.current;
-    setPageNavigationLookup({ scope, loading: true, error: false });
-    const candidates = selectedIsLoaded
-      ? fetchMorePages({ throwOnError: true }).then((result) => flattenUniqueRecords(result.data?.pages.map((page) => page.pages) ?? []))
-      : api.getPages(episodeId, organizationId).then((result) => result.pages);
-    void candidates.then((records) => {
-      if (latestPageWorkflowScope.current !== scope || pageNavigationIntent.current !== intent) return;
-      const next = adjacentPage(records.filter((page) => page.episode_id === episodeId), selectedId, direction);
-      setPageNavigationLookup({ scope, loading: false, error: false });
-      if (next !== null) switchPage(next.id);
-    }).catch(() => {
-      if (latestPageWorkflowScope.current === scope && pageNavigationIntent.current === intent) {
-        setPageNavigationLookup({ scope, loading: false, error: true });
-      }
-    });
-  }, [selectedPage, activeEpisodeId, pageNavigationLookup, pageWorkflowScope, pages, switchPage, hasMorePages, fetchMorePages, api, organizationId]);
-
   const previewPage = (pageId: string): void => {
     const page = pages.find((candidate) => candidate.id === pageId);
     if (page === undefined || !canUseMobilePageImage(page)) {
       return;
     }
-    const source = pageThumbnailImageSourcesFor(page)[0];
+    const source = fullPageImageSourcesFor(page)[0];
     if (source === undefined) {
       return;
     }
@@ -2108,60 +2046,6 @@ export function PagesScreen(): React.JSX.Element {
     setPageStale(false);
   };
 
-  const handleGenerationBlockerAction = (
-    blocker: PageGenerationBlockerRecord
-  ): void => {
-    const recoveryTarget = pageGenerationBlockerRecoveryTarget(blocker.code);
-    if (recoveryTarget === 'credits' || recoveryTarget === 'jobs') {
-      void resolveDirtyEditors(language).then((canLeave) => {
-        if (canLeave) {
-          navigation.navigate('Account');
-        }
-      });
-      return;
-    }
-    if (recoveryTarget === 'layout') {
-      setTemplateModalVisible(true);
-      return;
-    }
-    if (recoveryTarget === 'characters') {
-      void resolveDirtyEditors(language).then((canLeave) => {
-        if (canLeave) {
-          navigation.navigate('Characters');
-        }
-      });
-      return;
-    }
-
-    switch (blocker.action) {
-      case 'open_layout':
-        setTemplateModalVisible(true);
-        return;
-      case 'open_panels':
-        setPanelId((current) => current ?? panelsQuery.data?.panels[0]?.id ?? null);
-        return;
-      case 'open_characters':
-        void resolveDirtyEditors(language).then((canLeave) => {
-          if (canLeave) {
-            navigation.navigate('Characters');
-          }
-        });
-        return;
-      case 'reopen_page':
-        confirmAction({
-          language,
-          title: t(language, "generated.screens.PagesScreen.reopen.page.41da8099"),
-          message: t(language, "generated.screens.PagesScreen.the.confirmed.page.will.be.returned.to.e.1cee4ef2"),
-          confirmLabel: t(language, 'reopenPage'),
-          onConfirm: () => reopenPageMutation.mutate()
-        });
-        return;
-      case 'wait_for_generation':
-      case 'none':
-        return;
-    }
-  };
-
   const existingEpisodePageCount = pages.length;
   const existingEpisodePanelCount = pages.reduce((total, page) => total + page.panel_count, 0);
   const overwritePageSkeleton = existingEpisodePageCount > 0;
@@ -2192,9 +2076,9 @@ export function PagesScreen(): React.JSX.Element {
       updatePanelMutation.isPending || deletePanelMutation.isPending ||
       reorderPanelMutation.isPending || changePanelRoleMutation.isPending ||
       replaceFramesMutation.isPending || applyTemplateMutation.isPending ||
-      applyFrameTemplateMutation.isPending || autofillPageFromScenesMutation.isPending ||
-      confirmPageMutation.isPending || reopenPageMutation.isPending,
+      applyFrameTemplateMutation.isPending || autofillPageFromScenesMutation.isPending,
     status: selectedPage?.status,
+    automaticReopen,
     onSelect: setPanelId
   });
   const confirmInsertPanelAfter = (): void => {
@@ -2215,7 +2099,7 @@ export function PagesScreen(): React.JSX.Element {
     const available = stateAutofillAvailable;
     const isCurrent = (): boolean => currentAutofillScope.current.scope === scope && currentAutofillScope.current.canGenerate &&
       (!available || currentAutofillScope.current.available);
-    void resolveDirtyEditors(language).then((canContinue) => {
+    void startingStatesDraft.save().then(() => resolveDirtyEditors(language)).then((canContinue) => {
       if (!canContinue || !isCurrent()) return;
       confirmStoryStateAutofill({
         language,
@@ -2238,7 +2122,7 @@ export function PagesScreen(): React.JSX.Element {
           });
         }
       });
-    });
+    }).catch(() => undefined);
   };
 
   const confirmApplyTemplate = (): void => {
@@ -2298,25 +2182,7 @@ export function PagesScreen(): React.JSX.Element {
   const confirmGeneratePage = (): void => requestPageQuote('color');
   const confirmGenerateMonochromePage = (): void => requestPageQuote('monochrome');
 
-  const confirmConfirmPage = (): void => {
-    confirmAction({
-      language,
-      title: t(language, "generated.screens.PagesScreen.confirm.page.c7aff770"),
-      message: t(language, "generated.screens.PagesScreen.this.page.will.be.marked.as.confirmed.yo.c1c88cdb"),
-      confirmLabel: t(language, 'confirmPage'),
-      onConfirm: () => confirmPageMutation.mutate()
-    });
-  };
 
-  const confirmReopenPage = (): void => {
-    confirmAction({
-      language,
-      title: t(language, "generated.screens.PagesScreen.reopen.page.41da8099"),
-      message: t(language, "generated.screens.PagesScreen.the.confirmed.page.will.be.returned.to.e.1cee4ef2"),
-      confirmLabel: t(language, 'reopenPage'),
-      onConfirm: () => reopenPageMutation.mutate()
-    });
-  };
 
   const mutationErrors = collectOperationFailures([
     operationFailure('savePage', updatePageMutation.error, pageDirty ? 'page' : undefined),
@@ -2334,8 +2200,6 @@ export function PagesScreen(): React.JSX.Element {
     operationFailure('cancelPageDesign', cancelPageDesignJobMutation.error),
     operationFailure('generatePage', generatePageMutation.error),
     operationFailure('generateMonochromePage', generateMonochromePageMutation.error),
-    operationFailure('confirmPage', confirmPageMutation.error),
-    operationFailure('reopenPage', reopenPageMutation.error),
     operationFailure('exportPages', exportPagesMutation.error),
     operationFailure('openWebEditor', openWebEditorMutation.error)
   ]);
@@ -2384,24 +2248,28 @@ export function PagesScreen(): React.JSX.Element {
   const queryFailures = collectOperationFailures([
     {
       ...operationFailure('loadPages', pagesError),
+      context: { operation: 'loadPages', essential: pagesQuery.data === undefined },
       retry: () => {
         void pagesQuery.refetch();
       }
     },
     {
       ...operationFailure('loadPage', selectedPageError),
+      context: { operation: 'loadPage', essential: selectedPageQuery.data === undefined },
       retry: () => {
         void selectedPageQuery.refetch();
       }
     },
     {
       ...operationFailure('loadPanels', panelsError),
+      context: { operation: 'loadPanels', essential: panelsQuery.data === undefined },
       retry: () => {
         void panelsQuery.refetch();
       }
     },
     {
       ...operationFailure('loadFrames', framesError),
+      context: { operation: 'loadFrames', essential: framesQuery.data === undefined },
       retry: () => {
         void framesQuery.refetch();
       }
@@ -2426,6 +2294,7 @@ export function PagesScreen(): React.JSX.Element {
     },
     {
       ...operationFailure('loadCharacters', entitiesError),
+      context: { operation: 'loadCharacters', essential: entitiesQuery.data === undefined },
       retry: () => {
         void entitiesQuery.refetch();
       }
@@ -2458,7 +2327,7 @@ export function PagesScreen(): React.JSX.Element {
     return location.length === 0 ? prefix : `${prefix}: ${location}`;
   });
   const selectedPageIsEditableDraft =
-    selectedPage !== null && ['designing', 'editing'].includes(selectedPage.status);
+    selectedPage !== null && canEditPageStatus(selectedPage.status, automaticReopen);
   const selectedTemplatePanelCount = selectedTemplate?.panel_count ?? 0;
   const excessPanels = selectExcessPanels(
     panelsQuery.data?.panels ?? [],
@@ -2509,7 +2378,7 @@ export function PagesScreen(): React.JSX.Element {
   const panelRoleSegments = labelOptions(panelRoleOptions, language);
   const panelSizeSegments = labelOptions(panelSizeOptions, language);
   const readiness = pageGenerationReadinessQuery.data ?? null;
-  const pageRequiresReopen = selectedPage?.status === 'confirmed';
+  const pageRequiresReopen = selectedPage?.status === 'confirmed' && !automaticReopen;
   const serverGenerationBlocked =
     pageGenerationReadinessQuery.isLoading ||
     (!legacyPageGenerationReadinessUnavailable &&
@@ -2563,6 +2432,23 @@ export function PagesScreen(): React.JSX.Element {
       ) : null}
       {activeEpisodeId === null ? <Notice message={t(language, 'selectEpisodeFirst')} tone="warning" /> : null}
       {safeRedesignBlockReason === undefined ? null : <Notice message={safeRedesignBlockReason} tone="warning" />}
+      {startingEpisode !== null && (stateAutofillAvailable || (startingEpisode.starting_entity_states?.length ?? 0) > 0) ? (
+        <EpisodeStartingStatesEditor language={language} entities={entities}
+          value={startingStatesDraft.value} onChange={startingStatesDraft.setValue}
+          disabled={!canEditWork || !stateAutofillAvailable || startingStatesDraft.saving || pageDesignOperationActive}
+          hasMoreEntities={entitiesQuery.hasNextPage} loadingEntities={entitiesQuery.isFetchingNextPage}
+          onLoadMoreEntities={() => { void entitiesQuery.fetchNextPage(); }}>
+          {startingStatesDraft.error === null ? null : <ActionableErrorNotice error={startingStatesDraft.error}
+            context={{ operation: 'saveEpisode', retainedDraft: 'episode' }} language={language}
+            actions={{ retry: () => { void queryClient.invalidateQueries({ queryKey: episodesQueryKey(sessionKey, startingEpisode.chapter_id, organizationId) }); } }} />}
+          <View style={styles.buttonRow}>
+            <PrimaryButton label={t(language, 'save')} disabled={!canEditWork || !stateAutofillAvailable || !startingStatesDraft.dirty || pageDesignOperationActive}
+              loading={startingStatesDraft.saving} onPress={() => { void startingStatesDraft.save().catch(() => undefined); }} variant="secondary" />
+            {startingStatesDraft.dirty ? <PrimaryButton label={t(language, "generated.components.StoryHierarchySheet.cancel.3672b0b9")} disabled={startingStatesDraft.saving}
+              onPress={startingStatesDraft.discard} variant="ghost" /> : null}
+          </View>
+        </EpisodeStartingStatesEditor>
+      ) : null}
       <PageStoryAutofillAction
         blockReason={safeRedesignBlockReason}
         canGenerate={canGenerate}
@@ -2576,18 +2462,10 @@ export function PagesScreen(): React.JSX.Element {
       />
 
       <Section collapsible persistKey="pages:list" title={editorMessage(language, 'pageList')} subtitle={editorMessage(language, 'pageListHelp')}>
-        {selectedPage === null ? null : <PageSwipeNavigator
-          currentPageNumber={selectedPage.page_number} language={language} onMove={movePage}
-          canPrevious={adjacentPage(pages, selectedPage.id, -1) !== null || !pages.some((page) => page.id === selectedPage.id)}
-          canNext={adjacentPage(pages, selectedPage.id, 1) !== null || pagesQuery.hasNextPage || !pages.some((page) => page.id === selectedPage.id)}
-          loading={pageNavigationLookup?.scope === pageWorkflowScope && pageNavigationLookup.loading}
-        />}
-        {pageNavigationLookup?.scope === pageWorkflowScope && pageNavigationLookup.error
-          ? <Notice tone="warning" message={t(language, 'navigation.pageLoadFailed')} /> : null}
         <PageThumbnailPicker
           emptyLabel={t(language, 'emptyPages')}
           hasNextPage={pagesQuery.hasNextPage}
-          helperText={t(language, "generated.screens.PagesScreen.choose.a.page.to.edit.unsaved.edits.are.453ccf41")}
+          hideStatus
           imageSourcesFor={pageThumbnailImageSourcesFor}
           isFetchingNextPage={pagesQuery.isFetchingNextPage}
           language={language}
@@ -2600,11 +2478,6 @@ export function PagesScreen(): React.JSX.Element {
           selectedId={selection.pageId}
           statusLabelFor={(status) => formatPageStatus(status, language)}
         />
-        <Text style={styles.label}>{pageWorkflowMessage(language, 'jump')}</Text>
-        <RecordPicker items={pages} selectedId={selection.pageId} language={language} emptyLabel={t(language, 'emptyPages')}
-          labelForItem={(page) => pageWorkflowMessage(language, 'page', { number: page.page_number })}
-          onSelect={switchPage} hasNextPage={pagesQuery.hasNextPage} isFetchingNextPage={pagesQuery.isFetchingNextPage}
-          onEndReached={() => { void pagesQuery.fetchNextPage(); }} />
       </Section>
 
       <JobStatusCard
@@ -2645,27 +2518,7 @@ export function PagesScreen(): React.JSX.Element {
           onLogin={() => { void resolveDirtyEditors(language).then((canLeave) => { if (canLeave) void logout(); }); }}
           onReloadStale={() => { void reloadAfterPageStale(); }} onRetry={() => { failure.retry(); }} />
       ))}
-      {selectedPage?.status === 'confirmed' ? (
-        <Section
-          persistKey="pages:confirmed-summary"
-          title={t(language, "generated.screens.PagesScreen.confirmed.page.summary.fbda4a5d")}
-        >
-          <ConfirmedPageSummary
-            language={language}
-            page={selectedPage}
-            sourceSceneLabels={selectedPage.story_source_scene_ids.map((sceneId) => {
-              const sourceScene = scenes.find((scene) => scene.id === sceneId);
-              if (sourceScene === undefined) {
-                return t(language, "generated.screens.PagesScreen.deleted.source.scene.2ecddecb");
-              }
-              const prefix = `${t(language, "generated.screens.PagesScreen.scene.dd61f732")} ${sourceScene.order}`;
-              const location = sourceScene.location?.trim() ?? '';
-              return location.length === 0 ? prefix : `${prefix}: ${location}`;
-            })}
-          />
-        </Section>
-      ) : (
-        <>
+      <>
       <Section collapsible defaultCollapsed persistKey="pages:style" title={editorMessage(language, 'artStyle')}>
         <FormField editable={canEdit} label={t(language, 'styleReferenceTitle')} maxLength={200} onChangeText={setStyleReferenceTitle} value={styleReferenceTitle} />
         <FormField editable={canEdit} label={t(language, 'styleReferenceNotes')} maxLength={2000} multiline onChangeText={setStyleReferenceNotes} value={styleReferenceNotes} />
@@ -3066,8 +2919,7 @@ export function PagesScreen(): React.JSX.Element {
           <PrimaryButton testID="panel-save" disabled={!canEdit || panelInsertion.operationActive || selectedPanel === null || panelPayloadInvalid} disabledReason={!canEdit ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee") : selectedPanel === null ? t(language, "generated.screens.PagesScreen.select.a.panel.first.4b816ba0") : panelPayloadInvalid ? t(language, "generated.screens.PagesScreen.check.panel.content.a0d29c4a") : undefined} label={t(language, 'save')} loading={updatePanelMutation.isPending} onPress={() => updatePanelMutation.mutate()} variant="secondary" />
         </View>
       </Section>
-        </>
-      )}
+      </>
       <PageCompletionActions
         exportSection={config.episodeExportEnabled ? (
       <Section
@@ -3183,6 +3035,7 @@ export function PagesScreen(): React.JSX.Element {
         tone="highlight"
       >
         <PageGenerationStartActions
+          buttonRef={resultTriggerRef}
           canGenerate={!(
             !generationQuotesAvailable ||
             !canGenerate ||
@@ -3203,13 +3056,13 @@ export function PagesScreen(): React.JSX.Element {
               : selectedPage === null
                 ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
                 : pageRequiresReopen
-                  ? t(language, 'screen.pages.blocker.pageReopenRequired')
+                  ? pageWorkflowMessage(language, 'automaticEditingUnavailable')
                   : unsavedNewPanelDraft
                     ? t(language, 'screen.pages.unsavedNewPanelDraft')
                     : pageStale
                       ? t(language, "generated.screens.PagesScreen.reload.the.latest.page.2116abca")
                       : serverGenerationBlocked
-                        ? t(language, "generated.screens.PagesScreen.resolve.the.generation.blockers.above.cda6ec67")
+                        ? readiness?.blockers[0] === undefined ? pageWorkflowMessage(language, 'quoteError') : generationBlockerMessage(readiness.blockers[0], language)
                         : framePanelMismatch
                           ? t(language, "generated.screens.PagesScreen.match.frame.and.panel.counts.62ee8959")
                           : frameDraftsInvalid
@@ -3224,8 +3077,6 @@ export function PagesScreen(): React.JSX.Element {
           onGenerate={confirmGeneratePage}
           onGenerateMonochrome={confirmGenerateMonochromePage}
         />
-        {!generationQuotesAvailable ? <Notice message={pageWorkflowMessage(language, 'quoteUnavailable')} tone="info" /> : null}
-        <Text style={styles.caption}>{pageWorkflowMessage(language, 'quoteSaving')}</Text>
         <Text style={styles.caption}>{t(language, 'component.jobStatusCard.imageDurationEstimate')}</Text>
         {nextPageLookup?.scope === pageWorkflowScope && nextPageLookup.loading ? <Notice message={pageWorkflowMessage(language, 'morePages')} tone="info" /> : null}
         {nextPageLookup?.scope === pageWorkflowScope && nextPageLookup.error ? <Notice message={pageWorkflowMessage(language, 'quoteError')} tone="warning" /> : null}
@@ -3281,27 +3132,6 @@ export function PagesScreen(): React.JSX.Element {
             {t(language, "generated.screens.PagesScreen.estimated.credits.688bbeb1")}: {readiness.estimated_credit_cost}
           </Text>
         )}
-        {readiness?.blockers.map((blocker, index) => {
-          const recoveryTarget = pageGenerationBlockerRecoveryTarget(blocker.code);
-          const actionLabel =
-            recoveryTarget === 'layout' && !pageLayoutEditingUiEnabled
-              ? null
-              : recoveryTarget === null
-              ? generationBlockerActionLabel(blocker, language)
-              : errorRecoveryActionLabel(recoveryTarget, language);
-          return (
-            <View key={`${blocker.code}-${blocker.entity_id ?? 'page'}-${index}`} style={styles.usage}>
-              <Notice message={generationBlockerMessage(blocker, language)} tone="warning" />
-              {actionLabel === null ? null : (
-                <PrimaryButton
-                  label={actionLabel}
-                  onPress={() => handleGenerationBlockerAction(blocker)}
-                  variant="secondary"
-                />
-              )}
-            </View>
-          );
-        })}
         {selectedPage !== null && framePanelMismatch ? (
           <Notice
             actionLabel={
@@ -3321,23 +3151,6 @@ export function PagesScreen(): React.JSX.Element {
             tone="warning"
           />
         ) : null}
-        <PageConfirmationAction
-          buttonRef={resultTriggerRef}
-          canConfirm={canEdit && selectedPage !== null && !unsavedNewPanelDraft}
-          confirmed={pageRequiresReopen}
-          confirmLoading={confirmPageMutation.isPending}
-          disabledReason={!canEdit
-            ? t(language, "generated.screens.PagesScreen.editing.permission.is.required.6d3b86ee")
-            : selectedPage === null
-              ? t(language, "generated.screens.PagesScreen.select.a.page.first.50276876")
-              : unsavedNewPanelDraft
-                ? t(language, 'screen.pages.unsavedNewPanelDraft')
-                : undefined}
-          language={language}
-          onConfirm={confirmConfirmPage}
-          onReopen={confirmReopenPage}
-          reopenLoading={reopenPageMutation.isPending}
-        />
         <View style={styles.buttonRow}>
           <PrimaryButton
             disabled={!canExport || !canUseMobilePageImage(selectedPage)}
@@ -3406,6 +3219,7 @@ export function PagesScreen(): React.JSX.Element {
       />
       <ImagePreviewModal
         contentId={previewImagePageId}
+        sources={previewImageUri !== null && previewImagePage !== null && previewImagePage !== undefined && canUseMobilePageImage(previewImagePage) ? fullPageImageSourcesFor(previewImagePage) : []}
         headers={previewImageHeaders}
         language={language}
         onClose={() => {

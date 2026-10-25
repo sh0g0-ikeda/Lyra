@@ -128,7 +128,7 @@ export class BalloonService implements BalloonServicePort {
       throw new NotFoundError('Page not found');
     }
 
-    this.ensureBalloonEditingEnabled(pageContext);
+    this.ensureBalloonReadable(pageContext);
     return this.balloonRepository.findBalloonsByPageIdAndUserId(pageId, userId, organizationId);
   }
 
@@ -195,10 +195,16 @@ export class BalloonService implements BalloonServicePort {
   private ensureBalloonEditingEnabled(
     context: Pick<PageBalloonContext | BalloonContext, 'status' | 'dialogueMode' | 'hasGeneratedImage'>,
   ): void {
-    if (context.status === 'confirmed') {
-      throw new ConflictError('Confirmed pages must be reopened before editing balloons');
+    if (context.status === 'generating') {
+      throw new ConflictError('Balloons cannot change while page generation is in progress');
     }
 
+    this.ensureBalloonReadable(context);
+  }
+
+  private ensureBalloonReadable(
+    context: Pick<PageBalloonContext | BalloonContext, 'dialogueMode' | 'hasGeneratedImage'>,
+  ): void {
     if (context.dialogueMode === 'image_baked') {
       throw new ConflictError('Balloon editing is disabled for image_baked pages');
     }

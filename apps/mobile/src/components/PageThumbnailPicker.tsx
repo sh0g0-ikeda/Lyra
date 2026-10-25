@@ -20,6 +20,7 @@ interface PageThumbnailPickerProps {
   selectedId: string | null;
   emptyLabel: string;
   helperText?: string;
+  hideStatus?: boolean;
   language: 'ja' | 'en';
   imageSourcesFor: (page: PageRecord) => readonly RemoteImageSource[];
   statusLabelFor: (status: PageRecord['status']) => string;
@@ -35,6 +36,7 @@ export function PageThumbnailPicker({
   selectedId,
   emptyLabel,
   helperText,
+  hideStatus = false,
   language,
   imageSourcesFor,
   hasNextPage = false,
@@ -109,7 +111,7 @@ export function PageThumbnailPicker({
                 <Text numberOfLines={1} style={[styles.pageNumber, selected ? styles.pageNumberSelected : null]}>
                   {t(language, 'component.pageThumbnailPicker.pageNumber', { pageNumber: page.page_number })}
                 </Text>
-                <Text numberOfLines={1} style={styles.status}>{status}</Text>
+                {hideStatus ? null : <Text numberOfLines={1} style={styles.status}>{status}</Text>}
               </Pressable>
               {sources.length === 0 || onPreview === undefined ? null : (
                 <Pressable

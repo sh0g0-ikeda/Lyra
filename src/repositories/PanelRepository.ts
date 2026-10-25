@@ -30,6 +30,10 @@ import {
   type RepositorySchemaProfile,
 } from './RepositorySchemaProfile.js';
 import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
+import {
+  prepareAuthorizedPageEditByPageId,
+  prepareAuthorizedPageEditByPanelId,
+} from './PageEditAdmission.js';
 
 export type { CreatePanelInput, Panel, UpdatePanelInput };
 
@@ -124,16 +128,13 @@ export class PostgresPanelRepository implements PanelRepository {
     private readonly schemaProfile: RepositorySchemaProfile = CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   ) {}
 
-  private async runLegacyWrite<T>(
+  private async runExplicitWrite<T>(
     userId: string,
     organizationId: string | null,
     operation: (client: DatabaseClient) => Promise<T>,
   ): Promise<T> {
-    if (this.schemaProfile !== 'legacy_2debe_v1') {
-      return operation(this.client);
-    }
     return this.client.transaction(async (transactionClient) => {
-      if (organizationId === null) {
+      if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
         await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
       }
       return operation(transactionClient);
@@ -234,7 +235,16 @@ export class PostgresPanelRepository implements PanelRepository {
     organizationId: string | null = null,
   ): Promise<Panel | null> {
     try {
-      return await this.runLegacyWrite(userId, organizationId, async (client) => {
+      return await this.runExplicitWrite(userId, organizationId, async (client) => {
+        const editablePage = await prepareAuthorizedPageEditByPageId(
+          client,
+          pageId,
+          userId,
+          organizationId,
+        );
+        if (editablePage === null) {
+          return null;
+        }
         const result = await client.query<PanelRow>(
         `
         INSERT INTO panels (
@@ -351,7 +361,16 @@ export class PostgresPanelRepository implements PanelRepository {
     organizationId: string | null = null,
   ): Promise<Panel | null> {
     try {
-      return await this.runLegacyWrite(userId, organizationId, async (client) => {
+      return await this.runExplicitWrite(userId, organizationId, async (client) => {
+        const editablePage = await prepareAuthorizedPageEditByPanelId(
+          client,
+          panelId,
+          userId,
+          organizationId,
+        );
+        if (editablePage === null) {
+          return null;
+        }
         const result = await client.query<PanelRow>(
         `
         UPDATE panels
@@ -425,6 +444,15 @@ export class PostgresPanelRepository implements PanelRepository {
       if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
         await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
       }
+      const editablePage = await prepareAuthorizedPageEditByPanelId(
+        transactionClient,
+        panelId,
+        userId,
+        organizationId,
+      );
+      if (editablePage === null) {
+        return false;
+      }
       await transactionClient.query(
         `
         UPDATE panel_frames
@@ -496,7 +524,16 @@ export class PostgresPanelRepository implements PanelRepository {
     deletedOrder: number,
     organizationId: string | null = null,
   ): Promise<void> {
-    await this.runLegacyWrite(userId, organizationId, async (client) => {
+    await this.runExplicitWrite(userId, organizationId, async (client) => {
+      const editablePage = await prepareAuthorizedPageEditByPageId(
+        client,
+        pageId,
+        userId,
+        organizationId,
+      );
+      if (editablePage === null) {
+        return;
+      }
       await client.query(
       `
       UPDATE panels
@@ -542,6 +579,15 @@ export class PostgresPanelRepository implements PanelRepository {
     return this.client.transaction(async (transactionClient) => {
       if (this.schemaProfile === 'legacy_2debe_v1' && organizationId === null) {
         await assertLegacyPersonalWriteAllowed(transactionClient, { userId, organizationId });
+      }
+      const editablePage = await prepareAuthorizedPageEditByPageId(
+        transactionClient,
+        pageId,
+        userId,
+        organizationId,
+      );
+      if (editablePage === null) {
+        return [];
       }
       await transactionClient.query(
         `

@@ -63,6 +63,21 @@
         "simulator": false
       }
     },
+    "ux-preview": {
+      "extends": "staging",
+      "channel": "ux-review",
+      "autoIncrement": true
+    },
+    "testflight": {
+      "extends": "staging",
+      "environment": "preview",
+      "distribution": "store",
+      "channel": "ux-review",
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_APP_VARIANT": "testflight"
+      }
+    },
     "ios-simulator": {
       "environment": "preview",
       "distribution": "internal",
@@ -114,6 +129,11 @@
     }
   },
   "submit": {
+    "testflight": {
+      "ios": {
+        "ascAppId": "6797564060"
+      }
+    },
     "production": {
       "android": {
         "track": "internal",

@@ -47,6 +47,9 @@ export function createMeRoutes(dependencies: MeRouteDependencies): Hono<AppEnv> 
     const payload = {
       capabilities: {
         web_image_delivery: hasWebImageDeliveryAccess(c),
+        // Older clients ignore this additive capability. New editors may omit the
+        // manual reopen UI only when the server advertises atomic reopen-on-write.
+        automatic_page_reopen_on_write: true,
         generation_quotes: dependencies.generationQuotesEnabled === true,
         push_notifications: dependencies.pushNotificationsEnabled === true,
         entity_state_reference_generation: dependencies.stateCapabilities?.referenceGeneration === true,
