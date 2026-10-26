@@ -1,0 +1,111 @@
+# Explicit dispatch builds an immutable production candidate; no cloud credentials or deployment.
+name: Production image artifact
+
+on:
+  push:
+    branches:
+      - codex/production-ux-release-20261026
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-artifact:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    env:
+      ECR_REPOSITORY_URI: 452284481392.dkr.ecr.ap-northeast-1.amazonaws.com/lyra-prod-api
+      IMAGE_TAG: ${{ github.sha }}
+      PRODUCTION_API_URL: https://app.lyra-editor.com
+      PRODUCTION_COGNITO_DOMAIN: https://ap-northeast-1wizlzlgmm.auth.ap-northeast-1.amazoncognito.com
+      PRODUCTION_WEB_CLIENT_ID: 6b2h941o888u2l7ejhv5jog94
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate production inputs and native architecture
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$IMAGE_TAG"
+          test "$(uname -m)" = aarch64
+          test "$PRODUCTION_API_URL" = https://app.lyra-editor.com
+          test "$PRODUCTION_COGNITO_DOMAIN" = https://ap-northeast-1wizlzlgmm.auth.ap-northeast-1.amazoncognito.com
+          test "$PRODUCTION_WEB_CLIENT_ID" = 6b2h941o888u2l7ejhv5jog94
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build production image without registry credentials
+        run: |
+          set -euo pipefail
+          docker buildx build --platform linux/arm64 --load \
+            --build-arg VITE_API_BASE_URL="$PRODUCTION_API_URL" \
+            --build-arg VITE_COGNITO_DOMAIN="$PRODUCTION_COGNITO_DOMAIN" \
+            --build-arg VITE_COGNITO_CLIENT_ID="$PRODUCTION_WEB_CLIENT_ID" \
+            --build-arg VITE_COGNITO_REDIRECT_URI="${PRODUCTION_API_URL}/auth/callback" \
+            --build-arg VITE_COGNITO_LOGOUT_URI="$PRODUCTION_API_URL" \
+            --build-arg VITE_COGNITO_SCOPES='openid email' \
+            --build-arg VITE_COGNITO_API_TOKEN_USE=id \
+            --build-arg VITE_ORGANIZATION_FEATURES_ENABLED=true \
+            --label "org.opencontainers.image.revision=$IMAGE_TAG" \
+            -t "lyra-production:$IMAGE_TAG" .
+
+      - name: Verify ARM64 nonroot native image runtime
+        run: |
+          set -euo pipefail
+          docker run --rm --network none "lyra-production:$IMAGE_TAG" \
+            /usr/local/bin/bun -e 'import sharp from "sharp";
+            if(process.arch!=="arm64"||process.getuid?.()!==65532)throw new Error("Unexpected runtime identity");
+            const image=await sharp({create:{width:2,height:3,channels:4,background:{r:0,g:0,b:0,alpha:1}}}).png().toBuffer();
+            const result=await sharp(image).metadata();
+            if(result.format!=="png"||result.width!==2||result.height!==3)throw new Error("Native image runtime failed");
+            console.log(JSON.stringify({runtime:Bun.version,architecture:process.arch,uid:process.getuid(),imageDecode:"passed"}));' \
+            | tee runtime-proof.json
+
+      - name: Verify compiled support for the existing production profile
+        run: |
+          set -euo pipefail
+          docker run --rm --network none -e OPENAI_EPISODE_TEXT_PROFILE=balanced_v2 "lyra-production:$IMAGE_TAG" \
+            /usr/local/bin/bun -e 'import {env} from "./dist/src/lib/env.js";
+            if(env.OPENAI_EPISODE_TEXT_PROFILE!=="balanced_v2")throw new Error("Existing production profile is unsupported");
+            console.log(JSON.stringify({episodeTextProfile:env.OPENAI_EPISODE_TEXT_PROFILE,network:"none",configValidation:"passed"}));' \
+            | tee runtime-config-proof.json
+
+      - name: Verify production browser connection and page limit
+        run: |
+          set -euo pipefail
+          docker run --rm --network none "lyra-production:$IMAGE_TAG" \
+            /usr/local/bin/bun -e 'import {MAX_NEW_EPISODE_PAGES} from "./dist/packages/api-contract/src/episodePageLimits.js";
+            import {readFileSync,readdirSync} from "node:fs";
+            if(MAX_NEW_EPISODE_PAGES!==20)throw new Error("Incorrect episode limit");
+            const files=readdirSync("./public/assets").filter(x=>x.endsWith(".js"));
+            const js=files.map(x=>readFileSync("./public/assets/"+x,"utf8")).join("\n");
+            if(js.includes("d2dw83tkmziksr")||js.includes("6sarocqfaahcpl7cs5o0o9ja3c"))throw new Error("Staging value in production browser");
+            if(!js.includes("https://app.lyra-editor.com")||!js.includes("6b2h941o888u2l7ejhv5jog94"))throw new Error("Missing production browser auth");
+            console.log(JSON.stringify({episodePageLimit:20,productionBrowserConfig:"passed"}));' \
+            | tee production-config-proof.json
+
+      - name: Save immutable image and receipt
+        run: |
+          set -euo pipefail
+          mkdir artifact
+          mv runtime-proof.json artifact/
+          mv runtime-config-proof.json artifact/
+          mv production-config-proof.json artifact/
+          docker image inspect "lyra-production:$IMAGE_TAG" > artifact/image-inspect.json
+          docker save "lyra-production:$IMAGE_TAG" -o artifact/production-image.tar
+          printf '%s\n' "$IMAGE_TAG" > artifact/source-commit.txt
+          (cd artifact && sha256sum production-image.tar image-inspect.json runtime-proof.json runtime-config-proof.json production-config-proof.json source-commit.txt > SHA256SUMS)
+
+      - name: Upload private build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-image-${{ github.sha }}
+          path: artifact/
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
