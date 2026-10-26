@@ -83,6 +83,38 @@ describe('Story stale draft retry', () => {
   });
   afterEach(async () => { await act(async () => root?.unmount()); root = undefined; });
 
+  it('新しい話で21ページを入力した場合は保存せず入力を保持する', async () => {
+    await render();
+    const pages = root!.root.findAllByType('field').find((node) => node.props.keyboardType === 'numeric')!;
+    await act(async () => pages.props.onChangeText('21'));
+    await act(async () => { await expect(registration.save()).rejects.toThrow(); });
+    expect(updateEpisode).not.toHaveBeenCalled();
+    expect(root!.root.findAllByType('field').find((node) => node.props.keyboardType === 'numeric')!.props.value).toBe('21');
+  });
+
+  it('20ページの場合は入力したページ数で保存する', async () => {
+    await render();
+    await act(async () => root!.root.findAllByType('field').find((node) => node.props.keyboardType === 'numeric')!.props.onChangeText('20'));
+    await act(async () => registration.save());
+    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({ estimated_pages: 20 }), null);
+  });
+
+  it('既存32ページの話で本文を保存する場合はページ数を切り詰めない', async () => {
+    episode = { ...episode, estimated_pages: 32 };
+    await render();
+    await act(async () => body().props.onChangeText('Edited legacy story'));
+    await act(async () => registration.save());
+    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({ estimated_pages: 32, story_full_draft: 'Edited legacy story' }), null);
+  });
+
+  it('既存25ページの話を26ページへ増やす場合は保存しない', async () => {
+    episode = { ...episode, estimated_pages: 25 };
+    await render();
+    await act(async () => root!.root.findAllByType('field').find((node) => node.props.keyboardType === 'numeric')!.props.onChangeText('26'));
+    await act(async () => { await expect(registration.save()).rejects.toThrow(); });
+    expect(updateEpisode).not.toHaveBeenCalled();
+  });
+
   it('新しい版を読んで現在のtitleと本文を一度だけCAS保存し開始状態を送らない', async () => {
     await render();
     await act(async () => field('タイトル').props.onChangeText('Local title'));

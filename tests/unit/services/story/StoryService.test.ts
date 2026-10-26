@@ -25,6 +25,7 @@ import type {
 } from '../../../../src/repositories/StoryRepository.js';
 import { StoryService } from '../../../../src/services/story/StoryService.js';
 import type { EntityReferenceReader } from '../../../../src/repositories/EntityRepository.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../../packages/api-contract/src/episodePageLimits.js';
 
 const now = new Date('2026-04-22T00:00:00.000Z');
 
@@ -527,6 +528,75 @@ describe('StoryService', () => {
     expect(episode.startingEntityStates).toEqual([]);
   });
 
+  it('新規20ページを許可し21ページを拒否するが、未認可chapterは先にnot foundにする', async () => {
+    const repository = new FakeStoryRepository();
+    const service = new StoryService(repository, new FakeEntityReferenceReader());
+    const work = await service.createWork('user-1', {
+      title: 'Page limit', genre: null, worldSetting: null, theme: null,
+      mainEntityIds: [], startingPoint: null, endingPoint: null, overallFlow: null,
+    });
+    const chapter = await service.createChapter('user-1', work.id, {
+      order: 1, title: null, purpose: null, startingState: null, endingState: null,
+      emotionCurve: null, entitiesInvolved: [], keyBeats: [],
+    });
+    const input: CreateEpisodeInput = {
+      order: 1, title: null, purpose: null, storyInputMode: 'structured',
+      storyFullDraft: null, introduction: null, middle: null, climax: null,
+      endingHook: null, estimatedPages: MAX_NEW_EPISODE_PAGES, entitiesInvolved: [],
+    };
+
+    await expect(service.createEpisode('user-1', chapter.id, input)).resolves.toMatchObject({
+      estimatedPages: MAX_NEW_EPISODE_PAGES,
+    });
+    await expect(service.createEpisode('user-1', chapter.id, {
+      ...input,
+      order: 2,
+      estimatedPages: MAX_NEW_EPISODE_PAGES + 1,
+    })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+    await expect(service.createEpisode('user-2', 'missing-chapter', {
+      ...input,
+      estimatedPages: MAX_NEW_EPISODE_PAGES + 1,
+    })).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);
+  });
+
+  it('既存32ページの本文保存と減少を許可し、現在値を超える増加だけ拒否する', async () => {
+    const repository = new FakeStoryRepository();
+    const service = new StoryService(repository, new FakeEntityReferenceReader());
+    const work = await service.createWork('user-1', {
+      title: 'Legacy page count', genre: null, worldSetting: null, theme: null,
+      mainEntityIds: [], startingPoint: null, endingPoint: null, overallFlow: null,
+    });
+    const chapter = await service.createChapter('user-1', work.id, {
+      order: 1, title: null, purpose: null, startingState: null, endingState: null,
+      emotionCurve: null, entitiesInvolved: [], keyBeats: [],
+    });
+    const legacy = await repository.createEpisode(chapter.id, {
+      order: 1, title: null, purpose: null, storyInputMode: 'structured',
+      storyFullDraft: null, introduction: null, middle: null, climax: null,
+      endingHook: null, estimatedPages: 32, entitiesInvolved: [],
+    });
+
+    await expect(service.updateEpisode('user-1', legacy.id, {
+      title: 'legacy client body save',
+      estimatedPages: 32,
+    })).resolves.toMatchObject({ estimatedPages: 32, title: 'legacy client body save' });
+    await expect(service.updateEpisode('user-1', legacy.id, {
+      estimatedPages: 25,
+    })).resolves.toMatchObject({ estimatedPages: 25 });
+    await expect(service.updateEpisode('user-1', legacy.id, {
+      estimatedPages: 26,
+    })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+
+    const modern = await repository.createEpisode(chapter.id, {
+      order: 2, title: null, purpose: null, storyInputMode: 'structured',
+      storyFullDraft: null, introduction: null, middle: null, climax: null,
+      endingHook: null, estimatedPages: 20, entitiesInvolved: [],
+    });
+    await expect(service.updateEpisode('user-1', modern.id, {
+      estimatedPages: 21,
+    })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' } satisfies Partial<AppError>);
+  });
+
   it('開始状態を明示更新した場合だけ同workかつ確定参照の検証を通す', async () => {
     const repository = new FakeStoryRepository();
     const service = new StoryService(repository, new FakeEntityReferenceReader());
@@ -867,6 +937,7 @@ describe('StoryService', () => {
     await expect(
       service.updateEpisode('user-2', episode.id, {
         title: 'updated',
+        estimatedPages: MAX_NEW_EPISODE_PAGES + 1,
       }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' } satisfies Partial<AppError>);
   });

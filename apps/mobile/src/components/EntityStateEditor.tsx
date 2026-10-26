@@ -61,7 +61,8 @@ function ScopedEntityStateEditor({ entity, parentDirty, parentBusy, initialCandi
   const [reviewedChangedState, setReviewedChangedState] = useState<EditableEntityState | null>(null);
   const [heldConfirmation, setHeldConfirmation] = useState<{ name: string; request: PendingConfirmation } | null>(null);
   const [success, setSuccess] = useState<'saved' | 'confirmedDone' | null>(null);
-  const [candidateToken, setCandidateToken] = useState<string | null>(null);
+  const [candidateChoice, setCandidateChoice] = useState<{ context: string | null; token: string | null }>({ context: null, token: null });
+  const [defaultCandidate, setDefaultCandidate] = useState<{ context: string; token: string } | null>(null);
   const [localJob, setLocalJob] = useState<{ id: string; stateId: string; revision: string } | null>(null);
   const lockRef = useRef(false);
   const operationRef = useRef(0);
@@ -95,6 +96,30 @@ function ScopedEntityStateEditor({ entity, parentDirty, parentBusy, initialCandi
   });
   const stateJob = isStateReferenceJob(jobQuery.data, entity.id, draft.stateId ?? '') ? jobQuery.data : undefined;
   const candidates = selected === null ? [] : stateReferenceCandidates(stateJob, selected);
+  // A completed job is the only event allowed to choose a preview for the user.
+  // Tokens may be refreshed or reordered while that job is polled, so neither is
+  // an identity change; preserving an explicit radio choice is safer than picking
+  // a different candidate. Candidate validity still comes from the domain filter.
+  const candidateContext = selected === null || stateJob === undefined || candidates.length === 0
+    ? null
+    : JSON.stringify([scope, selected.id, selected.updated_at ?? null, stateJob.id]);
+  const candidateTokens = candidates.map((candidate) => candidate.candidate_token).join('\u0000');
+  const firstCandidateToken = candidates[0]?.candidate_token ?? null;
+  useEffect(() => {
+    if (candidateContext === null) return;
+    if (firstCandidateToken === null) return;
+    // The query result is external state. A new state/job/revision context starts
+    // with its first valid candidate; same-context polls retain the prior token.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDefaultCandidate((current) => current?.context === candidateContext ? current : { context: candidateContext, token: firstCandidateToken });
+  }, [candidateContext, candidateTokens, firstCandidateToken]);
+  const candidateToken = candidateContext === null
+    ? null
+    : candidateChoice.context === candidateContext
+      ? candidateChoice.token !== null && candidates.some((candidate) => candidate.candidate_token === candidateChoice.token)
+        ? candidateChoice.token : null
+    : defaultCandidate?.context === candidateContext && candidates.some((candidate) => candidate.candidate_token === defaultCandidate?.token)
+      ? defaultCandidate.token : null;
   const canEdit = hasCapability('edit_work');
   const currentRef = useRef({ scope, draft, selected, states, previewBlocker: null as string | null, baseId: baseReference?.ref_id, dirty, canEdit, parentBusy, parentDirty, error, candidateToken });
   const stateQuote = useAssetGenerationQuote({
@@ -107,7 +132,7 @@ function ScopedEntityStateEditor({ entity, parentDirty, parentBusy, initialCandi
     },
     onAccepted: async (receipt, target, originKey) => {
       if (receipt.job_id === null || target.request.target_id === undefined || !aliveRef.current || currentRef.current.scope !== originKey) return;
-      setLocalJob({ id: receipt.job_id, stateId: target.request.target_id, revision: target.revision }); setCandidateToken(null);
+      setLocalJob({ id: receipt.job_id, stateId: target.request.target_id, revision: target.revision }); setCandidateChoice({ context: null, token: null });
       await trackJob(receipt.job_id).catch(() => undefined); await refresh();
     }
   });
@@ -205,7 +230,7 @@ function ScopedEntityStateEditor({ entity, parentDirty, parentBusy, initialCandi
     let savedDraft = current.draft;
     if (cacheReceipt(saved, current.selected?.updated_at) && currentRef.current.draft === current.draft) {
       savedDraft = draftFromState(saved);
-      updateDraft(savedDraft); setCandidateToken(null); setSuccess('saved');
+      updateDraft(savedDraft); setCandidateChoice({ context: null, token: null }); setSuccess('saved');
     }
     finishMutation(operation);
     // The save has already succeeded. Refresh failure must not reject a dirty
@@ -230,7 +255,7 @@ function ScopedEntityStateEditor({ entity, parentDirty, parentBusy, initialCandi
       pendingConfirmationRef.current = pending;
       setReviewedChangedState(null);
       updateDraft(draftFromState(currentRef.current.states.find((state) => state.id === stateId) ?? null));
-      setCandidateToken(null); setSuccess(null); setError(pending === null ? null : { kind: 'confirmUnknown', name: pending.state.name ?? '' });
+      setCandidateChoice({ context: null, token: null }); setSuccess(null); setError(pending === null ? null : { kind: 'confirmUnknown', name: pending.state.name ?? '' });
     });
   };
   const confirmPreview = (): void => {
@@ -283,7 +308,7 @@ function ScopedEntityStateEditor({ entity, parentDirty, parentBusy, initialCandi
     pendingConfirmationsRef.current.delete(pinned.state.id);
     pendingConfirmationRef.current = null;
     if (heldConfirmation?.request.jobId === pinned.jobId && heldConfirmation.request.candidateIndex === pinned.candidateIndex) setHeldConfirmation(null);
-    setCandidateToken(null); setError(null);
+    setCandidateChoice({ context: null, token: null }); setError(null);
     if (currentRef.current.draft === current.draft) setSuccess('confirmedDone');
     finishMutation(operation);
     try { await refresh(); }
@@ -316,7 +341,7 @@ function ScopedEntityStateEditor({ entity, parentDirty, parentBusy, initialCandi
       {success === null || error !== null ? null : <Notice message={stateMessage(language, success)} tone="success" />}
       {blockedCandidates ? <Notice message={imageAccessNotice(language)} tone="warning" /> : null}
       {candidates.map((candidate, index) => (
-        <Pressable accessibilityRole="radio" accessibilityState={{ checked: candidateToken === candidate.candidate_token, disabled: busy || dirty || unknownMutation(error) }} accessibilityLabel={`${stateMessage(language, 'selectCandidate')} ${index + 1}`} disabled={busy || dirty || unknownMutation(error)} key={candidate.candidate_token} onPress={() => { if (!lockRef.current && !currentRef.current.dirty && !unknownMutation(currentRef.current.error)) setCandidateToken(candidate.candidate_token); }} style={[styles.candidate, candidateToken === candidate.candidate_token ? styles.selected : null]}>
+        <Pressable accessibilityRole="radio" accessibilityState={{ checked: candidateToken === candidate.candidate_token, disabled: busy || dirty || unknownMutation(error) }} accessibilityLabel={`${stateMessage(language, 'selectCandidate')} ${index + 1}`} disabled={busy || dirty || unknownMutation(error)} key={candidate.candidate_token} onPress={() => { if (!lockRef.current && !currentRef.current.dirty && !unknownMutation(currentRef.current.error)) setCandidateChoice({ context: candidateContext, token: candidate.candidate_token }); }} style={[styles.candidate, candidateToken === candidate.candidate_token ? styles.selected : null]}>
           <ResilientImage accessibilityLabel={`${stateMessage(language, 'candidate')} ${index + 1}`} contentFit="contain" sources={buildStateImageSources({ apiBaseUrl: config.apiBaseUrl, authorizationHeader, entityId: entity.id, organizationId, stateId: selected!.id, sessionKey, revision: selected!.updated_at!, candidate, provenance: candidate })} style={styles.image} />
           <Text style={styles.caption}>{stateMessage(language, 'selectCandidate')}{candidateToken === candidate.candidate_token ? ' ✓' : ''}</Text>
         </Pressable>

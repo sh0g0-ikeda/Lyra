@@ -97,17 +97,97 @@ describe('EntityStateEditor', () => {
     expect(action(renderer, 'キャラをプレビューする').props.disabled).toBe(true);
     expect(test.api.createGenerationQuote).not.toHaveBeenCalled();
   });
-  it('状態専用の候補を明示選択してからtokenとrevisionで確定する', async () => {
+  it('生成済みの有効な状態候補を最初から選択するが、明示確定するまで参照画像を置換しない', async () => {
     test.jobs = [{ id: 'job', job_type: 'entity_generate', status: 'completed', created_at: state.created_at,
       params: { target: 'entity_state', entity_id: 'entity', entity_state_id: 'state', state_revision: state.updated_at },
       result: { provider_result: true, candidates: [{ candidate_token: 'signed-state-token' }] } }];
     test.api.confirmEntityStateReference.mockResolvedValue(confirmationReceipt);
     const renderer = render();
-    expect(action(renderer, '選択した候補を状態画像に確定').props.disabled).toBe(true);
-    act(() => renderer.root.findAllByType('button')[0]!.props.onPress());
+    expect(renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 1' }).props.accessibilityState.checked).toBe(true);
+    expect(action(renderer, '選択した候補を状態画像に確定').props.disabled).toBe(false);
+    expect(test.api.confirmEntityStateReference).not.toHaveBeenCalled();
     await act(async () => { await action(renderer, '選択した候補を状態画像に確定').props.onPress(); });
     expect(test.api.confirmEntityStateReference).toHaveBeenCalledWith('entity', 'state', { candidate_token: 'signed-state-token', expected_state_revision: state.updated_at }, null);
     expect(test.api.generateEntityStateReference).not.toHaveBeenCalled();
+  });
+  it('同じ完了jobのpoll/refetchや候補順の更新ではユーザーが選び直した候補を上書きしない', () => {
+    test.jobs = [{ ...completedPreview, result: { provider_result: true, candidates: [
+      { candidate_token: 'first-candidate' }, { candidate_token: 'second-candidate' }
+    ] } }];
+    const renderer = render();
+    const first = () => renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 1' });
+    const second = () => renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 2' });
+    expect(first().props.accessibilityState.checked).toBe(true);
+    act(() => second().props.onPress());
+    expect(second().props.accessibilityState.checked).toBe(true);
+
+    test.jobs = [{ ...completedPreview, result: { provider_result: true, candidates: [
+      { candidate_token: 'second-candidate' }, { candidate_token: 'first-candidate' }
+    ] } }];
+    act(() => renderer.update(<EntityStateEditor entity={entity} parentDirty={false} parentBusy={false} availableCredits={10} initialCandidate={{ entityId: 'entity', stateId: 'state', name: '別の候補名', description: '上書きしない' }} />));
+    expect(renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 1' }).props.accessibilityState.checked).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 2' }).props.accessibilityState.checked).toBe(false);
+
+    test.jobs = [{ ...completedPreview, id: 'replacement-job', result: { provider_result: true, candidates: [
+      { candidate_token: 'new-first-candidate' }, { candidate_token: 'new-second-candidate' }
+    ] } }];
+    act(() => renderer.update(<EntityStateEditor entity={entity} parentDirty={false} parentBusy={false} availableCredits={10} initialCandidate={{ entityId: 'entity', stateId: 'state', name: '別の候補名', description: '上書きしない' }} />));
+    expect(renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 1' }).props.accessibilityState.checked).toBe(true);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 2' }).props.accessibilityState.checked).toBe(false);
+  });
+  it('無効候補や同一jobから消えた候補を自動選択・確定しない', () => {
+    test.jobs = [{ ...completedPreview, result: { provider_result: false, candidates: [{ candidate_token: 'invalid-candidate' }] } }];
+    const renderer = render();
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'radio' })).toHaveLength(0);
+    expect(renderer.root.findAllByType('action').some((node) => node.props.label === '選択した候補を状態画像に確定')).toBe(false);
+
+    test.jobs = [{ ...completedPreview, result: { provider_result: true, candidates: [{ candidate_token: 'valid-candidate' }] } }];
+    act(() => renderer.update(<EntityStateEditor entity={entity} parentDirty={false} parentBusy={false} availableCredits={10} initialCandidate={{ entityId: 'entity', stateId: 'state', name: '別の候補名', description: '上書きしない' }} />));
+    expect(renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 1' }).props.accessibilityState.checked).toBe(true);
+    test.jobs = [{ ...completedPreview, result: { provider_result: true, candidates: [{ candidate_token: 'expired-replacement-token' }] } }];
+    act(() => renderer.update(<EntityStateEditor entity={entity} parentDirty={false} parentBusy={false} availableCredits={10} initialCandidate={{ entityId: 'entity', stateId: 'state', name: '別の候補名', description: '上書きしない' }} />));
+    expect(renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 1' }).props.accessibilityState.checked).toBe(false);
+    expect(action(renderer, '選択した候補を状態画像に確定').props.disabled).toBe(true);
+    test.jobs = [{ ...completedPreview, result: { provider_result: true, candidates: [] } }];
+    act(() => renderer.update(<EntityStateEditor entity={entity} parentDirty={false} parentBusy={false} availableCredits={10} initialCandidate={{ entityId: 'entity', stateId: 'state', name: '別の候補名', description: '上書きしない' }} />));
+    expect(renderer.root.findAllByType('action').some((node) => node.props.label === '選択した候補を状態画像に確定')).toBe(false);
+    expect(test.api.confirmEntityStateReference).not.toHaveBeenCalled();
+  });
+  it('A状態の見積受付が遅れてもB状態で手動選択した候補を消さない', async () => {
+    test.session = { capabilities: { entity_state_reference_generation: true, generation_quotes: true } };
+    const second = { ...state, id: 'second-state', name: '休息', description: '包帯を交換' };
+    const firstJob = { ...completedPreview, id: 'first-job' };
+    const secondJob = { ...completedPreview, id: 'second-job', params: { ...completedPreview.params, entity_state_id: second.id }, result: { provider_result: true, candidates: [
+      { candidate_token: 'second-first-candidate' }, { candidate_token: 'second-manual-candidate' }
+    ] } };
+    const acceptance = deferred<{ quote_id: string; job_id: string; accepted_at: string; amount_credits: number }>();
+    test.states = [state, second]; test.jobs = [firstJob, secondJob]; test.api.acceptGenerationQuote.mockReturnValue(acceptance.promise);
+    const renderer = render();
+    await act(async () => { await action(renderer, 'キャラをプレビューする').props.onPress(); });
+    await act(async () => { renderer.root.findByType('quote-dialog').props.onAccept(); await Promise.resolve(); });
+
+    test.jobs = [secondJob, firstJob];
+    await act(async () => { renderer.root.findByType('picker').props.onSelect(second.id); await Promise.resolve(); });
+    const manualCandidate = () => renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 2' });
+    act(() => manualCandidate().props.onPress());
+    expect(manualCandidate().props.accessibilityState.checked).toBe(true);
+
+    await act(async () => { acceptance.resolve({ quote_id: 'quote', job_id: 'first-job', accepted_at: state.created_at, amount_credits: 7 }); await Promise.resolve(); await Promise.resolve(); });
+    expect(manualCandidate().props.accessibilityState.checked).toBe(true);
+    expect(test.trackJob).not.toHaveBeenCalled();
+  });
+  it('tenant切替後は古い候補を使わず新scopeの生成候補だけを明示確定できる', async () => {
+    test.jobs = [{ ...completedPreview, result: { provider_result: true, candidates: [{ candidate_token: 'personal-candidate' }] } }];
+    const renderer = render();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 1' }).props.accessibilityState.checked).toBe(true);
+
+    test.organizationId = 'organization-2';
+    test.jobs = [{ ...completedPreview, id: 'organization-job', result: { provider_result: true, candidates: [{ candidate_token: 'organization-candidate' }] } }];
+    test.api.confirmEntityStateReference.mockResolvedValue(confirmationReceipt);
+    await act(async () => { renderer.update(<EntityStateEditor entity={entity} parentDirty={false} parentBusy={false} availableCredits={10} initialCandidate={{ entityId: 'entity', stateId: 'state', name: '別の候補名', description: '上書きしない' }} />); });
+    expect(renderer.root.findByProps({ accessibilityLabel: 'この候補を選択 1' }).props.accessibilityState.checked).toBe(true);
+    await act(async () => { await action(renderer, '選択した候補を状態画像に確定').props.onPress(); });
+    expect(test.api.confirmEntityStateReference).toHaveBeenCalledWith('entity', 'state', { candidate_token: 'organization-candidate', expected_state_revision: state.updated_at }, 'organization-2');
   });
   it('古いpreview確認後に入力が変わった場合は課金操作を送らない', async () => {
     test.session = { capabilities: { entity_state_reference_generation: true, generation_quotes: true } };
