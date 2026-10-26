@@ -1291,7 +1291,7 @@ export function StoryHierarchySheet({
           style={styles.sheet}
         >
         <View style={styles.sheetViewport}>
-        <View accessibilityElementsHidden={overlayVisible} importantForAccessibility={overlayVisible ? 'no-hide-descendants' : 'auto'} pointerEvents={overlayVisible ? 'none' : 'auto'} style={styles.sheetBody}>
+        <View collapsable={false} accessibilityElementsHidden={overlayVisible} importantForAccessibility={overlayVisible ? 'no-hide-descendants' : 'auto'} pointerEvents={overlayVisible ? 'none' : 'auto'} style={styles.sheetBody}>
           <View style={styles.sheetHeader}>
             <View style={styles.sheetHeading}>
               <Text style={styles.eyebrow}>{t(language, "generated.components.StoryHierarchySheet.story.hierarchy.28f3f754")}</Text>

@@ -14,8 +14,16 @@ tags: [staging, personal, creation]
 - tapOn: ${E2E_CREATE_CHAPTER_LABEL}
 - tapOn: ${E2E_CHAPTER_TITLE_INPUT_LABEL}
 - inputText: ${E2E_NEW_CHAPTER_TITLE}
+- tapOn: "キャンセル|Cancel"
+- tapOn: ${E2E_CREATE_CHAPTER_LABEL}
+- tapOn: ${E2E_CHAPTER_TITLE_INPUT_LABEL}
+- inputText: ${E2E_NEW_CHAPTER_TITLE}
 - tapOn: ${E2E_SAVE_CHAPTER_LABEL}
 - assertVisible: ${E2E_NEW_CHAPTER_TITLE}
+- tapOn: ${E2E_CREATE_EPISODE_LABEL}
+- tapOn: ${E2E_EPISODE_TITLE_INPUT_LABEL}
+- inputText: ${E2E_NEW_EPISODE_TITLE}
+- tapOn: "キャンセル|Cancel"
 - tapOn: ${E2E_CREATE_EPISODE_LABEL}
 - tapOn: ${E2E_EPISODE_TITLE_INPUT_LABEL}
 - inputText: ${E2E_NEW_EPISODE_TITLE}
