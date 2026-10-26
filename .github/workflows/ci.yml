@@ -8,7 +8,8 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # Keep browser dependency installation reproducible across runner-image rollouts.
+    runs-on: ubuntu-24.04
     env:
       APP_ENV: test
       NODE_ENV: test
@@ -110,7 +111,8 @@ jobs:
         run: npm --prefix apps/web run e2e
 
   mobile-verify:
-    runs-on: ubuntu-latest
+    # Keep browser dependency installation reproducible across runner-image rollouts.
+    runs-on: ubuntu-24.04
     env:
       EXPO_NO_TELEMETRY: '1'
       SENTRY_DISABLE_AUTO_UPLOAD: 'true'
