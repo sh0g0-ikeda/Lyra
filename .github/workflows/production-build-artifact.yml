@@ -84,7 +84,8 @@ jobs:
             if(MAX_NEW_EPISODE_PAGES!==20)throw new Error("Incorrect episode limit");
             const files=readdirSync("./public/assets").filter(x=>x.endsWith(".js"));
             const js=files.map(x=>readFileSync("./public/assets/"+x,"utf8")).join("\n");
-            if(js.includes("d2dw83tkmziksr")||js.includes("6sarocqfaahcpl7cs5o0o9ja3c"))throw new Error("Staging value in production browser");
+            const forbidden=["d2dw83tkmziksr","lyra-staging-20261003-auth.auth.ap-northeast-1.amazoncognito.com","7oma7s7gkoo5au4jk4ak9mkihd","6sarocqfaahcpl7cs5o0o9ja3c"];
+            if(forbidden.some(value=>js.includes(value)))throw new Error("Staging value in production browser");
             if(!js.includes("https://app.lyra-editor.com")||!js.includes("6b2h941o888u2l7ejhv5jog94"))throw new Error("Missing production browser auth");
             console.log(JSON.stringify({episodePageLimit:20,productionBrowserConfig:"passed"}));' \
             | tee production-config-proof.json
