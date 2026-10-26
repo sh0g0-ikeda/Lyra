@@ -17,6 +17,7 @@ import {
   EPISODE_LONG_JOB_STALE_ERROR_MESSAGE,
   isStaleEpisodeLongJob,
 } from './EpisodeLongJobStalePolicy.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../packages/api-contract/src/episodePageLimits.js';
 
 export interface EpisodePageSkeletonJobRepository
   extends Pick<GenerationJobRepository, 'create' | 'attachQueueMessageId' | 'markFailed'> {
@@ -91,6 +92,7 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
           apply_story_plan: false,
           language: input.language,
           organization_id: organizationId,
+          max_new_page_count: MAX_NEW_EPISODE_PAGES,
         },
         capacityLimits: this.capacityLimits,
       });

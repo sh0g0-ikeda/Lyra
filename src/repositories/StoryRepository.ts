@@ -47,6 +47,7 @@ import {
   hasPreVariantEntitySchema,
 } from './RepositorySchemaProfile.js';
 import { assertLegacyPersonalWriteAllowed } from './LegacyAccountDeletionWriteFence.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../packages/api-contract/src/episodePageLimits.js';
 
 // CAS revisions must advance even inside one transaction or when clocks move backwards.
 type StoryRevisionTable = 'works' | 'chapters' | 'episodes';
@@ -116,7 +117,11 @@ export interface StoryRepository {
     episodeId: string,
     userId: string,
     pages: PageSkeletonPageDraft[],
-    options?: { overwriteExisting?: boolean },
+    options?: {
+      overwriteExisting?: boolean;
+      preserveGeneratedImages?: boolean;
+      maxNewPageCount?: number;
+    },
     organizationId?: string | null,
   ): Promise<PageSkeletonPersistResult | null>;
   rollbackFreshPageSkeleton(
@@ -1322,6 +1327,9 @@ export class PostgresStoryRepository
     input: UpdateEpisodeInput,
     organizationId: string | null,
   ): Promise<Episode | null> {
+    if (input.estimatedPages !== undefined) {
+      assertEpisodePageCountUpdateAllowed(currentEpisode.estimatedPages, input.estimatedPages);
+    }
     // Partial updates use undefined as "leave unchanged"; null is an explicit editor clear.
     const normalizedStoryInput = normalizeEpisodeStoryInput({
       storyInputMode: input.storyInputMode ?? currentEpisode.storyInputMode,
@@ -1405,6 +1413,8 @@ export class PostgresStoryRepository
           -- Freshness is checked under row locks before this UPDATE. Keep the
           -- parameters typed here without duplicating the JS fingerprint in SQL.
           AND (NOT $24::boolean OR $25::jsonb IS NOT NULL)
+          -- New writes stop at 20, while an unchanged/decreased legacy count remains editable.
+          AND ($20::int IS NULL OR $20::int <= ${MAX_NEW_EPISODE_PAGES} OR $20::int <= episodes.estimated_pages)
         RETURNING episodes.*
         `,
         [
@@ -1439,6 +1449,20 @@ export class PostgresStoryRepository
       );
 
       if (result.rows[0] === undefined) {
+        if (input.estimatedPages !== undefined) {
+          const latestEpisode = await this.findEpisodeByIdAndUserIdWithClient(
+            client,
+            id,
+            userId,
+            organizationId,
+          );
+          if (latestEpisode !== null) {
+            assertEpisodePageCountUpdateAllowed(
+              latestEpisode.estimatedPages,
+              input.estimatedPages,
+            );
+          }
+        }
         if (input.startingEntityStates !== undefined && input.expectedUpdatedAt === undefined) {
           throw new ConflictError('Episode starting state references changed while the episode was being updated');
         }
@@ -2493,7 +2517,11 @@ export class PostgresStoryRepository
     episodeId: string,
     userId: string,
     pages: PageSkeletonPageDraft[],
-    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean },
+    options?: {
+      overwriteExisting?: boolean;
+      preserveGeneratedImages?: boolean;
+      maxNewPageCount?: number;
+    },
     organizationId: string | null = null,
   ): Promise<PageSkeletonPersistResult | null> {
     const overwriteExisting = options?.overwriteExisting === true;
@@ -2552,6 +2580,20 @@ export class PostgresStoryRepository
         FOR UPDATE
         `,
         [episodeId],
+      );
+
+      const plannedMaxPageNumber = pages.reduce(
+        (maximum, page) => Math.max(maximum, page.pageNumber),
+        0,
+      );
+      const existingMaxPageNumber = existingPages.rows.reduce(
+        (maximum, page) => Math.max(maximum, page.page_number),
+        0,
+      );
+      assertPageSkeletonCountAllowed(
+        existingMaxPageNumber,
+        plannedMaxPageNumber,
+        options?.maxNewPageCount ?? MAX_NEW_EPISODE_PAGES,
       );
 
       const activeJobs = await transactionClient.query<IdRow>(
@@ -3499,6 +3541,28 @@ function normalizeEntityIdArray(value: unknown): string[] {
   }
 
   return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+}
+
+function assertEpisodePageCountUpdateAllowed(currentPageCount: number, requestedPageCount: number): void {
+  if (requestedPageCount <= MAX_NEW_EPISODE_PAGES || requestedPageCount <= currentPageCount) {
+    return;
+  }
+  throw new ValidationError(
+    `estimatedPages cannot increase above ${MAX_NEW_EPISODE_PAGES}`,
+  );
+}
+
+function assertPageSkeletonCountAllowed(
+  existingMaxPageNumber: number,
+  plannedMaxPageNumber: number,
+  maxNewPageCount: number,
+): void {
+  if (plannedMaxPageNumber <= maxNewPageCount || plannedMaxPageNumber <= existingMaxPageNumber) {
+    return;
+  }
+  throw new ValidationError(
+    `planned page count cannot increase above ${maxNewPageCount}`,
+  );
 }
 
 async function runInTransaction<T>(

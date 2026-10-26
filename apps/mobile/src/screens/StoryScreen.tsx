@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { editableEpisodePageLimit } from '@/domain/episodePageLimits';
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
 import { EpisodeImprovementPanel } from '@/components/EpisodeImprovementPanel';
@@ -61,7 +62,6 @@ const nullable = (value: string): string | null => {
   return trimmed.length === 0 ? null : trimmed;
 };
 
-const MAX_ESTIMATED_PAGES = 32;
 const MAX_STORY_ORDER = 1000;
 const sameStringArray = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((entry, index) => entry === b[index]);
@@ -223,7 +223,8 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   const storyErrorScopeRef = useRef(storyErrorScope);
   useLayoutEffect(() => { storyErrorScopeRef.current = storyErrorScope; }, [storyErrorScope]);
 
-  const estimatedPagesInvalid = parseIntInRange(estimatedPages, 1, MAX_ESTIMATED_PAGES) === null;
+  const maxEstimatedPages = editableEpisodePageLimit(selectedEpisode?.estimated_pages);
+  const estimatedPagesInvalid = parseIntInRange(estimatedPages, 1, maxEstimatedPages) === null;
   const sceneOrderInvalid = parseIntInRange(sceneOrder, 1, MAX_STORY_ORDER) === null;
   useEffect(() => {
     const nextId = selectedEpisode?.id ?? null;
@@ -285,13 +286,16 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       if (selectedEpisode === null) {
         throw new Error(t(language, "generated.screens.StoryScreen.select.an.episode.first.65b38fbb"));
       }
+      const parsedEstimatedPages = parseIntInRange(estimatedPages, 1, maxEstimatedPages);
+      if (parsedEstimatedPages === null) {
+        throw new Error(t(language, 'screen.story.estimatedPagesOutOfRange', { maximum: maxEstimatedPages }));
+      }
       return api.updateEpisode(
         selectedEpisode.id,
         buildEpisodeMobileUpdatePayload({
           draft: episodeDraft,
           episode: selectedEpisode,
-          estimatedPages:
-            parseIntInRange(estimatedPages, 1, MAX_ESTIMATED_PAGES) ?? 4,
+          estimatedPages: parsedEstimatedPages,
           title: episodeTitle,
         }),
         organizationId
@@ -413,7 +417,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
         if (estimatedPagesInvalid) {
           throw new Error(
             t(language, 'screen.story.estimatedPagesOutOfRange', {
-              maximum: MAX_ESTIMATED_PAGES
+              maximum: maxEstimatedPages
             })
           );
         }
@@ -448,6 +452,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     episodeDirty,
     storyErrorScope,
     estimatedPagesInvalid,
+    maxEstimatedPages,
     language,
     sceneDirty,
     sceneOrderInvalid,
@@ -471,7 +476,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     if (estimatedPagesInvalid) {
       throw new Error(
         t(language, 'screen.story.estimatedPagesOutOfRange', {
-          maximum: MAX_ESTIMATED_PAGES
+          maximum: maxEstimatedPages
         })
       );
     }
@@ -524,7 +529,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     const submitted = {
       title: episodeTitle,
       draft: episodeDraft,
-      estimatedPages: parseIntInRange(estimatedPages, 1, MAX_ESTIMATED_PAGES),
+      estimatedPages: parseIntInRange(estimatedPages, 1, maxEstimatedPages),
       scope: episodeScopeKey,
       revision: storyEditorRevision,
       episodeId: selectedEpisode.id,
@@ -868,7 +873,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
             <FormField editable={canEdit} label={t(language, 'title')} placeholder={editorMessage(language, 'titleExample')} help={editorMessage(language, 'titleHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} maxLength={200} onChangeText={setEpisodeTitle} value={episodeTitle} />
             <FormField editable={canEdit} label={t(language, 'fullDraft')} placeholder={editorMessage(language, 'storyExample')} help={editorMessage(language, 'storyInputHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} maxLength={8000} multiline multilineMaxHeight={260} onChangeText={setEpisodeDraft} value={episodeDraft} />
             <FormField editable={canEdit} keyboardType="numeric" label={t(language, 'estimatedPages')} placeholder={editorMessage(language, 'pagesExample')} help={editorMessage(language, 'pagesHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} onChangeText={setEstimatedPages} value={estimatedPages} />
-            {estimatedPagesInvalid ? <Notice message={t(language, "generated.screens.StoryScreen.estimated.pages.must.be.a.number.from.1.20301ed5")} tone="warning" /> : null}
+            {estimatedPagesInvalid ? <Notice message={t(language, 'screen.story.estimatedPagesOutOfRange', { maximum: maxEstimatedPages })} tone="warning" /> : null}
             <View style={styles.buttonRow}>
               <PrimaryButton disabled={!canEdit || activeStaleResource === 'episode' || estimatedPagesInvalid || episodeTitle.trim().length === 0} label={t(language, 'save')} loading={updateEpisodeMutation.isPending} onPress={() => updateEpisodeMutation.mutate()} variant="secondary" />
             </View>

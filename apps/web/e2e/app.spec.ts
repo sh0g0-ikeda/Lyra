@@ -738,6 +738,50 @@ test('未保存の想定ページ数は章と作品の変更をCancelしても�
   expect(episodePutCount).toBe(0);
 });
 
+test('1話の上限20ページを超える入力は保存せず20ページは保存する', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  const savedCounts: number[] = [];
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures, async (pending) => {
+    const payload = pending.request().postDataJSON() as Record<string, unknown>;
+    if (typeof payload.estimated_pages === 'number') savedCounts.push(payload.estimated_pages);
+    await pending.fulfill({ json: { ...episode, estimated_pages: payload.estimated_pages } });
+  }));
+  await page.goto('/');
+  const pages = page.getByRole('spinbutton', { name: 'Estimated pages', exact: true });
+  await expect(pages).toHaveAttribute('max', '20');
+  await pages.fill('21');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: /estimated pages/i })).toBeVisible();
+  expect(savedCounts).toEqual([]);
+  await expect(pages).toHaveValue('21');
+  await pages.fill('20');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(() => savedCounts).toEqual([20]);
+});
+
+test('既存32ページの話は本文を保存してもページ数を切り詰めない', async ({ page }) => {
+  const fixtures = storyNavigationFixtures();
+  const legacyEpisode = { ...episode, estimated_pages: 32 };
+  fixtures.episodes[chapter.id] = [legacyEpisode];
+  const savedCounts: number[] = [];
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockStoryNavigationApi(route, fixtures, async (pending) => {
+    const payload = pending.request().postDataJSON() as Record<string, unknown>;
+    if (typeof payload.estimated_pages === 'number') savedCounts.push(payload.estimated_pages);
+    await pending.fulfill({ json: { ...legacyEpisode, story_input_mode: 'full', story_full_draft: 'Legacy story edit' } });
+  }));
+  await page.goto('/');
+  const pages = page.getByRole('spinbutton', { name: 'Estimated pages', exact: true });
+  await expect(pages).toHaveValue('32');
+  await page.getByRole('textbox', { name: 'Whole story draft', exact: true }).fill('Legacy story edit');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(() => savedCounts).toEqual([32]);
+  await expect(pages).toHaveValue('32');
+});
+
 test('遅い保存の古い応答は後続の話入力を上書きしない', async ({ page }) => {
   const fixtures = storyNavigationFixtures();
   let releaseSave: (() => void) | undefined;

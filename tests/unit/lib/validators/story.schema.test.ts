@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../../packages/api-contract/src/episodePageLimits.js';
 import {
   createEpisodeBodySchema,
   updateEpisodeBodySchema,
@@ -8,15 +9,23 @@ import {
 } from '../../../../src/lib/validators/story.schema.js';
 
 describe('story schema', () => {
-  it('episode estimated_pages は skeleton 生成上限を超えられない', () => {
+  it('新規episodeは20ページまで、更新payloadは既存32ページ互換を保つ', () => {
+    expect(createEpisodeBodySchema.safeParse({
+      order: 1,
+      title: 'episode',
+      estimated_pages: MAX_NEW_EPISODE_PAGES,
+    }).success).toBe(true);
     expect(
       createEpisodeBodySchema.safeParse({
         order: 1,
         title: 'episode',
-        estimated_pages: STORY_AI_LIMITS.maxSkeletonPages + 1,
+        estimated_pages: MAX_NEW_EPISODE_PAGES + 1,
       }).success,
     ).toBe(false);
 
+    expect(updateEpisodeBodySchema.safeParse({
+      estimated_pages: STORY_AI_LIMITS.maxSkeletonPages,
+    }).success).toBe(true);
     expect(
       updateEpisodeBodySchema.safeParse({
         estimated_pages: STORY_AI_LIMITS.maxSkeletonPages + 1,

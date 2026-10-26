@@ -22,6 +22,8 @@ import type {
   UpdateWorkInput,
   Work,
 } from '../../../../src/repositories/StoryRepository.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../../packages/api-contract/src/episodePageLimits.js';
+import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
 
 class FakeStoryRepository implements StoryRepository {
   public skeletonContext: EpisodePageSkeletonContext | null = {
@@ -68,7 +70,11 @@ class FakeStoryRepository implements StoryRepository {
   };
 
   public createdPages: PageSkeletonPageDraft[] = [];
-  public lastCreateOptions: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean } | undefined;
+  public lastCreateOptions: {
+    overwriteExisting?: boolean;
+    preserveGeneratedImages?: boolean;
+    maxNewPageCount?: number;
+  } | undefined;
 
   public async findWorksByUserId(): Promise<Work[]> {
     return [];
@@ -139,7 +145,7 @@ class FakeStoryRepository implements StoryRepository {
     _episodeId: string,
     _userId: string,
     pages: PageSkeletonPageDraft[],
-    options?: { overwriteExisting?: boolean },
+    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean; maxNewPageCount?: number },
   ): Promise<PageSkeletonPersistResult | null> {
     this.createdPages = pages;
     this.lastCreateOptions = options;
@@ -722,7 +728,10 @@ describe('PageSkeletonService', () => {
       panelsCreated: 7,
       replacedExisting: true,
     });
-    expect(repository.lastCreateOptions).toEqual({ overwriteExisting: true });
+    expect(repository.lastCreateOptions).toEqual({
+      overwriteExisting: true,
+      maxNewPageCount: MAX_NEW_EPISODE_PAGES,
+    });
   });
 
   it('画像保持再設計では既存最大ページ番号を生成枚数の下限にする', async () => {
@@ -744,7 +753,61 @@ describe('PageSkeletonService', () => {
     expect(repository.lastCreateOptions).toEqual({
       overwriteExisting: true,
       preserveGeneratedImages: true,
+      maxNewPageCount: MAX_NEW_EPISODE_PAGES,
     });
+  });
+
+  it('新規または既存最大を超えるskeletonは20ページで拒否する', async () => {
+    const repository = new FakeStoryRepository();
+    if (repository.skeletonContext === null) throw new Error('Missing skeleton context');
+    repository.skeletonContext.estimatedPages = MAX_NEW_EPISODE_PAGES + 1;
+    const service = new PageSkeletonService(repository, new FakeStoryAiClient());
+
+    await expect(service.prepareForEpisode('user-1', repository.skeletonContext.episodeId))
+      .rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+
+    repository.skeletonContext.pageSkeletonGenerated = true;
+    repository.skeletonContext.existingPageCount = 25;
+    repository.skeletonContext.existingMaxPageNumber = 25;
+    repository.skeletonContext.estimatedPages = 26;
+    await expect(service.prepareForEpisode('user-1', repository.skeletonContext.episodeId, {
+      overwriteExisting: true,
+    })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('既存21から32ページは同じ長さまたは減少で再処理できる', async () => {
+    const repository = new FakeStoryRepository();
+    if (repository.skeletonContext === null) throw new Error('Missing skeleton context');
+    repository.skeletonContext.pageSkeletonGenerated = true;
+    repository.skeletonContext.existingPageCount = 25;
+    repository.skeletonContext.existingMaxPageNumber = 25;
+    repository.skeletonContext.estimatedPages = 25;
+    const client = new FakeStoryAiClient();
+    client.errorToThrow = new SyntaxError('force deterministic fixture');
+    const preparation = await new PageSkeletonService(repository, client).prepareForEpisode(
+      'user-1',
+      repository.skeletonContext.episodeId,
+      { overwriteExisting: true },
+    );
+
+    expect(preparation.pages).toHaveLength(25);
+    expect(preparation.maxNewPageCount).toBe(MAX_NEW_EPISODE_PAGES);
+  });
+
+  it('markerなし旧受付jobだけは従来32ページ容量を明示して準備できる', async () => {
+    const repository = new FakeStoryRepository();
+    if (repository.skeletonContext === null) throw new Error('Missing skeleton context');
+    repository.skeletonContext.estimatedPages = STORY_AI_LIMITS.maxSkeletonPages;
+    const client = new FakeStoryAiClient();
+    client.errorToThrow = new SyntaxError('force deterministic fixture');
+    const preparation = await new PageSkeletonService(repository, client).prepareForEpisode(
+      'user-1',
+      repository.skeletonContext.episodeId,
+      { pageLimitPolicy: 'legacy_accepted_job' },
+    );
+
+    expect(preparation.pages).toHaveLength(STORY_AI_LIMITS.maxSkeletonPages);
+    expect(preparation.maxNewPageCount).toBe(STORY_AI_LIMITS.maxSkeletonPages);
   });
 
   it('compacts long page skeleton context before sending it to the model', async () => {

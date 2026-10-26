@@ -1,4 +1,5 @@
 import { isOlderEditorRevision, reconcileSavedEditorDraft } from './domain/editorDraftSave';
+import { MAX_NEW_EPISODE_PAGES, editableEpisodePageLimit } from '../../../packages/api-contract/src/episodePageLimits.js';
 import { useRetainedSelection } from './hooks/useRetainedSelection';
 import { reconcileSavedStoryDraft, sameStoryDraft } from './domain/storyDraftSave';
 import { GoogleSignInButton, GoogleIdentityLinkPanel } from './components/GoogleAuthControls';
@@ -106,7 +107,6 @@ interface SubscriptionPlanOption {
   configured: boolean;
 }
 
-const MAX_EPISODE_PAGES = 32;
 const SHOW_LEGACY_STORY_HIERARCHY = false;
 
 const subscriptionPurchaseOptions: Array<{
@@ -3969,7 +3969,7 @@ function StudioShell(props: {
 
   const saveCurrentEpisodeContext = async (): Promise<void> => {
     if (selectedEpisode !== null) {
-      const saved = await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft), activeOrganizationId);
+      const saved = await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft, selectedEpisode.estimated_pages), activeOrganizationId);
       acceptSavedEpisode(saved, episodeDraft, false);
     }
 
@@ -4290,7 +4290,7 @@ function StudioShell(props: {
     void runAction('Save episode', async () => {
       const saved = await api.updateEpisode(
         selectedEpisode.id,
-        toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds),
+        toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds, selectedEpisode.estimated_pages),
         activeOrganizationId,
       );
       acceptSavedEpisode(saved, episodeDraft);
@@ -5901,7 +5901,7 @@ function StudioShell(props: {
                         onChange={(value) => setEpisodeDraft({ ...episodeDraft, estimated_pages: value })}
                         type="number"
                         min={1}
-                        max={MAX_EPISODE_PAGES}
+                        max={editableEpisodePageLimit(selectedEpisode?.estimated_pages)}
                       />
                     </div>
                     <TextAreaField
@@ -9067,6 +9067,7 @@ function toCreateChapterPayload(
 function toEpisodePayload(
   draft: EpisodeDraft,
   allowedEntityIds?: ReadonlySet<string>,
+  savedPageCount?: number,
 ): Record<string, unknown> {
   const storyFullDraft = buildFullEpisodeStoryText(draft);
   return {
@@ -9079,13 +9080,13 @@ function toEpisodePayload(
     middle: null,
     climax: null,
     ending_hook: null,
-    estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
+    estimated_pages: parseIntegerInRangeInput(draft.estimated_pages, 'estimated pages', 1, editableEpisodePageLimit(savedPageCount)),
     entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
     status: draft.status,
   };
 }
 
-function toEpisodeAutosavePayload(draft: EpisodeDraft): Record<string, unknown> {
+function toEpisodeAutosavePayload(draft: EpisodeDraft, savedPageCount?: number): Record<string, unknown> {
   const storyFullDraft = buildFullEpisodeStoryText(draft);
   return {
     order: parseNumberInput(draft.order, 'episode order'),
@@ -9097,7 +9098,7 @@ function toEpisodeAutosavePayload(draft: EpisodeDraft): Record<string, unknown> 
     middle: null,
     climax: null,
     ending_hook: null,
-    estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
+    estimated_pages: parseIntegerInRangeInput(draft.estimated_pages, 'estimated pages', 1, editableEpisodePageLimit(savedPageCount)),
     status: draft.status,
   };
 }
@@ -9117,7 +9118,7 @@ function toCreateEpisodePayload(
     middle: null,
     climax: null,
     ending_hook: null,
-    estimated_pages: parseNumberInput(draft.estimated_pages, 'estimated pages'),
+    estimated_pages: parseIntegerInRangeInput(draft.estimated_pages, 'estimated pages', 1, MAX_NEW_EPISODE_PAGES),
     entities_involved: splitEntityIdCsv(draft.entities_involved, allowedEntityIds),
   };
 }

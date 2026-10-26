@@ -7,10 +7,14 @@ import type {
 } from '../../repositories/EpisodePageSkeletonExecutionRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { PageServicePort } from '../page/PageService.js';
-import type { PageSkeletonServicePort } from './PageSkeletonService.js';
+import type {
+  PageSkeletonPageLimitPolicy,
+  PageSkeletonServicePort,
+} from './PageSkeletonService.js';
 import type {
   GenerationJobCancellationControlRepository,
 } from '../../repositories/GenerationJobRepository.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../packages/api-contract/src/episodePageLimits.js';
 
 export interface ProcessEpisodePageSkeletonJobResult {
   status: 'processed' | 'skipped';
@@ -44,10 +48,12 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
     const language = readLanguageParam(job.params, 'language');
     const overwriteExisting = readBooleanParam(job.params, 'overwrite_existing');
     const preserveGeneratedImages = readBooleanParamOrDefault(job.params, 'preserve_generated_images', false);
+    const pageLimitPolicy = readPageLimitPolicy(job.params);
     if (
       episodeId === null ||
       language === null ||
-      overwriteExisting === null
+      overwriteExisting === null ||
+      pageLimitPolicy === null
     ) {
       await this.repository.failEpisodePageSkeleton({
         jobId: job.id,
@@ -73,6 +79,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         preserveGeneratedImages,
         language,
         allowCompilerFallback: false,
+        pageLimitPolicy,
       }, job.organizationId);
       if (await this.finalizeCancellationIfRequested(job.id)) {
         return { status: 'processed', jobStatus: 'cancelled' };
@@ -133,12 +140,13 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       const language = readLanguageParam(job.params, 'language');
       const overwriteExisting = readBooleanParam(job.params, 'overwrite_existing');
       const preserveGeneratedImages = readBooleanParamOrDefault(job.params, 'preserve_generated_images', false);
-      if (episodeId === null || language === null || overwriteExisting === null) {
+      const pageLimitPolicy = readPageLimitPolicy(job.params);
+      if (episodeId === null || language === null || overwriteExisting === null || pageLimitPolicy === null) {
         throw new ConfigurationError('Episode page skeleton job is missing required params');
       }
       // Provider, repair and schema validation finish before the DB transaction.
       const preparation = await this.pageSkeletonService.prepareForEpisode(job.userId, episodeId, {
-        overwriteExisting, preserveGeneratedImages, language, allowCompilerFallback: false,
+        overwriteExisting, preserveGeneratedImages, language, allowCompilerFallback: false, pageLimitPolicy,
       }, job.organizationId);
       await commit.commitPreparedEpisodePageSkeleton(job, preparation);
       return { status: 'processed', jobStatus: 'completed' };
@@ -206,4 +214,11 @@ function readBooleanParam(params: Record<string, unknown>, key: string): boolean
 function readBooleanParamOrDefault(params: Record<string, unknown>, key: string, defaultValue: boolean): boolean {
   const value = params[key];
   return typeof value === 'boolean' ? value : defaultValue;
+}
+
+function readPageLimitPolicy(params: Record<string, unknown>): PageSkeletonPageLimitPolicy | null {
+  if (!Object.prototype.hasOwnProperty.call(params, 'max_new_page_count')) {
+    return 'legacy_accepted_job';
+  }
+  return params.max_new_page_count === MAX_NEW_EPISODE_PAGES ? 'current' : null;
 }

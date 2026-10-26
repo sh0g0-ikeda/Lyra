@@ -13,6 +13,8 @@ import type { PageServicePort } from '../../../../src/services/page/PageService.
 import type {
   GenerationJobCancellationControlRepository,
 } from '../../../../src/repositories/GenerationJobRepository.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../../packages/api-contract/src/episodePageLimits.js';
+import { STORY_AI_LIMITS } from '../../../../src/domain/constants/storyAi.js';
 
 class FakeEpisodePageSkeletonRepository implements EpisodePageSkeletonExecutionRepository {
   public job: GenerationJob | null = {
@@ -99,6 +101,9 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
       episodeId,
       organizationId: null,
       overwriteExisting: options?.overwriteExisting === true,
+      maxNewPageCount: options?.pageLimitPolicy === 'legacy_accepted_job'
+        ? STORY_AI_LIMITS.maxSkeletonPages
+        : MAX_NEW_EPISODE_PAGES,
       pages: [],
     };
   }
@@ -225,9 +230,52 @@ describe('EpisodePageSkeletonWorkerService', () => {
       overwriteExisting: true,
       language: 'ja',
       allowCompilerFallback: false,
+      pageLimitPolicy: 'legacy_accepted_job',
     });
     expect(repository.completed).not.toBeNull();
     expect(repository.failed).toBeNull();
+  });
+
+  it('新規job markerは20ページpolicyをworker準備へ渡す', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    repository.job = {
+      ...repository.job!,
+      params: {
+        ...repository.job!.params,
+        max_new_page_count: MAX_NEW_EPISODE_PAGES,
+      },
+    };
+    const pageSkeletonService = new FakePageSkeletonService();
+    const worker = new EpisodePageSkeletonWorkerService(repository, pageSkeletonService);
+
+    await expect(worker.processJob('job')).resolves.toEqual({
+      status: 'processed',
+      jobStatus: 'completed',
+    });
+    expect(pageSkeletonService.lastOptions?.pageLimitPolicy).toBe('current');
+    expect(pageSkeletonService.persistCalls[0]?.maxNewPageCount).toBe(MAX_NEW_EPISODE_PAGES);
+  });
+
+  it('未知page limit markerはprovider準備前に失敗させる', async () => {
+    const repository = new FakeEpisodePageSkeletonRepository();
+    repository.job = {
+      ...repository.job!,
+      params: {
+        ...repository.job!.params,
+        max_new_page_count: STORY_AI_LIMITS.maxSkeletonPages,
+      },
+    };
+    const pageSkeletonService = new FakePageSkeletonService();
+    const worker = new EpisodePageSkeletonWorkerService(repository, pageSkeletonService);
+
+    await expect(worker.processJob('job')).resolves.toEqual({
+      status: 'processed',
+      jobStatus: 'failed',
+    });
+    expect(pageSkeletonService.lastOptions).toBeUndefined();
+    expect(repository.failed).toMatchObject({
+      errorMessage: 'Episode page skeleton job is missing required params',
+    });
   });
 
   it('旧jobがapply_story_plan=trueでも新規skeletonからautofillを自動実行しない', async () => {

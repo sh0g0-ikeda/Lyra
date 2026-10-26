@@ -14,6 +14,7 @@ import type {
   EpisodeStoryAutofillQueuePayload,
   EpisodeStoryAutofillQueuePort,
 } from '../../../../src/services/story/EpisodeStoryAutofillQueue.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../../packages/api-contract/src/episodePageLimits.js';
 
 const now = new Date('2026-06-08T00:00:00.000Z');
 
@@ -415,6 +416,7 @@ describe('Episode long job enqueue services', () => {
     expect(repository.createdJobs).toHaveLength(1);
     expect(repository.createdJobs[0]?.jobType).toBe('episode_page_skeleton');
     expect(repository.createdJobs[0]?.params.apply_story_plan).toBe(false);
+    expect(repository.createdJobs[0]?.params.max_new_page_count).toBe(MAX_NEW_EPISODE_PAGES);
     expect(repository.createdJobs[0]?.capacityLimits).toEqual({
       perUser: 1,
       global: 5,

@@ -18,6 +18,8 @@ import {
   enqueueTerminalGenerationJobNotificationAfterRegistryLock,
   lockMobilePushTokenRegistryForTerminalSettlement,
 } from './PushNotificationOutboxRepository.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../packages/api-contract/src/episodePageLimits.js';
+import { STORY_AI_LIMITS } from '../domain/constants/storyAi.js';
 
 export interface CompleteEpisodePageSkeletonInput {
   jobId: string;
@@ -95,12 +97,15 @@ export class PostgresEpisodePageSkeletonExecutionRepository
     return this.client.transaction(async (client) => {
       // Read actual scope without a job lock, then take the shared admission order.
       const candidate = (await client.query<GenerationJobRow>('SELECT * FROM generation_jobs WHERE id = $1::uuid', [job.id])).rows[0];
-      if (!sameSkeletonAttempt(candidate, job)
+      const expectedMaxNewPageCount = readExpectedMaxNewPageCount(job.params);
+      if (expectedMaxNewPageCount === null
+        || !sameSkeletonAttempt(candidate, job)
         || preparation.userId !== job.userId
         || preparation.organizationId !== (job.organizationId ?? null)
         || preparation.episodeId !== job.params.episode_id
         || preparation.overwriteExisting !== job.params.overwrite_existing
         || (preparation.preserveGeneratedImages ?? false) !== (job.params.preserve_generated_images === true)
+        || preparation.maxNewPageCount !== expectedMaxNewPageCount
         || preparation.sourceFingerprint === undefined) {
         throw new ConflictError('Page skeleton attempt or source no longer matches');
       }
@@ -148,6 +153,7 @@ export class PostgresEpisodePageSkeletonExecutionRepository
         {
           overwriteExisting: preparation.overwriteExisting,
           ...(preparation.preserveGeneratedImages === true ? { preserveGeneratedImages: true } : {}),
+          maxNewPageCount: expectedMaxNewPageCount,
         }, preparation.organizationId);
       if (result === null) throw new NotFoundError('Episode not found');
       if (!(await new PostgresEpisodePageSkeletonExecutionRepository(bound, this.schemaProfile)
@@ -435,6 +441,15 @@ function sameSkeletonAttempt(row: GenerationJobRow | undefined, job: GenerationJ
     && row.retry_count === job.retryCount && row.started_at !== null && job.startedAt !== null
     && row.started_at.getTime() === job.startedAt.getTime()
     && isDeepStrictEqual(toJsonObject(row.params), job.params);
+}
+
+function readExpectedMaxNewPageCount(params: Record<string, unknown>): number | null {
+  if (!Object.prototype.hasOwnProperty.call(params, 'max_new_page_count')) {
+    return STORY_AI_LIMITS.maxSkeletonPages;
+  }
+  return params.max_new_page_count === MAX_NEW_EPISODE_PAGES
+    ? MAX_NEW_EPISODE_PAGES
+    : null;
 }
 
 function toJsonObject(value: unknown): Record<string, unknown> {

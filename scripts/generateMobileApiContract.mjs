@@ -32,28 +32,27 @@ const compatibilityExport =
 } from './mobileCompatibilitySchemas';
 `;
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const canonicalPath = resolve(
-  projectRoot,
-  'packages/api-contract/src/mobileApiSchemas.ts',
-);
-const generatedPath = resolve(
-  projectRoot,
-  'apps/mobile/src/domain/apiSchemas.ts',
-);
 const checkOnly = process.argv.slice(2).includes('--check');
+const contracts = [
+  ['packages/api-contract/src/mobileApiSchemas.ts', 'apps/mobile/src/domain/apiSchemas.ts', `\n${compatibilityExport}`],
+  ['packages/api-contract/src/episodePageLimits.ts', 'apps/mobile/src/domain/episodePageLimits.ts', ''],
+];
 
-const canonical = normalizeNewlines(await readFile(canonicalPath, 'utf8'));
-const expected = `${generatedHeader}${canonical}\n${compatibilityExport}`;
-
-if (checkOnly) {
-  await checkGeneratedContract(expected);
-} else {
-  await mkdir(dirname(generatedPath), { recursive: true });
-  await writeFile(generatedPath, expected, 'utf8');
-  process.stdout.write(`Wrote ${relativePath(generatedPath)}\n`);
+for (const [canonicalFile, generatedFile, suffix] of contracts) {
+  const canonicalPath = resolve(projectRoot, canonicalFile);
+  const generatedPath = resolve(projectRoot, generatedFile);
+  const canonical = normalizeNewlines(await readFile(canonicalPath, 'utf8'));
+  const expected = `${generatedHeader}${canonical}${suffix}`;
+  if (checkOnly) {
+    await checkGeneratedContract(expected, generatedPath);
+  } else {
+    await mkdir(dirname(generatedPath), { recursive: true });
+    await writeFile(generatedPath, expected, 'utf8');
+    process.stdout.write(`Wrote ${relativePath(generatedPath)}\n`);
+  }
 }
 
-async function checkGeneratedContract(expected) {
+async function checkGeneratedContract(expected, generatedPath) {
   let generated;
   try {
     generated = await readFile(generatedPath, 'utf8');

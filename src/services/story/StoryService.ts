@@ -23,6 +23,7 @@ import type {
   WorkListPaginationRepository,
 } from '../../repositories/StoryRepository.js';
 import type { EntityReferenceReader } from '../../repositories/EntityRepository.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../packages/api-contract/src/episodePageLimits.js';
 
 export type {
   Chapter,
@@ -201,6 +202,7 @@ export class StoryService implements StoryServicePort {
     organizationId: string | null = null,
   ): Promise<Episode> {
     const chapter = await this.ensureChapterOwnedByUser(userId, chapterId, organizationId);
+    assertEpisodePageCountUpdateAllowed(0, input.estimatedPages);
     await this.ensureEntitiesBelongToWork(userId, chapter.workId, input.entitiesInvolved, organizationId);
     return this.storyRepository.createEpisode(chapterId, input, userId, organizationId);
   }
@@ -219,6 +221,9 @@ export class StoryService implements StoryServicePort {
     const currentEpisode = await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId, organizationId);
     if (currentEpisode === null) {
       throw new NotFoundError('Episode not found');
+    }
+    if (input.estimatedPages !== undefined) {
+      assertEpisodePageCountUpdateAllowed(currentEpisode.estimatedPages, input.estimatedPages);
     }
     if (input.entitiesInvolved !== undefined) {
       const chapter = await this.ensureChapterOwnedByUser(userId, currentEpisode.chapterId, organizationId);
@@ -314,6 +319,15 @@ export class StoryService implements StoryServicePort {
       throw new ValidationError('All referenced entities must belong to the work');
     }
   }
+}
+
+function assertEpisodePageCountUpdateAllowed(currentPageCount: number, requestedPageCount: number): void {
+  if (requestedPageCount <= MAX_NEW_EPISODE_PAGES || requestedPageCount <= currentPageCount) {
+    return;
+  }
+  throw new ValidationError(
+    `estimatedPages cannot increase above ${MAX_NEW_EPISODE_PAGES}`,
+  );
 }
 
 function requireWorkListPaginationRepository(

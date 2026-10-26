@@ -298,6 +298,13 @@ or unmatched primaries and unconfirmed candidates remain unavailable; capability
 authorization, saved-input revision, active-job, and explicit quote acceptance
 checks still apply.
 
+When a state-preview job completes, Mobile initially selects its first valid
+generated candidate so the user can confirm it without an additional selection
+tap. Confirmation remains explicit. Polling, candidate reordering, and late
+responses for another state must preserve the user's current manual selection.
+Selections are scoped to workspace, character, state, saved revision, and job;
+expired or missing candidates cannot remain confirmable.
+
 Mobile import validates local file access, actual image bytes, and the existing
 5 MiB bound before preparing a network upload. JPEG, PNG, and WebP keep their
 original bytes. Starting with native/runtime version 1.0.9, recognized HEIC/HEIF
@@ -330,7 +337,7 @@ paths before rollout. This change branches from the submitted mobile release HEA
 to preserve its fixes that are not yet on main.
 Story-to-page autofill plans beat ownership across the complete episode before
 expanding the existing pages. The normal path first requests the full-episode beat
-plan once. Beat and outline response schemas use the episode page limit (32), not the per-page panel limit (8); every existing page must remain covered exactly once. Only a confirmed beat structured-output capacity failure activates the
+plan once. Beat and outline response schemas retain a compatible episode-processing capacity of 32, not the per-page panel limit (8); every existing page must remain covered exactly once. This processing capacity is separate from the new/increased episode page limit of 20. Only a confirmed beat structured-output capacity failure activates the
 existing compact outline and segmented ledger fallback; page count or an estimated
 pack count alone must not add those provider calls. Other failures retain their
 existing bounded retry/error handling and do not activate capacity fallback. Detail compilation uses adaptive, consecutive page
@@ -629,6 +636,15 @@ without an opt-in/overwrite checkbox or missing-state creation instructions when
 capability is advertised. Other job retry flows are unchanged.
 
 Mobile page editing selects pages through horizontally scrollable image cards.
+New episodes and increases in planned or generated page span are limited to 20
+pages per episode across API, Mobile and Web. Existing 21--32-page episodes stay
+readable, editable and exportable; unchanged or reduced saved counts remain valid
+without silently clamping drafts or deleting pages. Write-time checks use the
+authorized current value inside the persistence boundary, including concurrent
+legacy writes without revision fields. Skeleton acceptance records the new page
+policy; jobs accepted before that policy retain their prior compatible capacity.
+Existing page processing and response schemas must not be reduced to 20 merely
+because the new creation limit changes.
 The redundant page-number picker, previous/next buttons, swipe instructions and
 manual page-confirmation controls are omitted. Switching pages initializes the new page's first saved
 panel only after page-scoped data is available; a refetched empty cache is not an

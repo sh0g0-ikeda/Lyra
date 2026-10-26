@@ -18,6 +18,8 @@ import type { PageSkeletonPageDraft } from '../../src/domain/types/storyAi.js';
 import type { PageSkeletonPreparation } from '../../src/services/story/PageSkeletonService.js';
 import { fingerprintPageSkeletonContext } from '../../src/domain/pageSkeletonFingerprint.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../packages/api-contract/src/episodePageLimits.js';
+import { STORY_AI_LIMITS } from '../../src/domain/constants/storyAi.js';
 
 const describePostgres = process.env.APP_ENV === 'test' && process.env.DATABASE_URL ? describe : describe.skip;
 const LEGACY_MIGRATIONS = join(process.cwd(), 'tests/fixtures/production-lineage-2debe');
@@ -100,6 +102,69 @@ describePostgres('legacy skeleton atomic commit fence', () => {
       expect(await notificationCount(pool, job.id)).toBe(1);
     } finally { await single.end(); }
   });
+
+  it('新policyの21ページ準備はpage lock後のcommit再検査で全rollbackする', async () => {
+    const fixture = await insertFixture(pool);
+    const { job, preparation } = await prepareFixture(pool, fixture);
+    job.params = { ...job.params, max_new_page_count: MAX_NEW_EPISODE_PAGES };
+    preparation.maxNewPageCount = MAX_NEW_EPISODE_PAGES;
+    preparation.pages = draftPages(MAX_NEW_EPISODE_PAGES + 1);
+    await pool.query('UPDATE generation_jobs SET params=$2::jsonb WHERE id=$1', [
+      job.id,
+      JSON.stringify(job.params),
+    ]);
+
+    const outcome = await settle(
+      new PostgresEpisodePageSkeletonExecutionRepository(testDatabase(pool), 'legacy_2debe_v1')
+        .commitPreparedEpisodePageSkeleton(job, preparation),
+    );
+
+    expect(outcome).toMatchObject({ ok: false, error: { code: 'VALIDATION_ERROR' } });
+    await expectUnchanged(pool, fixture, job.id);
+  });
+
+  it('staleな32ページ読取後に20へ減少した場合はSQL現在値で26への復活を拒否する', async () => {
+    const fixture = await insertFixture(pool);
+    await pool.query('UPDATE episodes SET estimated_pages=32 WHERE id=$1', [fixture.episodeId]);
+    const equalSave = await new PostgresStoryRepository(
+      testDatabase(pool),
+      testDatabase(pool),
+      'legacy_2debe_v1',
+    ).updateEpisode(fixture.episodeId, fixture.userId, {
+      title: 'legacy 32-page body save',
+      estimatedPages: 32,
+    });
+    expect(equalSave).toMatchObject({ estimatedPages: 32, title: 'legacy 32-page body save' });
+
+    const staleRead = deferred<void>();
+    const resumeUpdate = deferred<void>();
+    let staleReadPaused = false;
+    const writer = await PinnedDatabase.connect(pool, async (sql) => {
+      if (!staleReadPaused && sql.includes('SELECT episodes.*') && sql.includes('FROM episodes')) {
+        staleReadPaused = true;
+        staleRead.resolve();
+        await resumeUpdate.promise;
+      }
+    });
+    let outcome: Awaited<ReturnType<typeof settle<unknown>>> | undefined;
+    try {
+      const update = settle(new PostgresStoryRepository(writer, writer, 'legacy_2debe_v1')
+        .updateEpisode(fixture.episodeId, fixture.userId, { estimatedPages: 26 }));
+      await waitForSignal(staleRead.promise, 'stale episode page-count read');
+      await pool.query('UPDATE episodes SET estimated_pages=20 WHERE id=$1', [fixture.episodeId]);
+      resumeUpdate.resolve();
+      outcome = await update;
+    } finally {
+      resumeUpdate.resolve();
+      await writer.close();
+    }
+
+    expect(outcome).toMatchObject({ ok: false, error: { code: 'VALIDATION_ERROR' } });
+    expect((await pool.query<{ estimated_pages: number }>(
+      'SELECT estimated_pages FROM episodes WHERE id=$1',
+      [fixture.episodeId],
+    )).rows[0]?.estimated_pages).toBe(20);
+  }, 10_000);
 
   it.each(['fake organization', 'foreign actor', 'episode substitution', 'actual resource organization'] as const)(
     '%sではjobと保存先scopeを再照合して変更を残さない', async (kind) => {
@@ -540,9 +605,13 @@ describePostgres('legacy skeleton atomic commit fence', () => {
 });
 
 function draft(): PageSkeletonPageDraft[] {
-  return [{ pageNumber: 1, purpose: 'setup', suggestedLayout: 'splash_1', suggestedPanelCount: 1, panels: [
+  return draftPages(1);
+}
+
+function draftPages(count: number): PageSkeletonPageDraft[] {
+  return Array.from({ length: count }, (_unused, index) => ({ pageNumber: index + 1, purpose: 'setup', suggestedLayout: 'splash_1', suggestedPanelCount: 1, panels: [
     { order: 1, panelRole: 'establish', suggestedSize: 'splash', situationHint: 'new skeleton', suggestedEntities: [], suggestedDialogueHint: '' },
-  ] }];
+  ] }));
 }
 
 async function prepareFixture(pool: Pool, fixture: Fixture): Promise<{ job: GenerationJob; preparation: PageSkeletonPreparation }> {
@@ -556,7 +625,8 @@ async function prepareFixture(pool: Pool, fixture: Fixture): Promise<{ job: Gene
     .findEpisodePageSkeletonContextByIdAndUserId(fixture.episodeId, fixture.userId, fixture.organizationId);
   if (job === null || context === null) throw new Error('Missing skeleton fixture');
   return { job, preparation: { userId: fixture.userId, organizationId: fixture.organizationId, episodeId: fixture.episodeId,
-    overwriteExisting: true, pages: draft(), sourceFingerprint: fingerprintPageSkeletonContext(context) } };
+    overwriteExisting: true, maxNewPageCount: STORY_AI_LIMITS.maxSkeletonPages,
+    pages: draft(), sourceFingerprint: fingerprintPageSkeletonContext(context) } };
 }
 
 async function notificationCount(pool: Pool, jobId: string): Promise<number> {

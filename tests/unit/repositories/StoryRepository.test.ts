@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { computeStateReferenceFingerprint } from '../../../src/domain/state/StateReferenceFingerprint.js';
 import { PostgresStoryRepository } from '../../../src/repositories/StoryRepository.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../packages/api-contract/src/episodePageLimits.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
@@ -114,6 +115,7 @@ class EpisodeUpdateCapturingClient implements DatabaseClient, TransactionRunner 
   public updateValues: readonly unknown[] | null = null;
   public queries: string[] = [];
   public updateRowPresent = true;
+  public postFailedUpdateEpisodeRow: Record<string, unknown> | null = null;
 
   public constructor(private readonly currentEpisodeRow: Record<string, unknown> = episodeRow()) {}
 
@@ -123,13 +125,18 @@ class EpisodeUpdateCapturingClient implements DatabaseClient, TransactionRunner 
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
     if (text.includes('SELECT episodes.*')) {
+      const selectedEpisodeRow = this.updateValues !== null
+        && !this.updateRowPresent
+        && this.postFailedUpdateEpisodeRow !== null
+        ? this.postFailedUpdateEpisodeRow
+        : this.currentEpisodeRow;
       return {
         command: 'SELECT',
         rowCount: 1,
         oid: 0,
         fields: [],
         rows: [{
-          ...this.currentEpisodeRow,
+          ...selectedEpisodeRow,
           ...(text.includes('FOR UPDATE OF episodes')
             ? { work_id: '11111111-1111-4111-8111-111111111111' }
             : {}),
@@ -480,6 +487,41 @@ describe('PostgresStoryRepository', () => {
     });
   });
 
+  it('page lock後に新policyの21ページcommitを拒否してgraphを変更しない', async () => {
+    const client = new QueryCapturingClient();
+    client.lockRow = {
+      id: '33333333-3333-4333-8333-333333333333',
+      page_skeleton_generated: true,
+      existing_page_count: 1,
+    };
+    client.skeletonPageRows = [{ id: 'existing-page-1', page_number: 1 }];
+    const repository = new PostgresStoryRepository(client, client);
+    const pages = Array.from({ length: MAX_NEW_EPISODE_PAGES + 1 }, (_unused, index) => ({
+      pageNumber: index + 1,
+      purpose: 'bounded skeleton',
+      suggestedPanelCount: 1,
+      suggestedLayout: 'splash_1' as const,
+      panels: [{
+        order: 1,
+        panelRole: 'establish' as const,
+        suggestedSize: 'splash' as const,
+        situationHint: 'bounded',
+        suggestedEntities: [],
+        suggestedDialogueHint: null,
+      }],
+    }));
+
+    await expect(repository.createPageSkeleton(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      pages,
+      { overwriteExisting: true, maxNewPageCount: MAX_NEW_EPISODE_PAGES },
+    )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(client.queries.some((query) => query.includes('SELECT id, page_number'))).toBe(true);
+    expect(client.queries.some((query) => query.includes('DELETE FROM pages'))).toBe(false);
+    expect(client.queries.some((query) => query.includes('INSERT INTO pages'))).toBe(false);
+  });
+
   it('generated画像を保持するoverwriteで既存ページがplanから欠ける場合は競合にする', async () => {
     const client = new QueryCapturingClient();
     client.lockRow = {
@@ -611,6 +653,35 @@ describe('PostgresStoryRepository', () => {
     expect(client.updateValues?.[14]).toBeNull();
     expect(client.updateValues?.[16]).toBeNull();
     expect(client.updateValues?.[18]).toBeNull();
+  });
+
+  it('episode page増加を認可済み現在値とUPDATE条件の両方で拒否する', async () => {
+    const legacy25 = new EpisodeUpdateCapturingClient({ ...episodeRow(), estimated_pages: 25 });
+    await expect(new PostgresStoryRepository(legacy25).updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { estimatedPages: 26 },
+    )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(legacy25.queries.some((sql) => sql.includes('UPDATE episodes'))).toBe(false);
+
+    const legacy32 = new EpisodeUpdateCapturingClient({ ...episodeRow(), estimated_pages: 32 });
+    await expect(new PostgresStoryRepository(legacy32).updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { title: 'legacy body save', estimatedPages: 32 },
+    )).resolves.not.toBeNull();
+    const updateSql = legacy32.queries.find((sql) => sql.includes('UPDATE episodes')) ?? '';
+    expect(updateSql).toContain(`$20::int <= ${MAX_NEW_EPISODE_PAGES}`);
+    expect(updateSql).toContain('$20::int <= episodes.estimated_pages');
+
+    const concurrentDecrease = new EpisodeUpdateCapturingClient({ ...episodeRow(), estimated_pages: 32 });
+    concurrentDecrease.updateRowPresent = false;
+    concurrentDecrease.postFailedUpdateEpisodeRow = { ...episodeRow(), estimated_pages: 25 };
+    await expect(new PostgresStoryRepository(concurrentDecrease).updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { estimatedPages: 26 },
+    )).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 
   it('開始状態の省略は保存済み値を保持し、明示空配列はclearとして保存する', async () => {

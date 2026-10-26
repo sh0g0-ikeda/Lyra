@@ -21,6 +21,9 @@ import type {
 import type { StoryRepository } from '../../repositories/StoryRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { StoryAiClientPort } from './StoryAiClientPort.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../packages/api-contract/src/episodePageLimits.js';
+
+export type PageSkeletonPageLimitPolicy = 'current' | 'legacy_accepted_job';
 
 export interface PageSkeletonServicePort {
   generateForEpisode(
@@ -56,6 +59,8 @@ export interface PageSkeletonGenerationOptions {
    * fallback skeleton is never persisted as if it were an AI result.
    */
   allowCompilerFallback?: boolean;
+  /** Only marker-less jobs accepted before the 20-page policy retain the 32-page admission ceiling. */
+  pageLimitPolicy?: PageSkeletonPageLimitPolicy;
 }
 
 export interface PageSkeletonPreparation {
@@ -64,6 +69,7 @@ export interface PageSkeletonPreparation {
   organizationId: string | null;
   overwriteExisting: boolean;
   preserveGeneratedImages?: boolean;
+  maxNewPageCount?: number;
   pages: PageSkeletonPageDraft[];
   /** Required by the explicit legacy atomic commit strategy. */
   sourceFingerprint?: string;
@@ -100,6 +106,9 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     const preserveGeneratedImages = overwriteExisting && options?.preserveGeneratedImages === true;
     const language = options?.language ?? 'ja';
     const allowCompilerFallback = options?.allowCompilerFallback !== false;
+    const maxNewPageCount = options?.pageLimitPolicy === 'legacy_accepted_job'
+      ? STORY_AI_LIMITS.maxSkeletonPages
+      : MAX_NEW_EPISODE_PAGES;
     const context = await this.storyRepository.findEpisodePageSkeletonContextByIdAndUserId(
       episodeId,
       userId,
@@ -121,6 +130,11 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     if (plannedPageCount > STORY_AI_LIMITS.maxSkeletonPages) {
       throw new ValidationError(
         `planned page count must be ${STORY_AI_LIMITS.maxSkeletonPages} or less to generate a page skeleton`,
+      );
+    }
+    if (plannedPageCount > maxNewPageCount && plannedPageCount > context.existingMaxPageNumber) {
+      throw new ValidationError(
+        `planned page count cannot increase above ${maxNewPageCount}`,
       );
     }
 
@@ -179,6 +193,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       organizationId,
       overwriteExisting,
       preserveGeneratedImages,
+      maxNewPageCount,
       pages,
       sourceFingerprint,
     };
@@ -196,6 +211,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
         ...(preparation.preserveGeneratedImages === true
           ? { preserveGeneratedImages: true }
           : {}),
+        maxNewPageCount: preparation.maxNewPageCount ?? MAX_NEW_EPISODE_PAGES,
       },
       preparation.organizationId,
     );

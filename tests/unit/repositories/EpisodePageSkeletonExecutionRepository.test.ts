@@ -2,6 +2,8 @@ import type { QueryResult, QueryResultRow } from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEpisodePageSkeletonExecutionRepository } from '../../../src/repositories/EpisodePageSkeletonExecutionRepository.js';
+import { MAX_NEW_EPISODE_PAGES } from '../../../packages/api-contract/src/episodePageLimits.js';
+import { STORY_AI_LIMITS } from '../../../src/domain/constants/storyAi.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
@@ -46,7 +48,8 @@ describe('legacy Skeleton commit organization capability', () => {
     const job = await repository.claimQueuedEpisodePageSkeletonJob('job-1');
     if (job === null) throw new Error('Missing test job');
     await expect(repository.commitPreparedEpisodePageSkeleton(job, {
-      userId: job.userId, organizationId: 'org-1', episodeId: 'episode-1', overwriteExisting: false, pages: [], sourceFingerprint: 'fixture',
+      userId: job.userId, organizationId: 'org-1', episodeId: 'episode-1', overwriteExisting: false,
+      maxNewPageCount: STORY_AI_LIMITS.maxSkeletonPages, pages: [], sourceFingerprint: 'fixture',
     })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(client.queries.some((sql) => sql.includes('FOR UPDATE OF works'))).toBe(false);
   });
@@ -57,7 +60,8 @@ describe('legacy Skeleton commit organization capability', () => {
     if (job === null) throw new Error('Missing test job');
     client.graphError = Object.assign(new Error('Reached graph'), { code: '42P01' });
     await expect(repository.commitPreparedEpisodePageSkeleton(job, {
-      userId: job.userId, organizationId: 'org-1', episodeId: 'episode-1', overwriteExisting: false, pages: [], sourceFingerprint: 'fixture',
+      userId: job.userId, organizationId: 'org-1', episodeId: 'episode-1', overwriteExisting: false,
+      maxNewPageCount: STORY_AI_LIMITS.maxSkeletonPages, pages: [], sourceFingerprint: 'fixture',
     })).rejects.toBe(client.graphError);
   });
 });
@@ -72,7 +76,8 @@ describe('PostgresEpisodePageSkeletonExecutionRepository cancellation barrier', 
     let rejection: unknown;
     try {
       await repository.commitPreparedEpisodePageSkeleton(job, {
-        userId: job.userId, organizationId: null, episodeId: 'episode-1', overwriteExisting: false, pages: [], sourceFingerprint: 'fixture',
+        userId: job.userId, organizationId: null, episodeId: 'episode-1', overwriteExisting: false,
+        maxNewPageCount: STORY_AI_LIMITS.maxSkeletonPages, pages: [], sourceFingerprint: 'fixture',
       });
     } catch (error: unknown) { rejection = error; }
     if (code === '55P03') expect(rejection).toMatchObject({ code: 'CONFLICT' });
@@ -99,6 +104,25 @@ describe('PostgresEpisodePageSkeletonExecutionRepository cancellation barrier', 
     catch (error: unknown) { rejection = error; }
     expect(rejection).toBeInstanceOf(Error);
     expect(client.queries).toEqual([]);
+  });
+
+  it('旧job markerと準備時page limit policyが一致しない場合はgraph lock前に拒否する', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresEpisodePageSkeletonExecutionRepository(client, 'legacy_2debe_v1');
+    const job = await repository.claimQueuedEpisodePageSkeletonJob('job-1');
+    if (job === null) throw new Error('Missing test job');
+    client.queries = [];
+
+    await expect(repository.commitPreparedEpisodePageSkeleton(job, {
+      userId: job.userId,
+      organizationId: null,
+      episodeId: 'episode-1',
+      overwriteExisting: false,
+      maxNewPageCount: MAX_NEW_EPISODE_PAGES,
+      pages: [],
+      sourceFingerprint: 'fixture',
+    })).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(client.queries.some((sql) => sql.includes('FOR UPDATE OF works'))).toBe(false);
   });
 
   it('停止要求済みのqueued jobをclaimしない', async () => {
