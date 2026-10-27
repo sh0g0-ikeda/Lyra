@@ -1,4 +1,5 @@
 import type { AppLanguage } from '../../domain/types/language.js';
+import type { EpisodeAutofillCharacterReference } from './EpisodePagePlanCompiler.js';
 import type {
   PageAutofillPanelSuggestion,
   PageDialogueMode,
@@ -154,6 +155,8 @@ export interface CompileEpisodePlanAuditInput {
   /** Legacy/internal visual snapshot retained for caller compatibility. */
   visualSnapshot?: EpisodePlanAuditVisualSnapshot;
   beforeRetry?: () => Promise<void>;
+  /** Same complete-context reference table as the detail compilation. */
+  characterReferences?: readonly EpisodeAutofillCharacterReference[];
 }
 
 export interface EpisodePlanAuditVisualSnapshotPanel {

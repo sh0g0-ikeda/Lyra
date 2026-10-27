@@ -17,6 +17,11 @@ import {PageAtomicGenerationService} from '../../src/services/page/PageAtomicGen
 import type {SaveAndGeneratePageInput} from '../../src/services/page/PageSaveAndGenerate.js';
 import {PostgresGenerationQuotePlanResolver} from '../../src/repositories/GenerationQuotePlanResolver.js';
 import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
+import {PageService} from '../../src/services/page/PageService.js';
+import {PanelEntityAssignmentService} from '../../src/services/page/PanelEntityAssignmentService.js';
+import {PostgresPanelRepository} from '../../src/repositories/PanelRepository.js';
+import {PostgresPanelEntityAssignmentRepository} from '../../src/repositories/PanelEntityAssignmentRepository.js';
+import {PostgresEpisodePlanPersistenceRepository} from '../../src/repositories/EpisodePlanPersistenceRepository.js';
 
 const run=process.env.APP_ENV==='test' && process.env.DATABASE_URL ? describe : describe.skip;
 run('legacy atomic save-and-generate compatibility',()=>{
@@ -38,6 +43,33 @@ run('legacy atomic save-and-generate compatibility',()=>{
   return {userId,workId,chapterId,episodeId,pageId,panelId,input};
  }
  async function state(ids:Awaited<ReturnType<typeof fixture>>){return (await pool.query(`SELECT p.status,p.layout_config,(SELECT situation_text FROM panels WHERE id=$2) AS scene,(SELECT purchased_credits FROM credit_balances WHERE user_id=$3) AS credits,(SELECT COUNT(*)::int FROM generation_jobs WHERE user_id=$3) AS jobs,(SELECT COUNT(*)::int FROM credit_ledger WHERE user_id=$3 AND type='consume') AS debits FROM pages p WHERE p.id=$1`,[ids.pageId,ids.panelId,ids.userId])).rows[0];}
+ it('完走優先の話者補正を原子的に保存した結果は既存の画像生成準備検査を変更せず通る',async()=>{
+  const ids=await fixture();
+  const entityId=randomUUID();
+  await pool.query("INSERT INTO entities(id,user_id,work_id,name,entity_type) VALUES($1,$2,$3,'Synthetic speaker','character')",[entityId,ids.userId,ids.workId]);
+  await pool.query("UPDATE episodes SET story_full_draft='Synthetic speaker says a test line.',estimated_pages=1 WHERE id=$1",[ids.episodeId]);
+  const db=database();
+  const autofill=new PageService(
+   new PostgresPageRepository(db),new PostgresPanelRepository(db),
+   new PanelEntityAssignmentService(new PostgresPanelEntityAssignmentRepository(db)),undefined,
+   {compilePlan:async(input)=>{
+    expect(input.characterReferences).toEqual([{ref:'E1',entityId,name:'Synthetic speaker',entityType:'character'}]);
+    return {compilerProvider:'openai',compilerModel:'synthetic-test',compilerPromptVersion:'synthetic-test',
+     suggestion:{pages:[{pageId:ids.pageId,pageNumber:1,sourceSceneIds:[],pagePurpose:'A synthetic exchange.',
+      continuityNote:null,page:{dialogueMode:'mixed',pageDialogueToggle:true},panels:[{order:1,
+       situationText:'A quiet off-panel exchange.',entities:[],dialogue:[{entityId:randomUUID(),
+        text:'The test line must remain intact.',type:'speech',position:'right'}]}]}]}};
+   }},undefined,undefined,undefined,false,{completionFirstEnabled:true},
+   new PostgresEpisodePlanPersistenceRepository(db),
+  );
+  const result=await autofill.autofillEpisodeFromStory(ids.userId,ids.episodeId,'ja');
+  expect(result).toMatchObject({compilerUsed:true,updatedPageCount:1,updatedPanelCount:1});
+  const saved=(await pool.query('SELECT dialogue FROM panels WHERE id=$1',[ids.panelId])).rows[0].dialogue;
+  expect(saved).toEqual([{entity_id:entityId,text:'The test line must remain intact.',type:'speech',position:'right'}]);
+  expect((await pool.query('SELECT count(*)::int AS count FROM panel_entity_assignments WHERE panel_id=$1',[ids.panelId])).rows[0].count).toBe(0);
+  expect(await service().getGenerationReadiness(ids.userId,ids.pageId)).toMatchObject({ready:true,blockers:[]});
+  expect(await state(ids)).toMatchObject({credits:30,jobs:0,debits:0});
+ });
  it('public quote機能を要求せず同時同keyを一度だけ保存課金しcommit後にdispatchする',async()=>{
   const ids=await fixture();let calls=0;
   const instance=service(undefined,async()=>{calls++;expect((await state(ids)).jobs).toBe(1);});

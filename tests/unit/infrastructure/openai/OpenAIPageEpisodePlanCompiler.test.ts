@@ -6,7 +6,272 @@ import { OpenAIPageEpisodePlanCompiler } from '../../../../src/infrastructure/op
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import { StructuredOpenAIResponseError } from '../../../../src/infrastructure/openai/StructuredOpenAIResponse.js';
 
+const ENTITY_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const ENTITY_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const FOREIGN_ENTITY = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const CHARACTER_REFERENCES = [
+  { ref: 'E1', entityId: ENTITY_A, name: '鍵', entityType: 'object' as const },
+  { ref: 'E2', entityId: ENTITY_B, name: 'ミナ', entityType: 'character' as const },
+] as const;
+
+function readObjectValue(value: unknown): Record<string, unknown> {
+  expect(value).toBeTypeOf('object');
+  expect(value).not.toBeNull();
+  expect(Array.isArray(value)).toBe(false);
+  return value as Record<string, unknown>;
+}
+
+function readArrayValue(value: unknown): unknown[] {
+  expect(Array.isArray(value)).toBe(true);
+  return value as unknown[];
+}
+
+function countEnumValues(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.reduce((total, item) => total + countEnumValues(item), 0);
+  }
+  if (typeof value !== 'object' || value === null) {
+    return 0;
+  }
+  return Object.entries(value).reduce((total, [key, item]) =>
+    total + (key === 'enum' && Array.isArray(item) ? item.length : countEnumValues(item)), 0);
+}
+
 describe('OpenAIPageEpisodePlanCompiler', () => {
+  it('local character refsをschemaとpromptに固定しspeakerを実IDへ復元する', async () => {
+    let request: Record<string, unknown> | undefined;
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        request = payload;
+        return {
+          body: {
+            status: 'completed',
+            output_text: JSON.stringify({
+              pages: [{
+                page_id: '11111111-1111-4111-8111-111111111111',
+                page_number: 1,
+                source_scene_ids: [],
+                page_purpose: null,
+                continuity_note: null,
+                page: null,
+                panels: [{
+                  order: 1,
+                  panel_role: 'action',
+                  panel_size: 'standard',
+                  situation_text: '会話する。',
+                  composition: null,
+                  dialogue_in_panel: true,
+                  dialogue: [
+                    { entity_id: FOREIGN_ENTITY, text: '不明な参照も完了する。', type: 'speech', position: 'right' },
+                    { entity_id: ENTITY_B, text: '既知UUIDも移行できる。', type: 'thought', position: 'left' },
+                    { entity_id: 'E2', text: '地の文。', type: 'narration', position: 'top' },
+                  ],
+                  sfx_text: null,
+                  background_note: null,
+                  panel_notes: null,
+                  entities: [{
+                    entity_id: 'E2', role: 'primary', expression: 'calm', custom_expression: null,
+                    action: 'standing_firm', custom_action: null, position: 'center',
+                    facing_direction: null, effect_note: null, state_id: FOREIGN_ENTITY,
+                  }],
+                }],
+              }],
+            }),
+          },
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    const originalBrief = `Allowed entities:\n${ENTITY_A}: 鍵\n${ENTITY_B}: ミナ\nQuoted story: 「${ENTITY_A}」\nstate_id=${ENTITY_A}`;
+    const result = await new OpenAIPageEpisodePlanCompiler(client).compilePlan({
+      compilerBrief: originalBrief,
+      language: 'ja',
+      characterReferences: CHARACTER_REFERENCES,
+    });
+
+    expect(result.suggestion.pages[0]?.panels[0]?.dialogue).toEqual([
+      { entityId: ENTITY_B, text: '不明な参照も完了する。', type: 'speech', position: 'right' },
+      { entityId: ENTITY_B, text: '既知UUIDも移行できる。', type: 'thought', position: 'left' },
+      { entityId: null, text: '地の文。', type: 'narration', position: 'top' },
+    ]);
+    expect(result.suggestion.pages[0]?.panels[0]?.entities?.[0]?.entityId).toBe(ENTITY_B);
+    expect(result.suggestion.pages[0]?.panels[0]?.entities?.[0]?.stateId).toBe(FOREIGN_ENTITY);
+
+    const text = readObjectValue(request?.text);
+    const format = readObjectValue(text.format);
+    const schema = readObjectValue(format.schema);
+    const schemaProperties = readObjectValue(schema.properties);
+    const pages = readObjectValue(schemaProperties.pages);
+    const pageItems = readObjectValue(pages.items);
+    const pageProperties = readObjectValue(pageItems.properties);
+    const panels = readObjectValue(pageProperties.panels);
+    const panelItems = readObjectValue(panels.items);
+    const panelProperties = readObjectValue(panelItems.properties);
+    const dialogue = readObjectValue(panelProperties.dialogue);
+    const dialogueArray = readObjectValue(readArrayValue(dialogue.anyOf)[0]);
+    const dialogueItems = readObjectValue(dialogueArray.items);
+    expect(readObjectValue(dialogueItems.properties).entity_id).toEqual({
+      anyOf: [{ type: 'string', enum: ['E1', 'E2'] }, { type: 'null' }],
+    });
+    const entities = readObjectValue(panelProperties.entities);
+    const entityItems = readObjectValue(entities.items);
+    expect(readObjectValue(entityItems.properties).entity_id).toEqual({
+      type: 'string', enum: ['E1', 'E2'],
+    });
+    const prompt = JSON.stringify(request?.input);
+    expect(prompt).toContain('E1');
+    expect(prompt).toContain('E2');
+    expect(prompt).toContain('鍵');
+    expect(prompt).toContain('fallback ref E2');
+    const requestInput = readArrayValue(request?.input);
+    const userContent = readArrayValue(readObjectValue(requestInput[1]).content);
+    const userText = readObjectValue(userContent[0]).text;
+    expect(userText).toBeTypeOf('string');
+    expect(userText as string).toContain(`${originalBrief}\n\n[SERVER ENTITY REFERENCE CATALOG]`);
+    expect(prompt).toContain(`E1 | entity_id=${ENTITY_A}`);
+    expect(prompt).toContain(`E2 | entity_id=${ENTITY_B}`);
+  });
+
+  it('local character refs modeは未知のvisible assignmentを推測せずbounded retryする', async () => {
+    let requestCount = 0;
+    const response = (entityId: string) => ({
+      pages: [{
+        page_id: '11111111-1111-4111-8111-111111111111', page_number: 1,
+        source_scene_ids: [], page_purpose: null, continuity_note: null, page: null,
+        panels: [{
+          order: 1, panel_role: 'action', panel_size: 'standard', situation_text: null,
+          composition: null, dialogue_in_panel: false, dialogue: [], sfx_text: null,
+          background_note: null, panel_notes: null,
+          entities: [{ entity_id: entityId, role: 'primary', expression: 'calm',
+            custom_expression: null, action: 'standing_firm', custom_action: null,
+            position: 'center', facing_direction: null, effect_note: null, state_id: null }],
+        }],
+      }],
+    });
+    const client = {
+      postJson: async () => ({
+        body: { status: 'completed', output_text: JSON.stringify(response(requestCount++ === 0 ? FOREIGN_ENTITY : 'E1')) },
+      }),
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIPageEpisodePlanCompiler(client).compilePlan({
+      compilerBrief: 'fixture', language: 'ja', characterReferences: CHARACTER_REFERENCES,
+    })).resolves.toMatchObject({ suggestion: { pages: [{ panels: [{ entities: [{ entityId: ENTITY_A }] }] }] } });
+    expect(requestCount).toBe(2);
+  });
+
+  it('local character refをstate_idへ流用せずUUID契約で再試行する', async () => {
+    let requestCount = 0;
+    const response = (stateId: string | null) => ({
+      pages: [{
+        page_id: '11111111-1111-4111-8111-111111111111', page_number: 1,
+        source_scene_ids: [], page_purpose: null, continuity_note: null, page: null,
+        panels: [{
+          order: 1, panel_role: 'action', panel_size: 'standard', situation_text: null,
+          composition: null, dialogue_in_panel: false, dialogue: [], sfx_text: null,
+          background_note: null, panel_notes: null,
+          entities: [{ entity_id: 'E1', role: 'primary', expression: 'calm',
+            custom_expression: null, action: 'standing_firm', custom_action: null,
+            position: 'center', facing_direction: null, effect_note: null, state_id: stateId }],
+        }],
+      }],
+    });
+    const client = {
+      postJson: async () => ({
+        body: { status: 'completed', output_text: JSON.stringify(response(requestCount++ === 0 ? 'E2' : null)) },
+      }),
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIPageEpisodePlanCompiler(client).compilePlan({
+      compilerBrief: 'fixture', language: 'ja', characterReferences: CHARACTER_REFERENCES,
+    })).resolves.toMatchObject({ suggestion: { pages: [{ panels: [{ entities: [{
+      entityId: ENTITY_A, stateId: null,
+    }] }] }] } });
+    expect(requestCount).toBe(2);
+  });
+
+  it('1000件超のcatalogでもenum上限を避けlate refをallowlistで復元する', async () => {
+    const references = Array.from({ length: 1_001 }, (_, index) => ({
+      ref: `E${index + 1}`,
+      entityId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      name: `Entity ${index + 1}`,
+      entityType: index === 0 ? 'object' as const : 'character' as const,
+    }));
+    const fallbackEntityId = references[1]!.entityId;
+    const lateEntityId = references[1_000]!.entityId;
+    let request: Record<string, unknown> | undefined;
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        request = payload;
+        return { body: { status: 'completed', output_text: JSON.stringify({ pages: [{
+          page_id: '11111111-1111-4111-8111-111111111111', page_number: 1,
+          source_scene_ids: [], page_purpose: null, continuity_note: null, page: null,
+          panels: [{
+            order: 1, panel_role: 'action', panel_size: 'standard', situation_text: null,
+            composition: null, dialogue_in_panel: true,
+            dialogue: [
+              { entity_id: FOREIGN_ENTITY, text: 'fallback', type: 'speech', position: 'right' },
+              { entity_id: 'E1001', text: 'late ref', type: 'speech', position: 'left' },
+            ],
+            sfx_text: null, background_note: null, panel_notes: null,
+            entities: [{ entity_id: 'E1001', role: 'primary', expression: 'calm',
+              custom_expression: null, action: 'standing_firm', custom_action: null,
+              position: 'center', facing_direction: null, effect_note: null, state_id: null }],
+          }],
+        }] }) } };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIPageEpisodePlanCompiler(client).compilePlan({
+      compilerBrief: 'large catalog', language: 'ja', characterReferences: references,
+    });
+
+    expect(result.suggestion.pages[0]?.panels[0]?.dialogue?.map((line) => line.entityId))
+      .toEqual([fallbackEntityId, lateEntityId]);
+    expect(result.suggestion.pages[0]?.panels[0]?.entities?.[0]?.entityId).toBe(lateEntityId);
+    const schema = readObjectValue(readObjectValue(readObjectValue(request?.text).format).schema);
+    expect(countEnumValues(schema)).toBeLessThanOrEqual(1_000);
+    expect(JSON.stringify(schema)).toContain('^[A-Z][A-Z0-9_-]{0,31}$');
+    expect(JSON.stringify(schema)).not.toContain('"E1001"');
+  });
+
+  it('entity catalogが空の場合はnarrationと空のvisible entitiesだけを許可する', async () => {
+    let request: Record<string, unknown> | undefined;
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        request = payload;
+        return { body: { status: 'completed', output_text: JSON.stringify({
+          pages: [{
+            page_id: '11111111-1111-4111-8111-111111111111', page_number: 1,
+            source_scene_ids: [], page_purpose: null, continuity_note: null, page: null,
+            panels: [{
+              order: 1, panel_role: 'narration', panel_size: 'standard', situation_text: null,
+              composition: null, dialogue_in_panel: true,
+              dialogue: [{ entity_id: null, text: '静かな夜。', type: 'narration', position: 'top' }],
+              sfx_text: null, background_note: null, panel_notes: null, entities: [],
+            }],
+          }],
+        }) } };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIPageEpisodePlanCompiler(client).compilePlan({
+      compilerBrief: 'fixture', language: 'ja', characterReferences: [],
+    })).resolves.toMatchObject({ suggestion: { pages: [{ panels: [{
+      dialogue: [{ entityId: null, type: 'narration' }], entities: [],
+    }] }] } });
+
+    const schema = readObjectValue(readObjectValue(readObjectValue(request?.text).format).schema);
+    const pages = readObjectValue(readObjectValue(schema.properties).pages);
+    const panels = readObjectValue(readObjectValue(readObjectValue(pages.items).properties).panels);
+    const panelProperties = readObjectValue(readObjectValue(panels.items).properties);
+    const dialogueArray = readObjectValue(readArrayValue(readObjectValue(panelProperties.dialogue).anyOf)[0]);
+    const dialogueProperties = readObjectValue(readObjectValue(dialogueArray.items).properties);
+    expect(dialogueProperties.entity_id).toEqual({ type: 'null' });
+    expect(dialogueProperties.type).toEqual({ type: 'string', enum: ['narration'] });
+    expect(readObjectValue(panelProperties.entities).maxItems).toBe(0);
+  });
+
   it('chapter/episode/scene brief を episode page plan JSON にコンパイルする', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {

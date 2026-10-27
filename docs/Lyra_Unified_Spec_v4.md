@@ -353,6 +353,26 @@ State ledgers and detail provider schemas represent the default state as JSON nu
 never a label in a UUID field. The provider state-ID schema accepts UUID or null;
 unknown UUIDs still fail the existing authorized-reference validation.
 
+Story-autofill workers prioritize an editable, persistable result over exact
+speaker attribution. For this worker path only, detail and audit compilers use
+one complete-episode, server-issued entity-reference table across every page
+pack; provider aliases are decoded to authorized work entity UUIDs before the
+ordinary output validators run. Invalid or missing dialogue speakers may be
+resolved to an existing authorized speaker. Dialogue text and type, visible
+entity assignments, state assignments and image references are preserved by this
+speaker-only repair. Narration retains a null speaker. An empty authorized cast
+never causes a fabricated ID or an unowned entity to be saved.
+The original detail draft is resolved and context-validated before the audit;
+audit dialogue repairs undergo the same resolution before validation. Residual
+duplicate dialogue is recorded as bounded operational quality feedback and does
+not reject an otherwise valid worker autofill. The existing optional audit repair,
+single-audit budget, page/panel counts and ordering, scene/entity/state ownership,
+source/state validation, cancellation, input fingerprint and atomic job/graph
+commit remain enforced. Editing, image-generation readiness, quote/credit and
+preview-confirmation contracts are unchanged. Callers without the worker's
+completion-first option retain their existing behavior; this is not a provider
+outage fallback or permission to report an unsaved result as completed.
+
 For a complete original-page mapping without character-state opt-in, bounded
 original-source requirement extraction replaces the existing beat-plan pack calls.
 Source extraction v11 uses consecutive packs of at most four complete pages;
