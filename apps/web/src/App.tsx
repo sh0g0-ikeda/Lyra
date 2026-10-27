@@ -4,10 +4,13 @@ import { useRetainedSelection } from './hooks/useRetainedSelection';
 import { reconcileSavedStoryDraft, sameStoryDraft } from './domain/storyDraftSave';
 import { GoogleSignInButton, GoogleIdentityLinkPanel } from './components/GoogleAuthControls';
 import { canReadWebImage, imageDeliveryNotice, mergeImageDeliveryMetadata, type ImageDeliveryMetadata } from './domain/imageDelivery';
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import {
   BookOpen,
-  Bot,
+  BookOpenText,
+  CircleHelp,
+  PenLine,
+  Settings,
   BriefcaseBusiness,
   Building2,
   Check,
@@ -15,12 +18,10 @@ import {
   ChevronUp,
   CreditCard,
   Download,
-  Image,
   KeyRound,
   LayoutGrid,
   LoaderCircle,
   LogOut,
-  PanelsTopLeft,
   Play,
   Plus,
   RefreshCw,
@@ -34,6 +35,9 @@ import {
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { StoryHierarchyTree } from './components/StoryHierarchyTree';
+import { WebMangaTutorial } from './components/WebMangaTutorial';
+import { readWorkspaceView, resumeMangaStep, type WebWorkspaceView } from './lib/mangaWorkflow';
+import { pageDesignNextAction, type PageDesignIntent } from './lib/pageDesignWorkflow';
 import { decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
 import { shouldAllowManualTokenAuth } from './lib/authMode';
 import {
@@ -86,8 +90,13 @@ import type {
   OrganizationMemberRecord,
 } from './types/api';
 
-type WorkspaceTab = 'story' | 'entities' | 'pages' | 'account' | 'tutorial';
+type WorkspaceTab = WebWorkspaceView;
 type UiLanguage = 'ja' | 'en';
+type PendingPageDesign = PageDesignIntent & {
+  organizationId: string | null;
+  language: UiLanguage;
+  synchronous: boolean;
+};
 type SubscriptionPlanCode = 'free' | 'standard' | 'premium' | 'enterprise_a' | 'enterprise_b' | 'enterprise_c';
 type ConsumerSubscriptionCheckoutPlanCode = 'standard' | 'premium';
 type SubscriptionCheckoutPlanCode = Exclude<SubscriptionPlanCode, 'free'>;
@@ -1588,12 +1597,12 @@ const tutorialSteps: Array<{
     title: { en: 'Story', ja: 'ストーリー' },
     steps: [
       {
-        en: 'On desktop, change workspace in the left sidebar. On mobile, open Account to change workspace.',
-        ja: 'PCでは左サイドバー、スマホでは「アカウント」からワークスペースを変更します。',
+        en: 'On desktop, change workspace in the left sidebar. On mobile, open My Page to change workspace.',
+        ja: 'PCでは左サイドバー、スマホでは「マイページ」からワークスペースを変更します。',
       },
       {
-        en: 'On desktop, choose or create a work in the left sidebar. On mobile, expand Works at the top, then choose or create it.',
-        ja: 'PCでは左サイドバー、スマホでは上部の「作品一覧」を開いて、作品を選択または作成します。',
+        en: 'On desktop, choose or create a work in the left sidebar. On mobile, open Select work, chapter and episode, then choose or create it.',
+        ja: 'PCでは左サイドバー、スマホでは「作品・章・話を選ぶ」を開いて、作品を選択または作成します。',
       },
       { en: 'The work overview is optional. Add world setting or overall flow only when it helps.', ja: '作品の概要は任意です。世界観や全体の流れは、必要な範囲だけ書けば十分です。' },
       { en: 'Add a chapter, then add episodes inside that chapter.', ja: '章を追加し、その章の中に話を追加します。' },
@@ -1623,11 +1632,11 @@ const tutorialSteps: Array<{
     title: { en: 'Pages And Export', ja: 'ページ生成と保存' },
     steps: [
       {
-        en: 'After creating the needed characters, open Page planning at the top of Pages and use Generate page plan.',
-        ja: '必要なキャラを作成したら、ページ画面上部の「ページ設計」を開き、「ページ骨格生成」を押します。',
+        en: 'After creating the needed characters, open Page planning at the top of Pages and use Design pages and autofill from story.',
+        ja: '必要なキャラを作成したら、ページ画面上部の「ページ設計」で「ページを設計してストーリーから自動入力」を押します。',
       },
-      { en: 'Page plan generation creates pages, frames, and panel slots. It can take a few minutes.', ja: 'ページ骨格生成ではページ、枠、コマ欄を作ります。数分かかる場合があります。' },
-      { en: 'Use Autofill page settings from story to distribute the story into panel details, characters, camera, background, and dialogue.', ja: '話をコマごとの状況、登場人物、カメラ、背景、セリフへ分配したい時は、ストーリーから設定を自動入力します。' },
+      { en: 'The action first creates pages, frames, and panel slots, then automatically fills panel settings from the story. It can take a few minutes.', ja: '最初にページ、枠、コマ欄を作り、完了後にストーリーからコマ設定を自動入力します。数分かかる場合があります。' },
+      { en: 'After page design completes, the story is automatically distributed into panel details, characters, camera, background, and dialogue.', ja: 'ページ設計が完了すると、話をコマごとの状況、登場人物、カメラ、背景、セリフへ自動で分配します。' },
       { en: 'Autofill page settings from story can take up to about 20 minutes. Keep the screen open while it is running.', ja: 'ストーリーから設定を自動入力は20分程度かかる場合があります。処理中は画面を開いたまま待ってください。' },
       { en: 'Open Pages, review each page, and adjust panel content, frame template, panel order, or panel count.', ja: 'ページを開き、各ページのコマ内容、コマ割り、コマ順、コマ数を調整します。' },
       { en: 'When ready, press Generate in color or Generate monochrome page. The image is created from the current saved page inputs.', ja: '調整できたら「カラー生成」か「白黒で生成」を押します。現在保存されているページ入力から画像を作ります。' },
@@ -2355,7 +2364,18 @@ function StudioShell(props: {
     scopedStorageKey(selectedPageStorageKey, props.authSessionKey),
     '',
   );
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() => new URLSearchParams(window.location.search).get('account') === 'google-link' ? 'account' : 'story');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() => new URLSearchParams(window.location.search).get('account') === 'google-link'
+    ? 'account' : readWorkspaceView(window.sessionStorage, scopedStorageKey('lyra:web:workspace-view', props.authSessionKey)));
+  const hierarchyDialogRef = useRef<HTMLDialogElement>(null);
+  const pageDesignIntentRef = useRef<PendingPageDesign | null>(null);
+  const pageDesignScopeRef = useRef('');
+  const [pageDesignStage, setPageDesignStage] = useState<'skeleton' | 'autofill' | null>(null);
+  const [pageDesignJobId, setPageDesignJobId] = useState<string | null>(null);
+  const [readerLayout, setReaderLayout] = useState<'rtl' | 'vertical'>('rtl');
+  const readerScope = JSON.stringify([activeOrganizationId, selectedEpisodeId]);
+  const [readerPosition, setReaderPosition] = useState({ scope: readerScope, index: 0 });
+  const readerPage = readerPosition.scope === readerScope ? readerPosition.index : 0;
+  const setReaderPage = (index: number): void => setReaderPosition({ scope: readerScope, index });
   const [mobileWorksCollapsed, setMobileWorksCollapsed] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -2514,10 +2534,17 @@ function StudioShell(props: {
   }, [uiLanguage]);
 
   useEffect(() => {
-    if (!isMobileViewport && activeTab === 'tutorial') {
-      setActiveTab('story');
+    // Session-only navigation preference; resource selection and drafts keep their existing scopes.
+    try {
+      window.sessionStorage.setItem(scopedStorageKey('lyra:web:workspace-view', props.authSessionKey), activeTab);
+    } catch {
+      // Storage restrictions do not prevent editing or navigation.
     }
-  }, [activeTab, isMobileViewport]);
+  }, [activeTab, props.authSessionKey]);
+
+  useEffect(() => {
+    if (!isMobileViewport) hierarchyDialogRef.current?.close();
+  }, [isMobileViewport]);
 
   useEffect(() => {
     if (!accountMenuOpen) {
@@ -2625,6 +2652,14 @@ function StudioShell(props: {
     activeOrganizationRole === 'owner' ||
     activeOrganizationRole === 'admin' ||
     activeOrganizationRole === 'editor';
+  const pageDesignScope = JSON.stringify([props.authSessionKey, activeOrganizationId, selectedEpisodeId, canCreateActiveOrganizationWorks]);
+  useLayoutEffect(() => {
+    pageDesignScopeRef.current = pageDesignScope;
+    pageDesignIntentRef.current = null;
+    setPageDesignStage(null);
+    setPageDesignJobId(null);
+    return () => { pageDesignScopeRef.current = ''; pageDesignIntentRef.current = null; };
+  }, [pageDesignScope]);
   const organizationBalanceQuery = useQuery({
     queryKey: sessionQueryKey(['organization-balance', activeOrganizationId ?? '']),
     queryFn: () => api.getOrganizationBalance(activeOrganizationId ?? ''),
@@ -2772,7 +2807,7 @@ function StudioShell(props: {
     if (
       activeOrganizationId !== null &&
       activeOrganizationRole === 'billing' &&
-      (activeTab === 'story' || activeTab === 'entities' || activeTab === 'pages')
+      (activeTab !== 'account' && activeTab !== 'tutorial')
     ) {
       setActiveTab('account');
     }
@@ -2922,10 +2957,19 @@ function StudioShell(props: {
   const skeletonActionMessage = skeletonContextLoading
     ? 'Loading current page plan.'
     : episodeHasExistingPagePlan
-      ? 'Regenerating will replace the current pages for this episode.'
+      ? pickUiText(uiLanguage, 'Page layouts and panel settings will be redesigned. Generated images will be kept.', 'ページの構成とコマ設定を再設計します。作成済み画像は保持します。')
       : null;
 
-  const polledJobList = trackedJobList.slice(0, 8);
+  const pageSkeletonCapabilitiesQuery = useQuery({
+    queryKey: scopedQueryKey(['page-skeleton-capabilities']),
+    queryFn: () => api.getPageSkeletonCapabilities(activeOrganizationId),
+    enabled: activeTab === 'pages' && canCreateActiveOrganizationWorks && episodeHasExistingPagePlan,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const safePageRedesignAvailable = !episodeHasExistingPagePlan || pageSkeletonCapabilitiesQuery.data?.preserve_generated_images === true;
+  const polledJobList = pageDesignJobId === null ? trackedJobList.slice(0, 8)
+    : [pageDesignJobId, ...trackedJobList.filter((id) => id !== pageDesignJobId).slice(0, 7)];
   const jobQueries = useQueries({
     queries: polledJobList.map((jobId) => ({
       queryKey: scopedQueryKey(['job', jobId]),
@@ -3075,7 +3119,8 @@ function StudioShell(props: {
   const entityReferenceGenerationBlocked = paidGenerationBlocked || hasBlockingErrors(entityReferenceGenerationBlockers);
   const referenceConfirmationBlocked = hasBlockingErrors(referenceConfirmationBlockers);
   const pageSkeletonBlocked = hasBlockingErrors(pageSkeletonBlockers);
-  const storyApplyBlocked = hasBlockingErrors(storyApplyBlockers);
+  const combinedStoryApplyBlockers = storyApplyBlockers.filter((item) => item.code !== 'story.pages_missing');
+  const storyApplyBlocked = hasBlockingErrors(combinedStoryApplyBlockers);
   const navigateToReadinessTarget = useCallback((target: GenerationReadinessTarget): void => {
     if (target === 'entities' || target === 'references') {
       setActiveTab('entities');
@@ -4159,10 +4204,17 @@ function StudioShell(props: {
   };
 
   const cancelTrackedJob = async (job: GenerationJobRecord): Promise<void> => {
-    if (!window.confirm(translateUiString(uiLanguage, 'Stop this story apply job?'))) {
+    if (!window.confirm(job.job_type === 'episode_page_skeleton'
+      ? pickUiText(uiLanguage, 'Stop page design?', 'ページ設計を停止しますか？')
+      : translateUiString(uiLanguage, 'Stop this story apply job?'))) {
       return;
     }
 
+    if (pageDesignIntentRef.current?.skeletonJobId === job.id || pageDesignJobId === job.id) {
+      pageDesignIntentRef.current = null;
+      setPageDesignStage(null);
+      setPageDesignJobId(null);
+    }
     const actionKey = `cancel-job:${job.id}`;
     try {
       setBusyAction(actionKey);
@@ -5205,7 +5257,7 @@ function StudioShell(props: {
           const isTerminalJob =
             job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
           const isStoryAutofillActive =
-            job.job_type === 'episode_story_autofill' &&
+            (job.job_type === 'episode_story_autofill' || job.job_type === 'episode_page_skeleton') &&
             (job.status === 'queued' || job.status === 'processing');
           const cancellationPending = typeof job.cancel_requested_at === 'string';
           const commitStarted = typeof job.commit_started_at === 'string';
@@ -5307,24 +5359,186 @@ function StudioShell(props: {
     </>
   );
 
-  const tutorialPanel = (
-    <PanelSection title="Tutorial" subtitle="First run guide" className="tutorial-section" compact>
-      <TutorialGuide />
-    </PanelSection>
-  );
+  // Unified Spec §6: one explicit action owns skeleton -> story autofill.
+  // Intent is scoped to the authenticated workspace/episode, consumed once, and
+  // dropped on failure, cancellation, missing jobs, unmount or permission changes.
+  // This never starts page-image generation and preserves existing generated images.
+  const refreshPageDesign = async (): Promise<void> => {
+    await Promise.all([
+      invalidateScopedQuery(['episodes']), invalidateScopedQuery(['pages']),
+      invalidateScopedQuery(['panels']), invalidateScopedQuery(['frames']),
+    ]);
+  };
+  const stopPageDesign = (): void => {
+    pageDesignIntentRef.current = null;
+    setPageDesignStage(null);
+    setPageDesignJobId(null);
+  };
+  const submitPageDesignAutofill = (intent: PendingPageDesign): void => {
+    if (pageDesignIntentRef.current !== intent || pageDesignScopeRef.current !== intent.scope) return;
+    pageDesignIntentRef.current = null;
+    setPageDesignStage('autofill');
+    void runAction('Apply story plan', async () => {
+      try {
+        if (pageDesignScopeRef.current !== intent.scope) return;
+        const result = await api.autofillEpisodePagesFromStory(intent.episodeId, intent.language, intent.organizationId);
+        if (pageDesignScopeRef.current !== intent.scope) return;
+        setPageDesignJobId(result.job_id);
+        trackJob(result.job_id);
+      } catch (error) {
+        if (pageDesignScopeRef.current === intent.scope) stopPageDesign();
+        throw error;
+      }
+    });
+  };
+  const advancePageDesign = useEffectEvent(() => {
+    if (pageDesignStage === null || pendingActionsRef.current > 0) return;
+    const intent = pageDesignIntentRef.current;
+    const query = pageDesignJobId === null ? undefined : jobQueries[polledJobList.indexOf(pageDesignJobId)];
+    const job = query?.data;
+    if (intent !== null) {
+      const next = intent.synchronous ? 'autofill' : pageDesignNextAction(intent, pageDesignScope, job, query?.isError === true);
+      if (next === 'autofill') submitPageDesignAutofill(intent);
+      else if (next === 'stop') {
+        stopPageDesign();
+        void refreshPageDesign();
+        setNotice({ type: 'info', message: pickUiText(uiLanguage,
+          'Page design stopped before autofill. Retry the combined action.',
+          '自動入力に進む前にページ設計を停止しました。まとめて実行するボタンから再試行してください。') });
+      }
+    } else if (pageDesignJobId !== null && (query?.isError || job?.status === 'completed' || job?.status === 'failed' || job?.status === 'cancelled')) {
+      stopPageDesign();
+      void refreshPageDesign();
+    }
+  });
+  useEffect(() => { advancePageDesign(); }, [pageDesignStage, pageDesignJobId, jobQueries, pageDesignScope]);
+  const startCombinedPageDesign = (): void => {
+    if (pageDesignIntentRef.current !== null || pageDesignStage !== null || selectedEpisode === null ||
+        !canCreateActiveOrganizationWorks || !safePageRedesignAvailable || pageSkeletonBlocked || storyApplyBlocked || pagesQuery.isFetching) return;
+    if (!confirmEditorNavigation('page')) return;
+    const overwriteExisting = episodeHasExistingPagePlan;
+    if (!window.confirm(pickUiText(uiLanguage,
+      overwriteExisting
+        ? 'Redesign pages and then autofill panel settings from the saved story? Existing generated images will be kept and the page count will not be reduced.'
+        : 'Design pages and then autofill panel settings from the saved story? This does not generate page images.',
+      overwriteExisting
+        ? 'ページを再設計してから、保存したストーリーをコマ設定へ自動入力します。作成済みの画像は残し、ページ数は減らしません。実行しますか？'
+        : 'ページを設計してから、保存したストーリーをコマ設定へ自動入力します。ページ画像の生成は行いません。実行しますか？'))) return;
+    const intent: PendingPageDesign = {
+      scope: pageDesignScope, episodeId: selectedEpisode.id, organizationId: activeOrganizationId,
+      language: uiLanguage, skeletonJobId: '', synchronous: false,
+    };
+    pageDesignIntentRef.current = intent;
+    setPageDesignStage('skeleton');
+    void runAction('Generate page skeleton', async () => {
+      try {
+        const submittedEditors = structuredClone(currentPageEditorRef.current);
+        await saveCurrentEpisodeContext();
+        if (pageDesignScopeRef.current !== intent.scope) return;
+        const result = await api.generatePageSkeleton(intent.episodeId, {
+          overwrite_existing: overwriteExisting,
+          ...(overwriteExisting ? { preserve_generated_images: true } : {}),
+          apply_story_plan: false, language: intent.language,
+        }, intent.organizationId);
+        if (pageDesignScopeRef.current !== intent.scope) return;
+        if (sameStoryDraft(currentPageEditorRef.current, submittedEditors)) discardPageEditors(false);
+        if ('job_id' in result) {
+          intent.skeletonJobId = result.job_id;
+          setPageDesignJobId(result.job_id);
+          trackJob(result.job_id);
+        } else if (typeof result.story_plan_job_id === 'string') {
+          pageDesignIntentRef.current = null;
+          setPageDesignStage('autofill');
+          setPageDesignJobId(result.story_plan_job_id);
+          trackJob(result.story_plan_job_id);
+        } else {
+          intent.synchronous = true;
+        }
+        await refreshPageDesign();
+      } catch (error) {
+        if (pageDesignScopeRef.current === intent.scope) stopPageDesign();
+        throw error;
+      }
+    });
+  };
 
-  const railPanel = (
-    <>
-      {personalBillingPanel}
-      {organizationCreditSummaryPanel}
-      {jobsPanel}
-      {tutorialPanel}
-    </>
-  );
+  // Unified Spec §2/§3: Web composes the existing editors into the native four-tab
+  // shell. Navigation never saves, generates, or replaces a selected resource;
+  // existing selection guards remain the only path to another work/chapter/episode.
+  const isCreationView = activeTab === 'story' || activeTab === 'entities' || activeTab === 'pages';
+  const creationSteps = [
+    { view: 'story', en: 'Story', ja: 'ストーリー', disabled: false },
+    { view: 'entities', en: 'Characters', ja: 'キャラクター', disabled: selectedWork === null },
+    { view: 'pages', en: 'Pages', ja: 'ページ', disabled: selectedEpisode === null },
+  ] as const;
+  const currentStepIndex = creationSteps.findIndex((step) => step.view === activeTab);
+  const savedStory = selectedEpisode === null ? '' : [selectedEpisode.introduction, selectedEpisode.middle, selectedEpisode.climax, selectedEpisode.ending_hook].filter(Boolean).join(' ');
+  const resumeStep = resumeMangaStep({ hasEpisode: selectedEpisode !== null, hasPages: pages.length > 0 || selectedEpisode?.page_skeleton_generated === true, savedStory });
+  // Conservative display-only dirty check; authoritative navigation guards still
+  // use saved revision baselines when the user changes a selected resource.
+  const hasUnsavedEditors =
+    (selectedChapter !== null && !sameStoryDraft(chapterDraft, toChapterDraft(selectedChapter))) ||
+    (selectedEpisode !== null && !sameStoryDraft(episodeDraft, toEpisodeDraft(selectedEpisode))) ||
+    (entityEditorMode === 'create' ? !sameStoryDraft(entityDraft, createEmptyEntityDraft()) : selectedEntity !== null && !sameStoryDraft(entityDraft, toEntityDraft(selectedEntity))) ||
+    draftImportedReference !== null ||
+    (selectedScene !== null && !sameStoryDraft(sceneDraft, toSceneDraft(selectedScene))) ||
+    (selectedPage !== null && !sameStoryDraft(pageSettingsDraft, toPageSettingsDraft(selectedPage))) ||
+    (selectedPanel !== null && !sameStoryDraft(panelDraft, toPanelDraft(selectedPanel))) ||
+    !sameStoryDraft(frameDrafts, frames.map(toPanelFrameDraft));
+  const openHierarchy = (): void => {
+    setMobileWorksCollapsed(false);
+    if (isMobileViewport) hierarchyDialogRef.current?.showModal();
+    else document.querySelector<HTMLElement>('.sidebar')?.scrollIntoView({ block: 'start' });
+  };
+  const primaryItems = [
+    ...(canViewActiveOrganizationWorks ? [
+      { view: 'library' as const, en: 'Edit', ja: '編集', icon: <PenLine size={21} strokeWidth={2.2} /> },
+      { view: 'assets' as const, en: 'Assets', ja: 'アセット', icon: <BookOpenText size={21} strokeWidth={2.2} /> },
+    ] : []),
+    { view: 'account' as const, en: 'My Page', ja: 'マイページ', icon: <Settings size={21} strokeWidth={2.2} /> },
+    { view: 'tutorial' as const, en: 'Guide', ja: 'ガイド', icon: <CircleHelp size={21} strokeWidth={2.2} /> },
+  ];
+  const primaryButtons = (desktop: boolean): ReactNode => primaryItems.map((item) => {
+    const active = activeTab === item.view || (item.view === 'library' && isCreationView);
+    return <button aria-current={active ? 'page' : undefined} className={`${desktop ? 'tab-button ' : ''}${active ? 'active' : ''}`} key={item.view} onClick={() => setActiveTab(item.view)} type="button">
+      {item.icon}<span>{pickUiText(uiLanguage, item.en, item.ja)}</span>
+    </button>;
+  });
+  const selectionButton = <button className="ghost-button workspace-selection-button" onClick={openHierarchy} type="button"><LayoutGrid size={16} />{pickUiText(uiLanguage, 'Select work, chapter and episode', '作品・章・話を選ぶ')}</button>;
+  const workflowHeader = <div className="creation-workflow-header">
+    <div className="creation-context"><button className="ghost-button" onClick={() => setActiveTab('library')} type="button">{pickUiText(uiLanguage, 'Manga library', '漫画一覧')}</button><span>{selectedWork?.title}{selectedEpisode ? ` / ${selectedEpisode.title}` : ''}</span>{selectionButton}</div>
+    <nav aria-label={pickUiText(uiLanguage, 'Manga creation steps', '漫画の制作工程')} className="creation-steps">
+      {creationSteps.map((step, index) => <button aria-current={activeTab === step.view ? 'step' : undefined} className={activeTab === step.view ? 'active' : ''} disabled={step.disabled} key={step.view} onClick={() => setActiveTab(step.view)} type="button">{index + 1}. {pickUiText(uiLanguage, step.en, step.ja)}</button>)}
+    </nav>
+  </div>;
+  const workflowFooter = <div className="creation-workflow-actions">
+    <button className="ghost-button" onClick={() => setActiveTab(currentStepIndex <= 0 ? 'library' : creationSteps[currentStepIndex - 1].view)} type="button">{pickUiText(uiLanguage, 'Previous step', '前の工程へ')}</button>
+    {currentStepIndex < 2 ? <button className="primary-button" disabled={creationSteps[currentStepIndex + 1]?.disabled} onClick={() => setActiveTab(creationSteps[currentStepIndex + 1].view)} type="button">{pickUiText(uiLanguage, currentStepIndex === 0 ? 'Next: Characters' : 'Next: Pages', currentStepIndex === 0 ? '次へ：キャラクター' : '次へ：ページ')}</button> : null}
+  </div>;
+  const libraryPanel = <section className="manga-library">
+    <header className="manga-library-heading"><div><p className="eyebrow">Lyra</p><h1>{pickUiText(uiLanguage, 'Manga library', '漫画一覧')}</h1><p>{pickUiText(uiLanguage, 'Choose a work, then create your manga in three steps.', '作品を選び、3つの工程で漫画をつくりましょう。')}</p></div><button className="primary-button" disabled={!canCreateActiveOrganizationWorks} onClick={() => { setNewWorkComposerOpen(true); openHierarchy(); }} type="button"><Plus size={18} />{pickUiText(uiLanguage, 'Create manga', '漫画を新規作成')}</button></header>
+    {selectionButton}
+    {selectedEpisode ? <section className="manga-resume-card"><p className="eyebrow">{pickUiText(uiLanguage, 'Selected episode', '選択中の話')}</p><h2>{selectedWork?.title} / {selectedEpisode.title}</h2><p>{pickUiText(uiLanguage, `Resume from ${creationSteps.find((step) => step.view === resumeStep)?.en}.`, `「${creationSteps.find((step) => step.view === resumeStep)?.ja}」から再開できます。`)}</p><button className="primary-button" onClick={() => setActiveTab(resumeStep)} type="button">{pickUiText(uiLanguage, 'Continue selected episode', '選択中の話を続ける')}</button></section> : null}
+    <div className="manga-library-steps">{creationSteps.map((step, index) => <button disabled={step.disabled} key={step.view} onClick={() => setActiveTab(step.view)} type="button"><span>{index + 1}</span><strong>{pickUiText(uiLanguage, step.en, step.ja)}</strong></button>)}</div>
+    <h2>{pickUiText(uiLanguage, 'Works', '作品')}</h2>
+    {showWorksLoading ? <p role="status">{pickUiText(uiLanguage, 'Loading works…', '作品を読込中…')}</p> : null}
+    {showWorksError ? <div role="alert"><p>{worksErrorMessage}</p><button className="ghost-button" onClick={() => void worksQuery.refetch()} type="button">{pickUiText(uiLanguage, 'Retry', '再読込')}</button></div> : null}
+    {showWorksEmpty ? <p>{pickUiText(uiLanguage, 'Create your first manga to get started.', '漫画を新規作成して、制作を始めましょう。')}</p> : null}
+    <div className="manga-work-cards">{works.map((work) => <button className={`manga-work-card ${selectedWorkId === work.id ? 'active' : ''}`} key={work.id} onClick={() => { selectStory(work.id, work.id === selectedWorkId ? selectedChapterId : '', work.id === selectedWorkId ? selectedEpisodeId : ''); openHierarchy(); }} type="button"><BookOpen size={26} /><strong>{work.title}</strong><span>{work.genre}</span><span>{pickUiText(uiLanguage, 'Choose chapter / episode', '章・話を選ぶ')}</span></button>)}</div>
+  </section>;
+  const readerPages = pages.filter((page) => page.generated_image !== null).sort((left, right) => left.page_number - right.page_number);
+  const readerPageIndex = Math.min(readerPage, Math.max(0, readerPages.length - 1));
+  const readablePage = readerPages[readerPageIndex];
+  const renderReaderImage = (page: PageRecord): ReactNode => !canReadWebImage(page.generated_image, webImageDeliveryEnabled)
+    ? <p>{imageDeliveryNotice(uiLanguage)}</p>
+    : <AuthenticatedImage alt={pickUiText(uiLanguage, `Page ${page.page_number}`, `${page.page_number}ページ`)} errorLabel={pickUiText(uiLanguage, 'Image could not be loaded.', '画像を読み込めませんでした。')} loadImage={() => api.exportPageImage(page.id, activeOrganizationId, page.generated_image, webImageDeliveryEnabled)} queryKey={scopedQueryKey(['page-image', page.id, page.generated_image?.generated_at, page.generated_image?.image_model, webImageDeliveryEnabled])} />;
+  const readerPanel = <section className="manga-reader" aria-label={pickUiText(uiLanguage, 'Manga reader', '漫画リーダー')}>
+    <header className="manga-library-heading"><div><h1>{pickUiText(uiLanguage, 'Assets', 'アセット')}</h1><p>{selectedWork?.title} {selectedEpisode?.title}</p></div>{selectionButton}</header>
+    <div className="reader-toolbar"><button aria-pressed={readerLayout === 'rtl'} className="ghost-button" onClick={() => setReaderLayout('rtl')} type="button">{pickUiText(uiLanguage, 'Right to left', '右から左')}</button><button aria-pressed={readerLayout === 'vertical'} className="ghost-button" onClick={() => setReaderLayout('vertical')} type="button">{pickUiText(uiLanguage, 'Vertical', '縦読み')}</button><button className="ghost-button" disabled={selectedEpisode === null} onClick={() => setActiveTab('pages')} type="button">{pickUiText(uiLanguage, 'Open Pages', 'ページを開く')}</button></div>
+    {pagesQuery.isFetching && readerPages.length === 0 ? <p role="status">{pickUiText(uiLanguage, 'Loading pages…', 'ページを読込中…')}</p> : pagesQuery.isError ? <div role="alert"><p>{pickUiText(uiLanguage, 'Could not load pages.', 'ページを読み込めませんでした。')}</p><button className="ghost-button" onClick={() => void pagesQuery.refetch()} type="button">{pickUiText(uiLanguage, 'Retry', '再読込')}</button></div> : readerPages.length === 0 ? <div className="reader-empty"><BookOpen size={36} /><h2>{pickUiText(uiLanguage, 'No generated pages yet', '生成済みのページはまだありません')}</h2><p>{pickUiText(uiLanguage, 'Choose an episode or generate its pages in Edit.', '話を選ぶか、編集の「ページ」で画像を生成すると、ここで読めます。')}</p></div> : readerLayout === 'vertical' ? <div className="reader-vertical">{readerPages.map((page) => <figure key={page.id}>{renderReaderImage(page)}<figcaption>{page.page_number}</figcaption></figure>)}</div> : readablePage ? <><div className="reader-pagination"><button className="ghost-button" disabled={readerPageIndex >= readerPages.length - 1} onClick={() => setReaderPage(Math.min(readerPages.length - 1, readerPageIndex + 1))} type="button">{pickUiText(uiLanguage, 'Next page', '次のページ')}</button><span>{readerPageIndex + 1} / {readerPages.length}</span><button className="ghost-button" disabled={readerPageIndex === 0} onClick={() => setReaderPage(Math.max(0, readerPageIndex - 1))} type="button">{pickUiText(uiLanguage, 'Previous page', '前のページ')}</button></div><figure className="reader-current" key={readablePage.id}>{renderReaderImage(readablePage)}</figure></> : null}
+  </section>;
 
-  return (
-    <UiLanguageContext.Provider value={uiLanguage}>
-      <div className="app-shell">
+  const workspaceSidebar = (
       <aside className="sidebar">
         <div className="brand">
           <img className="brand-mark" src="/logo.png" alt="Lyra" />
@@ -5514,6 +5728,27 @@ function StudioShell(props: {
           </section>
         )}
       </aside>
+  );
+
+  const tutorialPanel = (
+    <PanelSection title="Tutorial" subtitle="First run guide" className="tutorial-section" compact>
+      <TutorialGuide canViewWork={canViewActiveOrganizationWorks} onNavigate={setActiveTab} />
+    </PanelSection>
+  );
+
+  const railPanel = (
+    <>
+      {personalBillingPanel}
+      {organizationCreditSummaryPanel}
+      {jobsPanel}
+      {tutorialPanel}
+    </>
+  );
+
+  return (
+    <UiLanguageContext.Provider value={uiLanguage}>
+      <div className={`app-shell workspace-view-${activeTab}`}>
+      {!isMobileViewport ? workspaceSidebar : null}
 
       <main className="workspace">
         {activeOrganizationId !== null && organizationWorkspacesQuery.isSuccess && activeOrganizationWorkspace === null ? (
@@ -5533,26 +5768,10 @@ function StudioShell(props: {
         ) : null}
 
         <header className="topbar">
-          {canViewActiveOrganizationWorks ? (
-            <nav
-              aria-label={translateUiString(uiLanguage, 'Primary navigation')}
-              className="primary-navigation desktop-workspace-toolbar"
-            >
-              <button className={`tab-button ${activeTab === 'story' ? 'active' : ''}`} onClick={() => setActiveTab('story')} type="button">
-                <BookOpen size={17} />
-                {translateUiString(uiLanguage, 'Story')}
-              </button>
-              <button className={`tab-button ${activeTab === 'entities' ? 'active' : ''}`} onClick={() => setActiveTab('entities')} type="button">
-                <Image size={17} />
-                {translateUiString(uiLanguage, 'Entities')}
-              </button>
-              <button className={`tab-button ${activeTab === 'pages' ? 'active' : ''}`} onClick={() => setActiveTab('pages')} type="button">
-                <PanelsTopLeft size={17} />
-                {translateUiString(uiLanguage, 'Pages')}
-              </button>
-            </nav>
-          ) : null}
+          <nav aria-label={translateUiString(uiLanguage, 'Primary navigation')} className="primary-navigation desktop-workspace-toolbar">{primaryButtons(true)}</nav>
           <div className="topbar-account">
+            <strong className="workspace-mobile-brand">Lyra</strong>
+            <div className="workspace-credit-badge" aria-label={pickUiText(uiLanguage, 'Workspace credits', 'ワークスペースのクレジット')}><span>{activeOrganizationId === null ? pickUiText(uiLanguage, 'Personal', '個人') : activeOrganizationWorkspace?.organization.name}</span><strong>{activeCreditBalance ?? '—'}</strong><span>{pickUiText(uiLanguage, 'credits', 'クレジット')}</span></div>
             <div className="topbar-identity">
               <div className="eyebrow">{translateUiString(uiLanguage, 'Signed in')}</div>
               <strong>{props.email}</strong>
@@ -5609,11 +5828,11 @@ function StudioShell(props: {
 
         {notice !== null ? <NoticeBanner notice={notice} /> : null}
 
-        {!canViewActiveOrganizationWorks ? (
-          <div className="workspace-grid mobile-account-workspace">
-            <section className="main-column mobile-account-column">{accountPanel}</section>
-          </div>
-        ) : activeTab === 'account' ? (
+        {isCreationView && canViewActiveOrganizationWorks ? workflowHeader : null}
+        <div className="tutorial-entry" hidden={activeTab !== 'library' && activeTab !== 'tutorial'}>
+          <WebMangaTutorial autoOpen={canViewActiveOrganizationWorks && activeTab === 'library'} canAutoOpen={() => !hasUnsavedEditors && busyAction === null && !storyBusy && !importingImage} credits={activeCreditBalance} language={uiLanguage} storageScope={props.authSessionKey} />
+        </div>
+        {(activeTab === 'account' || (!canViewActiveOrganizationWorks && activeTab !== 'tutorial')) ? (
           <div className="workspace-grid mobile-account-workspace">
             <section className="main-column mobile-account-column">{accountPanel}</section>
           </div>
@@ -5621,11 +5840,13 @@ function StudioShell(props: {
           <div className="workspace-grid mobile-account-workspace">
             <section className="main-column mobile-account-column">{tutorialPanel}</section>
           </div>
-        ) : selectedWork === null ? (
+        ) : activeTab === 'library' ? libraryPanel
+          : activeTab === 'assets' ? readerPanel
+          : selectedWork === null ? (
           <section className="empty-state">
             <LayoutGrid size={28} />
             <h2>{translateUiString(uiLanguage, 'No work selected')}</h2>
-            <p>{translateUiString(uiLanguage, 'Create or select a work from the left panel to start editing.')}</p>
+            <p>{pickUiText(uiLanguage, 'Choose or create a work with Select work, chapter and episode.', '「作品・章・話を選ぶ」から作品を選択または作成してください。')}</p>
           </section>
         ) : (
           <div className="workspace-grid">
@@ -6655,85 +6876,20 @@ function StudioShell(props: {
                     collapsible
                     actions={
                       <div className="toolbar">
-                        <button
-                          className="primary-button skeleton-plan-button"
-                          disabled={skeletonActionDisabled || selectedEpisodePageSkeletonJob !== null || pageSkeletonBlocked}
-                          onClick={() => {
-                            if (!confirmEditorNavigation('page')) return;
-                            const overwriteExisting = episodeHasExistingPagePlan;
-                            if (
-                              overwriteExisting &&
-                              !window.confirm(
-                                translateUiString(
-                                  uiLanguage,
-                                  'Regenerating the page plan will replace the current pages for this episode.',
-                                ),
-                              )
-                            ) {
-                              return;
-                            }
-                            void runAction('Generate page skeleton', async () => {
-                              const submittedEditors = structuredClone(currentPageEditorRef.current);
-                              await saveCurrentEpisodeContext();
-                              const result = await api.generatePageSkeleton(
-                                selectedEpisode.id,
-                                {
-                                  overwrite_existing: overwriteExisting,
-                                  apply_story_plan: false,
-                                  language: uiLanguage,
-                                },
-                                activeOrganizationId,
-                              );
-                              if (sameStoryDraft(currentPageEditorRef.current, submittedEditors)) discardPageEditors(false);
-                              if ('job_id' in result) {
-                                trackJob(result.job_id);
-                              } else {
-                                await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
-                                await invalidateScopedQuery(['scenes', selectedEpisode.id]);
-                                await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                              }
-                              setActiveTab('pages');
-                            });
-                          }}
-                          type="button"
-                        >
-                          {busyAction === 'Generate page skeleton' || selectedEpisodePageSkeletonJob !== null ? (
-                            <LoaderCircle className="spin" size={16} />
-                          ) : (
-                            <Sparkles size={16} />
-                          )}
-                          {translateUiString(uiLanguage, skeletonActionLabel)}
-                        </button>
-                        <button
-                          className="secondary-button story-plan-button"
-                          disabled={
-                            busyAction === 'Apply story plan' ||
-                            selectedEpisodeStoryAutofillJob !== null ||
-                            selectedEpisodePageSkeletonJob !== null ||
-                            storyApplyBlocked
-                          }
-                          onClick={() => {
-                            void runAction('Apply story plan', async () => {
-                              await saveCurrentEpisodeContext();
-                              const result = await api.autofillEpisodePagesFromStory(
-                                selectedEpisode.id,
-                                uiLanguage,
-                                activeOrganizationId,
-                              );
-                              trackJob(result.job_id);
-                              setActiveTab('pages');
-                            });
-                          }}
-                          type="button"
-                        >
-                          <Wand2 size={16} />
-                          {translateUiString(uiLanguage, 'Autofill page settings from story')}
+                        <button className="primary-button skeleton-plan-button" disabled={
+                          skeletonActionDisabled || pageDesignStage !== null || selectedEpisodePageSkeletonJob !== null ||
+                          selectedEpisodeStoryAutofillJob !== null || pageSkeletonBlocked || storyApplyBlocked ||
+                          !canCreateActiveOrganizationWorks || pagesQuery.isFetching || !safePageRedesignAvailable
+                        } onClick={startCombinedPageDesign} type="button">
+                          {pageDesignStage !== null || selectedEpisodePageSkeletonJob !== null || selectedEpisodeStoryAutofillJob !== null
+                            ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
+                          {pickUiText(uiLanguage, 'Design pages and autofill from story', 'ページを設計してストーリーから自動入力')}
                         </button>
                       </div>
                     }
                   >
                     <div className="feature-guidance">
-                      <p>{translateUiString(uiLanguage, 'Use these two steps to turn the episode story into panel details.')}</p>
+                      <p>{pickUiText(uiLanguage, 'One action designs the page plan, then autofills panel settings from the story.', '1つのボタンでページを設計し、完了後にストーリーをコマ設定へ自動入力します。')}</p>
                       <p>
                         <strong>{`1. ${translateUiString(uiLanguage, skeletonActionLabel)}`}</strong>
                         <span>{translateUiString(uiLanguage, 'Builds the page and panel allocation and the overall story flow.')}</span>
@@ -6754,10 +6910,17 @@ function StudioShell(props: {
                       onAction={navigateToReadinessTarget}
                     />
                     <GenerationReadinessNotice
-                      blockers={storyApplyBlockers}
+                      blockers={combinedStoryApplyBlockers}
                       language={uiLanguage}
                       onAction={navigateToReadinessTarget}
                     />
+                    {!safePageRedesignAvailable ? <p className="error-text" role="status">{pageSkeletonCapabilitiesQuery.isLoading
+                      ? pickUiText(uiLanguage, 'Checking whether existing pages can be redesigned safely.', '作成済みページを安全に再設計できるか確認しています。')
+                      : pickUiText(uiLanguage, 'Existing pages cannot be redesigned safely until the server is updated.', '既存画像を保護できることを確認できませんでした。サーバー更新後に再試行してください。')}</p> : null}
+                    {pageDesignStage !== null ? <p role="status" aria-live="polite">{pickUiText(uiLanguage,
+                      pageDesignStage === 'skeleton' ? 'Step 1 of 2: Designing pages…' : 'Step 2 of 2: Autofilling from story…',
+                      pageDesignStage === 'skeleton' ? '1 / 2：ページを設計しています…' : '2 / 2：ストーリーから自動入力しています…')}</p> : null}
+                    {isMobileViewport && (pageDesignStage !== null || trackedJobs.some((job) => (job.job_type === 'episode_page_skeleton' || job.job_type === 'episode_story_autofill') && job.params.episode_id === selectedEpisode.id)) ? jobsPanel : null}
                     {skeletonActionMessage !== null ? (
                       <div className="muted small">{translateUiString(uiLanguage, skeletonActionMessage)}</div>
                     ) : null}
@@ -6785,6 +6948,7 @@ function StudioShell(props: {
                       </span>
                     </div>
                   </PanelSection>
+                  <fieldset className="page-editing-content" disabled={pageDesignStage !== null}>
                   <PanelSection title="Pages" className="page-section-pages" collapsible>
                     <div className="page-grid">
                       {pages.map((page) => (
@@ -7511,6 +7675,7 @@ function StudioShell(props: {
 
                     </>
                   ) : null}
+                  </fieldset>
                   </div>
                 </>
               ) : null}
@@ -7521,58 +7686,12 @@ function StudioShell(props: {
             </aside>
           </div>
         )}
+        {isCreationView && canViewActiveOrganizationWorks ? workflowFooter : null}
       </main>
-      <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
-        {canViewActiveOrganizationWorks ? (
-          <>
-            <button
-              aria-current={activeTab === 'story' ? 'page' : undefined}
-              className={activeTab === 'story' ? 'active' : ''}
-              onClick={() => setActiveTab('story')}
-              type="button"
-            >
-              <Bot size={20} />
-              <span>{translateUiString(uiLanguage, 'Story')}</span>
-            </button>
-            <button
-              aria-current={activeTab === 'entities' ? 'page' : undefined}
-              className={activeTab === 'entities' ? 'active' : ''}
-              onClick={() => setActiveTab('entities')}
-              type="button"
-            >
-              <Image size={20} />
-              <span>{translateUiString(uiLanguage, 'Entities')}</span>
-            </button>
-            <button
-              aria-current={activeTab === 'pages' ? 'page' : undefined}
-              className={activeTab === 'pages' ? 'active' : ''}
-              onClick={() => setActiveTab('pages')}
-              type="button"
-            >
-              <PanelsTopLeft size={20} />
-              <span>{translateUiString(uiLanguage, 'Pages')}</span>
-            </button>
-          </>
-        ) : null}
-        <button
-          aria-current={activeTab === 'account' ? 'page' : undefined}
-          className={activeTab === 'account' ? 'active' : ''}
-          onClick={() => setActiveTab('account')}
-          type="button"
-        >
-          <CreditCard size={20} />
-          <span>{translateUiString(uiLanguage, 'Account')}</span>
-        </button>
-        <button
-          aria-current={activeTab === 'tutorial' ? 'page' : undefined}
-          className={activeTab === 'tutorial' ? 'active' : ''}
-          onClick={() => setActiveTab('tutorial')}
-          type="button"
-        >
-          <BookOpen size={20} />
-          <span>{translateUiString(uiLanguage, 'Guide')}</span>
-        </button>
-      </nav>
+      <nav className="mobile-bottom-nav" aria-label="Mobile navigation">{primaryButtons(false)}</nav>
+      {isMobileViewport ? <dialog aria-label={pickUiText(uiLanguage, 'Select work, chapter and episode', '作品・章・話を選ぶ')} className="workspace-hierarchy-dialog" ref={hierarchyDialogRef}>
+        <div className="hierarchy-dialog-header"><strong>{pickUiText(uiLanguage, 'Select work, chapter and episode', '作品・章・話を選ぶ')}</strong><button className="ghost-button" onClick={() => hierarchyDialogRef.current?.close()} type="button">{pickUiText(uiLanguage, 'Close selection', '選択画面を閉じる')}</button></div>{workspaceSidebar}
+      </dialog> : null}
       {lightboxImageUrl !== null ? (
         <div className="image-lightbox" onClick={closeImageLightbox} role="presentation">
           <div className="image-lightbox-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
@@ -7985,12 +8104,12 @@ function BillingPanel(props: {
     </PanelSection>
   );
 }
-function TutorialGuide() {
+function TutorialGuide(props: { canViewWork: boolean; onNavigate: (view: 'story' | 'entities' | 'pages') => void }): React.JSX.Element {
   const language = useContext(UiLanguageContext);
 
   return (
     <div className="tutorial-guide">
-      {tutorialSteps.map((group) => (
+      {tutorialSteps.map((group, index) => (
         <section key={group.title.en} className="tutorial-group">
           <h3>{pickUiText(language, group.title.en, group.title.ja)}</h3>
           <ol>
@@ -7998,6 +8117,7 @@ function TutorialGuide() {
               <li key={step.en}>{pickUiText(language, step.en, step.ja)}</li>
             ))}
           </ol>
+          <button className="primary-button" disabled={!props.canViewWork} onClick={() => props.onNavigate(index === 0 ? 'story' : index === 1 ? 'entities' : 'pages')} type="button">{pickUiText(language, `Open ${index === 0 ? 'Story' : index === 1 ? 'Characters' : 'Pages'}`, `${index === 0 ? 'ストーリー' : index === 1 ? 'キャラクター' : 'ページ'}を開く`)}</button>
         </section>
       ))}
     </div>

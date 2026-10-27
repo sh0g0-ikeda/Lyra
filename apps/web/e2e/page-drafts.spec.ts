@@ -117,7 +117,9 @@ function createState(): EditorState {
 async function seed(page: Page): Promise<void> {
   await page.addInitScript(({ tokenKey, languageKey }) => {
     window.sessionStorage.setItem(tokenKey, 'header.payload.signature');
+    window.sessionStorage.setItem('lyra:web:workspace-view:email:session', 'story');
     window.localStorage.setItem(languageKey, 'en');
+    window.localStorage.setItem('lyra:web:manga-tutorial:v1:email:session', 'seen');
   }, { tokenKey: manualTokenStorageKey, languageKey: uiLanguageStorageKey });
 }
 
@@ -154,7 +156,7 @@ async function openPages(page: Page, state: EditorState): Promise<void> {
   await seed(page);
   await page.route('**/api/**', (route) => mockEditorApi(route, state));
   await page.goto('/');
-  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Manga creation steps' }).getByRole('button', { name: '3. Pages', exact: true }).click();
   await expect(page.locator('.page-card').first()).toHaveClass(/active/);
 }
 
@@ -181,7 +183,7 @@ test('同じpageのremote refetchでも未保存のArt style referenceを保持�
 test('同じsceneのremote refetchでも未保存のLocationを保持する', async ({ page }) => {
   const state = createState();
   await openPages(page, state);
-  await page.getByRole('button', { name: 'Story', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Manga creation steps' }).getByRole('button', { name: '1. Story', exact: true }).click();
   const location = page.getByRole('textbox', { name: 'Location', exact: true });
   await location.fill('Local rooftop');
   state.scenes[0] = { ...state.scenes[0], location: 'Remote harbor', updated_at: '2026-10-05T00:00:01.000Z' };
@@ -373,7 +375,7 @@ for (const kind of ['scene', 'panel'] as const) {
     const initialRequest=page.waitForRequest(request=>request.method()==='GET' && new URL(request.url()).pathname===pathname);
     const initialResponse=page.waitForResponse(response=>response.request().method()==='GET' && new URL(response.url()).pathname===pathname);
     await page.goto('/');
-    if(kind==='panel') await page.getByRole('button',{name:'Pages',exact:true}).click();
+    if(kind==='panel') await page.getByRole('navigation',{name:'Manga creation steps'}).getByRole('button',{name:'3. Pages',exact:true}).click();
     await initialRequest;
     const draft=page.getByRole('textbox',{name:kind==='scene'?'Location':'Situation',exact:true});
     await draft.fill('Keep new '+kind+' input');
