@@ -66,9 +66,9 @@ run('legacy atomic save-and-generate compatibility',()=>{
   );
   const result=await autofill.autofillEpisodeFromStory(ids.userId,ids.episodeId,'ja');
   expect(result).toMatchObject({compilerUsed:true,updatedPageCount:1,updatedPanelCount:1});
-  const saved=(await pool.query('SELECT dialogue FROM panels WHERE id=$1',[ids.panelId])).rows[0].dialogue;
-  expect(saved).toEqual([{entity_id:entityId,text:'The test line must remain intact.',type:'speech',position:'right'}]);
-  expect((await pool.query('SELECT count(*)::int AS count FROM panel_entity_assignments WHERE panel_id=$1',[ids.panelId])).rows[0].count).toBe(0);
+  const saved=(await pool.query('SELECT dialogue,entities FROM panels WHERE id=$1',[ids.panelId])).rows[0];
+  expect(saved.dialogue).toEqual([{entity_id:entityId,text:'The test line must remain intact.',type:'speech',position:'right'}]);
+  expect(saved.entities).toEqual([]);
   expect(await service().getGenerationReadiness(ids.userId,ids.pageId)).toMatchObject({ready:true,blockers:[]});
   expect(await state(ids)).toMatchObject({credits:30,jobs:0,debits:0});
  });
