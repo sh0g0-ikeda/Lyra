@@ -48,7 +48,11 @@ import type { StyleReferenceCompilerPort } from '../style/StyleReferenceCompiler
 import { resolveStyleReferenceForPersistence } from '../style/styleReferencePersistence.js';
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
 import type { PageAutofillCompilerPort } from './PageAutofillCompiler.js';
-import type { EpisodePagePlanCompilerPort } from './EpisodePagePlanCompiler.js';
+import type { EpisodeAutofillCharacterReference, EpisodePagePlanCompilerPort } from './EpisodePagePlanCompiler.js';
+import {
+  buildEpisodeAutofillCharacterReferences,
+  resolveEpisodeAutofillDialogueSpeakers,
+} from './EpisodeAutofillCharacterResolution.js';
 import type { EpisodeStateTransitionCompilerPort } from './EpisodeStateTransitionCompiler.js';
 import {
   EpisodeBeatPlanOutputLimitError,
@@ -160,6 +164,12 @@ export type EpisodePagePlanProgressReporter =
 export interface EpisodePlanReliabilityOptions {
   adaptivePackingEnabled?: boolean;
   inlineRepairEnabled?: boolean;
+  /**
+   * Worker autofill only: resolve speaker references before existing validation;
+   * duplicate dialogue is editable quality feedback, never a structural bypass.
+   * Page/scene/state ownership, cancellation and atomic persistence stay strict.
+   */
+  completionFirstEnabled?: boolean;
 }
 
 interface AutofillExecutionResult {
@@ -476,7 +486,8 @@ export class PageService implements PageServicePort {
       stateOptions !== undefined ||
       executionControl !== undefined ||
       this.episodePlanReliabilityOptions.adaptivePackingEnabled === true ||
-      this.episodePlanReliabilityOptions.inlineRepairEnabled === true;
+      this.episodePlanReliabilityOptions.inlineRepairEnabled === true ||
+      this.episodePlanReliabilityOptions.completionFirstEnabled === true;
     const episodePlanPersistence = this.episodePlanPersistence;
     const shouldUseAtomicPersistence =
       deferLayoutPersistence && episodePlanPersistence !== undefined;
@@ -712,6 +723,11 @@ export class PageService implements PageServicePort {
     stateOptions?: EpisodeStateAutofillOptions,
     executionControl?: EpisodePagePlanExecutionControl,
   ): Promise<EpisodePlanExecutionResult> {
+    // One authorized full-episode catalog is reused across every detail pack.
+    // Aliases are provider-only; ordinary editing and persistence keep UUIDs.
+    const characterReferences = this.episodePlanReliabilityOptions.completionFirstEnabled === true
+      ? buildEpisodeAutofillCharacterReferences(context)
+      : undefined;
     const beforeDetailPlanRetry = executionControl === undefined
       ? undefined
       : () => executionControl.checkpoint();
@@ -723,6 +739,7 @@ export class PageService implements PageServicePort {
           progressReporter,
           stateOptions,
           executionControl,
+          characterReferences,
         );
       } catch (error) {
         if (!(error instanceof ConfigurationError)) {
@@ -761,6 +778,9 @@ export class PageService implements PageServicePort {
         language,
         undefined,
         beforeDetailPlanRetry,
+        false,
+        undefined,
+        characterReferences,
       );
       if (compiled.compilerUsed) {
         await reportEpisodePlanProgress(progressReporter, {
@@ -796,6 +816,9 @@ export class PageService implements PageServicePort {
         language,
         undefined,
         beforeDetailPlanRetry,
+        false,
+        undefined,
+        characterReferences,
       );
       if (!compiled.compilerUsed) {
         return compiled;
@@ -830,6 +853,7 @@ export class PageService implements PageServicePort {
     progressReporter?: EpisodePagePlanProgressReporter,
     stateOptions?: EpisodeStateAutofillOptions,
     executionControl?: EpisodePagePlanExecutionControl,
+    characterReferences?: readonly EpisodeAutofillCharacterReference[],
   ): Promise<EpisodePlanExecutionResult> {
     if (this.episodeBeatPlanCompiler === undefined || this.episodePlanAuditCompiler === undefined) {
       throw new ConfigurationError('Episode continuity v3 compilers are not configured');
@@ -937,6 +961,7 @@ export class PageService implements PageServicePort {
         beforeDetailPlanRetry,
         sourceOwnedPageContext,
         compiledSourceRequirements?.requirements,
+        characterReferences,
       );
       if (!compiled.compilerUsed) {
         return compiled;
@@ -987,7 +1012,9 @@ export class PageService implements PageServicePort {
       stateLedger,
       sourceOwnedPageContext,
     );
-    const blockingIssues = audit.issues.filter((issue) => issue.severity === 'error');
+    const blockingIssues = audit.issues.filter((issue) => issue.severity === 'error' && (
+      this.episodePlanReliabilityOptions.completionFirstEnabled !== true || issue.code !== 'duplicate_dialogue'
+    ));
     if (blockingIssues.length === 0) {
       this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
       return { ...combined, stateTransitions, stateVisualFallbacks };
@@ -1040,6 +1067,7 @@ export class PageService implements PageServicePort {
         beforeDetailPlanRetry,
         sourceOwnedPageContext,
         compiledSourceRequirements?.requirements,
+        characterReferences,
       );
       if (!repaired.compilerUsed) {
         return repaired;
@@ -1316,20 +1344,29 @@ export class PageService implements PageServicePort {
     const deterministicErrors = detectDeterministicContinuityIssues(suggestion).filter(
       (issue) => issue.severity === 'error',
     );
-    if (deterministicErrors.length === 0) {
+    const blockingErrors = this.episodePlanReliabilityOptions.completionFirstEnabled === true
+      ? deterministicErrors.filter((issue) => issue.code !== 'duplicate_dialogue')
+      : deterministicErrors;
+    if (blockingErrors.length !== deterministicErrors.length) {
+      console.warn('episode_story_autofill_quality_warning', {
+        reason: 'duplicate_dialogue',
+        issueCount: deterministicErrors.length - blockingErrors.length,
+      });
+    }
+    if (blockingErrors.length === 0) {
       return;
     }
 
     console.warn('episode_page_plan_continuity_v3_deterministic_rejected', {
       episodeId: context.episodeId,
-      deterministicErrorCount: deterministicErrors.length,
-      issueCodes: deterministicErrors.map((issue) => issue.code),
+      deterministicErrorCount: blockingErrors.length,
+      issueCodes: blockingErrors.map((issue) => issue.code),
       affectedPageIds: Array.from(
-        new Set(deterministicErrors.flatMap((issue) => issue.pageIds)),
+        new Set(blockingErrors.flatMap((issue) => issue.pageIds)),
       ),
     });
     throw new ConfigurationError(
-      `Episode continuity deterministic verification found ${deterministicErrors.length} unresolved issue(s) after bounded repair`,
+      `Episode continuity deterministic verification found ${blockingErrors.length} unresolved issue(s) after bounded repair`,
     );
   }
 
@@ -1349,11 +1386,11 @@ export class PageService implements PageServicePort {
         ] as const),
       ),
     });
-    const normalizedSuggestion = normalizeEpisodePlanToContext(
+    const normalizedSuggestion = this.prepareCompletionFirstSuggestion(context, normalizeEpisodePlanToContext(
       context,
       repairedSuggestion,
       language,
-    );
+    ));
     validateEpisodePlanAgainstContext(context, normalizedSuggestion);
     return normalizedSuggestion;
   }
@@ -1394,6 +1431,9 @@ export class PageService implements PageServicePort {
       ),
       language,
       pageIds: context.pages.map((page) => page.pageId),
+      ...(this.episodePlanReliabilityOptions.completionFirstEnabled === true
+        ? { characterReferences: buildEpisodeAutofillCharacterReferences(context) }
+        : {}),
       coverageCatalog: auditArtifacts.coverageCatalog,
       visualSnapshot: buildEpisodePlanAuditVisualSnapshot(suggestion),
       sourceOwnedPageContext,
@@ -1480,6 +1520,7 @@ export class PageService implements PageServicePort {
     beforeRetry?: () => Promise<void>,
     sourceOwnedPageContext = false,
     sourceRequirements?: EpisodeSourceRequirements,
+    characterReferences?: readonly EpisodeAutofillCharacterReference[],
   ): Promise<EpisodePlanExecutionResult> {
     const baseCompilerBrief = buildEpisodePlanCompilerBrief(context, language);
     const compilerBrief = continuitySupplement === undefined
@@ -1491,6 +1532,7 @@ export class PageService implements PageServicePort {
       const compiled = await this.episodePagePlanCompiler!.compilePlan({
         compilerBrief,
         language,
+        ...(characterReferences === undefined ? {} : { characterReferences }),
         ...(sourceOwnedPageContext ? { sourceOwnedPageContext: true } : {}),
         ...(sourceRequirements === undefined ? {} : { sourceRequirements }),
         ...(sourceRequirements === undefined
@@ -1499,12 +1541,12 @@ export class PageService implements PageServicePort {
         ...(beforeRetry === undefined ? {} : { beforeRetry }),
       });
       return {
-        suggestion: repairEpisodePlanSuggestionAgainstContext(
+        suggestion: this.prepareCompletionFirstSuggestion(context, repairEpisodePlanSuggestionAgainstContext(
           context,
           compiled.suggestion,
           fallbackSuggestion,
           language,
-        ),
+        )),
         compilerUsed: true,
         compilerProvider: compiled.compilerProvider,
         compilerModel: compiled.compilerModel,
@@ -1531,6 +1573,31 @@ export class PageService implements PageServicePort {
         compilerError,
       };
     }
+  }
+
+  private prepareCompletionFirstSuggestion(
+    context: EpisodePagePlanContext,
+    suggestion: EpisodePagePlanSuggestion,
+  ): EpisodePagePlanSuggestion {
+    if (this.episodePlanReliabilityOptions.completionFirstEnabled !== true) return suggestion;
+    const resolved = resolveEpisodeAutofillDialogueSpeakers(context, suggestion);
+    for (const page of resolved.suggestion.pages) for (const panel of page.panels) {
+      for (const line of panel.dialogue ?? []) {
+        if (line.entityId === null && (
+          line.type === 'speech' || line.type === 'thought' || line.type === 'shout' || line.type === 'whisper'
+        )) {
+          throw new ValidationError('Episode autofill dialogue requires an authorized speaker');
+        }
+      }
+    }
+    // Never bypass page, panel, scene, visible-entity or state ownership checks.
+    validateEpisodePlanAgainstContext(context, resolved.suggestion);
+    if (resolved.repairedSpeakerCount > 0) {
+      console.info('episode_story_autofill_speakers_resolved', {
+        repairedSpeakerCount: resolved.repairedSpeakerCount,
+      });
+    }
+    return resolved.suggestion;
   }
 
   private async applyEpisodePlanSuggestion(

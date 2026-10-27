@@ -26,6 +26,15 @@ import {
   requestStructuredOpenAIResponse,
   StructuredOpenAIResponseError,
 } from './StructuredOpenAIResponse.js';
+import {
+  createEpisodeAutofillProviderReferenceMode,
+  episodeAutofillProviderReferenceInstruction,
+  providerDialogueEntityIdJsonSchema,
+  providerVisibleEntityIdJsonSchema,
+  rewriteEpisodeAutofillProviderBrief,
+  sanitizeEpisodePagePlanProviderReferences,
+  type EpisodeAutofillProviderReferenceMode,
+} from './EpisodeAutofillProviderReferences.js';
 
 const EPISODE_PAGE_PLAN_COMPILER_MAX_ATTEMPTS = 2;
 const RETRYABLE_DETAIL_PLAN_FAILURE_REASONS = new Set<StructuredOpenAIResponseFailureReason>([
@@ -78,6 +87,11 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
   public async compilePlan(
     input: CompileEpisodePagePlanInput,
   ): Promise<CompiledEpisodePagePlan> {
+    const providerReferences = createEpisodeAutofillProviderReferenceMode(input.characterReferences);
+    const providerCompilerBrief = providerReferences === null
+      ? input.compilerBrief
+      : rewriteEpisodeAutofillProviderBrief(input.compilerBrief, providerReferences);
+    const providerJsonSchema = buildEpisodePagePlanJsonSchema(providerReferences);
     let validated: (EpisodePagePlanSuggestionPayload & {
       source_requirement_placements?: z.infer<typeof sourceRequirementPlacementSchema>[];
     }) | null = null;
@@ -100,24 +114,35 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
           maxOutputTokens: EPISODE_PAGE_PLAN_COMPILER_MAX_TOKENS,
           schemaName: 'episode_page_plan',
           jsonSchema: sourceRequirements === undefined
-            ? episodePagePlanJsonSchema
-            : buildEpisodePagePlanWithRequirementPlacementsJsonSchema(placementRequirements.length),
+            ? providerJsonSchema
+            : buildEpisodePagePlanWithRequirementPlacementsJsonSchema(
+                placementRequirements.length,
+                providerJsonSchema,
+              ),
           responseSchema: sourceRequirements === undefined
             ? episodePagePlanProviderResponseSchema
             : sourceRequirementPagePlanProviderResponseSchema,
           errorLabel: 'OpenAI episode page plan compiler',
-          sanitize: sanitizeEpisodePagePlanPayload,
+          sanitize: (value) => sanitizeEpisodePagePlanPayload(
+            providerReferences === null
+              ? value
+              : sanitizeEpisodePagePlanProviderReferences(value, providerReferences),
+          ),
           input: [
             {
               role: 'system',
               content: [{
                 type: 'input_text',
-                text: buildSystemPrompt(input.language, input.sourceOwnedPageContext === true),
+                text: buildSystemPrompt(
+                  input.language,
+                  input.sourceOwnedPageContext === true,
+                  providerReferences,
+                ),
               }],
             },
             {
               role: 'user',
-              content: [{ type: 'input_text', text: buildUserPrompt(input.compilerBrief) + (placementCorrection === undefined ? '' : `\n[PLACEMENT CORRECTION - SERVER DATA]\n${placementCorrection}\nCorrect this allocation and its affected panel fields from the unchanged original source. Do not change requirement IDs, page ownership, panel count, or the contracted schema.\n[END PLACEMENT CORRECTION]`) }],
+              content: [{ type: 'input_text', text: buildUserPrompt(providerCompilerBrief) + (placementCorrection === undefined ? '' : `\n[PLACEMENT CORRECTION - SERVER DATA]\n${placementCorrection}\nCorrect this allocation and its affected panel fields from the unchanged original source. Do not change requirement IDs, page ownership, panel count, or the contracted schema.\n[END PLACEMENT CORRECTION]`) }],
             },
           ],
         });
@@ -220,6 +245,7 @@ export class OpenAIPageEpisodePlanCompiler implements EpisodePagePlanCompilerPor
 function buildSystemPrompt(
   language: CompileEpisodePagePlanInput['language'],
   sourceOwnedPageContext: boolean,
+  providerReferences: EpisodeAutofillProviderReferenceMode | null,
 ): string {
   const outputLanguage = describeAppLanguage(language);
   return [
@@ -231,7 +257,9 @@ function buildSystemPrompt(
       : STORY_SOURCE_POLICY,
     'Return only the contracted JSON. Respect exact existing pages and panel orders, provided entity/scene allowlists, and enum values.',
     'For every entity assignment, state_id must be an existing state UUID or JSON null for the default state; never use strings such as default or none.',
-    'Identifier fields must copy only supplied UUIDs; use JSON null for an ambiguous dialogue speaker, never a name, default, or none.',
+    providerReferences === null
+      ? 'Identifier fields must copy only supplied UUIDs; use JSON null for an ambiguous dialogue speaker, never a name, default, or none.'
+      : episodeAutofillProviderReferenceInstruction(providerReferences),
     ...(sourceOwnedPageContext ? [
       'Use each CURRENT CHUNK ORIGINAL SOURCE excerpt as the complete ownership contract for its matching page. Do not redistribute authored facts across pages or reveal later-page information early.',
       'SOURCE REQUIREMENTS were extracted only from original source. Treat global requirements as episode-wide context, style, and constraints without forcing a visible event or panel placement. Before drafting any editable field, allocate every PAGE requirement to actual panel orders in source_requirement_placements, then draft panels from those allocations. A spanning_constraint is a mandatory instruction over the allocated panels, not a later event; retain its complete context, emotional progression, spatial order and endpoint coverage. Never reinterpret a required terminal event as only an arrival near its endpoint. For every same-page afterRequirementIds relation, all predecessor panel orders must be less than or equal to every successor panel order: max(predecessor.panel_orders) <= min(successor.panel_orders). Equality permits an authored sequence within one panel; do not reverse actual actions in its fields. Do not alter supplied relations. A page-wide continuing/negative/spatial/framing constraint without an after relation may cover all relevant panels, including earlier panels; its source sentence position does not create a new event after the preceding dialogue. page_purpose and continuity_note are derived draft metadata and never source authority. Placement metadata is internal, is discarded after structural validation, and does not prove semantic fidelity.',
@@ -798,10 +826,55 @@ const episodePagePlanJsonSchema = {
   },
 } as const;
 
-function buildEpisodePagePlanWithRequirementPlacementsJsonSchema(requirementCount: number): Record<string, unknown> {
+function buildEpisodePagePlanJsonSchema(
+  providerReferences: EpisodeAutofillProviderReferenceMode | null,
+): Record<string, unknown> {
+  if (providerReferences === null) {
+    return episodePagePlanJsonSchema;
+  }
+
+  const schema = JSON.parse(JSON.stringify(episodePagePlanJsonSchema)) as unknown;
+  if (!isRecord(schema)) {
+    throw new ConfigurationError('Episode page plan schema is invalid');
+  }
+  const properties = requireRecord(schema.properties, 'properties');
+  const pages = requireRecord(properties.pages, 'pages');
+  const pageItems = requireRecord(pages.items, 'page items');
+  const pageProperties = requireRecord(pageItems.properties, 'page properties');
+  const panels = requireRecord(pageProperties.panels, 'panels');
+  const panelItems = requireRecord(panels.items, 'panel items');
+  const panelProperties = requireRecord(panelItems.properties, 'panel properties');
+
+  const dialogue = requireRecord(panelProperties.dialogue, 'dialogue');
+  const dialogueVariants = dialogue.anyOf;
+  if (!Array.isArray(dialogueVariants) || !isRecord(dialogueVariants[0])) {
+    throw new ConfigurationError('Episode page plan dialogue schema is invalid');
+  }
+  const dialogueItems = requireRecord(dialogueVariants[0].items, 'dialogue items');
+  const dialogueProperties = requireRecord(dialogueItems.properties, 'dialogue properties');
+  dialogueProperties.entity_id = providerDialogueEntityIdJsonSchema(providerReferences);
+  if (providerReferences.refs.length === 0) {
+    dialogueProperties.type = { type: 'string', enum: ['narration'] };
+  }
+
+  const entities = requireRecord(panelProperties.entities, 'entities');
+  if (providerReferences.refs.length === 0) {
+    entities.maxItems = 0;
+  }
+  const entityItems = requireRecord(entities.items, 'entity items');
+  const entityProperties = requireRecord(entityItems.properties, 'entity properties');
+  entityProperties.entity_id = providerVisibleEntityIdJsonSchema(providerReferences);
+  return schema;
+}
+
+function buildEpisodePagePlanWithRequirementPlacementsJsonSchema(
+  requirementCount: number,
+  pagePlanSchema: Record<string, unknown>,
+): Record<string, unknown> {
+  const pagePlanProperties = requireRecord(pagePlanSchema.properties, 'page plan properties');
   return {
-    ...episodePagePlanJsonSchema,
-    required: ['source_requirement_placements', ...episodePagePlanJsonSchema.required],
+    ...pagePlanSchema,
+    required: ['source_requirement_placements', 'pages'],
     properties: {
       source_requirement_placements: {
         type: 'array',
@@ -821,9 +894,16 @@ function buildEpisodePagePlanWithRequirementPlacementsJsonSchema(requirementCoun
           },
         },
       },
-      ...episodePagePlanJsonSchema.properties,
+      ...pagePlanProperties,
     },
   };
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new ConfigurationError(`Episode page plan ${label} schema is invalid`);
+  }
+  return value;
 }
 
 function validateSourceRequirementPlacements(

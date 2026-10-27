@@ -300,6 +300,7 @@ export function resolveWorkerDependencies(
       {
         adaptivePackingEnabled: env.EPISODE_PAGE_PLAN_ADAPTIVE_PACKING_ENABLED,
         inlineRepairEnabled: env.EPISODE_PLAN_INLINE_REPAIR_ENABLED,
+        completionFirstEnabled: true,
       },
       new PostgresEpisodePlanPersistenceRepository(db, persistenceProfile),
       overrides.episodeStateTransitionCompiler ?? resolveEpisodeStateTransitionCompiler(),
