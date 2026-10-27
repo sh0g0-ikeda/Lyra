@@ -73,7 +73,9 @@ async function open(page: Page, state: State, scope: string): Promise<void> {
   await page.clock.install();
   await page.addInitScript(({ scope, organizationId, jobId }) => {
     sessionStorage.setItem('lyra:web:manual-token', 'header.payload.signature');
+    sessionStorage.setItem('lyra:web:workspace-view:email:session', 'story');
     localStorage.setItem('lyra:web:ui-language', 'en');
+    localStorage.setItem('lyra:web:manga-tutorial:v1:email:session', 'seen');
     localStorage.setItem('lyra:web:selected-organization:email:session', scope === 'personal' ? '' : organizationId);
     localStorage.setItem(`lyra:web:tracked-jobs:email:session:workspace:${scope}`, JSON.stringify([jobId]));
   }, { scope, organizationId, jobId });

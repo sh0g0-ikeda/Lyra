@@ -832,6 +832,7 @@ function HierarchyActionMenu(props: {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const focusEdgeRef = useRef<'first' | 'last'>('first');
@@ -925,6 +926,8 @@ function HierarchyActionMenu(props: {
   }, [closeMenu, open, placeMenu]);
 
   const openMenu = (focusEdge: 'first' | 'last'): void => {
+    // A modal dialog makes body portals inert; keep its menu in the same top layer.
+    setPortalHost(triggerRef.current?.closest('dialog') ?? document.body);
     focusEdgeRef.current = focusEdge;
     setOpen(true);
   };
@@ -1042,7 +1045,7 @@ function HierarchyActionMenu(props: {
                 </button>
               ))}
             </div>,
-            document.body,
+            portalHost ?? document.body,
           )
         : null}
     </div>
