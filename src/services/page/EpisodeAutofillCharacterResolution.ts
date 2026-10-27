@@ -204,7 +204,23 @@ function compareEntityContexts(
   left: EpisodePagePlanContext['entities'][number],
   right: EpisodePagePlanContext['entities'][number],
 ): number {
-  return left.id.localeCompare(right.id)
-    || left.name.localeCompare(right.name)
-    || left.entityType.localeCompare(right.entityType);
+  return compareCodePoints(left.id, right.id)
+    || compareCodePoints(left.name, right.name)
+    || compareCodePoints(left.entityType, right.entityType);
+}
+
+function compareCodePoints(left: string, right: string): number {
+  const leftCodePoints = Array.from(left);
+  const rightCodePoints = Array.from(right);
+  const sharedLength = Math.min(leftCodePoints.length, rightCodePoints.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const leftPoint = leftCodePoints[index]!.codePointAt(0)!;
+    const rightPoint = rightCodePoints[index]!.codePointAt(0)!;
+    if (leftPoint !== rightPoint) {
+      return leftPoint < rightPoint ? -1 : 1;
+    }
+  }
+  return leftCodePoints.length === rightCodePoints.length
+    ? 0
+    : leftCodePoints.length < rightCodePoints.length ? -1 : 1;
 }

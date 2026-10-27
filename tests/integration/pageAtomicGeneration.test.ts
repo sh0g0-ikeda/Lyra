@@ -45,6 +45,8 @@ run('legacy atomic save-and-generate compatibility',()=>{
  async function state(ids:Awaited<ReturnType<typeof fixture>>){return (await pool.query(`SELECT p.status,p.layout_config,(SELECT situation_text FROM panels WHERE id=$2) AS scene,(SELECT purchased_credits FROM credit_balances WHERE user_id=$3) AS credits,(SELECT COUNT(*)::int FROM generation_jobs WHERE user_id=$3) AS jobs,(SELECT COUNT(*)::int FROM credit_ledger WHERE user_id=$3 AND type='consume') AS debits FROM pages p WHERE p.id=$1`,[ids.pageId,ids.panelId,ids.userId])).rows[0];}
  it('完走優先の話者補正を原子的に保存した結果は既存の画像生成準備検査を変更せず通る',async()=>{
   const ids=await fixture();
+  // Autofill requires canonical layout metadata, unlike a legacy draft quote.
+  await pool.query('UPDATE pages SET layout_config=layout_config || \'{"panel_count":1}\'::jsonb WHERE id=$1',[ids.pageId]);
   const entityId=randomUUID();
   await pool.query("INSERT INTO entities(id,user_id,work_id,name,entity_type) VALUES($1,$2,$3,'Synthetic speaker','character')",[entityId,ids.userId,ids.workId]);
   await pool.query("UPDATE episodes SET story_full_draft='Synthetic speaker says a test line.',estimated_pages=1 WHERE id=$1",[ids.episodeId]);

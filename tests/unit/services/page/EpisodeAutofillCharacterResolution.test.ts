@@ -18,7 +18,7 @@ describe('EpisodeAutofillCharacterResolution', () => {
 
     expect(buildEpisodeAutofillCharacterReferences(context)).toEqual([
       { ref: 'E1', entityId: 'entity-a', name: '同名', entityType: 'character' },
-      { ref: 'E2', entityId: 'entity-b', name: '重複', entityType: 'character' },
+      { ref: 'E2', entityId: 'entity-b', name: '同名', entityType: 'character' },
     ]);
     expect(buildEpisodeAutofillCharacterReferences({ ...context, entities: [...context.entities].reverse() }))
       .toEqual(buildEpisodeAutofillCharacterReferences(context));
