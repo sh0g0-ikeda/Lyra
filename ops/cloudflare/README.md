@@ -1,15 +1,40 @@
 # Cloudflare ingress migration
 
-Status: **partial rollout; main app and ALB retained** (2026-10-30 JST).
-Cloudflare is authoritative, the original 15 DNS records are preserved, and the
-canary Worker/Tunnel path is live. API revision 148 runs two healthy tasks with
-cloudflared using the unchanged API image and task size. Main app still uses
-CloudFront/ALB; the app route, app DNS cutover and ALB retirement remain pending.
-A host-limited Browser Integrity Check exception allows normal API clients on
-app and canary. Safe canary readiness/auth-rejection/CORS/public-document checks
-passed; valid-session reads and live SSE are separate outstanding gates.
-Building this directory alone never applies cloud changes. No ALB savings have
-yet been realized.
+Status: **production ingress migrated; ALB retirement verified** (2026-10-31 JST).
+Cloudflare is authoritative; app and canary Worker/Tunnel routes are live.
+CloudFront default/API assets now use `lyra-cloudflare-app-origin`, after the
+exact `/healthz` probe passed locally and on a temporary GitHub runner. Its five
+S3 OAC public-document behaviors remain unchanged. AWS API, PostgreSQL, S3, SQS
+and generation workers remain in Tokyo; no US production resources were added.
+The temporary US runner was an external public-health probe, not a deployed copy.
+
+API revision 148 retains the immutable API image, 256 CPU / 512 MiB and desired
+count two. Both endpoints passed owner-authenticated reads, signed Stripe raw-body
+acceptance (modified body rejected), one approved SSE preview, public-file byte
+comparison, and JS/CSS range checks. The preview did not change the test work or
+its before/after credit balance. A rolling replacement completed with graceful
+shutdown and exit 0 on both old tasks. ALB request count was zero for the observed
+first hour after cutover. After explicit retirement approval, the service ALB
+association was detached; the ALB, dedicated target group, one obsolete API ingress
+rule and the old `origin` CNAME were removed. All three original managed network
+interface IDs now return NotFound. API desired/running remain two, pending zero.
+Both authoritative nameservers match all 13 unchanged DNS records (26 checks);
+app/canary A and AAAA resolve and old origin has no CNAME. DNS reload retains
+15 records, including the old origin certificate-validation CNAME.
+
+The detach monitor recorded one legacy client-side 10-second timeout; its exact
+cause is not established. Keep that failed sample. Subsequent steady monitoring
+passed 20 consecutive readiness checks on both endpoints, and final post-removal
+public compatibility probes passed 10 checks per endpoint. CloudFront error-rate
+metrics were zero for the nine available points covering the transient window.
+The retained Route 53 zone, ALB security group and ACM certificates support
+propagation/recreation; they do not constitute an active ALB. The unused old
+CloudFront origin is recovery metadata, not a reachable fallback after deletion.
+
+Live tests did not hold a long-running SSE open during shutdown or originate an
+IPv6 client connection; those paths have unit/configuration coverage only. Keep
+these limits separate from the completed live checks. Building this directory
+alone never applies cloud changes.
 
 ## Scope and invariants
 
@@ -86,7 +111,8 @@ and its ownership/expiry checks are not changed.
   Use the official authorization flow / OS credential store or a locally supplied
   scoped token. Never place tokens in chat, Git, commands, plans or logs.
 - `lyra-editor.com` is registered through XServer / Star Domain. Public authoritative
-  DNS is currently Route 53; public RDAP reports no signed delegation. Free full
+  DNS was Route 53 before this migration and is now Cloudflare; public RDAP
+  reported no signed delegation at the pre-cutover check. Free full
   DNS onboarding requires a registrar nameserver update. A partial CNAME zone is
   a Business/Enterprise feature: do not purchase it implicitly.
 - Back up all Route 53 records, CloudFront distribution config/ETag, ALB/listeners/
@@ -216,11 +242,25 @@ first; only after that may the ordered CloudFront-origin/DNS rollback above run.
 Retirement is therefore a separate final transition requiring verified recreation
 settings, not an immediately reversible DNS switch.
 
-The observed ALB base plus three IPv4 is about USD 30.66/month before tax at 730
-hours, excluding LCU. This is removable AWS capacity, not net savings: Cloudflare
-usage/plan charges, the new secret and any required task-size increase must be
-deducted. Preserve the existing public API-task IPs for outbound access; this
-migration does not add a NAT Gateway or claim all public IPv4 costs disappear.
+The verified Tokyo ALB base is USD 0.0243/hour (AWS Price List SKU
+`98ZU8QNDMR4AS8FJ`, effective 2026-08-01), correcting the earlier USD 0.027
+assumption. At 730 hours, the removed base plus three IPv4 is USD 28.689/month
+before tax, excluding LCU. Less the new secret's nominal USD 0.40/month, ingress
+saves approximately USD 28.289/month before incremental data transfer, logs and
+Cloudflare usage/plan charges. No paid Cloudflare plan or task-size increase was
+introduced. Preserve the two public API-task IPs for outbound access; this
+migration does not add a NAT Gateway or eliminate all public IPv4 costs.
+
+Including the earlier staging API/ALB and four stopped-DB volume removals, the
+configuration-based subtotal is USD 86.00885/month (730 hours) before backup and
+transfer deltas. This assumes two staging ALB public IPv4 addresses; their actual
+pre-deletion count was not captured. Excluding that assumption gives USD 78.70885.
+Stopped DB compute savings are zero in this comparison. Retained final snapshots
+may change billed backup storage and reduce the RDS free allowance; logical
+snapshot capacity is not billed physical capacity. AWS-to-Cloudflare traffic is
+not the AWS-to-CloudFront origin-transfer exemption. Use actual additional billed
+GB after the shared AWS free allowance when calculating net savings. These are
+run-rate estimates, not a reconciled invoice or a whole-account percentage.
 
 ## Official references
 
