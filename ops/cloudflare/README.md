@@ -159,20 +159,27 @@ access to the single new token secret must be checked separately.
    attach `app.lyra-editor.com/*` to the validated Worker, then edit only the
    existing `app` record in place to the proxied Tunnel CNAME (do not delete it). Test the unchanged public hostname from outside
    AWS. Check old and new web assets and supported mobile release configurations.
-   **Only after app + Worker + Tunnel are serving correctly and public DNS has
-   propagated**, change the domain of CloudFront `E3B8V7G1NPTTMS`'s existing API
-   origin `lyra-prod-alb-origin` from `origin.lyra-editor.com` to
-   `app.lyra-editor.com`. Never point it at app while app still resolves to this
-   distribution: that creates a loop. Preserve the origin ID used by default and
-   `/assets/*`, HTTPS settings, guard, 60-second read timeout, cache/origin request
-   policies and all five S3 OAC behaviors. The default policy
-   `b689b0a8-53d0-40ab-baf2-68738e2966ac` replaces Host with the origin hostname;
-   verify the generated viewer-address header is included. Wait for `Deployed`,
-   then verify direct `d1a1300ysx6i1r.cloudfront.net` requests: authenticated read,
-   cache-miss assets, IPv4/IPv6 client identity, raw signed body, SSE and public
-   documents. Check TLS and absence of interactive Cloudflare challenges on this
-   server-to-server path. Do not disable the distribution while the Worker uses
-   its public files. Keep the original ALB path available until rollback gates pass.
+   **Only after app + Worker + Tunnel are serving correctly**, add CloudFront
+   origin `lyra-cloudflare-app-origin` for `app.lyra-editor.com`, copying the
+   existing ALB origin's HTTPS/TLS, guard and 60-second read timeout. Keep
+   `lyra-prod-alb-origin` unchanged for rollback. First add only an exact `/healthz`
+   GET/HEAD behavior to this origin, using CachingDisabled and the existing default
+   origin-request policy. Leave default, assets and the five S3 behaviors unchanged.
+   Wait for `Deployed`; probe the direct distribution hostname locally and from
+   the credential-free GitHub smoke workflow, recording Cloudflare and CloudFront
+   POP/cache metadata. Public DNS resolver results alone do not establish which
+   DNS CloudFront uses. A failing probe blocks the broad cutover.
+
+   After this probe passes, switch only default and `/assets/*` targets to the
+   validated new origin, preserving their policies; remove the now-redundant
+   `/healthz` behavior. Wait for `Deployed`. The default origin policy
+   `b689b0a8-53d0-40ab-baf2-68738e2966ac` generates the viewer address and replaces
+   Host with the origin hostname. Verify direct distribution readiness/auth/assets,
+   IPv4/IPv6 identity, signed-body handling, SSE and public documents. Check TLS
+   and absence of interactive Cloudflare challenges on this server-to-server path.
+   The narrow probe checks actual observed CloudFront paths, not every internal
+   resolver worldwide. Keep ALB available through compatibility and drain gates.
+   Do not disable CloudFront while the Worker still uses its five public files.
 7. Observe at least one complete ECS replacement/drain, both healthy connector
    replicas, request/error/latency and CPU/memory metrics, and absence of old ALB
    traffic after relevant TTLs. Long requests must finish during shutdown:
@@ -190,16 +197,16 @@ access to the single new token secret must be checked separately.
 ## Rollback and cost boundary
 
 Before ALB retirement, verify the saved ALB path and target readiness still work.
-**First restore CloudFront's API origin to `origin.lyra-editor.com` backed by the
-ALB, using the current distribution ETag, and wait for `Deployed`.** Verify direct
-distribution readiness/auth/assets. Only then restore `app` to the original
-DNS-only CloudFront CNAME and remove the application Worker route. Reversing this
-order creates a CloudFront -> app -> CloudFront loop. If the API-origin change was
-never made, verify it still uses the ALB before restoring app DNS. Restore the saved
-ECS service/task definition if necessary and repeat readiness/auth/assets checks.
-Keeping the authoritative zone unchanged avoids a second NS change. Registrar NS
+**First restore CloudFront default and asset targets to the retained
+`lyra-prod-alb-origin` backed by ALB, and remove any `/healthz` probe behavior.**
+Use the current distribution ETag and wait for `Deployed`; verify direct
+distribution readiness/auth/assets. Only then restore `app` to CloudFront
+DNS-only and remove the app Worker route. The opposite order creates a
+CloudFront -> app -> CloudFront loop. If an older operator changed the existing
+ALB origin domain in place, restore `origin.lyra-editor.com` first as well.
+Keep the saved service/task definition, DNS records and policies. Registrar
 rollback uses the original four Route 53 nameservers only after its records and
-CloudFront origin are checked for the same loop hazard.
+CloudFront targets are checked for the same loop hazard.
 
 After ALB retirement, the previous DNS rollback is unavailable: the original ALB
 cannot be undeleted. Keep app on the working Tunnel path while repairing/reverting
