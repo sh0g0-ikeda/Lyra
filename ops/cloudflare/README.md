@@ -1,9 +1,15 @@
 # Cloudflare ingress migration
 
-Status: **prepared, not deployed** (2026-10-30 JST). This directory never enables a
-route, changes DNS, registers an ECS task, or deletes an ALB merely by being built.
-The user has authorized the migration; account authentication and acceptance checks
-are outstanding. Do not describe preparation as realized savings.
+Status: **partial rollout; main app and ALB retained** (2026-10-30 JST).
+Cloudflare is authoritative, the original 15 DNS records are preserved, and the
+canary Worker/Tunnel path is live. API revision 148 runs two healthy tasks with
+cloudflared using the unchanged API image and task size. Main app still uses
+CloudFront/ALB; the app route, app DNS cutover and ALB retirement remain pending.
+A host-limited Browser Integrity Check exception allows normal API clients on
+app and canary. Safe canary readiness/auth-rejection/CORS/public-document checks
+passed; valid-session reads and live SSE are separate outstanding gates.
+Building this directory alone never applies cloud changes. No ALB savings have
+yet been realized.
 
 ## Scope and invariants
 
@@ -12,7 +18,7 @@ Keep Cognito, PostgreSQL, S3, SQS, the API and generation worker in AWS. Keep th
 public URL `https://app.lyra-editor.com`, Cognito callbacks, bearer authentication,
 Stripe signature verification, asynchronous job contracts and credits unchanged.
 
-The observed production API is `lyra-prod-api:147`, two ARM64 tasks in Tokyo AZs
+The pre-migration API baseline is `lyra-prod-api:147`, two ARM64 tasks in Tokyo AZs
 1c/1d (256 CPU / 512 MiB each). Its immutable image is:
 
 ```text
@@ -32,6 +38,19 @@ The base `wrangler.jsonc` intentionally has empty routes. Once a route is live,
 deploy with an operator-owned runtime copy containing the account and exact
 approved routes. Deploying the empty-route template would unmount live ingress.
 Keep encrypted bindings out of `vars`; preserve them during runtime updates.
+
+The app origin bridge is initial-OFF: unset or `LYRA_APP_ORIGIN_BRIDGE="off"`
+uses the incoming hostname's configured origin. Only the exact value `"canary"`
+rewrites app API/SPA requests to the fixed canary URL and Host, preserving path,
+query, authentication and raw streams. Unknown values fail closed. The five
+public documents still use CloudFront. `global_fetch_private_origin` explicitly
+pins same-zone fetch to the origin instead of re-entering Worker routes.
+
+When the bridge is `canary`, its DNS record and published Tunnel route are
+**production dependencies**. Keep them until an app published Tunnel route is
+confirmed on both replicas, same-host app origin requests pass, and the runtime
+binding is explicitly set to `off`. With `keep_vars: true`, omitting the binding
+from a subsequent config does not disable it. Never remove canary first.
 
 The Worker replaces visitor origin-guard/address headers. At a public Worker
 route it uses the Cloudflare platform IP, except when the original incoming guard
@@ -109,9 +128,11 @@ access to the single new token secret must be checked separately.
    against both authoritative servers. Keep the Route 53 zone and its rollback
    data. Change registrar NS only after this comparison passes. Wait for an active
    Cloudflare zone and verified external DNS; do not guess assigned nameservers.
-2. Create a remotely managed Tunnel, with explicit public host entries for `app`
-   and `lyra-tunnel-canary.lyra-editor.com` to `http://127.0.0.1:3000`, followed by
-   `http_status:404`. Keep metrics on `127.0.0.1:2000`; do not publish that port.
+2. Create a remotely managed Tunnel with the published canary hostname
+   `lyra-tunnel-canary.lyra-editor.com` to `http://127.0.0.1:3000`, followed by
+   `http_status:404`. The fixed app bridge can reuse this origin while the app
+   published Tunnel route is absent. Keep metrics on `127.0.0.1:2000`; do not
+   publish that port.
    Confirm required outbound TCP 7844 for HTTP/2 without opening API inbound access.
 3. Store the Tunnel token in a dedicated AWS Secrets Manager secret. Inject only
    its ARN as ECS `TUNNEL_TOKEN`. Transfer the existing origin guard directly into
@@ -133,8 +154,10 @@ access to the single new token secret must be checked separately.
    all five public documents, Android association, raw signed Stripe webhook
    handling in a safe test, SSE/error status, cancellation, IP spoof rejection and
    no private cache. Do not create charges or generation jobs merely for smoke.
-6. Attach `app.lyra-editor.com/*` to the validated Worker, then change only `app`
-   to the proxied Tunnel CNAME. Test the unchanged public hostname from outside
+6. Enable the fixed `canary` bridge in the operator runtime config while keeping
+   the existing canary Worker route. After explicit main-cutover authorization,
+   attach `app.lyra-editor.com/*` to the validated Worker, then edit only the
+   existing `app` record in place to the proxied Tunnel CNAME (do not delete it). Test the unchanged public hostname from outside
    AWS. Check old and new web assets and supported mobile release configurations.
    **Only after app + Worker + Tunnel are serving correctly and public DNS has
    propagated**, change the domain of CloudFront `E3B8V7G1NPTTMS`'s existing API
@@ -160,8 +183,9 @@ access to the single new token secret must be checked separately.
    saved ALB/listeners/target group and obsolete ALB ingress rules/DNS after the
    rollback transition is confirmed. Verify deletion and release of its public
    IPv4, keep two healthy API tasks and repeat external readiness/auth/static
-   smoke checks. Remove the temporary canary route and DNS record. Record exact
-   receipts and measured cost later; do not infer savings from a plan.
+   smoke checks. Remove canary only after its production dependency has been
+   retired under the bridge-off conditions above. Record exact receipts and
+   measured cost later; do not infer savings from a plan.
 
 ## Rollback and cost boundary
 
@@ -202,3 +226,5 @@ migration does not add a NAT Gateway or claim all public IPv4 costs disappear.
 - [CloudFront managed origin request policies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html)
 - [CloudFront generated viewer headers](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/adding-cloudfront-headers.html)
 - [CloudFront origin custom headers](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/add-origin-custom-headers.html)
+
+- [Same-zone fetch compatibility](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public)

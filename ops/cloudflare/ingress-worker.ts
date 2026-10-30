@@ -7,10 +7,14 @@
  * Exact public documents use a credential-free allowlist.
  * Preserve raw request/response streams and status; never retry a mutation or
  * flush an early success response. Missing configuration fails closed.
+ * The optional app bridge has fixed off/canary modes only; it never accepts an
+ * arbitrary origin and leaves public-document routing on CloudFront unchanged.
  */
 export interface IngressEnvironment {
   /** Encrypted Worker secret binding; never a plaintext Wrangler variable. */
   LYRA_ORIGIN_GUARD?: string;
+  /** Initial-off app API/SPA bridge to the fixed Tunnel canary origin. */
+  LYRA_APP_ORIGIN_BRIDGE?: string;
 }
 
 export interface OriginFetchInit extends RequestInit {
@@ -19,10 +23,9 @@ export interface OriginFetchInit extends RequestInit {
 
 export type OriginFetch = (request: Request, init: OriginFetchInit) => Promise<Response>;
 
-const APPLICATION_ORIGINS = new Set([
-  'https://app.lyra-editor.com',
-  'https://lyra-tunnel-canary.lyra-editor.com',
-]);
+const APPLICATION_ORIGIN = 'https://app.lyra-editor.com';
+const CANARY_ORIGIN = 'https://lyra-tunnel-canary.lyra-editor.com';
+const APPLICATION_ORIGINS = new Set([APPLICATION_ORIGIN, CANARY_ORIGIN]);
 const PUBLIC_DOCUMENT_ORIGIN = 'https://d1a1300ysx6i1r.cloudfront.net';
 const ORIGIN_GUARD_HEADER = 'X-Lyra-Origin-Guard';
 const VIEWER_ADDRESS_HEADER = 'CloudFront-Viewer-Address';
@@ -46,6 +49,7 @@ const CACHE_HEADERS = [
 // Prevent cache storage and intermediary HTML/body transformations on every
 // Worker response, including public documents proxied from CloudFront.
 const RESPONSE_CACHE_CONTROL = 'no-store, no-transform';
+type AppOriginBridge = 'off' | 'canary';
 
 export async function handleRequest(
   request: Request,
@@ -59,6 +63,10 @@ export async function handleRequest(
   const url = new URL(request.url);
   if (!APPLICATION_ORIGINS.has(url.origin)) {
     return failureResponse(404, 'Not found');
+  }
+  const appOriginBridge = parseAppOriginBridge(environment.LYRA_APP_ORIGIN_BRIDGE);
+  if (appOriginBridge === null) {
+    return failureResponse(503, 'Service unavailable');
   }
 
   const isPublicDocument = PUBLIC_DOCUMENT_PATHS.has(url.pathname);
@@ -99,9 +107,23 @@ export async function handleRequest(
     // Same-host route subrequests reach the configured Tunnel origin. Preserve
     // body streaming, method, URL and authentication; deployment must canary the
     // route/origin configuration before production DNS cutover.
-    forwardedRequest = new Request(request, {
-      headers, redirect: 'manual', cache: 'no-store',
-    });
+    if (appOriginBridge === 'canary' && url.origin === APPLICATION_ORIGIN) {
+      // Assign path/search after constructing the fixed origin. A leading `//`
+      // path must remain a path and never become an attacker-controlled authority.
+      const destination = new URL(CANARY_ORIGIN);
+      destination.pathname = url.pathname;
+      destination.search = url.search;
+      headers.set('Host', destination.host);
+      const bridgedRequest = new Request(destination, request);
+      forwardedRequest = new Request(bridgedRequest, {
+        headers,
+        redirect: 'manual', cache: 'no-store', signal: request.signal,
+      });
+    } else {
+      forwardedRequest = new Request(request, {
+        headers, redirect: 'manual', cache: 'no-store',
+      });
+    }
   }
 
   try {
@@ -124,6 +146,11 @@ function failureResponse(status: number, message: string): Response {
   const headers = new Headers({ 'Content-Type': 'text/plain; charset=utf-8' });
   for (const name of CACHE_HEADERS) headers.set(name, RESPONSE_CACHE_CONTROL);
   return new Response(message, { status, headers });
+}
+
+function parseAppOriginBridge(value: string | undefined): AppOriginBridge | null {
+  if (value === undefined || value === 'off') return 'off';
+  return value === 'canary' ? 'canary' : null;
 }
 
 async function matchesOriginGuard(presented: string | null, expected: string): Promise<boolean> {

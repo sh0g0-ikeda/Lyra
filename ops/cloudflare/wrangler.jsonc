@@ -5,6 +5,8 @@
   "name": "lyra-tunnel-ingress",
   "main": "ingress-worker.ts",
   "compatibility_date": "2026-10-30",
+  // Pin origin-directed same-zone fetch; public routing would re-enter the Worker.
+  "compatibility_flags": ["global_fetch_private_origin"],
   "workers_dev": false,
   "preview_urls": false,
   "routes": [],

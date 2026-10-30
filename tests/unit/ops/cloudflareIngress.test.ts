@@ -63,6 +63,75 @@ describe('Cloudflare ingress', () => {
     expect([403, 404, 502]).toEqual([forbidden.status, missingOrigin.status, upstreamFailure.status]);
   });
 
+  it.each([undefined, 'off'])('bridgeが%sならapp APIは従来のsame-hostへ転送する', async (bridge) => {
+    const origin = upstream();
+    await handleRequest(request('/api/works?cursor=a%2Bb'), { ...ENV, LYRA_APP_ORIGIN_BRIDGE: bridge }, origin.fetcher);
+
+    expect(origin.calls[0]!.request.url).toBe(APP + '/api/works?cursor=a%2Bb');
+  });
+
+  it('canary bridgeはapp APIのURLとHostだけを変更し、body・認証・trusted Viewer IPを保持する', async () => {
+    const origin = upstream();
+    const bytes = new Uint8Array([123, 34, 120, 34, 58, 49, 125]);
+    await handleRequest(request('/api/webhooks/stripe?x=one%2Btwo', {
+      method: 'POST', body: bytes,
+      headers: {
+        Authorization: 'Bearer user-token', Cookie: 'session=private',
+        'X-Lyra-Origin-Guard': ENV.LYRA_ORIGIN_GUARD,
+        'CloudFront-Viewer-Address': '198.51.100.7:443',
+      },
+    }), { ...ENV, LYRA_APP_ORIGIN_BRIDGE: 'canary' }, origin.fetcher);
+
+    const sent = origin.calls[0]!.request;
+    expect(sent.url).toBe('https://lyra-tunnel-canary.lyra-editor.com/api/webhooks/stripe?x=one%2Btwo');
+    expect(sent.headers.get('Host')).toBe('lyra-tunnel-canary.lyra-editor.com');
+    expect(sent.headers.get('Authorization')).toBe('Bearer user-token');
+    expect(sent.headers.get('Cookie')).toBe('session=private');
+    expect(sent.headers.get('CloudFront-Viewer-Address')).toBe('198.51.100.7');
+    expect(new Uint8Array(await sent.arrayBuffer())).toEqual(bytes);
+  });
+
+  it.each(['//attacker.example/api?x=one%2Btwo', '/\\attacker.example/api?x=one%2Btwo'])(
+    'canary bridgeはauthority風pathを固定originのpathとして転送する (%s)',
+    async (path) => {
+      const origin = upstream();
+      const body = new Uint8Array([123, 125]);
+      const incoming = request(path, { method: 'POST', body, headers: { Authorization: 'Bearer user-token' } });
+      const normalizedIncoming = new URL(incoming.url);
+      await handleRequest(incoming, { ...ENV, LYRA_APP_ORIGIN_BRIDGE: 'canary' }, origin.fetcher);
+
+      const sent = origin.calls[0]!.request;
+      expect(new URL(sent.url).origin).toBe('https://lyra-tunnel-canary.lyra-editor.com');
+      expect(sent.headers.get('Host')).toBe('lyra-tunnel-canary.lyra-editor.com');
+      expect(new URL(sent.url).pathname).toBe(normalizedIncoming.pathname);
+      expect(new URL(sent.url).search).toBe('?x=one%2Btwo');
+      expect(sent.headers.get('Authorization')).toBe('Bearer user-token');
+      expect(new Uint8Array(await sent.arrayBuffer())).toEqual(body);
+    },
+  );
+
+  it('canary bridgeでもcanary受信と公開5パスは既存の宛先を変えない', async () => {
+    const canaryOrigin = upstream();
+    const canaryRequest = new Request('https://lyra-tunnel-canary.lyra-editor.com/api/works?x=1');
+    await handleRequest(canaryRequest, { ...ENV, LYRA_APP_ORIGIN_BRIDGE: 'canary' }, canaryOrigin.fetcher);
+    expect(canaryOrigin.calls[0]!.request.url).toBe(canaryRequest.url);
+
+    for (const path of ['/.well-known/assetlinks.json', '/privacy.html', '/terms.html', '/support.html', '/legal.css']) {
+      const publicOrigin = upstream();
+      await handleRequest(request(path), { ...ENV, LYRA_APP_ORIGIN_BRIDGE: 'canary' }, publicOrigin.fetcher);
+      expect(publicOrigin.calls[0]!.request.url).toBe(STATIC + path);
+    }
+  });
+
+  it('未知bridge設定は503でfail closedし外部通信しない', async () => {
+    const origin = upstream();
+    const response = await handleRequest(request(), { ...ENV, LYRA_APP_ORIGIN_BRIDGE: 'arbitrary-origin' }, origin.fetcher);
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('cache-control')).toBe('no-store, no-transform');
+    expect(origin.calls).toHaveLength(0);
+  });
+
   it.each(['203.0.113.17', '2001:db8::1', '::1', '::', '2001:db8:0:1:2:3:4:5', '::ffff:192.0.2.128'])(
     '有効な接続IPの場合に偽装headerを上書きする (%s)',
     async (ip) => {
