@@ -149,6 +149,14 @@ class TunnelTaskPlanTests(unittest.TestCase):
 
         self.assertEqual(plan["register_task_definition"]["tags"], [{"key": "outer", "value": "kept"}])
 
+    def test_omits_empty_outer_describe_response_tags(self):
+        "回帰: AWSが拒否するdescribe_task_definition外側の空tagsはregister payloadへ渡さない。"
+        outer = {"taskDefinition": source_definition(), "tags": []}
+
+        plan = self.build(source=outer)
+
+        self.assertNotIn("tags", plan["register_task_definition"])
+
     def test_rejects_secret_arn_with_wrong_service_region_or_account(self):
         "異常系: SSM、別リージョン、別アカウントのtoken参照を拒否する。"
         with self.assertRaisesRegex(ValueError, "Secrets Manager"):

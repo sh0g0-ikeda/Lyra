@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 # Design: preserve only ECS registerable fields; never read token values. The API
 # image is immutable, and the sidecar starts only after PostgreSQL-backed /readyz.
+# ECS rejects an empty ``tags`` request member, so omit it while preserving tags.
 REGISTERABLE_KEYS = ("family", "taskRoleArn", "executionRoleArn", "networkMode", "containerDefinitions", "volumes", "placementConstraints", "requiresCompatibilities", "cpu", "memory", "runtimePlatform", "proxyConfiguration", "ephemeralStorage", "pidMode", "ipcMode", "inferenceAccelerators", "tags")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 PINNED = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
@@ -44,8 +45,10 @@ def build_tunnel_plan(*, source: Mapping[str, Any], api_container_name: str, exp
     if not isinstance(source, Mapping):
         raise ValueError("taskDefinition must be an object")
     payload = {key: copy.deepcopy(source[key]) for key in REGISTERABLE_KEYS if key in source}
-    if outer_tags is not None:
+    if outer_tags:
         payload["tags"] = outer_tags
+    elif outer_tags == [] or payload.get("tags") == []:
+        payload.pop("tags", None)
     for key in ("family", "containerDefinitions", "requiresCompatibilities", "cpu", "memory", "runtimePlatform"):
         if key not in payload:
             raise ValueError(f"source is missing required registerable field: {key}")
