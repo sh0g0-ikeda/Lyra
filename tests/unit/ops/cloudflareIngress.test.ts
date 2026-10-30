@@ -86,6 +86,79 @@ describe('Cloudflare ingress', () => {
     expect(origin.calls[0]!.request.headers.get('CF-Connecting-IP')).toBeNull();
   });
 
+  it.each([
+    ['198.51.100.7:1', '198.51.100.7'],
+    ['198.51.100.7:65535', '198.51.100.7'],
+    ['[2001:db8::7]:443', '2001:db8::7'],
+    ['[2001:db8:0:1:2:3:4:5]:12345', '2001:db8:0:1:2:3:4:5'],
+    ['[::ffff:192.0.2.7]:443', '::ffff:192.0.2.7'],
+  ])('元のguardが一致する場合にCloudFront利用者IPをportなしで保持する (%s)', async (viewer, expected) => {
+    const origin = upstream();
+    await handleRequest(request('/api/works', { headers: {
+      'X-Lyra-Origin-Guard': ENV.LYRA_ORIGIN_GUARD,
+      'CloudFront-Viewer-Address': viewer,
+      'CF-Connecting-IP': '203.0.113.99',
+      'X-Forwarded-For': '192.0.2.99',
+    } }), ENV, origin.fetcher);
+    const headers = origin.calls[0]!.request.headers;
+    expect(headers.get('CloudFront-Viewer-Address')).toBe(expected);
+    expect(headers.get('X-Lyra-Origin-Guard')).toBe(ENV.LYRA_ORIGIN_GUARD);
+    expect(headers.get('CF-Connecting-IP')).toBeNull();
+    expect(headers.get('X-Forwarded-For')).toBeNull();
+  });
+
+  it.each([undefined, '', 'operator-secrex', 'operator-secret-extra', 'operator-secre']) (
+    '元のguardが不一致の場合に偽AWS viewerを無視して接続IPを維持する (%s)', async (guard) => {
+      const headers = new Headers({
+        'CloudFront-Viewer-Address': '198.51.100.7:443',
+        'CF-Connecting-IP': '203.0.113.99',
+      });
+      if (guard !== undefined) headers.set('X-Lyra-Origin-Guard', guard);
+      const origin = upstream();
+      await handleRequest(request('/api/works', { headers }), ENV, origin.fetcher);
+      expect(origin.calls[0]!.request.headers.get('CloudFront-Viewer-Address')).toBe('203.0.113.99');
+    },
+  );
+
+  it.each([
+    undefined, '', '198.51.100.7', '198.51.100.7:0', '198.51.100.7:65536',
+    '198.51.100.7:0443', '198.51.100.7:-1', '198.51.100.7:443junk',
+    '198.51.100.7 :443', '999.51.100.7:443', '019.51.100.7:443',
+    '198.51.100.7:443, 192.0.2.1:443', '[2001:db8::7]', '2001:db8::7:443',
+    '[2001:db8::7]:65536', '[fe80::1%eth0]:443', '[1::2::3]:443',
+    '[192.0.2.7]:443', '[2001:db8::7]:443junk', '[2001:db8::7] :443',
+  ])('guard一致でもAWS viewerが欠落または不正な場合に既存接続IPへ戻る (%s)', async (viewer) => {
+    const headers = new Headers({
+      'X-Lyra-Origin-Guard': ENV.LYRA_ORIGIN_GUARD,
+      'CF-Connecting-IP': '2001:db8::99',
+    });
+    if (viewer !== undefined) headers.set('CloudFront-Viewer-Address', viewer);
+    const origin = upstream();
+    await handleRequest(request('/api/works', { headers }), ENV, origin.fetcher);
+    expect(origin.calls[0]!.request.headers.get('CloudFront-Viewer-Address')).toBe('2001:db8::99');
+    expect(origin.calls[0]!.request.headers.get('CF-Connecting-IP')).toBeNull();
+  });
+
+  it('認証したAWS viewerが有効な場合に接続IPがなくても利用者IPを保持する', async () => {
+    const origin = upstream();
+    await handleRequest(request('/api/works', { headers: {
+      'X-Lyra-Origin-Guard': ENV.LYRA_ORIGIN_GUARD,
+      'CloudFront-Viewer-Address': '198.51.100.7:443',
+    } }), ENV, origin.fetcher);
+    expect(origin.calls[0]!.request.headers.get('CloudFront-Viewer-Address')).toBe('198.51.100.7');
+  });
+
+  it('AWS viewerと接続IPが不正な場合に両方のfallback headerを削除する', async () => {
+    const origin = upstream();
+    await handleRequest(request('/api/works', { headers: {
+      'X-Lyra-Origin-Guard': ENV.LYRA_ORIGIN_GUARD,
+      'CloudFront-Viewer-Address': '198.51.100.7:65536',
+      'CF-Connecting-IP': '203.0.113.99, 192.0.2.99',
+    } }), ENV, origin.fetcher);
+    expect(origin.calls[0]!.request.headers.get('CloudFront-Viewer-Address')).toBeNull();
+    expect(origin.calls[0]!.request.headers.get('CF-Connecting-IP')).toBeNull();
+  });
+
   it('APIへのPOSTでは認証とStripe署名と生bodyとqueryを保持する', async () => {
     const bytes = new Uint8Array([123, 32, 13, 10, 34, 120, 34, 58, 34, 195, 169, 34, 125]);
     const origin = upstream();

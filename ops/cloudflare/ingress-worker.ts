@@ -1,8 +1,10 @@
 /**
  * Unified Spec §§3/4/7/8/9: this adapter changes ingress only. The existing API
  * owns authentication, authorization, billing and readiness. Trust viewer IP only
- * from Cloudflare's platform header at the public route; overwrite visitor guard
- * and viewer headers. Exact public documents use a credential-free allowlist.
+ * from Cloudflare's platform header, or from an AWS viewer address authenticated
+ * by the incoming origin guard. Verify that guard with Web Crypto before replacing
+ * it; accept only strict IP:port syntax and otherwise retain the platform fallback.
+ * Exact public documents use a credential-free allowlist.
  * Preserve raw request/response streams and status; never retry a mutation or
  * flush an early success response. Missing configuration fails closed.
  */
@@ -82,9 +84,12 @@ export async function handleRequest(
     // unvalidated alternative after rejecting the trusted viewer address.
     headers.delete('CF-Connecting-IP');
     for (const name of UNTRUSTED_FORWARDING_HEADERS) headers.delete(name);
-    // Cloudflare supplies this header at the public route. Never deploy this
-    // trust boundary as a generic proxy accepting arbitrary caller metadata.
-    const clientIp = request.headers.get('CF-Connecting-IP');
+    // Authenticate the ORIGINAL guard before trusting the preceding AWS hop.
+    // Invalid/missing AWS metadata keeps the existing Cloudflare IP fallback.
+    const awsViewerIp = parseCloudFrontViewerAddress(request.headers.get(VIEWER_ADDRESS_HEADER));
+    const fromTrustedCloudFront = awsViewerIp !== null
+      && await matchesOriginGuard(request.headers.get(ORIGIN_GUARD_HEADER), secret.trim());
+    const clientIp = fromTrustedCloudFront ? awsViewerIp : request.headers.get('CF-Connecting-IP');
     if (clientIp !== null && isIpAddress(clientIp)) {
       headers.set(VIEWER_ADDRESS_HEADER, clientIp);
     }
@@ -116,6 +121,29 @@ function failureResponse(status: number, message: string): Response {
   const headers = new Headers({ 'Content-Type': 'text/plain; charset=utf-8' });
   for (const name of CACHE_HEADERS) headers.set(name, 'no-store');
   return new Response(message, { status, headers });
+}
+
+async function matchesOriginGuard(presented: string | null, expected: string): Promise<boolean> {
+  if (presented === null) return false;
+  // Use native HMAC verification rather than an early-exit string comparison.
+  // No digest, key, supplied credential or verification detail leaves this scope.
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', encoder.encode(expected), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(expected));
+  return crypto.subtle.verify('HMAC', key, signature, encoder.encode(presented));
+}
+
+function parseCloudFrontViewerAddress(value: string | null): string | null {
+  if (value === null) return null;
+  // AWS viewer endpoints are IPv4:port or [IPv6]:port. Do not guess the port
+  // boundary in an unbracketed IPv6 address, trim internal spaces or accept lists.
+  const match = /^(?:([0-9.]+)|\[([0-9a-f:.]+)\]):([1-9][0-9]{0,4})$/iu.exec(value);
+  if (match === null || Number(match[3]) > 65535) return null;
+  if (match[1] !== undefined) return isIpv4Address(match[1]) ? match[1] : null;
+  const ipv6 = match[2];
+  return ipv6 !== undefined && ipv6.includes(':') && isIpAddress(ipv6) ? ipv6 : null;
 }
 
 function isIpv4Address(value: string): boolean {

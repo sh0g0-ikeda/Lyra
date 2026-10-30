@@ -24,9 +24,15 @@ the complete deployed application: **do not rebuild/redeploy the API from this
 checkout**. Refresh the live task definition, compare the expected image, and
 apply the additive sidecar plan to that definition only.
 
-The Worker replaces visitor origin-guard/address headers. It only trusts the
-Cloudflare platform IP at a public Worker route, never an arbitrary upstream
-proxy. A missing origin secret fails closed. There is no mutation retry, response
+The Worker replaces visitor origin-guard/address headers. At a public Worker
+route it uses the Cloudflare platform IP, except when the original incoming guard
+matches the encrypted binding: only then may a strictly valid AWS
+`CloudFront-Viewer-Address` (`IPv4:port` or `[IPv6]:port`) supply the client IP.
+Guard verification uses Web Crypto HMAC verification without logging credentials.
+Missing/wrong guards or malformed AWS addresses retain the Cloudflare platform IP
+fallback; invalid platform IPs are omitted. The existing CloudFront origin policy
+must generate the viewer address and overwrite its custom guard. A missing origin
+secret fails closed. There is no mutation retry, response
 buffering, early success status or authenticated response cache. Debug headers,
 credentials and request bodies must never be logged.
 
@@ -121,10 +127,20 @@ access to the single new token secret must be checked separately.
 6. Attach `app.lyra-editor.com/*` to the validated Worker, then change only `app`
    to the proxied Tunnel CNAME. Test the unchanged public hostname from outside
    AWS. Check old and new web assets and supported mobile release configurations.
-   Retain CloudFront's five public S3 behaviors. Before retiring the ALB, also
-   ensure any retained CloudFront default-origin traffic uses a verified healthy
-   ingress path; direct distribution-host compatibility must not silently become
-   a 502. Do not disable the distribution while the Worker uses its public files.
+   **Only after app + Worker + Tunnel are serving correctly and public DNS has
+   propagated**, change the domain of CloudFront `E3B8V7G1NPTTMS`'s existing API
+   origin `lyra-prod-alb-origin` from `origin.lyra-editor.com` to
+   `app.lyra-editor.com`. Never point it at app while app still resolves to this
+   distribution: that creates a loop. Preserve the origin ID used by default and
+   `/assets/*`, HTTPS settings, guard, 60-second read timeout, cache/origin request
+   policies and all five S3 OAC behaviors. The default policy
+   `b689b0a8-53d0-40ab-baf2-68738e2966ac` replaces Host with the origin hostname;
+   verify the generated viewer-address header is included. Wait for `Deployed`,
+   then verify direct `d1a1300ysx6i1r.cloudfront.net` requests: authenticated read,
+   cache-miss assets, IPv4/IPv6 client identity, raw signed body, SSE and public
+   documents. Check TLS and absence of interactive Cloudflare challenges on this
+   server-to-server path. Do not disable the distribution while the Worker uses
+   its public files. Keep the original ALB path available until rollback gates pass.
 7. Observe at least one complete ECS replacement/drain, both healthy connector
    replicas, request/error/latency and CPU/memory metrics, and absence of old ALB
    traffic after relevant TTLs. Long requests must finish during shutdown:
@@ -140,13 +156,25 @@ access to the single new token secret must be checked separately.
 
 ## Rollback and cost boundary
 
-Before ALB retirement, restore `app` to the original DNS-only CloudFront CNAME,
-remove the application Worker route, restore the saved ECS service/task definition
-if necessary, and verify readiness/auth/assets. Keeping the authoritative zone
-unchanged allows this application rollback without waiting for a second NS change.
-Registrar NS rollback uses the original four Route 53 nameservers only after its
-records are rechecked. An ALB cannot be undeleted: retirement requires verified
-replacement/recreation settings and is the last step.
+Before ALB retirement, verify the saved ALB path and target readiness still work.
+**First restore CloudFront's API origin to `origin.lyra-editor.com` backed by the
+ALB, using the current distribution ETag, and wait for `Deployed`.** Verify direct
+distribution readiness/auth/assets. Only then restore `app` to the original
+DNS-only CloudFront CNAME and remove the application Worker route. Reversing this
+order creates a CloudFront -> app -> CloudFront loop. If the API-origin change was
+never made, verify it still uses the ALB before restoring app DNS. Restore the saved
+ECS service/task definition if necessary and repeat readiness/auth/assets checks.
+Keeping the authoritative zone unchanged avoids a second NS change. Registrar NS
+rollback uses the original four Route 53 nameservers only after its records and
+CloudFront origin are checked for the same loop hazard.
+
+After ALB retirement, the previous DNS rollback is unavailable: the original ALB
+cannot be undeleted. Keep app on the working Tunnel path while repairing/reverting
+the Worker or sidecar. Returning to ALB requires recreating and validating the
+saved ALB/listeners/target group, security rules, origin DNS and ECS association
+first; only after that may the ordered CloudFront-origin/DNS rollback above run.
+Retirement is therefore a separate final transition requiring verified recreation
+settings, not an immediately reversible DNS switch.
 
 The observed ALB base plus three IPv4 is about USD 30.66/month before tax at 730
 hours, excluding LCU. This is removable AWS capacity, not net savings: Cloudflare
@@ -161,3 +189,7 @@ migration does not add a NAT Gateway or claim all public IPv4 costs disappear.
 - [Tunnel high availability](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-availability/)
 - [Partial DNS setup eligibility](https://developers.cloudflare.com/dns/zone-setups/partial-setup/)
 - [cloudflared releases](https://github.com/cloudflare/cloudflared/releases)
+
+- [CloudFront managed origin request policies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html)
+- [CloudFront generated viewer headers](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/adding-cloudfront-headers.html)
+- [CloudFront origin custom headers](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/add-origin-custom-headers.html)
