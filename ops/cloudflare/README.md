@@ -24,6 +24,15 @@ the complete deployed application: **do not rebuild/redeploy the API from this
 checkout**. Refresh the live task definition, compare the expected image, and
 apply the additive sidecar plan to that definition only.
 
+Every Worker response uses `no-store, no-transform` so intermediary HTML/body
+rewrites (including automatic analytics injection) do not change the existing
+public documents or streaming payload.
+
+The base `wrangler.jsonc` intentionally has empty routes. Once a route is live,
+deploy with an operator-owned runtime copy containing the account and exact
+approved routes. Deploying the empty-route template would unmount live ingress.
+Keep encrypted bindings out of `vars`; preserve them during runtime updates.
+
 The Worker replaces visitor origin-guard/address headers. At a public Worker
 route it uses the Cloudflare platform IP, except when the original incoming guard
 matches the encrypted binding: only then may a strictly valid AWS

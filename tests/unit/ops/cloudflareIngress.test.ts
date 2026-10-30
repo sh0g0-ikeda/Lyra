@@ -44,10 +44,23 @@ describe('Cloudflare ingress', () => {
     for (const path of ['/api/works', '/privacy.html']) {
       const response = await handleRequest(request(path), { LYRA_ORIGIN_GUARD: secret }, origin.fetcher);
       expect(response.status).toBe(503);
-      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(response.headers.get('cache-control')).toBe('no-store, no-transform');
       expect(await response.text()).not.toContain('operator-secret');
     }
     expect(origin.calls).toHaveLength(0);
+  });
+
+  it('成功・拒否・上流失敗の全応答で本文変換を禁止する', async () => {
+    const success = await handleRequest(request(), ENV, upstream(new Response('unchanged')).fetcher);
+    const forbidden = await handleRequest(request('/privacy.html', { method: 'POST' }), ENV, upstream().fetcher);
+    const missingOrigin = await handleRequest(new Request('https://attacker.example/api/works'), ENV, upstream().fetcher);
+    const upstreamFailure = await handleRequest(request(), ENV, async (): Promise<Response> => { throw new Error('network'); });
+
+    for (const response of [success, forbidden, missingOrigin, upstreamFailure]) {
+      expect(response.headers.get('cache-control')).toBe('no-store, no-transform');
+    }
+    expect(await success.text()).toBe('unchanged');
+    expect([403, 404, 502]).toEqual([forbidden.status, missingOrigin.status, upstreamFailure.status]);
   });
 
   it.each(['203.0.113.17', '2001:db8::1', '::1', '::', '2001:db8:0:1:2:3:4:5', '::ffff:192.0.2.128'])(
@@ -241,7 +254,7 @@ describe('Cloudflare ingress', () => {
     expect(origin.calls[0]!.request.cache).toBe('no-store');
     expect(origin.calls[0]!.init.cf).toEqual({ cacheEverything: false, cacheTtlByStatus: { '100-599': -1 } });
     for (const name of ['Cache-Control', 'CDN-Cache-Control', 'Cloudflare-CDN-Cache-Control']) {
-      expect(response.headers.get(name)).toBe('no-store');
+      expect(response.headers.get(name)).toBe('no-store, no-transform');
     }
   });
 

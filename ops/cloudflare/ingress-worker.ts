@@ -43,6 +43,9 @@ const UNTRUSTED_FORWARDING_HEADERS = [
 const CACHE_HEADERS = [
   'Cache-Control', 'CDN-Cache-Control', 'Cloudflare-CDN-Cache-Control',
 ] as const;
+// Prevent cache storage and intermediary HTML/body transformations on every
+// Worker response, including public documents proxied from CloudFront.
+const RESPONSE_CACHE_CONTROL = 'no-store, no-transform';
 
 export async function handleRequest(
   request: Request,
@@ -106,7 +109,7 @@ export async function handleRequest(
       cf: { cacheEverything: false, cacheTtlByStatus: { '100-599': -1 } },
     });
     const headers = new Headers(response.headers);
-    for (const name of CACHE_HEADERS) headers.set(name, 'no-store');
+    for (const name of CACHE_HEADERS) headers.set(name, RESPONSE_CACHE_CONTROL);
     return new Response(response.body, {
       status: response.status, statusText: response.statusText, headers,
     });
@@ -119,7 +122,7 @@ export async function handleRequest(
 
 function failureResponse(status: number, message: string): Response {
   const headers = new Headers({ 'Content-Type': 'text/plain; charset=utf-8' });
-  for (const name of CACHE_HEADERS) headers.set(name, 'no-store');
+  for (const name of CACHE_HEADERS) headers.set(name, RESPONSE_CACHE_CONTROL);
   return new Response(message, { status, headers });
 }
 
