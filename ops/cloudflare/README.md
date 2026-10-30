@@ -1,7 +1,7 @@
 # Cloudflare ingress migration
 
-Status: **production ingress migrated; ALB retirement verified; legacy-DNS
-propagation mitigation awaits approval** (2026-10-31 JST).
+Status: **production ingress migrated; ALB retirement and legacy-DNS
+propagation mitigation verified** (2026-10-31 JST).
 Cloudflare is authoritative; app and canary Worker/Tunnel routes are live.
 CloudFront default/API assets now use `lyra-cloudflare-app-origin`, after the
 exact `/healthz` probe passed locally and on a temporary GitHub runner. Its five
@@ -32,22 +32,27 @@ The retained Route 53 zone, ALB security group and ACM certificates support
 propagation/recreation; they do not constitute an active ALB. The unused old
 CloudFront origin is recovery metadata, not a reachable fallback after deletion.
 
-The old Route 53 zone still has app A/AAAA aliases to this CloudFront distribution.
-Its delegation NS TTL was 172800 seconds. A resolver retaining the old NS can
-therefore return CloudFront for app while CloudFront's new origin is app, creating
-a possible DNS/origin cycle during propagation. Successful LAX/ORD and final
-endpoint probes do not establish convergence of every resolver; the single
-observed timeout has not been attributed to this hypothesis.
+The retained Route 53 zone previously had app A/AAAA aliases to this CloudFront
+distribution. Its delegation NS TTL was 172800 seconds, so an old-NS resolver
+could return CloudFront for app while CloudFront's new origin is app. Successful
+LAX/ORD and final endpoint probes alone did not establish convergence of every
+resolver; the single observed timeout has not been attributed to this hypothesis.
 
-A reversible, two-record TTL-60 mirror plan from the current Cloudflare app
-A/AAAA answers is prepared; both advertised IPv4 addresses passed app Host/SNI
-readiness with normal TLS verification. Applying it to the retained Route 53 zone
-was rejected by automatic approval review for missing explicit authority for this
-additional DNS update. It is **not applied and awaits user approval**. Re-read
-both Cloudflare authoritative answers before applying; fixed edge IPs are only a
-propagation bridge, not a permanent replacement for Cloudflare authoritative DNS.
-Preserve the previous aliases, but never restore them while CloudFront still
-uses app as its origin. That would restore the same cycle.
+After explicit user approval, only the retained zone's app A/AAAA records were
+mirrored to freshly verified Cloudflare authoritative addresses with TTL 60.
+At 2026-10-31 08:30 JST, the AWS change was INSYNC, all four old nameservers'
+A/AAAA answers matched (eight checks), and app plus legacy distribution readiness
+both returned 200. Both adopted IPv4 addresses also passed app Host/SNI readiness
+with normal TLS verification. Existing cached alias answers may remain until
+their TTL expires; this does not claim every resolver has already converged.
+
+Cloudflare remains authoritative and its records were not changed by this mirror.
+Fixed edge IPs are only a propagation bridge, not a permanent DNS architecture.
+Before reusing or maintaining the retained zone, re-read both Cloudflare
+nameservers and compare its mirror; the values do not synchronize automatically.
+Keep the zone through the old delegation cache window before considering its
+separately authorized retirement. Preserve the previous aliases, but never restore
+them while CloudFront still uses app as origin: that would restore the same cycle.
 
 Live tests did not hold a long-running SSE open during shutdown or originate an
 IPv6 client connection; those paths have unit/configuration coverage only. Keep
