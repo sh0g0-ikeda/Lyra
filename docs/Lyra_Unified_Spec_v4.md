@@ -46,6 +46,18 @@ The primary user flows are:
 Routes must not implement provider calls or credit arithmetic directly. Services
 depend on ports, and repositories own persistence details.
 
+The optional ingress migration adapter lives in `ops/cloudflare/` and is prepared
+with public routes and previews disabled. Its deployment changes only the public
+proxy/Tunnel layer and an additive API-task sidecar; it must preserve the live
+API image, worker, Cognito, tenant authorization, raw signed webhook requests,
+stream/error status, job/credit contracts and public hostname. Visitor-supplied
+origin/address headers are replaced, authenticated responses are never cached,
+and only the five explicit public documents may reach the existing S3 OAC branch.
+DNS import is initially DNS-only and must preserve email/certificate records.
+Capacity, two healthy connectors, compatible clients and drain/rollback checks
+must pass before retiring the ALB. See `ops/cloudflare/README.md` for the dated
+operational baseline and rollout gates; prepared code is not a deployed migration.
+
 ## 4. Authentication and authorization
 
 Production authentication uses Cognito JWT verification. Protected routes require

@@ -1564,5 +1564,5 @@ Git
 
 \*AGENTS.md は設計・仕様が変わった場合に必ず更新する。\*
 
-\*最終更新: 2026-04-22\*
+\*最終更新: 2026-10-30（入口移行の境界と初期無効設定は `docs/Lyra_Unified_Spec_v4.md` §3・§9 と `ops/cloudflare/README.md` を参照）\*
 

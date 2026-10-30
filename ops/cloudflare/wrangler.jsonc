@@ -1,0 +1,13 @@
+{
+  // Prepared only: no account, route, workers.dev or preview exposure is enabled.
+  // The operator supplies account_id after authentication and runtime acceptance checks.
+  // LYRA_ORIGIN_GUARD must be an encrypted secret binding, never placed in vars.
+  "name": "lyra-tunnel-ingress",
+  "main": "ingress-worker.ts",
+  "compatibility_date": "2026-10-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "vars": {},
+  "observability": { "enabled": false }
+}
