@@ -1,0 +1,23 @@
+name: Cloudflare ingress smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/cloudflare-tunnel-ingress
+    paths:
+      - .github/workflows/cloudflare-ingress-smoke.yml
+      - scripts/ops/cloudflare_ingress_smoke.py
+
+permissions:
+  contents: read
+
+jobs:
+  public-healthz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/ops/cloudflare_ingress_smoke.py --timeout-seconds 15

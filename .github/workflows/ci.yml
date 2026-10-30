@@ -52,6 +52,12 @@ jobs:
       - name: Run Vitest suite
         run: bun run test
 
+      - name: Typecheck Cloudflare ingress adapter
+        run: node node_modules/typescript/bin/tsc -p ops/cloudflare/tsconfig.json
+
+      - name: Verify local-only ingress deployment planners
+        run: python3 -B -m unittest discover -s tests/unit/ops -p 'test_*.py' -v
+
       - name: Run Bun test entrypoint
         run: bun test
 

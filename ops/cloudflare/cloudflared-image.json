@@ -1,0 +1,8 @@
+{
+  "version": "2026.10.6",
+  "image": "cloudflare/cloudflared@sha256:004d843fa5fdc3103983fd580ee19fab4a8fa98add31f87249c1659e848c98e0",
+  "arm64_manifest": "sha256:cb08c296d13f5a72754bdec3104fa5a31332058dde23fa5253718c825c080dff",
+  "source": "https://github.com/cloudflare/cloudflared/releases/tag/2026.10.6",
+  "registry_digest_verified": true,
+  "verified_date": "2026-10-30"
+}
