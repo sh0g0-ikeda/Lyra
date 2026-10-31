@@ -70,6 +70,7 @@ type EditorState = {
   frames: Record<string, PanelFrameRecord[]>;
   scenes: SceneRecord[];
   writes: number;
+  warmupCalls: number;
   handleWrite?: (route: Route) => Promise<void>;
 };
 
@@ -111,6 +112,7 @@ function createState(): EditorState {
     frames: { [first.id]: [createFrame('frame-1', first.id, firstPanel.id)], [second.id]: [createFrame('frame-2', second.id, 'panel-3')] },
     scenes: [{ id: 'scene-1', episode_id: episode.id, order: 1, location: 'Server fort', time: 'night', atmosphere: 'tense', involved_entity_ids: [], entity_states: [], status: 'draft', created_at: '2026-10-05T00:00:00.000Z', updated_at: '2026-10-05T00:00:00.000Z' }],
     writes: 0,
+    warmupCalls: 0,
   };
 }
 
@@ -124,6 +126,14 @@ async function seed(page: Page): Promise<void> {
 async function mockEditorApi(route: Route, state: EditorState): Promise<void> {
   const request = route.request();
   const pathname = new URL(request.url()).pathname;
+  const warmupPageId = pathname.match(/^\/api\/pages\/([^/]+)\/generation-warmup$/u)?.[1];
+  if (request.method() === 'POST' && warmupPageId !== undefined) {
+    expect(state.pages.some(saved => saved.id === warmupPageId)).toBe(true);
+    state.warmupCalls += 1;
+    expect(request.postData()).toBeNull();
+    await route.fulfill({ status: 204 });
+    return;
+  }
   if (request.method() !== 'GET') {
     state.writes += 1;
     if (state.handleWrite !== undefined) return state.handleWrite(route);
@@ -323,10 +333,12 @@ test('未保存frame編集がある場合はカラーと白黒生成を無効化
   const color=page.getByRole('button',{name:'Generate in color',exact:true});
   const monochrome=page.getByRole('button',{name:'Generate monochrome page',exact:true});
   await expect(color).toBeEnabled();await expect(monochrome).toBeEnabled();
+  await expect.poll(()=>state.warmupCalls).toBe(1);
   await page.getByText('Advanced frame geometry',{exact:true}).click();
   await page.getByRole('spinbutton',{name:'X',exact:true}).first().fill('0.25');
   await expect(color).toBeDisabled();await expect(monochrome).toBeDisabled();
   expect(state.writes).toBe(0);
+  expect(state.warmupCalls).toBe(1);
 });
 
 test('frame保存待機中のremote更新後は遅い保存応答で入力と基準を巻き戻さない',async({page})=>{
