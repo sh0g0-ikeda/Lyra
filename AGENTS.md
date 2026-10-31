@@ -1573,3 +1573,5 @@ Git
 Generation-worker fast-start rollout follows Unified Spec §6: preserve existing
 worker task protection, deploy pre/post-052-compatible code before migration 052,
 and keep a compatible flag-OFF rollback image after the migration.
+Workers are on demand at every hour; retain the shared twenty-minute idle lease
+and active-job/task protection when changing warm control.

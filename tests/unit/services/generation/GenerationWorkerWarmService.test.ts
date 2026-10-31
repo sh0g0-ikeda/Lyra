@@ -4,23 +4,22 @@ import { getGenerationWorkerWarmFloor } from '../../../../src/domain/generation/
 /* Design: Unified Spec 4/6/7/9. Pre-wake and durable enqueue request a shared
  * twenty-minute lease, without charging credits or creating a preview job.
  * One transactional controller owns the minimum floor, never desired/max count.
- * JST 13:00-01:00 stays warm; queued/processing work prevents scale-in.
- * AWS is mocked throughout. Production configuration remains unchanged.
+ * Every hour is on demand: only a live lease or queued/processing work keeps
+ * the minimum at one. Existing twenty-minute reuse and scale-in safety remain.
+ * AWS is mocked throughout.
  */
 describe('generation worker warm policy', () => {
-  it('日本時間13時から翌1時未満は最低1台になる', () => {
-    expect(getGenerationWorkerWarmFloor(new Date('2026-10-31T04:00:00Z'), null, false)).toBe(1);
-    expect(getGenerationWorkerWarmFloor(new Date('2026-10-31T15:59:59Z'), null, false)).toBe(1);
-  });
-  it('日本時間1時から13時未満に利用も処理もない場合は0台になる', () => {
-    expect(getGenerationWorkerWarmFloor(new Date('2026-10-31T16:00:00Z'), null, false)).toBe(0);
-    expect(getGenerationWorkerWarmFloor(new Date('2026-10-31T03:59:59Z'), null, false)).toBe(0);
-  });
-  it('常駐時間外でも期限内の予熱または処理中ジョブがあれば最低1台になる', () => {
-    const now = new Date('2026-10-31T18:00:00Z');
-    expect(getGenerationWorkerWarmFloor(now, new Date('2026-10-31T18:20:00Z'), false)).toBe(1);
-    expect(getGenerationWorkerWarmFloor(now, null, true)).toBe(1);
+  it.each(Array.from({ length: 24 }, (_, hour) => hour))('日本時間%i時でも利用も処理もない場合は0台になる', (hour) => {
+    const now = new Date(new Date('2026-11-01T00:00:00+09:00').getTime() + hour * 60 * 60 * 1000);
+    expect(getGenerationWorkerWarmFloor(now, null, false)).toBe(0);
+    expect(getGenerationWorkerWarmFloor(now, new Date(now.getTime() - 1), false)).toBe(0);
     expect(getGenerationWorkerWarmFloor(now, now, false)).toBe(0);
+  });
+  it.each(Array.from({ length: 24 }, (_, hour) => hour))('日本時間%i時でも期限内の予熱または処理中ジョブがあれば最低1台になる', (hour) => {
+    const now = new Date(new Date('2026-11-01T00:00:00+09:00').getTime() + hour * 60 * 60 * 1000);
+    expect(getGenerationWorkerWarmFloor(now, new Date(now.getTime() + 1), false)).toBe(1);
+    expect(getGenerationWorkerWarmFloor(now, null, true)).toBe(1);
+    expect(getGenerationWorkerWarmFloor(now, now, true)).toBe(1);
   });
 });
 
@@ -63,6 +62,18 @@ class MemoryFloor implements GenerationWorkerFloorPort {
 }
 
 describe('GenerationWorkerWarmService', () => {
+  it('旧常駐時間帯でも期限切れで仕事がなければ既存1台の最低台数を0へ戻す', async () => {
+    const repository = new MemoryWarmRepository();
+    repository.now = new Date('2026-11-01T04:00:00Z');
+    repository.leaseUntil = new Date(repository.now.getTime() - 1);
+    repository.appliedFloor = 1;
+    const floor = new MemoryFloor();
+    const service = new GenerationWorkerWarmService(repository, floor, 'service/test/worker', () => undefined);
+    await service.reconcile();
+    expect(floor.calls).toEqual([0]);
+    expect(repository.appliedFloor).toBe(0);
+  });
+
   it('起動要求を共有20分leaseへまとめて最大台数や現在台数を操作しない', async () => {
     const repository = new MemoryWarmRepository();
     const floor = new MemoryFloor();

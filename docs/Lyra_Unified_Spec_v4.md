@@ -761,7 +761,8 @@ warm request after the durable SQS send; wake failure never invalidates an
 accepted message or triggers a refund.
 
 A server-configured scalable resource has a shared transactional warm lease.
-JST 13:00-01:00 has a minimum of one worker; outside that window preparation,
+Without a live lease or queued/processing work, minimum capacity is zero at
+every hour. Preparation,
 enqueue and work completion keep the minimum at one for twenty minutes. All
 queued/processing generation job types prevent lowering the floor. The
 controller serializes expiry and wake requests across API replicas and changes
