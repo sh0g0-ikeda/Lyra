@@ -30,12 +30,11 @@ async function createClient(): Promise<InstanceType<WebApiModule['LyraApiClient'
 
 describe('LyraApiClient generation warmup', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it('生成warmupは課金bodyなしで認証済みpage scopeへ送る', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
-    vi.stubGlobal('fetch', fetchMock);
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
     const client = await createClient();
 
     await expect(
@@ -52,7 +51,7 @@ describe('LyraApiClient generation warmup', () => {
   });
 
   it('生成warmupは旧backendの404を生成阻害エラーにしない', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
     const client = await createClient();
 
     await expect(client.warmPageGeneration('page-1')).resolves.toBeUndefined();
