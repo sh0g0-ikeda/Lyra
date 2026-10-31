@@ -842,8 +842,9 @@ function sanitizePanelSpecificNote(
   backgroundNote: string | null,
   customNote: string | null,
 ): string | null {
-  const sentences = normalizeWhitespace(note).slice(0, 2000).split(/(?<=[。！？])\s*|(?<=[.!?])\s+/u);
-  const sanitized = sentences.filter((sentence) => sanitizePromptField(sentence, 2000) !== null).join(' ');
+  // Only discard a note when its entire content is already present elsewhere.
+  // Boilerplate-like wording may still contain authored grip/scale information.
+  const sanitized = normalizeWhitespace(note).slice(0, 2000);
   if (sanitized.length === 0) {
     return null;
   }
@@ -889,22 +890,14 @@ function sanitizePromptField(value: string | null | undefined, maxLength: number
 }
 
 function promptFieldsLookEquivalent(left: string, right: string): boolean {
-  const normalize = (value: string): string =>
-    value
-      .toLowerCase()
-      .replace(/[.!?。！？、,／/・:;()[\]{}"'`]/gu, ' ')
-      .replace(/\s+/gu, ' ')
-      .trim();
-
-  const normalizedLeft = normalize(left);
-  const normalizedRight = normalize(right);
+  const normalizedLeft = normalizeWhitespace(left);
+  const normalizedRight = normalizeWhitespace(right);
   if (normalizedLeft.length < 12 || normalizedRight.length < 12) {
     return normalizedLeft === normalizedRight;
   }
 
   return (
     normalizedLeft === normalizedRight ||
-    normalizedLeft.includes(normalizedRight) ||
     normalizedRight.includes(normalizedLeft)
   );
 }

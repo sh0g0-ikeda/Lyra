@@ -197,14 +197,24 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain('150 cm');
     expect(result.draftPrompt).toContain('six heads tall');
   });
-  it('日本語の句点直後に保持指示が続く場合に定型文だけ除去して指示を残す', async () => {
+  it('日本語の句点直後に保持指示が続く場合に指示と小数を壊さず渡す', async () => {
     const panels = new FakePanelRepository();
     panels.panels[0]!.panelNotes = 'Focus this page on the room。もう一方の手で柄を支える。高さ1.5mの台を保つ。';
     const result = await new PromptBuilder(new FakePageRepository(), panels, new FakeEntityRepository(), new FakeCompositionGalleryRepository())
       .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
     expect(result.draftPrompt).toContain('もう一方の手で柄を支える。');
     expect(result.draftPrompt).toContain('高さ1.5mの台を保つ');
-    expect(result.draftPrompt).not.toContain('Focus this page on the room');
+  });
+
+  it.each([
+    'Focus this page on the room and keep the other hand around the grip.',
+    'Hero lunges forward. The other hand supports the grip.',
+  ])('定型文や既出の文を含む補足にも固有の関係がある場合に残す: %s', async (note) => {
+    const panels = new FakePanelRepository();
+    panels.panels[0]!.panelNotes = note;
+    const result = await new PromptBuilder(new FakePageRepository(), panels, new FakeEntityRepository(), new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+    expect(result.draftPrompt).toContain(note.replace(/[.]$/u, ''));
   });
 
   it('物体の補足と説明に別々の設計情報がある場合に両方を一度ずつ保持する', async () => {
@@ -344,7 +354,6 @@ describe('PromptBuilder', () => {
       expect(text).toContain('The enormous vehicle remains intentionally much larger than the people');
       expect(text).toContain('The doorway is twice the height of the child');
       expect(text).toContain('The other hand supports the bottom of the object');
-      expect(text).not.toContain('Focus this page on the room');
       expect(text).toContain('Subjects at comparable depth have plausible size relationships');
       expect(text).toContain('perspective and foreshortening');
     }
@@ -719,13 +728,13 @@ describe('PromptBuilder', () => {
     );
   });
 
-  it('drops redundant long panel notes from the prompt brief', async () => {
+  it('入力本文と同一のパネル補足の場合に重複して出力しない', async () => {
     const panelRepository = new FakePanelRepository();
     panelRepository.panels = [
       {
         ...buildPanel(),
         panelNotes:
-          'Focus this page on Rooftop / night / tense. Maintain the scene mood: tense. Page 3 should read naturally into the next page without adding a new event.',
+          'Hero lunges forward.',
       },
     ];
     const builder = new PromptBuilder(
@@ -742,8 +751,8 @@ describe('PromptBuilder', () => {
       generationMode: 'thinking',
     });
 
-    expect(result.draftPrompt).not.toContain('Panel-specific note: Focus this page on Rooftop');
-    expect(result.compilerBrief).not.toContain('Panel-specific note: Focus this page on Rooftop');
+    expect(result.draftPrompt).not.toContain('Panel-specific note: Hero lunges forward');
+    expect(result.compilerBrief).not.toContain('Panel-specific note: Hero lunges forward');
   });
 
   it('includes named style reference title and compiled brief in page prompts', async () => {

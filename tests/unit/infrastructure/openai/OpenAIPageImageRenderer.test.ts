@@ -139,6 +139,7 @@ describe('OpenAIPageImageRenderer', () => {
     const request = postJson.mock.calls[0]?.[1] as { prompt: string };
     expect(request.prompt.match(new RegExp(PAGE_VISUAL_INTEGRITY_POLICY, 'g'))).toHaveLength(1);
     expect(request.prompt).toBe(`page prompt\n\nInternal generation plan:\nplan\n\n${PAGE_VISUAL_INTEGRITY_POLICY}`);
+    expect(result.providerPromptSha256).toBe(buildPersistedPromptDiagnostics(request.prompt).sha256);
   });
 
   it('input image がある場合は /images/edits に multipart で送る', async () => {
