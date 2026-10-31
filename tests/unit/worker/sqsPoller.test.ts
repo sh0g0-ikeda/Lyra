@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ChangeMessageVisibilityBatchCommand,
   DeleteMessageBatchCommand,
@@ -11,6 +11,11 @@ import type { ProcessEpisodePageSkeletonJobResult } from '../../../src/services/
 import type { ProcessEpisodeStoryAutofillJobResult } from '../../../src/services/story/EpisodeStoryAutofillWorkerService.js';
 import { GenerationQueuePoller, type SqsPollerClient } from '../../../worker/sqsPoller.js';
 import type { WorkerBatchResult, WorkerDependencies } from '../../../worker/index.js';
+import { advanceFakeTimersByTime } from '../../helpers/advanceTimers.js';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 class FakeSqsPollerClient implements SqsPollerClient {
   public deletedEntries: unknown[] = [];
@@ -195,9 +200,9 @@ describe('GenerationQueuePoller', () => {
     });
     const running = poller.run();
 
-    await vi.advanceTimersByTimeAsync(999);
+    await advanceFakeTimersByTime(999);
     expect(client.receiveInputs).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1);
+    await advanceFakeTimersByTime(1);
     await running;
 
     expect(client.receiveInputs).toHaveLength(2);

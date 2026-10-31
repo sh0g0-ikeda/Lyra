@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   EcsTaskProtection,
   type EcsTaskProtectionFetch,
 } from '../../../../src/infrastructure/aws/EcsTaskProtection.js';
+import { advanceFakeTimersByTime } from '../../../helpers/advanceTimers.js';
 
 function createFetch(status = 200): EcsTaskProtectionFetch {
   return vi.fn(async (_url, init) => ({
@@ -12,6 +13,10 @@ function createFetch(status = 200): EcsTaskProtectionFetch {
     json: async () => ({ ProtectionEnabled: JSON.parse(init.body).ProtectionEnabled }),
   }));
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('EcsTaskProtection', () => {
   it('protectの場合にECS agentへ60分の保護をPUTする', async () => {
@@ -123,7 +128,7 @@ describe('EcsTaskProtection', () => {
       resolveWork = () => resolve('completed');
     }));
 
-    await vi.advanceTimersByTimeAsync(1);
+    await advanceFakeTimersByTime(1);
     resolveWork?.();
     await Promise.resolve();
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -154,9 +159,9 @@ describe('EcsTaskProtection', () => {
         resolveWork = () => resolve('completed');
       }));
 
-      await vi.advanceTimersByTimeAsync(1);
+      await advanceFakeTimersByTime(1);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('active job continues'));
-      await vi.advanceTimersByTimeAsync(1);
+      await advanceFakeTimersByTime(1);
       resolveWork?.();
 
       await expect(running).resolves.toBe('completed');
