@@ -2,6 +2,7 @@ import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { GenerationJobType } from '../../domain/types/job.js';
 import { toSanitizedAwsErrorMessage } from './AwsErrorMessage.js';
+import type { GenerationWorkerWarmPort } from '../../services/generation/GenerationWorkerWarmService.js';
 
 export interface EnqueueGenerationJobInput {
   jobId: string;
@@ -18,6 +19,7 @@ export class SqsGenerationQueue {
   public constructor(
     private readonly client: GenerationQueueClient,
     private readonly queueUrl: string,
+    private readonly warm: GenerationWorkerWarmPort | null = null,
   ) {}
 
   public async enqueueJob(input: EnqueueGenerationJobInput): Promise<{ messageId: string | null }> {
@@ -32,6 +34,11 @@ export class SqsGenerationQueue {
         }),
       );
 
+      // Durable acceptance must survive a failed capacity-control request.
+      if (this.warm !== null) {
+        try { await this.warm.requestWarm(); }
+        catch { console.warn('[generation-worker-warm] enqueue wake unavailable; durable queue fallback remains active'); }
+      }
       return {
         messageId: response.MessageId ?? null,
       };

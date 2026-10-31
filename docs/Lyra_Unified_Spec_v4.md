@@ -751,6 +751,57 @@ keeps an exact section only once. Direct draft and fallback paths retain their
 existing style section; this does not add a provider call, audit, quote field or
 new persisted contract.
 
+Generation worker fast start is independently gated by
+`GENERATION_WORKER_WARM_ENABLED`, default false. An authenticated, rate-limited
+page preparation request reuses saved-input generation validation, ownership,
+organization generate capability and available credits without creating a job,
+changing page state, recovering jobs, or charging credits. Preparation failure
+must not block actual generation. Existing clients also benefit from a best-effort
+warm request after the durable SQS send; wake failure never invalidates an
+accepted message or triggers a refund.
+
+A server-configured scalable resource has a shared transactional warm lease.
+JST 13:00-01:00 has a minimum of one worker; outside that window preparation,
+enqueue and work completion keep the minimum at one for twenty minutes. All
+queued/processing generation job types prevent lowering the floor. The
+controller serializes expiry and wake requests across API replicas and changes
+only the minimum capacity; it does not directly set desired count or change
+the existing maximum capacity.
+Suspending AWS scheduled scaling is the explicit handoff that authorizes
+adopting an existing minimum of zero or one. It refuses ownership while AWS
+scheduled scaling remains enabled or dynamic scaling is suspended, and never lowers an unowned/manual higher floor.
+API reconcilers retry failed updates while preserving the lease. Worker-side
+ECS protection is acquired before processing, renewed during long work and
+released only after the completion lease update is attempted. Initial protection
+failure retains the message for retry instead of starting unprotected work.
+Renewal failures are logged and retried without turning an already successful
+job into a duplicate delivery; active-job capacity remains protected by the
+controller floor, while prolonged renewal failure cannot guarantee ECS
+protection beyond its existing expiry.
+
+The existing worker scale-in protection remains authoritative and requires
+`ECS_TASK_SCALE_IN_PROTECTION_ENABLED=true` when warm control is enabled. The
+poller extends the shared lease after work settlement and before releasing its
+existing protection. Protection is never layered or replaced by this feature.
+
+Migration 052 adds only the operational warm-control table. Runtime attestation
+validates its complete footprint before projecting it out of the existing
+canonical and production schema profiles. First deploy code compatible with both
+pre-052 and post-052 schemas to every API and worker with warm control disabled;
+then apply 052, validate invariants, verify worker protection, suspend scheduled
+scaling, and enable API warm control. API shutdown drains in-flight reconciles
+before closing database connections. Existing SQS policies and their maximum
+capacity remain the fallback. Native mobile clients benefit from enqueue wake;
+shipping their preparation UI is a separate store release.
+
+Rollback retains migration 052 and uses the compatible release image with warm
+control disabled. First hold minimum capacity at one and preserve active work,
+restore scheduled-scaling ownership, verify a healthy worker, then disable warm
+control on API and worker. Restore the recorded minimum after draining active
+work; disabling the flag alone does not reset the minimum. Original pre-052
+images must not be restarted against the extended
+schema. Model, pricing, API replica count and unrelated runtime flags stay intact.
+
 ## 7. Credits and billing
 
 Text AI operations are free. Entity preview/import analysis and page generation use

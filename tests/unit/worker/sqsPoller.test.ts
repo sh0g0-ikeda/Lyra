@@ -9,7 +9,11 @@ import type { ProcessEntityGenerationJobResult } from '../../../src/services/ent
 import type { ProcessPageGenerationJobResult } from '../../../src/services/page/PageGenerationWorkerService.js';
 import type { ProcessEpisodePageSkeletonJobResult } from '../../../src/services/story/EpisodePageSkeletonWorkerService.js';
 import type { ProcessEpisodeStoryAutofillJobResult } from '../../../src/services/story/EpisodeStoryAutofillWorkerService.js';
-import { GenerationQueuePoller, type SqsPollerClient } from '../../../worker/sqsPoller.js';
+import {
+  assertWarmWorkerProtectionEnabled,
+  GenerationQueuePoller,
+  type SqsPollerClient,
+} from '../../../worker/sqsPoller.js';
 import {
   TaskScaleInProtectionError,
   type TaskScaleInProtection,
@@ -117,6 +121,16 @@ class FakeEpisodePageSkeletonWorkerService {
 }
 
 describe('GenerationQueuePoller', () => {
+  it('warm制御有効時は既存task protectionの有効化を必須にする', () => {
+    expect(() => assertWarmWorkerProtectionEnabled(true, {
+      ECS_TASK_SCALE_IN_PROTECTION_ENABLED: 'false',
+    })).toThrow('task scale-in protection');
+    expect(() => assertWarmWorkerProtectionEnabled(true, {
+      ECS_TASK_SCALE_IN_PROTECTION_ENABLED: 'true',
+    })).not.toThrow();
+    expect(() => assertWarmWorkerProtectionEnabled(false, {})).not.toThrow();
+  });
+
   it('処理成功と恒久的な不正メッセージはSQSから削除する', async () => {
     const pageWorker = new FakePageGenerationWorkerService();
     const entityWorker = new FakeEntityGenerationWorkerService();
@@ -243,6 +257,52 @@ describe('GenerationQueuePoller', () => {
     expect(events[0]).toBe('protect:120');
     expect(events[1]).toBe('receive');
     expect(events.at(-1)).toBe('unprotect');
+  });
+
+  it('処理完了leaseを一度だけ更新してからtask protectionを解除する', async () => {
+    const events: string[] = [];
+    const protection = new FakeTaskScaleInProtection();
+    protection.unprotect = async () => { events.push('unprotect'); };
+    const poller = new GenerationQueuePoller(
+      new FakeSqsPollerClient([
+        buildMessage('message-1', 'receipt-1', {
+          job_id: '11111111-1111-4111-8111-111111111111',
+          job_type: 'page_generate',
+        }),
+      ]),
+      buildDependencies(new FakePageGenerationWorkerService(), new FakeEntityGenerationWorkerService()),
+      {
+        queueUrl: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
+        onWorkSettled: async () => { events.push('lease'); },
+      },
+      protection,
+    );
+
+    await poller.pollOnce();
+
+    expect(events).toEqual(['lease', 'unprotect']);
+  });
+
+  it('処理完了lease更新失敗でも成功messageを再試行にせずtask protectionを解除する', async () => {
+    const protection = new FakeTaskScaleInProtection();
+    const client = new FakeSqsPollerClient([
+      buildMessage('message-1', 'receipt-1', {
+        job_id: '11111111-1111-4111-8111-111111111111',
+        job_type: 'page_generate',
+      }),
+    ]);
+    const poller = new GenerationQueuePoller(
+      client,
+      buildDependencies(new FakePageGenerationWorkerService(), new FakeEntityGenerationWorkerService()),
+      {
+        queueUrl: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
+        onWorkSettled: async () => { throw new Error('lease unavailable'); },
+      },
+      protection,
+    );
+
+    await expect(poller.pollOnce()).resolves.toMatchObject({ deletedCount: 1, retryCount: 0 });
+    expect(protection.calls.at(-1)).toBe('unprotect');
   });
 
   it('task保護取得失敗時はSQS受信もprovider処理も行わない', async () => {

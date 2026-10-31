@@ -1568,3 +1568,8 @@ Git
 
 \*最終更新: 2026-10-31（自動入力と画像生成の種別・形状・相対スケール契約は `docs/Lyra_Unified_Spec_v4.md` §6を参照）\*
 
+
+
+Generation-worker fast-start rollout follows Unified Spec §6: preserve existing
+worker task protection, deploy pre/post-052-compatible code before migration 052,
+and keep a compatible flag-OFF rollback image after the migration.

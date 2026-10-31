@@ -34,6 +34,11 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`Google recovery
         } };
         await withPostgresTestMigrationLock(admin, async () => {
             await runPendingMigrations(database, profile === 'canonical' ? undefined : { migrationsDir: join(process.cwd(), 'tests/fixtures/production44-pg18') });
+            // This suite rehearses the historical 050 -> 051 boundary.
+            if (profile === 'canonical') await database.transaction(async client => {
+                await client.query('DROP TABLE generation_worker_warm_controls');
+                await client.query("DELETE FROM schema_migrations WHERE filename='052_add_generation_worker_warm_control.sql'");
+            });
             if (profile === 'expanded') {
                 await runProduction44Expansion(pool);
                 await database.transaction(async client => {

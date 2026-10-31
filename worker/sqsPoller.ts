@@ -29,6 +29,7 @@ export interface GenerationQueuePollerOptions {
   waitTimeSeconds?: number;
   visibilityTimeoutSeconds?: number;
   idleDelayMs?: number;
+  onWorkSettled?: () => Promise<void>;
 }
 
 export interface GenerationQueuePollResult {
@@ -48,6 +49,15 @@ const MIN_TASK_PROTECTION_EXPIRY_MINUTES = 120;
 const MAX_TASK_PROTECTION_EXPIRY_MINUTES = 2_880;
 const TASK_PROTECTION_FAILURE_DELAY_MS = 30_000;
 const MIN_TASK_PROTECTION_REFRESH_INTERVAL_MS = 60_000;
+
+export function assertWarmWorkerProtectionEnabled(
+  warmEnabled: boolean,
+  environment: { ECS_TASK_SCALE_IN_PROTECTION_ENABLED?: string },
+): void {
+  if (warmEnabled && environment.ECS_TASK_SCALE_IN_PROTECTION_ENABLED !== 'true') {
+    throw new Error('Generation worker warm control requires ECS task scale-in protection');
+  }
+}
 
 /**
  * ECS/Fargate worker loop for the same SQS payload contract used by the
@@ -102,6 +112,7 @@ export class GenerationQueuePoller {
 
     const protectionExpiryMinutes = this.taskProtectionExpiryMinutes();
     await this.taskProtection.protect(protectionExpiryMinutes);
+    let workStarted = false;
     try {
       const messages = await this.receiveMessages();
       if (messages.length === 0) {
@@ -121,6 +132,7 @@ export class GenerationQueuePoller {
       const stopProtectionRefresh = this.startProtectionRefresh(protectionExpiryMinutes);
       let handlerResult: WorkerBatchResult;
       try {
+        workStarted = true;
         handlerResult = await handleGenerationQueue(
           {
             Records: messages.map((message) => ({
@@ -150,6 +162,16 @@ export class GenerationQueuePoller {
         handlerResult,
       };
     } finally {
+      if (workStarted && this.options.onWorkSettled !== undefined) {
+        try {
+          await this.options.onWorkSettled();
+        } catch (error) {
+          console.warn(
+            '[generation-worker-warm] completion lease refresh unavailable',
+            sanitizePersistedErrorMessage(error, 'Completion lease refresh failed'),
+          );
+        }
+      }
       try {
         await this.taskProtection.unprotect();
       } catch (error) {

@@ -28,7 +28,8 @@ import { EntityGenerationRecoveryService } from '../src/services/entity/EntityGe
 import { PageGenerationRecoveryService } from '../src/services/page/PageGenerationRecoveryService.js';
 import { OrganizationService, type OrganizationServicePort } from '../src/services/organization/OrganizationService.js';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
-import { GenerationQueuePoller } from '../worker/sqsPoller.js';
+import { resolveGenerationWorkerWarmService } from '../src/infrastructure/aws/GenerationWorkerWarmRuntime.js';
+import { assertWarmWorkerProtectionEnabled, GenerationQueuePoller } from '../worker/sqsPoller.js';
 
 const GENERATION_RECOVERY_INTERVAL_MS = Math.min(
   PAGE_GENERATION_STALE_AFTER_MS,
@@ -51,6 +52,8 @@ async function main(): Promise<void> {
 
 async function startWorkerRuntime(runtime: AttestedRuntime, queueUrl: string): Promise<void> {
   assertAttestedRuntimeCapabilities(runtime, env);
+  const warm = resolveGenerationWorkerWarmService();
+  assertWarmWorkerProtectionEnabled(warm !== null, process.env);
   const terminalRecovery = await createTerminalGenerationNotificationRecoveryRuntime(db, runtime.repositoryProfile, {
     enabled: env.PUSH_NOTIFICATIONS_ENABLED,
     cutover: env.PUSH_TERMINAL_RECOVERY_CUTOVER,
@@ -68,6 +71,15 @@ async function startWorkerRuntime(runtime: AttestedRuntime, queueUrl: string): P
       queueUrl,
       maxNumberOfMessages: env.SQS_GENERATION_MAX_NUMBER_OF_MESSAGES,
       visibilityTimeoutSeconds: env.SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS,
+      ...(warm === null ? {} : {
+        onWorkSettled: async () => {
+          try {
+            await warm.requestWarm();
+          } catch {
+            console.warn('[generation-worker-warm] completion lease refresh unavailable');
+          }
+        },
+      }),
     },
   );
 

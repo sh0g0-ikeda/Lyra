@@ -30,7 +30,7 @@ describePostgres('canonical story autofill migration 050 work fence', () => {
       max: 8,
     });
     const applied = await withPostgresTestMigrationLock(admin, () => runPendingMigrations(testDatabase(pool)));
-    expect(applied.at(-1)).toBe('051_add_google_link_recovery.sql');
+    expect(applied.at(-1)).toBe('052_add_generation_worker_warm_control.sql');
   }, 120_000);
 
   afterAll(async () => {

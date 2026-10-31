@@ -46,6 +46,7 @@ const routeMountPrefixes = new Map([
   ['mobilePurchases.ts', '/api/mobile-purchases'],
   ['organizations.ts', '/api'],
   ['pages.ts', '/api'],
+  ['pageGenerationWarmup.ts', '/api'],
   ['pagePanelStructure.ts', '/api'],
   ['generationQuotes.ts', '/api'],
   ['panelEntityAssignments.ts', '/api'],
@@ -57,6 +58,7 @@ const routeMountPrefixes = new Map([
 ]);
 
 const explicitResponseClassifications = new Map([
+  ['POST /api/pages/:id/generation-warmup', { response: 'Empty', detail: 'Authenticated saved-input readiness and best-effort capacity warmup (204); no job or charge' }],
   ['GET /api/story/page-skeleton-capabilities', { response: 'Operational JSON', detail: 'Authenticated edit-work capability for generated-image-preserving skeleton overwrite' }],
   ['DELETE /api/works/:id', { response: 'Operational JSON', detail: 'Scoped permanent deletion receipt; durable pending/completed status (202/200)' }],
   ['GET /api/work-deletions', { response: 'Operational JSON', detail: 'Scoped nonterminal deletion receipts; bounded to 50' }],

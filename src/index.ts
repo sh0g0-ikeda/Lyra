@@ -1,4 +1,5 @@
 import {createWorkDeletionRuntime,startWorkDeletionRecovery} from './infrastructure/work/WorkDeletionRuntime.js';
+import { startGenerationWorkerWarmReconciler } from './infrastructure/aws/GenerationWorkerWarmRuntime.js';
 import { createAccountDeletionRecoveryRuntime, startAccountDeletionRecovery } from './infrastructure/account/AccountDeletionRuntime.js';
 import { createEpisodeExportMaintenanceRuntime } from './lib/episodeExportMaintenanceRuntime.js';
 import { startEpisodeExportMaintenance } from './lib/episodeExportMaintenance.js';
@@ -109,6 +110,7 @@ async function startRuntime(runtime: AttestedRuntime): Promise<void> {
   const stopExports = startEpisodeExportMaintenance(createEpisodeExportMaintenanceRuntime(env, db));
   const stopCancelledRecovery = await startCancelledGenerationSettlementRecoveryMaintenance(cancelledRecovery);
   const stopTerminalRecovery = await startTerminalGenerationNotificationRecoveryMaintenance(terminalRecovery);
+  const stopWorkerWarm = startGenerationWorkerWarmReconciler();
 
   const server = serve(
     {
@@ -129,7 +131,7 @@ async function startRuntime(runtime: AttestedRuntime): Promise<void> {
       // Stop scheduling before draining HTTP and recovery. No DB close can
       // overtake this reconciliation or an in-flight push dispatch.
       const drained = await Promise.allSettled([
-        stopCancelledRecovery(), stopTerminalRecovery(), stopPush(), stopAccountDeletion(), stopWorkDeletion(), stopExports(), httpClosed,
+        stopWorkerWarm(), stopCancelledRecovery(), stopTerminalRecovery(), stopPush(), stopAccountDeletion(), stopWorkDeletion(), stopExports(), httpClosed,
       ]);
       await closeDatabasePool();
       if (drained.some(result => result.status === 'rejected')) {

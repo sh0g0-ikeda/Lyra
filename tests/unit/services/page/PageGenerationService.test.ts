@@ -240,9 +240,15 @@ class FakeCreditService implements CreditServicePort {
   public shouldFailRefund = false;
   public consumeError: unknown = null;
   public eventLog: string[] | null = null;
+  public balance: CreditBalanceSnapshot = {
+    monthlyCredits: 0,
+    purchasedCredits: 0,
+    totalCredits: 0,
+    monthlyExpiresAt: null,
+  };
 
   public async getBalance(): Promise<CreditBalanceSnapshot> {
-    return { monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null };
+    return this.balance;
   }
 
   public async grantSignupBonus(): Promise<CreditBalanceSnapshot> {
@@ -296,6 +302,63 @@ class FakeRecoveryService implements PageGenerationRecoveryServicePort {
 }
 
 describe('PageGenerationService', () => {
+  it('予熱readinessは既存入力を検証しても回復・課金・job書込を行わない', async () => {
+    const pageRepository = new FakePageRepository();
+    const jobRepository = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    creditService.balance = {
+      monthlyCredits: 10,
+      purchasedCredits: 0,
+      totalCredits: 10,
+      monthlyExpiresAt: null,
+    };
+    const queue = new FakeQueue();
+    const recoveryService = new FakeRecoveryService();
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeEntityRepository(),
+      jobRepository,
+      creditService,
+      queue,
+      new ModeSelector(),
+      recoveryService,
+    );
+
+    await service.assertReadyForWarmup(userId, pageId);
+
+    expect(recoveryService.pageIds).toEqual([]);
+    expect(jobRepository.created).toBeNull();
+    expect(pageRepository.updates).toEqual([]);
+    expect(creditService.consumed).toEqual([]);
+    expect(queue.lastPayload).toBeNull();
+  });
+
+  it('予熱readinessは残高不足を起動前に拒否して書込を行わない', async () => {
+    const pageRepository = new FakePageRepository();
+    const jobRepository = new FakeGenerationJobRepository();
+    const creditService = new FakeCreditService();
+    const queue = new FakeQueue();
+    const recoveryService = new FakeRecoveryService();
+    const service = new PageGenerationService(
+      pageRepository,
+      new FakeEntityRepository(),
+      jobRepository,
+      creditService,
+      queue,
+      new ModeSelector(),
+      recoveryService,
+    );
+
+    await expect(service.assertReadyForWarmup(userId, pageId)).rejects.toMatchObject({
+      code: 'INSUFFICIENT_CREDITS',
+    });
+    expect(recoveryService.pageIds).toEqual([]);
+    expect(jobRepository.created).toBeNull();
+    expect(pageRepository.updates).toEqual([]);
+    expect(creditService.consumed).toEqual([]);
+    expect(queue.lastPayload).toBeNull();
+  });
+
   it('generate前に対象pageのstale processing jobを回収する', async () => {
     const recoveryService = new FakeRecoveryService();
     const service = new PageGenerationService(
