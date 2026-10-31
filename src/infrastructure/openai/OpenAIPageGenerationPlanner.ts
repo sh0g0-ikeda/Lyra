@@ -4,6 +4,7 @@ import type {
 } from '../../services/page/PageGenerationWorkerService.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import { PAGE_GENERATION_PLANNER_MAX_TOKENS } from '../../domain/constants/generation.js';
+import { PAGE_VISUAL_INTEGRITY_POLICY } from '../../services/page/PageVisualPolicy.js';
 import { OpenAIClient } from './OpenAIClient.js';
 
 interface OpenAIPlannerResponse {
@@ -27,7 +28,11 @@ export class OpenAIPageGenerationPlanner implements PageGenerationPlannerPort {
           content: [
             {
               type: 'input_text',
-              text: 'Create an internal manga page generation plan. Return only the plan text.',
+              text: [
+                'Create an internal manga page generation plan. Return only the plan text.',
+                'The plan is subordinate to the authored prompt and must not invent ownership, positions, sizes, or geometry.',
+                PAGE_VISUAL_INTEGRITY_POLICY,
+              ].join(' '),
             },
           ],
         },

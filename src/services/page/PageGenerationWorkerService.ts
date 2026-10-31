@@ -89,6 +89,8 @@ export interface RenderPageImageResult extends ImageProvenance {
   mimeType: string;
   openaiRequestId: string | null;
   costUsd: number | null;
+  providerPromptSha256?: string;
+  providerPromptBytes?: number;
 }
 
 export interface PageImageRendererPort {
@@ -604,6 +606,12 @@ function buildCompletionInput(
     ...(renderResult.imageModel === undefined ? {} : { imageModel: renderResult.imageModel }),
     ...(renderResult.providerModelId === undefined ? {} : { providerModelId: renderResult.providerModelId }),
     ...(renderResult.provider === undefined ? {} : { provider: renderResult.provider }),
+    ...(renderResult.providerPromptSha256 === undefined || renderResult.providerPromptBytes === undefined
+      ? {}
+      : {
+          providerPromptSha256: renderResult.providerPromptSha256,
+          providerPromptBytes: renderResult.providerPromptBytes,
+        }),
   };
 }
 

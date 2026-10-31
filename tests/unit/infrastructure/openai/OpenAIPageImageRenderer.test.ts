@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ConfigurationError } from '../../../../src/domain/errors/index.js';
+import { ConfigurationError, ValidationError } from '../../../../src/domain/errors/index.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../../../src/domain/constants/imageInput.js';
+import { PAGE_IMAGE_PROMPT_MAX_CHARACTERS } from '../../../../src/domain/constants/generation.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { resolvePageGenerationLayoutControl } from '../../../../src/services/page/PageGenerationLayoutControl.js';
 import { OpenAIPageImageRenderer } from '../../../../src/infrastructure/openai/OpenAIPageImageRenderer.js';
+import { PAGE_VISUAL_INTEGRITY_POLICY } from '../../../../src/services/page/PageVisualPolicy.js';
+import { buildPersistedPromptDiagnostics } from '../../../../src/lib/promptDiagnostics.js';
 
 describe('OpenAIPageImageRenderer', () => {
   it('binds saved geometry after compiler, planner and monochrome instructions', async () => {
@@ -11,10 +14,16 @@ describe('OpenAIPageImageRenderer', () => {
     const control = resolvePageGenerationLayoutControl({type:'template',template_id:'splash_1'},1)!;
     const postFormData=vi.fn().mockImplementation(async (_path:string,build:()=>FormData)=>{const form=build();postJson('fixture',{prompt:form.get('prompt')});return {body:{data:[{b64_json:Buffer.from('png').toString('base64')}]},requestId:'fixture'};});
     const renderer = new OpenAIPageImageRenderer({postJson,postFormData} as unknown as OpenAIClient);
-    await renderer.render({jobId:'job',userId:'user',pageId:'page',requestKind:'initial',generationMode:'thinking',quality:'medium',prompt:'compiled',internalPlan:'mirror the page',inputImages:[{role:'layout_reference',label:'guide',dataUrl:'data:image/png;base64,cG5n'}],renderStyle:'monochrome',layoutControl:control,panelCount:1});
+    const result = await renderer.render({jobId:'job',userId:'user',pageId:'page',requestKind:'initial',generationMode:'thinking',quality:'medium',prompt:'compiled',internalPlan:'mirror the page',inputImages:[{role:'layout_reference',label:'guide',dataUrl:'data:image/png;base64,cG5n'}],renderStyle:'monochrome',layoutControl:control,panelCount:1});
     const prompt = postJson.mock.calls[0]?.[1]?.prompt as string;
     expect(prompt.endsWith(control.finalSuffix)).toBe(true);
     expect(prompt.indexOf('black-and-white manga')).toBeLessThan(prompt.indexOf('FINAL AUTHORITATIVE'));
+    expect(prompt.indexOf(PAGE_VISUAL_INTEGRITY_POLICY)).toBeGreaterThan(prompt.indexOf('Internal generation plan:'));
+    expect(prompt.indexOf(PAGE_VISUAL_INTEGRITY_POLICY)).toBeLessThan(prompt.indexOf('black-and-white manga'));
+    expect(result).toMatchObject({
+      providerPromptSha256: buildPersistedPromptDiagnostics(prompt).sha256,
+      providerPromptBytes: buildPersistedPromptDiagnostics(prompt).bytes,
+    });
   });
   it('白黒生成の場合にplannerの後へ白黒制約を付けてproviderへ渡す', async () => {
     const postJson = vi.fn().mockResolvedValue({
@@ -72,6 +81,8 @@ describe('OpenAIPageImageRenderer', () => {
       imageModel: 'gpt-image-2',
       providerModelId: 'gpt-image-2',
       provider: 'openai',
+      providerPromptSha256: buildPersistedPromptDiagnostics(`page prompt\n\nInternal generation plan:\nkeep panel 1 wide\n\n${PAGE_VISUAL_INTEGRITY_POLICY}`).sha256,
+      providerPromptBytes: buildPersistedPromptDiagnostics(`page prompt\n\nInternal generation plan:\nkeep panel 1 wide\n\n${PAGE_VISUAL_INTEGRITY_POLICY}`).bytes,
     });
     expect(postJson).toHaveBeenCalledWith(
       '/images/generations',
@@ -79,6 +90,31 @@ describe('OpenAIPageImageRenderer', () => {
         model: 'gpt-image-2',
       }),
     );
+  });
+
+  it('計画だけが上限を超える場合はlayoutと白黒制約を保って計画を外す', async () => {
+    const postJson = vi.fn().mockResolvedValue({body:{data:[{b64_json:Buffer.from('png').toString('base64')}]},requestId:'fixture'});
+    const control = resolvePageGenerationLayoutControl({type:'template',template_id:'splash_1'},1)!;
+    const postFormData = vi.fn().mockImplementation(async (_path:string,build:()=>FormData)=>{
+      const form = build();
+      postJson('fixture',{prompt:form.get('prompt')});
+      return {body:{data:[{b64_json:Buffer.from('png').toString('base64')}]},requestId:'fixture'};
+    });
+    const renderer = new OpenAIPageImageRenderer({postJson,postFormData} as unknown as OpenAIClient);
+    await renderer.render({jobId:'job',userId:'user',pageId:'page',requestKind:'initial',generationMode:'thinking',quality:'medium',prompt:'compiled',internalPlan:'p'.repeat(PAGE_IMAGE_PROMPT_MAX_CHARACTERS),inputImages:[{role:'layout_reference',label:'guide',dataUrl:'data:image/png;base64,cG5n'}],renderStyle:'monochrome',layoutControl:control,panelCount:1});
+    const prompt = postJson.mock.calls[0]?.[1]?.prompt as string;
+    expect(prompt).not.toContain('Internal generation plan:');
+    expect(prompt).toContain(PAGE_VISUAL_INTEGRITY_POLICY);
+    expect(prompt).toContain('black-and-white manga');
+    expect(prompt.endsWith(control.finalSuffix)).toBe(true);
+  });
+
+  it('本文とポリシーが上限を超える edits は provider 呼出し前に拒否する', async () => {
+    const postFormData = vi.fn();
+    const renderer = new OpenAIPageImageRenderer({postJson:vi.fn(),postFormData} as unknown as OpenAIClient);
+    const prompt = 'a'.repeat(PAGE_IMAGE_PROMPT_MAX_CHARACTERS - Array.from(PAGE_VISUAL_INTEGRITY_POLICY).length + 1);
+    await expect(renderer.render({jobId:'job',userId:'user',pageId:'page',requestKind:'initial',generationMode:'standard',quality:'medium',prompt,internalPlan:null,inputImages:[{role:'entity_reference',label:'Aoi',dataUrl:'data:image/png;base64,cmVm'}]})).rejects.toEqual(new ValidationError('Page image prompt exceeds the provider character limit'));
+    expect(postFormData).not.toHaveBeenCalled();
   });
 
   it('input image がある場合は /images/edits に multipart で送る', async () => {

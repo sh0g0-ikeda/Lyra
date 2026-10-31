@@ -28,6 +28,8 @@ export interface CompletePageGenerationInput extends ImageProvenance {
   generatedAt: string;
   costUsd: number | null;
   openaiRequestId: string | null;
+  providerPromptSha256?: string;
+  providerPromptBytes?: number;
   promptMetadata: PagePromptCompilationMetadata;
   stageTimingsMs?: PageGenerationStageTimingsMs;
 }
@@ -278,6 +280,7 @@ export class PostgresPageGenerationExecutionRepository implements PageGeneration
             cost_usd: input.costUsd,
             ...toImageProvenanceRecord(input),
             ...buildPromptMetadataDiagnostics(input.promptMetadata),
+            ...buildProviderPromptDiagnostics(input),
             compiled_prompt_used: input.promptMetadata.compiledPromptUsed,
             prompt_compiler_provider: input.promptMetadata.promptCompilerProvider,
             compiler_model: input.promptMetadata.compilerModel,
@@ -453,5 +456,18 @@ function buildPromptMetadataDiagnostics(
     compiled_brief_bytes: compiledBrief.bytes,
     compiled_prompt_sha256: compiledPrompt.sha256,
     compiled_prompt_bytes: compiledPrompt.bytes,
+  };
+}
+
+function buildProviderPromptDiagnostics(
+  input: CompletePageGenerationInput,
+): Record<string, string | number> {
+  if (input.providerPromptSha256 === undefined || input.providerPromptBytes === undefined) {
+    return {};
+  }
+
+  return {
+    provider_prompt_sha256: input.providerPromptSha256,
+    provider_prompt_bytes: input.providerPromptBytes,
   };
 }

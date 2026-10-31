@@ -5,7 +5,10 @@ import type {
   RenderPageImageResult,
 } from '../../services/page/PageGenerationWorkerService.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
-import { ConfigurationError } from '../../domain/errors/index.js';
+import { PAGE_IMAGE_PROMPT_MAX_CHARACTERS } from '../../domain/constants/generation.js';
+import { ConfigurationError, ValidationError } from '../../domain/errors/index.js';
+import { buildPersistedPromptDiagnostics } from '../../lib/promptDiagnostics.js';
+import { PAGE_VISUAL_INTEGRITY_POLICY } from '../../services/page/PageVisualPolicy.js';
 import { OpenAIClient } from './OpenAIClient.js';
 
 interface OpenAIImageGenerationResponse {
@@ -24,14 +27,10 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
     if (input.layoutControl != null && input.inputImages.at(-1)?.role !== 'layout_reference') {
       throw new ConfigurationError('Resolved layout requires its guide as the last image input');
     }
-    const plannedPrompt = input.internalPlan === null
-      ? input.prompt
-      : `${input.prompt}\n\nInternal generation plan:\n${input.internalPlan}`;
-    const styledPrompt = input.renderStyle === 'monochrome'
-      ? `${plannedPrompt}\n\nFinal rendering constraint: black-and-white manga ink with grayscale screentones only; no colored fills.`
-      : plannedPrompt;
-    const prompt = input.panelCount === undefined ? styledPrompt
-      : assemblePageRenderPrompt(styledPrompt, null, input.layoutControl ?? null, input.panelCount);
+    // This is the provider boundary: integrity constraints are made final here,
+    // then monochrome and saved-layout instructions retain the final authority.
+    const prompt = buildProviderPrompt(input);
+    const providerPromptDiagnostics = buildPersistedPromptDiagnostics(prompt);
 
     const response = input.inputImages.length === 0
       ? await this.client.postJson<OpenAIImageGenerationResponse>('/images/generations', {
@@ -68,8 +67,51 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
       imageModel: this.model,
       providerModelId: this.model,
       provider: 'openai',
+      providerPromptSha256: providerPromptDiagnostics.sha256,
+      providerPromptBytes: providerPromptDiagnostics.bytes,
     };
   }
+}
+
+function buildProviderPrompt(input: RenderPageImageInput): string {
+  const promptWithPlan = assembleStyledPagePrompt(input, true);
+  if (countPromptCharacters(promptWithPlan) <= PAGE_IMAGE_PROMPT_MAX_CHARACTERS) {
+    return promptWithPlan;
+  }
+
+  const promptWithoutPlan = assembleStyledPagePrompt(input, false);
+  if (input.internalPlan !== null && countPromptCharacters(promptWithoutPlan) <= PAGE_IMAGE_PROMPT_MAX_CHARACTERS) {
+    return promptWithoutPlan;
+  }
+
+  throw new ValidationError('Page image prompt exceeds the provider character limit');
+}
+
+function assembleStyledPagePrompt(input: RenderPageImageInput, includePlan: boolean): string {
+  const promptWithPlan = includePlan && input.internalPlan !== null
+    ? `${input.prompt}\n\nInternal generation plan:\n${input.internalPlan}`
+    : input.prompt;
+  const integrityPrompt = appendVisualIntegrityPolicy(promptWithPlan);
+  const styledPrompt = input.renderStyle === 'monochrome'
+    ? `${integrityPrompt}\n\nFinal rendering constraint: black-and-white manga ink with grayscale screentones only; no colored fills.`
+    : integrityPrompt;
+
+  return input.panelCount === undefined
+    ? styledPrompt
+    : assemblePageRenderPrompt(styledPrompt, null, input.layoutControl ?? null, input.panelCount);
+}
+
+function appendVisualIntegrityPolicy(prompt: string): string {
+  const promptWithoutPolicy = prompt
+    .split(PAGE_VISUAL_INTEGRITY_POLICY)
+    .join('')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim();
+  return `${promptWithoutPolicy}\n\n${PAGE_VISUAL_INTEGRITY_POLICY}`;
+}
+
+function countPromptCharacters(prompt: string): number {
+  return Array.from(prompt).length;
 }
 
 function buildImageEditFormData(input: {
