@@ -199,6 +199,179 @@ class FakeCompositionGalleryRepository implements CompositionGalleryRepository {
 }
 
 describe('PromptBuilder', () => {
+  it('外見が長い人物の場合も身長と頭身の指定を縮約で失わない', async () => {
+    const entities = new FakeEntityRepository();
+    entities.entities = [buildEntity({ structuredFields: { height: '150 cm',
+      hair: { style: 'intricate braided hair '.repeat(18) },
+      proportions: { head_to_body_ratio: 'six heads tall' } } })];
+    const result = await new PromptBuilder(new FakePageRepository(), new FakePanelRepository(), entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+    expect(result.draftPrompt).toContain('150 cm');
+    expect(result.draftPrompt).toContain('six heads tall');
+  });
+  it('日本語の句点直後に保持指示が続く場合に指示と小数を壊さず渡す', async () => {
+    const panels = new FakePanelRepository();
+    panels.panels[0]!.panelNotes = 'Focus this page on the room。もう一方の手で柄を支える。高さ1.5mの台を保つ。';
+    const result = await new PromptBuilder(new FakePageRepository(), panels, new FakeEntityRepository(), new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+    expect(result.draftPrompt).toContain('もう一方の手で柄を支える。');
+    expect(result.draftPrompt).toContain('高さ1.5mの台を保つ');
+  });
+
+  it.each([
+    'Focus this page on the room and keep the other hand around the grip.',
+    'Hero lunges forward. The other hand supports the grip.',
+  ])('定型文や既出の文を含む補足にも固有の関係がある場合に残す: %s', async (note) => {
+    const panels = new FakePanelRepository();
+    panels.panels[0]!.panelNotes = note;
+    const result = await new PromptBuilder(new FakePageRepository(), panels, new FakeEntityRepository(), new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+    expect(result.draftPrompt).toContain(note.replace(/[.]$/u, ''));
+  });
+
+  it('物体の補足と説明に別々の設計情報がある場合に両方を一度ずつ保持する', async () => {
+    const entities = new FakeEntityRepository();
+    entities.entities = [buildEntity({ entityType: 'object', name: 'Relic',
+      freeDescription: 'Three rigid components share one straight axis.', promptSupplement: 'Silver with a blue inset.' })];
+    entities.resolvedReferences = [];
+    const result = await new PromptBuilder(new FakePageRepository(), new FakePanelRepository(), entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+    expect(countOccurrences(result.draftPrompt, 'Three rigid components share one straight axis')).toBe(1);
+    expect(countOccurrences(result.draftPrompt, 'Silver with a blue inset')).toBe(1);
+  });
+  it('同じ人物が複数コマで登場する場合に外見定義を一度だけ渡し各コマの参照と台詞は維持する', async () => {
+    const panels = new FakePanelRepository();
+    panels.panels = Array.from({ length: 4 }, (_, index) => ({ ...buildPanel(), id: `panel-${index + 1}`, order: index + 1 }));
+    const entities = new FakeEntityRepository();
+    entities.entities = [buildEntity({ structuredFields: { hair: { color: 'silver', length: 'long', style: 'braided' } } })];
+    const result = await new PromptBuilder(new FakePageRepository(), panels, entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'thinking' });
+    for (const text of [result.draftPrompt, result.compilerBrief]) {
+      expect(countOccurrences(text, 'silver long braided hair')).toBe(1);
+      for (let order = 1; order <= 4; order += 1) {
+        expect(text).toContain(`Panel ${order} subject lock:`);
+        expect(text).toContain(`Dialogue lock for panel ${order}:`);
+      }
+      expect(countOccurrences(text, 'I will finish this now.')).toBe(8);
+    }
+  });
+  it.each(['weapon', 'tool', 'vehicle', 'structure'])(
+    '物体カテゴリ%sの場合に人物用の指示と独立した位置を出さず使用関係と外観を保持する',
+    async (category) => {
+      const panels = new FakePanelRepository();
+      const entities = new FakeEntityRepository();
+      entities.entities.push(buildEntity({ id: 'object-1', name: 'Relic', entityType: 'object',
+        structuredFields: { category, material: 'metal', size: 'large', distinctive_features: 'three connected segments' },
+        promptSupplement: 'Gold object with a red inset.' }));
+      panels.panels[0]!.entities.push({ ...buildPanel().entities[0]!, entityId: 'object-1', role: 'secondary',
+        position: 'right', facingDirection: 'away', expression: 'custom', customExpression: 'a red glow',
+        action: 'custom', customAction: 'Aki uses Relic with the left hand', effectNote: 'the inset remains visible' });
+      const result = await new PromptBuilder(new FakePageRepository(), panels, entities, new FakeCompositionGalleryRepository())
+        .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'thinking' });
+      for (const text of [result.draftPrompt, result.compilerBrief]) {
+        expect(text).toContain('Relic object reference.');
+        expect(text).not.toContain('Relic character reference');
+        expect(text).not.toContain("Relic's face");
+        expect(text).not.toMatch(/Relic[^.;\n]*right zone/u);
+        expect(text).not.toMatch(/Relic[^.;\n]*facing away/u);
+        expect(text).not.toContain('Aki uses Relic with the left hand body language');
+        expect(text).toContain('Aki uses Relic with the left hand');
+        expect(text).toContain('a red glow');
+        expect(text).toContain('the inset remains visible');
+        expect(text).toContain('three connected segments');
+        expect(text).toContain('metal');
+      }
+      // Prompt conversion must not mutate the editable assignments or API contract.
+      expect(panels.panels[0]!.entities[1]).toMatchObject({ position: 'right', facingDirection: 'away' });
+    },
+  );
+
+  it('参照画像がない単独の物体の場合も物体の設定を使い持ち主を捏造しない', async () => {
+    const panels = new FakePanelRepository();
+    panels.panels = [{ ...buildPanel(), dialogue: [], situationText: 'A vehicle rests on a platform.',
+      entities: [{ ...buildPanel().entities[0]!, entityId: 'object-1', action: 'standing_firm', expression: 'angry',
+        customAction: null, customExpression: null, effectNote: null }]}];
+    const entities = new FakeEntityRepository();
+    entities.entities = [buildEntity({ id: 'object-1', name: 'Cargo', entityType: 'object',
+      structuredFields: { category: 'vehicle', material: 'metal', size: 'enormous' } })];
+    entities.resolvedReferences = [];
+    const result = await new PromptBuilder(new FakePageRepository(), panels, entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+    expect(result.draftPrompt).toContain('enormous');
+    expect(result.draftPrompt).toContain('vehicle');
+    expect(result.draftPrompt).not.toContain('showing angry');
+    expect(result.draftPrompt).not.toContain('standing firm body language');
+    expect(result.draftPrompt).not.toContain('Cargo character reference');
+    expect(result.draftPrompt).toContain('do not invent a holder');
+  });
+
+  it('巨大な非人間の場合に生物の参照と固有の体格や移動方法を維持する', async () => {
+    const entities = new FakeEntityRepository();
+    entities.entities = [buildEntity({ name: 'Dragon', entityType: 'nonhuman',
+      structuredFields: { base_form: 'dragon', size: 'enormous', movement: 'flying', distinctive_features: 'four wings' } })];
+    const result = await new PromptBuilder(new FakePageRepository(), new FakePanelRepository(), entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+    expect(result.draftPrompt).toContain('Dragon nonhuman reference.');
+    expect(result.draftPrompt).not.toContain("Dragon's face, hair shape, clothing silhouette");
+    expect(result.draftPrompt).toContain('enormous');
+    expect(result.draftPrompt).toContain('flying');
+    expect(result.draftPrompt).toContain('four wings');
+    expect(result.draftPrompt).toContain('facing three quarter left');
+    expect(result.draftPrompt).toContain('Explicit authored giants');
+  });
+
+  it('物体の状態が異なる場合に各コマの視覚ロックも対応する状態画像を指定する', async () => {
+    const panels = new FakePanelRepository();
+    panels.panels = [buildPanel(), { ...buildPanel(), id: 'panel-2', order: 2,
+      entities: [{ ...buildPanel().entities[0]!, stateId: 'state-1' }] }];
+    const entities = new FakeEntityRepository();
+    entities.entities = [buildEntity({ name: 'Relic', entityType: 'object' })];
+    entities.resolvedReferences = [
+      { entityId: 'entity-1', stateId: null, stateName: null, stateDescription: null, stateExists: true,
+        ownerUserId: 'user-1', refId: 'base', s3Key: 'saved/user-1/entities/entity-1/base.png', cdnUrl: '', imageModel: null },
+      { entityId: 'entity-1', stateId: 'state-1', stateName: 'Broken', stateDescription: 'One segment is detached.', stateExists: true,
+        ownerUserId: 'user-1', refId: 'broken', s3Key: 'saved/user-1/entities/entity-1/broken.png', cdnUrl: '', imageModel: null },
+    ];
+    const result = await new PromptBuilder(new FakePageRepository(), panels, entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'thinking' });
+    expect(result.draftPrompt).toContain('Image 2 (Relic / Broken): Relic / Broken object reference.');
+    expect(result.draftPrompt).toContain('Visual lock for panel 2: subjects=Relic [Image 2 (Relic / Broken)');
+  });
+
+  it('先行人物の参照がない場合に物体の参照番号を実際の画像順に詰める', async () => {
+    const panels = new FakePanelRepository();
+    panels.panels[0]!.entities.push({ ...buildPanel().entities[0]!, entityId: 'object-1' });
+    const entities = new FakeEntityRepository();
+    entities.entities.push(buildEntity({ id: 'object-1', name: 'Relic', entityType: 'object' }));
+    entities.resolvedReferences = [{ entityId: 'object-1', stateId: null, stateName: null, stateDescription: null,
+      stateExists: true, ownerUserId: 'user-1', refId: 'object-ref', s3Key: 'saved/user-1/entities/object-1/ref.png', cdnUrl: '', imageModel: null }];
+    const result = await new PromptBuilder(new FakePageRepository(), panels, entities, new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard' });
+    expect(result.draftPrompt).toContain('Image 1 (Relic)');
+    expect(result.draftPrompt).not.toContain('Image 2 (Relic)');
+  });
+
+  it('構図の後半に使用関係や大きさの例外がある場合に切り捨てず遠近の指示とともに渡す', async () => {
+    const panels = new FakePanelRepository();
+    panels.panels[0]!.composition = { ...buildPanel().composition, source: 'custom',
+      compositionPrompt: 'A wide view of the room. Aki grips the handle with the left hand; the child stands beside Aki at the same depth.',
+      customNote: 'The foreground object is foreshortened. The enormous vehicle remains intentionally much larger than the people.' };
+    panels.panels[0]!.backgroundNote = 'A doorway is behind the subjects. The doorway is twice the height of the child.';
+    panels.panels[0]!.panelNotes = 'Focus this page on the room. The other hand supports the bottom of the object.';
+    const result = await new PromptBuilder(new FakePageRepository(), panels, new FakeEntityRepository(), new FakeCompositionGalleryRepository())
+      .buildPagePrompt({ userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'thinking' });
+    for (const text of [result.draftPrompt, result.compilerBrief]) {
+      expect(text).toContain('Aki grips the handle with the left hand');
+      expect(text).toContain('the child stands beside Aki at the same depth');
+      expect(text).toContain('The enormous vehicle remains intentionally much larger than the people');
+      expect(text).toContain('The doorway is twice the height of the child');
+      expect(text).toContain('The other hand supports the bottom of the object');
+      expect(text).toContain('Subjects at comparable depth have plausible size relationships');
+      expect(text).toContain('perspective and foreshortening');
+    }
+  });
+
+
   it('keeps off-panel thought identity without adding a visible subject or image reference', async () => {
     const panels=new FakePanelRepository();const entities=new FakeEntityRepository();
     entities.entities.push({...entities.entities[0]!,id:'off-panel',name:'Mio'});
@@ -416,8 +589,8 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain(
       'Panel 1 subject lock: required visible subjects are Aki, reference Image 1 (Aki), role primary, center zone, facing three quarter left.',
     );
-    expect(result.draftPrompt).toContain('Every listed subject must be visibly present and recognizable in this panel.');
-    expect(result.draftPrompt).toContain('Do not substitute, merge, swap, or replace these subjects with any other character or reference image.');
+    expect(result.draftPrompt).toContain('every listed subject must be visible and recognizable');
+    expect(result.draftPrompt).toContain('Do not merge, swap, or substitute referenced subjects.');
     expect(result.draftPrompt).toContain('Aki, reference Image 1 (Aki), is primary in the center zone, facing three quarter left');
     expect(result.draftPrompt).toContain('Sound effect text in the artwork: "WHOOSH".');
     expect(result.draftPrompt).toContain('Panel 1 dialogue by Aki, reference Image 1 (Aki): "I will finish this now." as speech at top.');
@@ -532,7 +705,7 @@ describe('PromptBuilder', () => {
       'Do not treat this as an edit, continuation, or restoration of any previously generated page image.',
     );
     expect(result.draftPrompt).toContain(
-      'Treat uploaded images only as character or layout references, never as a previous page image or an edit target.',
+      'Treat uploaded images only as the declared character, nonhuman, object, or layout references, never as a previous page image or an edit target.',
     );
     expect(result.compilerBrief).toContain(
       'fresh standard generation request based only on the current saved page inputs',
@@ -730,29 +903,29 @@ describe('PromptBuilder', () => {
       'Image 1 (Kasane): Kasane character reference. Use this image only for Kasane',
     );
     expect(result.draftPrompt).toContain(
-      'Kasane visual identity: female, black short straight hair, heavy bangs, blunt front, clean bob back, silver sharp eyes, navy school outfit, sailor collar, short skirt, slender build, average height.',
+      'Kasane visual identity: slender build, average height, female, black short straight hair, heavy bangs, blunt front, clean bob back, silver sharp eyes, navy school outfit, sailor collar, short skirt.',
     );
     expect(result.draftPrompt).toContain(
-      'Kasane, reference Image 1 (Kasane), visual identity female, black short straight hair',
+      'Kasane, reference Image 1 (Kasane), role primary',
     );
     expect(result.draftPrompt).toContain(
-      'line 1 must stay assigned to Kasane, reference Image 1 (Kasane), visual identity female, black short straight hair',
+      'line 1 must stay assigned to Kasane, reference Image 1 (Kasane) exactly as written',
     );
     expect(result.draftPrompt).toContain(
       'Do not assign this line to any other subject or reference image.',
     );
     expect(result.draftPrompt).toContain(
-      'Visual lock for panel 1: subjects=Kasane [Image 1 (Kasane), female, black short straight hair',
+      'Visual lock for panel 1: subjects=Kasane [Image 1 (Kasane)]',
     );
   });
 
-  it('drops redundant long panel notes from the prompt brief', async () => {
+  it('入力本文と同一のパネル補足の場合に重複して出力しない', async () => {
     const panelRepository = new FakePanelRepository();
     panelRepository.panels = [
       {
         ...buildPanel(),
         panelNotes:
-          'Focus this page on Rooftop / night / tense. Maintain the scene mood: tense. Page 3 should read naturally into the next page without adding a new event.',
+          'Hero lunges forward.',
       },
     ];
     const builder = new PromptBuilder(
@@ -769,8 +942,8 @@ describe('PromptBuilder', () => {
       generationMode: 'thinking',
     });
 
-    expect(result.draftPrompt).not.toContain('Panel-specific note: Focus this page on Rooftop');
-    expect(result.compilerBrief).not.toContain('Panel-specific note: Focus this page on Rooftop');
+    expect(result.draftPrompt).not.toContain('Panel-specific note: Hero lunges forward');
+    expect(result.compilerBrief).not.toContain('Panel-specific note: Hero lunges forward');
   });
 
   it('includes named style reference title and compiled brief in page prompts', async () => {
@@ -829,7 +1002,7 @@ describe('PromptBuilder', () => {
       "Style priority: preserve this reference's visual treatment over generic defaults.",
     );
     expect(requiredStyleLock).toContain(
-      'Visual only: preserve character identity/reference mapping, authored story/dialogue, panel count/order/layout, and camera/composition.',
+      'Visual only: preserve subject identity/reference mapping, authored story/dialogue, panel count/order/layout, and camera/composition.',
     );
     expect(result.draftPrompt.split(requiredStyleLock ?? '').length - 1).toBe(1);
     expect(result.compilerBrief.split(requiredStyleLock ?? '').length - 1).toBe(1);

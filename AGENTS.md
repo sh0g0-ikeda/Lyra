@@ -1342,6 +1342,8 @@ CREATE INDEX CONCURRENTLY idx\_entities\_work ON entities(work\_id);
 
 \## 6. 外部API呼び出し原則
 
+画像プロンプトは登録種別ごとに人物・非人間・物体を区別する。物体の独立した位置ロックより使用・保持関係を優先し、参照形状と相対スケールの契約は Spec §6 と `src/services/page/PageVisualPolicy.ts` に従う。
+
 
 
 ```typescript
@@ -1564,5 +1566,5 @@ Git
 
 \*AGENTS.md は設計・仕様が変わった場合に必ず更新する。\*
 
-\*最終更新: 2026-10-27（自動入力の完走優先と維持する検証境界は `docs/Lyra_Unified_Spec_v4.md` §6を参照）\*
+\*最終更新: 2026-10-31（自動入力と画像生成の種別・形状・相対スケール契約は `docs/Lyra_Unified_Spec_v4.md` §6を参照）\*
 

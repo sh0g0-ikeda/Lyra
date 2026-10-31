@@ -3,6 +3,12 @@ import { PANEL_FRAME_TEMPLATE_IDS, getPanelFrameTemplate } from '../../../../src
 import { assemblePageRenderPrompt, resolvePageGenerationLayoutControl } from '../../../../src/services/page/PageGenerationLayoutControl.js';
 
 describe('PageGenerationLayoutControl', () => {
+  it('物体の参照画像が含まれる場合に最終レイアウト指示でも登録種別を維持する', () => {
+    const control = resolvePageGenerationLayoutControl({ type: 'template', template_id: 'standard_4' }, 4)!;
+    expect(control.finalSuffix).toContain('earlier images remain subject references with their registered types');
+    expect(control.finalSuffix).not.toContain('earlier images remain character references');
+  });
+
   it.each(PANEL_FRAME_TEMPLATE_IDS)('%s の場合にカタログの頂点と読み順を変更せず全コマを説明する', (templateId) => {
     const template = getPanelFrameTemplate(templateId);
     const before = JSON.stringify(template);

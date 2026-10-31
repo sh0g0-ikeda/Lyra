@@ -168,6 +168,8 @@ class FakeRenderer implements PageImageRendererPort {
   public imageData = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   public mimeType = 'image/png';
   public onRender: () => void = () => undefined;
+  public providerPromptSha256: string | undefined;
+  public providerPromptBytes: number | undefined;
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
     this.calls.push(input);
@@ -181,6 +183,9 @@ class FakeRenderer implements PageImageRendererPort {
       mimeType: this.mimeType,
       openaiRequestId: 'openai-1',
       costUsd: 0.07,
+      ...(this.providerPromptSha256 === undefined || this.providerPromptBytes === undefined
+        ? {}
+        : { providerPromptSha256: this.providerPromptSha256, providerPromptBytes: this.providerPromptBytes }),
     };
   }
 }
@@ -517,6 +522,8 @@ describe('PageGenerationWorkerService', () => {
     const promptCompiler = new FakePromptCompiler();
     const inputImageBuilder = new FakeInputImageBuilder();
     const renderer = new FakeRenderer();
+    renderer.providerPromptSha256 = 'provider-prompt-sha';
+    renderer.providerPromptBytes = 321;
     const storage = new FakeStorage();
     const creditService = new FakeCreditService();
     const service = new PageGenerationWorkerService(
@@ -587,6 +594,8 @@ describe('PageGenerationWorkerService', () => {
       pageId: 'page-1',
       generationMode: 'standard',
       requestKind: 'initial',
+      providerPromptSha256: 'provider-prompt-sha',
+      providerPromptBytes: 321,
       promptMetadata: {
         draftPrompt: 'page-prompt-draft',
         compilerBrief: '[TASK]\npage compiler brief',

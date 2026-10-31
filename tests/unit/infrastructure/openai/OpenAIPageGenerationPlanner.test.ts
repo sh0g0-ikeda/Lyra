@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
 import { OpenAIPageGenerationPlanner } from '../../../../src/infrastructure/openai/OpenAIPageGenerationPlanner.js';
+import { PAGE_VISUAL_INTEGRITY_POLICY } from '../../../../src/services/page/PageVisualPolicy.js';
 
 describe('OpenAIPageGenerationPlanner', () => {
   it('output_textを内部計画として返す', async () => {
@@ -29,6 +30,11 @@ describe('OpenAIPageGenerationPlanner', () => {
         max_output_tokens: expect.any(Number),
       }),
     );
+    const request = (client.postJson as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as {
+      input: Array<{ content: Array<{ text: string }> }>;
+    };
+    expect(request.input[0]?.content[0]?.text).toContain(PAGE_VISUAL_INTEGRITY_POLICY);
+    expect(request.input[0]?.content[0]?.text).toContain('subordinate to the authored prompt');
   });
 
   it('テキストが無い場合はConfigurationErrorを投げる', async () => {

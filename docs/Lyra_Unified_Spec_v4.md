@@ -289,7 +289,22 @@ the authorized target before entering an active state.
 
 Generation and regeneration both create a new result from the current saved inputs.
 A previous generated page image is not an implicit image reference. Confirmed entity
-reference images are explicit character-consistency inputs.
+reference images are explicit subject-consistency inputs.
+
+Page image prompts preserve the registered character, nonhuman, or object type.
+Objects use reference silhouettes, proportions, component counts and connections;
+human anatomy or expression instructions must not be applied to them. Holder,
+use, support, and contact relations take precedence over independent object
+position/facing assignments; explicit authored composition remains authoritative.
+Relative scale follows saved height, body proportions, object dimensions and
+consistent perspective, with explicit fantasy/miniature/state changes preserved.
+Shared identity definitions and visual integrity rules are stated once, while
+authored actions, dialogue and composition remain intact. The provider boundary
+reinforces this policy before the final monochrome and numbered-layout constraints.
+The final prompt is limited to 32,000 Unicode code points: omit an overflowing
+optional plan as a whole, or fail before the provider call when the base exceeds
+the limit. Persist only its SHA-256 and UTF-8 byte count as additive diagnostics.
+The shared visual policy lives in `src/services/page/PageVisualPolicy.ts`.
 
 Mobile state-preview availability follows the persisted primary character image,
 not the reference-set image count. A matching Mobile-compatible confirmed primary

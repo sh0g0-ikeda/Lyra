@@ -1,3 +1,4 @@
+import { PAGE_VISUAL_INTEGRITY_POLICY } from './PageVisualPolicy.js';
 import { resolvePageGenerationLayoutControl, type PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
 import { NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { CompositionGalleryItem } from '../../domain/types/composition.js';
@@ -47,7 +48,7 @@ interface NormalizedReferenceRole {
   entityId: string | null;
   assignmentKeys: string[];
   imageLabel: string;
-  role: 'character_reference' | 'layout_reference';
+  role: 'character_reference' | 'nonhuman_reference' | 'object_reference' | 'layout_reference';
   subject: string;
   instruction: string;
 }
@@ -70,6 +71,7 @@ interface NormalizedPagePrompt {
   pageSummary: string;
   pageSetting: string;
   referenceRoles: NormalizedReferenceRole[];
+  subjectDefinitions: string[];
   layoutInstruction: string;
   panelInstructions: NormalizedPanelInstruction[];
   qualityConstraints: string[];
@@ -211,6 +213,9 @@ function normalizePagePrompt(
     pageSummary: buildPageSummary(page, input, orderedPanels.length),
     pageSetting: buildPageSetting(page),
     referenceRoles,
+    subjectDefinitions: Array.from(new Set(orderedPanels.flatMap(panel => panel.entities.map(assignment => assignment.entityId))))
+      .map(id => entityMap.get(id)).filter((entity): entity is Entity => entity !== undefined)
+      .map(entity => `${entity.name} (${entity.entityType}): ${summarizeEntityAnchor(entity)}`),
     layoutInstruction: layoutControl?.detailedInstruction ?? buildLayoutInstruction(orderedPanels.length),
     panelInstructions: orderedPanels.map((panel, index) =>
       buildNormalizedPanelInstruction(
@@ -262,7 +267,7 @@ function buildPageSummary(
   panelCount: number,
 ): string {
   const purpose = page.episodePurpose === null ? 'the current episode beat' : page.episodePurpose;
-  return `Create page ${page.pageNumber} of the episode, covering ${purpose}. This is a ${panelCount}-panel manga page for a fresh ${input.generationMode} generation request based only on the current saved page inputs. Render one new finished manga page image, not separated panel assets, and preserve the authored panel order from panel ${1} through panel ${panelCount}. Do not treat this as an edit, continuation, or restoration of any previously generated page image.`;
+  return `Create page ${page.pageNumber} of the episode, covering ${purpose}. This is a fresh ${input.generationMode} generation request based only on the current saved page inputs. Render one complete ${panelCount}-panel manga page in authored order. Do not treat this as an edit, continuation, or restoration of any previously generated page image.`;
 }
 
 function buildPageSetting(page: PagePromptContext): string {
@@ -319,7 +324,13 @@ function buildReferenceRoles(
       reference,
       referenceImages,
     );
-    const anchor = summarizeEntityAnchor(entity);
+    const entityType = entity?.entityType ?? 'character';
+    const referenceRole = entityType === 'object' ? 'object_reference' : entityType === 'nonhuman' ? 'nonhuman_reference' : 'character_reference';
+    const preservation = entityType === 'object'
+      ? 'Preserve its silhouette, component proportions, connections, and distinctive design from this image while changing view and perspective for the authored use. Do not copy the reference display pose or background.'
+      : entityType === 'nonhuman'
+        ? 'Preserve its species-specific anatomy, silhouette, markings, and authored size; do not replace them with human anatomy.'
+        : `Keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable when ${entityName} appears.`;
     const assignmentKeys = assignments.map((assignment) => referenceKey(assignment.entityId, assignment.stateId));
     const panelOrders = Array.from(new Set(assignmentKeys.flatMap((key) => panelOrdersByAssignment.get(key) ?? [])))
       .sort((left, right) => left - right);
@@ -328,9 +339,9 @@ function buildReferenceRoles(
       entityId: reference.entityId,
       assignmentKeys,
       imageLabel: `Image ${roles.length + 1} (${entityName})`,
-      role: 'character_reference',
+      role: referenceRole,
       subject: entityName,
-      instruction: `${entityName} character reference. Use this image only for ${entityName}; never use it as another character. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. Keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable when ${entityName} appears. ${anchor}`.trim(),
+      instruction: `${entityName} ${entityType} reference. Use this image only for ${entityName}; never use it as another ${entityType === 'character' ? 'character' : 'subject'}. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. ${preservation}${assignments.some(assignment => assignment.stateId !== null) ? ' The selected state controls state-specific changes to the base design.' : ''}`,
     });
   }
 
@@ -352,7 +363,7 @@ function buildReferenceRoles(
 function buildReferenceLabelMap(referenceRoles: NormalizedReferenceRole[]): Map<string, string> {
   return new Map(
     referenceRoles.flatMap((role) =>
-      role.role === 'character_reference' && role.entityId !== null
+      role.role !== 'layout_reference' && role.entityId !== null
         ? role.assignmentKeys.map((key) => [key, role.imageLabel] as const)
         : [],
     ),
@@ -372,7 +383,7 @@ function buildNormalizedPanelInstruction(
     order: panel.order,
     role: panel.panelRole,
     size: panel.panelSize,
-    situation: normalizePanelSituation(panel.situationText),
+    situation: normalizeAuthoredField(panel.situationText ?? 'No explicit situation text.', 2000),
     subjectLock: buildSubjectLock(panel, entityMap, referenceLabelByEntityId),
     characterBeat: buildCharacterBeat(panel.entities, entityMap, referenceLabelByEntityId),
     compositionBeat: [physicalPlacement === undefined ? null : `Guide frame P${panel.order}: ${physicalPlacement}.`, buildCompositionBeat(panel, compositionMap)].filter(Boolean).join(' '),
@@ -395,21 +406,17 @@ function buildSubjectLock(
   const details = assignments.map((assignment) => {
     const entity = entityMap.get(assignment.entityId);
     const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
-    const referenceLabel = findReferenceLabel(
-      referenceLabelByEntityId,
-      assignment.entityId,
-      assignment.stateId,
-    );
-    const visualAnchor = summarizeEntityVisualIdentity(entity);
-    const position = `${humanizeToken(assignment.position)} zone`;
-    const facing = assignment.facingDirection === null
+    const referenceLabel = findReferenceLabel(referenceLabelByEntityId, assignment.entityId, assignment.stateId);
+    const isObject = entity?.entityType === 'object';
+    const position = isObject ? null : `${humanizeToken(assignment.position)} zone`;
+    const facing = isObject || assignment.facingDirection === null
       ? null
       : `facing ${humanizeToken(assignment.facingDirection)}`;
     return [
       entityName,
       referenceLabel === undefined ? null : `reference ${referenceLabel}`,
-      visualAnchor === null ? null : `visual identity ${visualAnchor}`,
       `role ${assignment.role}`,
+      isObject ? 'object; placement follows authored interaction' : null,
       position,
       facing,
     ]
@@ -417,7 +424,7 @@ function buildSubjectLock(
       .join(', ');
   });
 
-  return `Panel ${panel.order} subject lock: required visible subjects are ${details.join('; ')}. Every listed subject must be visibly present and recognizable in this panel. Do not substitute, merge, swap, or replace these subjects with any other character or reference image. Do not draw unassigned named or referenced characters in this panel.`;
+  return `Panel ${panel.order} subject lock: required visible subjects are ${details.join('; ')}.`;
 }
 
 function dedupeAssignmentsByEntity(assignments: PanelEntityAssignment[]): PanelEntityAssignment[] {
@@ -448,19 +455,21 @@ function buildCharacterBeat(
     .map((assignment) => {
       const entity = entityMap.get(assignment.entityId);
       const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
-      const referenceLabel = findReferenceLabel(
-        referenceLabelByEntityId,
-        assignment.entityId,
-        assignment.stateId,
-      );
-      const visualAnchor = summarizeEntityVisualIdentity(entity);
+      const referenceLabel = findReferenceLabel(referenceLabelByEntityId, assignment.entityId, assignment.stateId);
       const expression = assignment.expression === 'custom' ? assignment.customExpression : assignment.expression;
       const action = assignment.action === 'custom' ? assignment.customAction : assignment.action;
+      if (entity?.entityType === 'object') {
+        return [
+          `${entityName}${referenceLabel === undefined ? '' : `, reference ${referenceLabel}`}: object`,
+          assignment.action === 'custom' && assignment.customAction !== null ? `authored interaction/use: ${normalizeSentence(assignment.customAction, false)}` : null,
+          assignment.expression === 'custom' && assignment.customExpression !== null ? `appearance/effect: ${normalizeSentence(assignment.customExpression, false)}` : null,
+          assignment.effectNote === null ? null : `visual detail: ${normalizeSentence(assignment.effectNote, false)}`,
+        ].filter((part): part is string => part !== null).join('; ') + '.';
+      }
       const parts = [
         [
           entityName,
           referenceLabel === undefined ? null : `reference ${referenceLabel}`,
-          visualAnchor === null ? null : `visual identity ${visualAnchor}`,
         ].filter((value): value is string => value !== null).join(', '),
         `is ${assignment.role} in the ${assignment.position} zone`,
         assignment.facingDirection === null ? null : `facing ${humanizeToken(assignment.facingDirection)}`,
@@ -489,7 +498,7 @@ function buildCompositionBeat(
   }
 
   if (panel.composition.compositionPrompt !== null) {
-    parts.push(normalizePromptField(panel.composition.compositionPrompt, 180));
+    parts.push(normalizeAuthoredField(panel.composition.compositionPrompt, 1000));
   }
 
   if (panel.composition.shotType !== null) {
@@ -501,22 +510,22 @@ function buildCompositionBeat(
   }
 
   if (panel.composition.customNote !== null) {
-    parts.push(normalizePromptField(panel.composition.customNote, 140));
+    parts.push(normalizeAuthoredField(panel.composition.customNote, 1000));
   }
 
   if (panel.backgroundNote !== null) {
-    const background = sanitizePromptField(panel.backgroundNote, 100);
-    if (background !== null) {
-      parts.push(`Background: ${normalizeSentence(background, false)}.`);
+    if (panel.backgroundNote.trim().length > 0) {
+      parts.push(`Background: ${normalizeAuthoredField(panel.backgroundNote, 2000)}`);
     }
   }
 
-  if (panel.panelNotes !== null && panel.composition.customNote === null) {
+  if (panel.panelNotes !== null) {
     const panelSpecificNote = sanitizePanelSpecificNote(
       panel.panelNotes,
       panel.situationText,
       panel.composition.compositionPrompt,
       panel.backgroundNote,
+      panel.composition.customNote,
     );
     if (panelSpecificNote !== null) {
       parts.push(`Panel-specific note: ${normalizeSentence(panelSpecificNote, false)}`);
@@ -647,18 +656,14 @@ function buildQualityConstraints(
   referenceRoles: NormalizedReferenceRole[],
 ): string[] {
   const constraints = [
-    'Create a fresh page from the current saved page inputs only; do not preserve, restore, or edit any previous generated page image.',
     `Maintain exactly ${panelCount} readable panels in right-to-left manga reading order.`,
-    'Keep panel borders and gutters clean and unambiguous.',
-    'Preserve the authored action progression from one panel to the next without skipping intermediate beats.',
-    'Do not let any foreground character drift off-model relative to their reference image.',
-    'For every panel, the listed panel subjects are authoritative; do not replace them with a different referenced character and do not move a character into a panel where they are not listed.',
-    'Panel subject lock lines are hard constraints: every listed required subject must be visible in that panel, and unlisted named or referenced characters must not appear there.',
-    'Panel situation cues and background cues are mandatory visual content for their panels, not optional mood notes.',
+    'Follow authored action, composition, and background cues. Each panel subject lock is authoritative: every listed subject must be visible and recognizable, and unlisted named subjects must not appear.',
+    'Do not merge, swap, or substitute referenced subjects.',
+    PAGE_VISUAL_INTEGRITY_POLICY,
   ];
 
   if (referenceRoles.length > 0) {
-    constraints.push('Treat uploaded images only as character or layout references, never as a previous page image or an edit target.');
+    constraints.push('Treat uploaded images only as the declared character, nonhuman, object, or layout references, never as a previous page image or an edit target.');
   }
 
   if (referenceRoles.some((role) => role.role === 'layout_reference')) {
@@ -666,8 +671,7 @@ function buildQualityConstraints(
   }
 
   if (page.pageDialogueToggle && page.dialogueMode !== 'balloon_only') {
-    constraints.push('Keep required dialogue and SFX legible in the artwork without changing the authored wording.');
-    constraints.push('Preserve each baked dialogue line exactly with its authored speaker or narration role. Do not swap speakers, paraphrase lines, or move narration into character speech.');
+    constraints.push('Render required dialogue and SFX legibly and exactly with the locked speaker or narration role.');
   }
 
   return constraints;
@@ -675,11 +679,6 @@ function buildQualityConstraints(
 
 function buildNegativeConstraints(page: PagePromptContext): string[] {
   const constraints = [
-    'No extra panels.',
-    'No missing panels.',
-    'No extra characters beyond the authored cast for each panel.',
-    'No photorealistic rendering.',
-    'No western comic page styling.',
     'No watermark.',
   ];
 
@@ -696,6 +695,7 @@ function buildDraftPrompt(normalized: NormalizedPagePrompt): string {
     normalized.styleLock,
     normalized.pageSetting,
     normalized.layoutInstruction,
+    `Subject definitions (apply throughout the page): ${normalized.subjectDefinitions.join(' ')}`,
     `Reference image roles: ${buildReferenceRoleParagraph(normalized.referenceRoles)}`,
     buildPanelInstructionParagraph(normalized.panelInstructions),
     buildQualityConstraintParagraph(normalized.qualityConstraints, normalized.negativeConstraints),
@@ -714,6 +714,7 @@ function buildCompilerBrief(normalized: NormalizedPagePrompt): string {
         ? ['No image reference is attached to this page. Rely on the authored panel instructions only.']
         : normalized.referenceRoles.map((role) => `${role.imageLabel}: ${role.instruction}`),
     ],
+    ['[SUBJECT DEFINITIONS]', normalized.subjectDefinitions],
     ['[SETTING]', [normalized.pageSetting]],
     ['[LAYOUT]', [normalized.layoutInstruction]],
     [
@@ -723,7 +724,7 @@ function buildCompilerBrief(normalized: NormalizedPagePrompt): string {
           `Panel ${panel.order} (${panel.role}, ${panel.size})`,
           `- Situation: ${panel.situation}`,
           panel.subjectLock === null ? null : `- Subject lock: ${panel.subjectLock}`,
-          `- Character beat: ${panel.characterBeat}`,
+          `- Subject beat: ${panel.characterBeat}`,
           `- Composition beat: ${panel.compositionBeat}`,
         ].filter((value): value is string => value !== null);
 
@@ -766,7 +767,7 @@ function buildPanelInstructionParagraph(panelInstructions: NormalizedPanelInstru
         `Panel ${panel.order}: This is a ${panel.role} ${panel.size} beat.`,
         `Panel ${panel.order} situation: ${panel.situation}`,
         panel.subjectLock,
-        `Panel ${panel.order} character direction: ${panel.characterBeat}`,
+        `Panel ${panel.order} subject direction: ${panel.characterBeat}`,
         `Panel ${panel.order} composition and action: ${panel.compositionBeat}`,
         panel.dialogueBeats.length === 0 ? null : `Panel ${panel.order} dialogue and SFX: ${panel.dialogueBeats.join(' ')}`,
         panel.dialogueLock,
@@ -826,6 +827,10 @@ function normalizePanelSituation(value: string | null): string {
   return normalizePromptField(value ?? 'No explicit situation text.', 140);
 }
 
+function normalizeAuthoredField(value: string, maxLength: number): string {
+  return normalizeSentence(normalizeWhitespace(value).slice(0, maxLength));
+}
+
 function normalizePromptField(value: string, maxLength: number): string {
   return normalizeSentence(sanitizePromptField(value, maxLength) ?? value);
 }
@@ -835,14 +840,17 @@ function sanitizePanelSpecificNote(
   situation: string | null,
   compositionPrompt: string | null,
   backgroundNote: string | null,
+  customNote: string | null,
 ): string | null {
-  const sanitized = sanitizePromptField(note, 120);
-  if (sanitized === null) {
+  // Only discard a note when its entire content is already present elsewhere.
+  // Boilerplate-like wording may still contain authored grip/scale information.
+  const sanitized = normalizeWhitespace(note).slice(0, 2000);
+  if (sanitized.length === 0) {
     return null;
   }
 
-  const comparisons = [situation, compositionPrompt, backgroundNote]
-    .map((value) => sanitizePromptField(value, 120))
+  const comparisons = [situation, compositionPrompt, backgroundNote, customNote]
+    .map((value) => value === null ? null : normalizeWhitespace(value))
     .filter((value): value is string => value !== null);
   if (comparisons.some((comparison) => promptFieldsLookEquivalent(sanitized, comparison))) {
     return null;
@@ -882,30 +890,24 @@ function sanitizePromptField(value: string | null | undefined, maxLength: number
 }
 
 function promptFieldsLookEquivalent(left: string, right: string): boolean {
-  const normalize = (value: string): string =>
-    value
-      .toLowerCase()
-      .replace(/[.!?。！？、,／/・:;()[\]{}"'`]/gu, ' ')
-      .replace(/\s+/gu, ' ')
-      .trim();
-
-  const normalizedLeft = normalize(left);
-  const normalizedRight = normalize(right);
+  const normalizedLeft = normalizeWhitespace(left);
+  const normalizedRight = normalizeWhitespace(right);
   if (normalizedLeft.length < 12 || normalizedRight.length < 12) {
     return normalizedLeft === normalizedRight;
   }
 
   return (
     normalizedLeft === normalizedRight ||
-    normalizedLeft.includes(normalizedRight) ||
     normalizedRight.includes(normalizedLeft)
   );
 }
 
 function summarizeEntityAnchor(entity: Entity | undefined): string {
   const visualIdentity = summarizeEntityVisualIdentity(entity);
-  const source = entity?.promptSupplement ?? entity?.freeDescription ?? '';
-  const normalized = normalizeWhitespace(source);
+  const sources = entity?.entityType === 'character'
+    ? [entity.promptSupplement ?? entity.freeDescription ?? '']
+    : [entity?.freeDescription ?? '', entity?.promptSupplement ?? ''];
+  const normalized = Array.from(new Set(sources.map(normalizeWhitespace).filter((value) => value.length > 0))).join(' ');
   const parts: string[] = [];
 
   if (visualIdentity !== null) {
@@ -913,7 +915,8 @@ function summarizeEntityAnchor(entity: Entity | undefined): string {
   }
 
   if (normalized.length > 0) {
-    const trimmed = normalized.length > 160 ? `${normalized.slice(0, 157).trimEnd()}...` : normalized;
+    const limit = entity?.entityType === 'character' ? 160 : 4000;
+    const trimmed = normalized.length > limit ? `${normalized.slice(0, limit - 3).trimEnd()}...` : normalized;
     parts.push(`Keep these anchor traits stable: ${trimmed}`);
   }
 
@@ -929,11 +932,9 @@ function formatEntityReferenceIdentity(
   const entity = entityMap.get(entityId);
   const entityName = entity?.name ?? `Unknown entity ${entityId}`;
   const referenceLabel = findReferenceLabel(referenceLabelByEntityId, entityId, stateId);
-  const visualIdentity = summarizeEntityVisualIdentity(entity);
   return [
     entityName,
     referenceLabel === undefined ? null : `reference ${referenceLabel}`,
-    visualIdentity === null ? null : `visual identity ${visualIdentity}`,
   ]
     .filter((value): value is string => value !== null)
     .join(', ');
@@ -948,10 +949,8 @@ function formatEntityVisualLockSubject(
   const entity = entityMap.get(entityId);
   const entityName = entity?.name ?? entityId;
   const referenceLabel = findReferenceLabel(referenceLabelByEntityId, entityId, stateId);
-  const visualIdentity = summarizeEntityVisualIdentity(entity);
   const details = [
     referenceLabel,
-    visualIdentity,
   ].filter((value): value is string => value !== undefined && value !== null);
   return details.length === 0 ? entityName : `${entityName} [${details.join(', ')}]`;
 }
@@ -962,21 +961,34 @@ function summarizeEntityVisualIdentity(entity: Entity | undefined): string | nul
   }
 
   const fields = entity.structuredFields;
+  if (entity.entityType !== 'character') {
+    const keys = entity.entityType === 'object'
+      ? ['category', 'material', 'size', 'distinctive_features']
+      : ['base_form', 'size', 'movement', 'distinctive_features'];
+    const details = keys.flatMap((key) => {
+      const value = readFieldString(fields, key);
+      return value === null ? [] : [`${key.replace(/_/gu, ' ')}: ${value}`];
+    });
+    return details.length === 0 ? null : details.join(', ');
+  }
   const parts = [
     readFieldString(fields, 'gender_expression'),
     summarizeHair(fields),
     summarizeEyes(fields),
     summarizeClothing(fields),
-    summarizeBody(fields),
     summarizeExpression(fields),
   ].filter((value): value is string => value !== null);
 
-  if (parts.length === 0) {
+  const body = summarizeBody(fields);
+  if (parts.length === 0 && body === null) {
     return null;
   }
 
   const summary = parts.join(', ');
-  return summary.length > 320 ? `${summary.slice(0, 317).trimEnd()}...` : summary;
+  const appearance = summary.length > 320 ? `${summary.slice(0, 317).trimEnd()}...` : summary;
+  // Scale is independent of the compact appearance summary: long hair/outfit
+  // descriptions must never hide the authored height or body proportions.
+  return [body, appearance].filter((value) => value !== null && value.length > 0).join(', ');
 }
 
 function summarizeHair(fields: Record<string, unknown>): string | null {
@@ -1028,10 +1040,15 @@ function summarizeClothing(fields: Record<string, unknown>): string | null {
 }
 
 function summarizeBody(fields: Record<string, unknown>): string | null {
+  const proportions = readRecord(fields.proportions);
   const values = [
     readFieldString(fields, 'build') === null ? null : `${readFieldString(fields, 'build')} build`,
     readFieldString(fields, 'height') === null ? null : `${readFieldString(fields, 'height')} height`,
     readFieldString(fields, 'age_range') === null ? null : `${readFieldString(fields, 'age_range')} age`,
+    ...['head_to_body_ratio', 'shoulder_width', 'leg_length', 'posture_axis'].flatMap((key) => {
+      const value = readFieldString(proportions, key);
+      return value === null ? [] : [`${key.replace(/_/gu, ' ')}: ${value}`];
+    }),
   ].filter((value): value is string => value !== null);
   return values.length === 0 ? null : values.join(', ');
 }
@@ -1212,7 +1229,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const STYLE_LOCK_TEXT =
   'Style lock: anime manga illustration, clean black line art, flat colors with manga-style shading, crisp panel borders with visible gutters, right-to-left reading flow, no photorealism, no western comic styling.';
 const MONOCHROME_STYLE_LOCK_TEXT =
-  'Style lock: black-and-white manga ink, grayscale shading and screentones, clean black line art, white paper, crisp panel borders with visible gutters, right-to-left reading flow, no colored fills, no photorealism, no western comic styling. Use reference colors only to preserve character identity and translate them into distinct grayscale tones.';
+  'Style lock: black-and-white manga ink, grayscale shading and screentones, clean black line art, white paper, crisp panel borders with visible gutters, right-to-left reading flow, no colored fills, no photorealism, no western comic styling. Use reference colors only to preserve subject identity and translate them into distinct grayscale tones.';
 const STYLE_PROMPT_TEXT_LIMITS = {
   title: 200,
   compiledBrief: 820,
@@ -1220,7 +1237,7 @@ const STYLE_PROMPT_TEXT_LIMITS = {
   notes: 300,
 } as const;
 const STYLE_REFERENCE_PRIORITY_AND_SCOPE_TEXT =
-  "Style priority: preserve this reference's visual treatment over generic defaults. Visual only: preserve character identity/reference mapping, authored story/dialogue, panel count/order/layout, and camera/composition.";
+  "Style priority: preserve this reference's visual treatment over generic defaults. Visual only: preserve subject identity/reference mapping, authored story/dialogue, panel count/order/layout, and camera/composition.";
 
 function buildStyleLock(page: PagePromptContext, renderStyle: PageRenderStyle): string {
   const styleLock = renderStyle === 'monochrome' ? MONOCHROME_STYLE_LOCK_TEXT : STYLE_LOCK_TEXT;
@@ -1245,7 +1262,7 @@ function buildStyleLock(page: PagePromptContext, renderStyle: PageRenderStyle): 
 
   return [
     styleLock,
-    `Named style reference constraint: "${title}". Treat it as a hard page-wide rendering constraint.`,
+    `Named style reference constraint: "${title}".`,
     `Generalized style interpretation: ${compactStylePromptText(
       page.styleReference.compiledBrief,
       STYLE_PROMPT_TEXT_LIMITS.compiledBrief,

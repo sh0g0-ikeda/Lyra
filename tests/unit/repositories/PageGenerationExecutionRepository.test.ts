@@ -142,6 +142,8 @@ describe('PostgresPageGenerationExecutionRepository', () => {
       providerModelId: 'gpt-image-2',
       provider: 'openai',
       openaiRequestId: 'openai-1',
+      providerPromptSha256: 'provider-prompt-sha',
+      providerPromptBytes: 321,
       promptMetadata: {
         draftPrompt: 'draft prompt',
         compilerBrief: '[TASK]\nbrief',
@@ -192,6 +194,8 @@ describe('PostgresPageGenerationExecutionRepository', () => {
         compiled_brief_bytes: 12,
         compiled_prompt_sha256: '3933ca9c4b8ba6126fbbfff84d1bdac485836784b4ef147550e757cf8895451a',
         compiled_prompt_bytes: 15,
+        provider_prompt_sha256: 'provider-prompt-sha',
+        provider_prompt_bytes: 321,
         compiled_prompt_used: true,
         prompt_compiler_provider: 'openai',
         compiler_model: 'gpt-5.4-mini',

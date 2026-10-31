@@ -53,7 +53,7 @@ export function resolvePageGenerationLayoutControl(
       COORDINATE_SYSTEM,
       ...positions,
       `Place each Panel n scene, its characters, and its exact dialogue ONLY inside guide frame Pn. Story sequence: ${path}.`,
-      'The last input image is the layout guide; earlier images remain character references. P labels identify frames where space allows; for very narrow custom frames, the coordinate map above supplies the assignment. Use the guide only for geometry and panel assignment, never as scene content or art style.',
+      'The last input image is the layout guide; earlier images remain subject references with their registered types. P labels identify frames where space allows; for very narrow custom frames, the coordinate map above supplies the assignment. Use the guide only for geometry and panel assignment, never as scene content or art style.',
       'This numbered placement overrides conflicting layout suggestions in the internal plan. Preserve the authored in-panel subject positions, identities, camera directions, and dialogue locks. Never mirror the page or swap scenes between frames.',
       annotationRule,
     ].join('\n'),
