@@ -52,6 +52,37 @@ export class ApiError extends Error {
   }
 }
 
+export interface PageGenerationWarmupGate {
+  request(
+    input: { eligible: boolean; pageId: string | null; organizationId?: string | null },
+    warm: (pageId: string, organizationId?: string | null) => Promise<void>,
+  ): Promise<void>;
+}
+
+export async function runBestEffortPageGenerationWarmup(
+  warm: () => Promise<void>,
+): Promise<void> {
+  try {
+    await warm();
+  } catch {
+    // Preparation must never block the actual generation path.
+  }
+}
+
+export function createPageGenerationWarmupGate(): PageGenerationWarmupGate {
+  const warmedKeys = new Set<string>();
+  return {
+    request: async (input, warm): Promise<void> => {
+      const pageId = input.pageId;
+      if (!input.eligible || pageId === null) return;
+      const key = `${input.organizationId ?? 'personal'}:${pageId}`;
+      if (warmedKeys.has(key)) return;
+      warmedKeys.add(key);
+      await runBestEffortPageGenerationWarmup(async () => warm(pageId, input.organizationId));
+    },
+  };
+}
+
 type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: unknown; timeoutMs?: number };
 
 const billingRedirectTimeoutMs = 30_000;
@@ -471,6 +502,18 @@ export class LyraApiClient {
 
   public getPageGenerationReadiness(pageId: string, organizationId?: string | null): Promise<PageGenerationReadinessRecord> {
     return this.request(`/api/pages/${pageId}/generation-readiness${organizationQuery(organizationId)}`);
+  }
+
+  public async warmPageGeneration(pageId: string, organizationId?: string | null): Promise<void> {
+    try {
+      await this.requestVoid(
+        `/api/pages/${pageId}/generation-warmup${organizationQuery(organizationId)}`,
+        { method: 'POST' },
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return;
+      throw error;
+    }
   }
 
   public generatePage(

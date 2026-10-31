@@ -60,8 +60,18 @@ export const CANONICAL_RUNTIME_MIGRATIONS = [
 export const SECURITY_RUNTIME_MIGRATIONS = [...CANONICAL_RUNTIME_MIGRATIONS, '049_add_stripe_credit_recovery.sql'] as const;
 export const WORK_DELETION_RUNTIME_MIGRATIONS = [...SECURITY_RUNTIME_MIGRATIONS, '050_add_work_deletion.sql'] as const;
 export const GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS = [...WORK_DELETION_RUNTIME_MIGRATIONS, '051_add_google_link_recovery.sql'] as const;
+export const GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS = [...GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, '052_add_generation_worker_warm_control.sql'] as const;
 
 export interface RuntimeSchemaCatalog {
+  // Additive-table evidence only; removed after exact 052 validation so existing
+  // serialized descriptors and their guarantees remain unchanged.
+  generationWorkerWarmStorage?: Array<{
+    persistence: string;
+    heap: boolean;
+    defaultColumns: boolean;
+    defaultIndexes: boolean;
+    noAdditionalObjects: boolean;
+  }>;
   migrationFilenames: string[];
   relations: Array<{
     name: string;
@@ -218,6 +228,9 @@ const POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM = 180000;
 const runtimeSchemaPostgresVersions = new WeakMap<RuntimeSchemaCatalog, number>();
 
 export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSchemaDescription {
+  const warm = projectGenerationWorkerWarmControl(catalog);
+  if (warm === null) return { kind: 'unsupported', failures: ['GENERATION_WORKER_WARM_SCHEMA_MISMATCH'] };
+  catalog = warm;
   const recovery = projectGoogleIdentityRecovery(catalog);
   if (recovery === null) return { kind: 'unsupported', failures: ['GOOGLE_IDENTITY_RECOVERY_SCHEMA_MISMATCH'] };
   if (recovery.enabled) return describeRuntimeSchema(recovery.catalog);
@@ -500,6 +513,43 @@ export async function readRuntimeSchemaCatalogInTransaction(
       triggers: triggers.rows,
     };
     const completeCatalog = functions === undefined ? catalog : { ...catalog, functions: functions.rows };
+    if (relationNames.has(GENERATION_WORKER_WARM_TABLE)) {
+      // Generic legacy index signatures omit INCLUDE columns, access methods and
+      // storage details. Check these only for 052, without widening old hashes.
+      const storage = await client.query<NonNullable<RuntimeSchemaCatalog['generationWorkerWarmStorage']>[number]>(`
+        SELECT relation.relpersistence::text AS persistence,
+          method.amname = 'heap' AS heap,
+          NOT EXISTS (
+            SELECT 1 FROM pg_attribute attribute
+            INNER JOIN pg_type column_type ON column_type.oid = attribute.atttypid
+            INNER JOIN pg_namespace type_namespace ON type_namespace.oid = column_type.typnamespace
+            WHERE attribute.attrelid = relation.oid AND attribute.attnum > 0 AND NOT attribute.attisdropped
+              AND (type_namespace.nspname <> 'pg_catalog'
+                OR column_type.typname <> CASE attribute.attname
+                  WHEN 'resource_id' THEN 'text' WHEN 'last_applied_floor' THEN 'int2' ELSE 'timestamptz' END
+                OR attribute.atttypmod <> -1 OR attribute.attndims <> 0
+                OR attribute.attcollation <> column_type.typcollation)
+          ) AS "defaultColumns",
+          NOT EXISTS (
+            SELECT 1 FROM pg_index warm_index
+            INNER JOIN pg_class index_relation ON index_relation.oid = warm_index.indexrelid
+            INNER JOIN pg_am index_method ON index_method.oid = index_relation.relam
+            WHERE warm_index.indrelid = relation.oid
+              AND (index_method.amname <> 'btree' OR warm_index.indnatts <> 1 OR warm_index.indnkeyatts <> 1
+                OR NOT warm_index.indisprimary OR NOT warm_index.indimmediate OR warm_index.indnullsnotdistinct
+                OR index_relation.reloptions IS NOT NULL OR index_relation.reltablespace <> 0)
+          ) AS "defaultIndexes",
+          (NOT relation.relhasrules AND relation.relreplident = 'd' AND relation.reloptions IS NULL
+            AND relation.reltablespace = 0
+            AND NOT EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid = relation.oid OR inhparent = relation.oid)
+            AND NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = relation.oid)) AS "noAdditionalObjects"
+        FROM pg_class relation
+        INNER JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+        LEFT JOIN pg_am method ON method.oid = relation.relam
+        WHERE namespace.nspname = CURRENT_SCHEMA() AND relation.relname = $1
+      `, [GENERATION_WORKER_WARM_TABLE]);
+      completeCatalog.generationWorkerWarmStorage = storage.rows;
+    }
     if (completeCatalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql')) {
       const postgresVersion = await readPostgresServerVersionNum(client);
       runtimeSchemaPostgresVersions.set(completeCatalog, postgresVersion);
@@ -526,6 +576,9 @@ const verifiedRuntimeProofs = new WeakSet<object>();
 
 /** The frozen proof is issued from catalog evidence, never an environment selection. */
 function runtimeProof(catalog: RuntimeSchemaCatalog): AttestedRuntime | null {
+  const warm = projectGenerationWorkerWarmControl(catalog);
+  if (warm === null) return null;
+  catalog = warm;
   const recovery = projectGoogleIdentityRecovery(catalog);
   if (recovery === null) return null;
   catalog = recovery.catalog;
@@ -771,4 +824,70 @@ function projectGoogleIdentityRecovery(catalog: RuntimeSchemaCatalog): { catalog
 function sameCatalogRows(actual: readonly object[], expected: readonly object[]): boolean {
   const signatures = (rows: readonly object[]): string[] => rows.map(row => JSON.stringify(Object.entries(row).sort(([a], [b]) => a.localeCompare(b)))).sort();
   return sameStrings(signatures(actual), signatures(expected));
+}
+
+const GENERATION_WORKER_WARM_MIGRATION = '052_add_generation_worker_warm_control.sql';
+const GENERATION_WORKER_WARM_TABLE = 'generation_worker_warm_controls';
+const GENERATION_WORKER_WARM_COLUMNS = [
+  ['resource_id', 'text', false, null],
+  ['lease_until', 'timestamp with time zone', true, null],
+  ['last_applied_floor', 'smallint', true, null],
+  ['updated_at', 'timestamp with time zone', false, 'clock_timestamp()'],
+] as const;
+const GENERATION_WORKER_WARM_CONSTRAINTS = [
+  ['generation_worker_warm_controls_pkey', 'p', 'PRIMARY KEY (resource_id)'],
+  ['generation_worker_warm_controls_resource_id_check', 'c', 'CHECK (length(resource_id) >= 1 AND length(resource_id) <= 200)'],
+  ['generation_worker_warm_controls_last_applied_floor_check', 'c', 'CHECK (last_applied_floor = ANY (ARRAY[0, 1]))'],
+  ['generation_worker_warm_controls_resource_id_not_null', 'n', 'NOT NULL resource_id'],
+  ['generation_worker_warm_controls_updated_at_not_null', 'n', 'NOT NULL updated_at'],
+] as const;
+
+/** Spec §6/10: 052 is operational state, not a new writer capability. Validate
+ * its whole additive footprint before removing it from the existing 051 proof.
+ * Reject partial/unrecorded DDL and retain live version evidence across both
+ * projections; never trust a deserialized catalog's claimed PostgreSQL version. */
+function projectGenerationWorkerWarmControl(catalog: RuntimeSchemaCatalog): RuntimeSchemaCatalog | null {
+  const owns = (row: { relation: string }): boolean => row.relation === GENERATION_WORKER_WARM_TABLE;
+  const hasReservedArtifact = catalog.namespaceArtifacts.some(row => row.name.startsWith(GENERATION_WORKER_WARM_TABLE))
+    || (catalog.functions ?? []).some(row => row.name.startsWith(GENERATION_WORKER_WARM_TABLE));
+  const occurrences = catalog.migrationFilenames.filter(filename => filename === GENERATION_WORKER_WARM_MIGRATION).length;
+  if (occurrences === 0) {
+    return catalog.relations.some(row => row.name === GENERATION_WORKER_WARM_TABLE)
+      || catalog.columns.some(owns) || catalog.constraints.some(owns) || catalog.indexes.some(owns)
+      || catalog.triggers.some(owns) || catalog.generationWorkerWarmStorage !== undefined || hasReservedArtifact
+      ? null : catalog;
+  }
+  const version = runtimeSchemaPostgresVersions.get(catalog);
+  if (occurrences !== 1 || !catalog.migrationFilenames.includes(GOOGLE_IDENTITY_RECOVERY_MIGRATION)
+    || version === undefined || version < MIN_SUPPORTED_POSTGRES_VERSION_NUM || hasReservedArtifact) return null;
+  const columns = GENERATION_WORKER_WARM_COLUMNS.map(([name, type, nullable, expression]) => ({
+    relation: GENERATION_WORKER_WARM_TABLE, name, type, nullable,
+    defaultExpressionSha256: expression === null ? null : googleRecoveryDigest(expression),
+    identityGeneration: null, generatedExpressionSha256: null,
+  }));
+  const constraints = GENERATION_WORKER_WARM_CONSTRAINTS
+    .filter(([, type]) => version >= POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM || type !== 'n')
+    .map(([name, type, definition]) => ({ relation: GENERATION_WORKER_WARM_TABLE, name, type, validated: true, definitionSha256: googleRecoveryDigest(definition) }));
+  if (!sameCatalogRows(catalog.relations.filter(row => row.name === GENERATION_WORKER_WARM_TABLE), [
+    { name: GENERATION_WORKER_WARM_TABLE, kind: 'r', rowSecurity: false, forceRowSecurity: false },
+  ]) || !sameCatalogRows(catalog.columns.filter(owns), columns)
+    || !sameCatalogRows(catalog.constraints.filter(owns), constraints)
+    || !sameCatalogRows(catalog.indexes.filter(owns), [{
+      relation: GENERATION_WORKER_WARM_TABLE, name: 'generation_worker_warm_controls_pkey', unique: true,
+      valid: true, definitionSha256: googleRecoveryDigest('[["resource_id"], ""]'),
+    }]) || catalog.triggers.some(owns)
+    || !sameCatalogRows(catalog.generationWorkerWarmStorage ?? [], [{
+      persistence: 'p', heap: true, defaultColumns: true, defaultIndexes: true, noAdditionalObjects: true,
+    }])) return null;
+  const baseline: RuntimeSchemaCatalog = {
+    ...catalog,
+    migrationFilenames: catalog.migrationFilenames.filter(filename => filename !== GENERATION_WORKER_WARM_MIGRATION),
+    relations: catalog.relations.filter(row => row.name !== GENERATION_WORKER_WARM_TABLE),
+    columns: catalog.columns.filter(row => !owns(row)),
+    constraints: catalog.constraints.filter(row => !owns(row)),
+    indexes: catalog.indexes.filter(row => !owns(row)),
+  };
+  delete baseline.generationWorkerWarmStorage;
+  runtimeSchemaPostgresVersions.set(baseline, version);
+  return baseline;
 }

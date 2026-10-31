@@ -6,7 +6,7 @@ const state = ({
   closeDatabase: vi.fn(), query: vi.fn(), pageRecovery: vi.fn(), entityRecovery: vi.fn(),
   cancelledRun: vi.fn(), cancelledStop: vi.fn(), runtimeFactory: vi.fn(),
   terminalRun:vi.fn(),terminalStop:vi.fn(),terminalFactory:vi.fn(),
-  poll: vi.fn(), stopPoll: vi.fn(),
+  poll: vi.fn(), stopPoll: vi.fn(), warmResolve: vi.fn(), warmProtectionAssert: vi.fn(),
 });
 vi.mock('../../../src/lib/env.js', () => ({env:{SQS_QUEUE_URL_GENERATION:'https://example.invalid/queue'}}));
 vi.mock('../../../src/lib/db.js', () => ({db:{query:state.query},closeDatabasePool:state.closeDatabase}));
@@ -19,20 +19,24 @@ vi.mock('../../../src/lib/runtimeSchemaAttestation.js', () => ({
 }));
 vi.mock('../../../src/lib/cancelledGenerationSettlementRecoveryRuntime.js',()=>({createCancelledGenerationSettlementRecoveryRuntime:state.runtimeFactory}));
 vi.mock('../../../src/lib/terminalGenerationNotificationRecoveryRuntime.js',()=>({createTerminalGenerationNotificationRecoveryRuntime:state.terminalFactory}));
+vi.mock('../../../src/infrastructure/aws/GenerationWorkerWarmRuntime.js',()=>({resolveGenerationWorkerWarmService:state.warmResolve}));
 vi.mock('../../../worker/dependencies.js',()=>({resolveWorkerDependencies:state.dependencies}));
-vi.mock('../../../worker/sqsPoller.js',()=>({GenerationQueuePoller:class{run=state.poll;stop=state.stopPoll;}}));
+vi.mock('../../../worker/sqsPoller.js',()=>({
+  assertWarmWorkerProtectionEnabled:state.warmProtectionAssert,
+  GenerationQueuePoller:class{run=state.poll;stop=state.stopPoll;},
+}));
 vi.mock('@aws-sdk/client-sqs',()=>({
   SQSClient:class{},SendMessageCommand:class{},ReceiveMessageCommand:class{},
   DeleteMessageBatchCommand:class{},ChangeMessageVisibilityBatchCommand:class{},
 }));
 
-beforeEach(()=>{if(typeof vi.resetModules==='function')vi.resetModules();vi.useFakeTimers();vi.clearAllMocks();state.attest.mockResolvedValue(state.proof);state.capabilities.mockReset();state.dependencies.mockReturnValue({});(globalThis as {__lyraWorkerAttestationHook?: (...values:unknown[])=>unknown}).__lyraWorkerAttestationHook=state.attest;});
+beforeEach(()=>{if(typeof vi.resetModules==='function')vi.resetModules();vi.useFakeTimers();vi.clearAllMocks();state.attest.mockResolvedValue(state.proof);state.capabilities.mockReset();state.dependencies.mockReturnValue({});state.warmResolve.mockReturnValue(null);(globalThis as {__lyraWorkerAttestationHook?: (...values:unknown[])=>unknown}).__lyraWorkerAttestationHook=state.attest;});
 it.each(['schema','capability'])('workerは%s拒否時にrecovery・provider・pollを開始しない',async failure=>{
  vi.spyOn(console,'error').mockImplementation(()=>{});
  if(failure==='schema')state.attest.mockRejectedValueOnce(new Error('Artificial unsupported catalog'));
  else state.capabilities.mockImplementationOnce(()=>{throw new Error('048 required');});
  await importWorkerEntry(failure);await flush();
- expect(state.runtimeFactory).not.toHaveBeenCalled();expect(state.terminalFactory).not.toHaveBeenCalled();expect(state.dependencies).not.toHaveBeenCalled();expect(state.poll).not.toHaveBeenCalled();expect(state.closeDatabase).toHaveBeenCalledOnce();
+ expect(state.runtimeFactory).not.toHaveBeenCalled();expect(state.terminalFactory).not.toHaveBeenCalled();expect(state.dependencies).not.toHaveBeenCalled();expect(state.warmResolve).not.toHaveBeenCalled();expect(state.poll).not.toHaveBeenCalled();expect(state.closeDatabase).toHaveBeenCalledOnce();
 });
 afterEach(()=>{process.exitCode=0;vi.clearAllTimers();vi.useRealTimers();vi.restoreAllMocks();});
 afterAll(restoreBunModuleMocks);
@@ -60,6 +64,7 @@ it('実worker入口で既存recovery失敗と新周期を分離しSIGTERM後はa
   state.terminalFactory.mockResolvedValue({run:state.terminalRun,stop:state.terminalStop});
   await import(/* @vite-ignore */ ['../../../scripts/runGenerationWorker.js','?cancelled-worker-drain'].join(''));
   await flush();expect(state.poll).toHaveBeenCalledOnce();expect(state.cancelledRun).toHaveBeenCalledTimes(1);
+  expect(state.warmResolve).toHaveBeenCalledOnce();expect(state.warmProtectionAssert).toHaveBeenCalledWith(false,process.env);
   expect(state.terminalRun).toHaveBeenCalledTimes(1);
   expect(state.dependencies.mock.calls[0]![1]).toBe(state.proof);
   expect(state.runtimeFactory.mock.calls[0]![1]).toBe(state.proof.repositoryProfile);
