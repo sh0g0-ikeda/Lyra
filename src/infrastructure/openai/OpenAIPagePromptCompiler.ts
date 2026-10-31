@@ -83,7 +83,7 @@ function buildSystemPrompt(): string {
     'The result must describe one complete manga page with explicit layout fidelity and full-page framing.',
     'Use clear concrete visual language. Avoid vague praise words like beautiful, cool, high-quality, masterpiece, cinematic, or stunning.',
     'Output the final prompt in the same language that the brief uses for authored dialogue, narration, and editable text fields.',
-    'Keep the final prompt dense but readable, typically around 220 to 360 English-word equivalent unless the brief is very simple.',
+    'Keep the final prompt dense but readable; preserve authored constraints before shortening. Remove repetition rather than forcing every page into a fixed word count.',
     PAGE_VISUAL_INTEGRITY_POLICY,
   ].join(' ');
 }

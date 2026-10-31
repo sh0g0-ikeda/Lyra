@@ -45,6 +45,8 @@ describe('OpenAIPagePromptCompiler', () => {
     expect(systemPrompt).toContain('Preserve the exact wording, the exact speaker assignment');
     expect(systemPrompt).toContain(PAGE_VISUAL_INTEGRITY_POLICY);
     expect(systemPrompt).toContain('object and nonhuman reference types explicit');
+    expect(systemPrompt).not.toContain('220 to 360');
+    expect(systemPrompt).toContain('preserve authored constraints before shortening');
     expect(userPrompt).toContain('[TASK]');
     expect(userPrompt).not.toContain('Deterministic draft prompt:');
     expect(userPrompt).toContain('Write the final GPT Image 2 page-generation prompt now.');
