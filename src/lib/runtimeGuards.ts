@@ -36,6 +36,8 @@ interface RuntimeGuardConfig {
   OPENAI_BASE_URL?: string;
   OPENAI_TIMEOUT_MS?: number;
   SQS_QUEUE_URL_GENERATION?: string;
+  GENERATION_WORKER_WARM_ENABLED?: boolean;
+  GENERATION_WORKER_SCALABLE_RESOURCE_ID?: string;
   SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS?: number;
   EPISODE_EXPORT_ENABLED?: boolean;
   SQS_QUEUE_URL_EXPORT?: string;
@@ -148,6 +150,10 @@ export function assertProductionRuntimeConfig(
   config: RuntimeGuardConfig,
   nodeEnv = process.env.NODE_ENV,
 ): void {
+  if (config.GENERATION_WORKER_WARM_ENABLED === true &&
+      (!config.AWS_REGION || !config.SQS_QUEUE_URL_GENERATION || !config.GENERATION_WORKER_SCALABLE_RESOURCE_ID)) {
+    throw new ConfigurationError('Generation worker warm control configuration is incomplete');
+  }
   const appEnv = config.APP_ENV;
   const isProductionRuntime = nodeEnv === 'production' || appEnv === 'production';
   const violations: string[] = [];

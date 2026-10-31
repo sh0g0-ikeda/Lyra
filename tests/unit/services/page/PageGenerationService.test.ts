@@ -996,3 +996,34 @@ function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
     ...overrides,
   };
 }
+
+describe('PageGenerationService warmup readiness', () => {
+  function setup(): { service: PageGenerationService; pages: FakePageRepository; jobs: FakeGenerationJobRepository; credits: FakeCreditService; queue: FakeQueue; recovery: FakeRecoveryService } {
+    const pages = new FakePageRepository();
+    const jobs = new FakeGenerationJobRepository();
+    const credits = new FakeCreditService();
+    credits.getBalance = async () => ({ monthlyCredits: 100, purchasedCredits: 0, totalCredits: 100, monthlyExpiresAt: null });
+    const queue = new FakeQueue();
+    const recovery = new FakeRecoveryService();
+    return { service: new PageGenerationService(pages, new FakeEntityRepository(), jobs, credits, queue, new ModeSelector(), recovery), pages, jobs, credits, queue, recovery };
+  }
+  it('予熱確認では課金もジョブ作成も状態変更も回復処理もしない', async () => {
+    const { service, pages, jobs, credits, queue, recovery } = setup();
+    await service.assertReadyForWarmup(userId, pageId);
+    expect(jobs.created).toBeNull();
+    expect(pages.updates).toEqual([]);
+    expect(credits.consumed).toEqual([]);
+    expect(queue.lastPayload).toBeNull();
+    expect(recovery.pageIds).toEqual([]);
+  });
+  it('所有scopeにページがなければ予熱対象にできない', async () => {
+    const { service, pages } = setup();
+    pages.context = null;
+    await expect(service.assertReadyForWarmup(userId, pageId)).rejects.toBeInstanceOf(NotFoundError);
+  });
+  it('残高が足りない場合は予熱対象にできない', async () => {
+    const { service, credits } = setup();
+    credits.getBalance = async () => ({ monthlyCredits: 0, purchasedCredits: 0, totalCredits: 0, monthlyExpiresAt: null });
+    await expect(service.assertReadyForWarmup(userId, pageId)).rejects.toMatchObject({ code: 'INSUFFICIENT_CREDITS' });
+  });
+});

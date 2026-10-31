@@ -43,6 +43,7 @@ const routeMountPrefixes = new Map([
   ['mobilePurchases.ts', '/api/mobile-purchases'],
   ['organizations.ts', '/api'],
   ['pages.ts', '/api'],
+  ['pageGenerationWarmup.ts', '/api'],
   ['pagePanelStructure.ts', '/api'],
   ['panelEntityAssignments.ts', '/api'],
   ['panelFrames.ts', '/api'],

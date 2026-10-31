@@ -84,3 +84,33 @@ describe('SqsGenerationQueue', () => {
     });
   });
 });
+
+import { vi } from 'vitest';
+
+describe('SQS enqueue worker wake', () => {
+  it('SQS受付成功後にworkerを起動する', async () => {
+    const client = new FakeSqsClient();
+    const requestWarm = vi.fn(async () => undefined);
+    const queue = new SqsGenerationQueue(client, 'https://sqs.example.test/queue', { requestWarm });
+    await expect(queue.enqueueJob({ jobId: 'job-1', jobType: 'page_generate' })).resolves.toEqual({ messageId: 'message-1' });
+    expect(requestWarm).toHaveBeenCalledOnce();
+  });
+  it('起動要求が失敗しても受付済みジョブを失敗や返金へ戻さない', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const queue = new SqsGenerationQueue(new FakeSqsClient(), 'https://sqs.example.test/queue', {
+        requestWarm: async () => { throw new Error('private provider failure'); },
+      });
+      await expect(queue.enqueueJob({ jobId: 'job-1', jobType: 'page_generate' })).resolves.toEqual({ messageId: 'message-1' });
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('private provider failure');
+    } finally { warn.mockRestore(); }
+  });
+  it('SQS受付が失敗した場合は起動せず従来のenqueue失敗を返す', async () => {
+    const client = new FakeSqsClient();
+    client.error = new Error('queue unavailable');
+    const requestWarm = vi.fn(async () => undefined);
+    const queue = new SqsGenerationQueue(client, 'https://sqs.example.test/queue', { requestWarm });
+    await expect(queue.enqueueJob({ jobId: 'job-1', jobType: 'page_generate' })).rejects.toThrow();
+    expect(requestWarm).not.toHaveBeenCalled();
+  });
+});

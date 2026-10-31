@@ -93,7 +93,11 @@ import {
 } from '@/lib/errorRecovery';
 import { t } from '@/lib/i18n';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
-import { ApiError } from '@/lib/api';
+import {
+  ApiError,
+  createPageGenerationWarmupGate,
+  runBestEffortPageGenerationWarmup
+} from '@/lib/api';
 import {
   flattenUniqueRecords,
   MOBILE_LIST_PAGE_SIZE,
@@ -791,6 +795,7 @@ export function PagesScreen(): React.JSX.Element {
   const [lastSyncedFramePageId, setLastSyncedFramePageId] =
     useState<string | null>(null);
   const generationAttemptRef = useRef<PageGenerationAttempt | null>(null);
+  const pageGenerationWarmupGateRef = useRef(createPageGenerationWarmupGate());
   const exportAttemptRef = useRef<EpisodeExportAttempt | null>(null);
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
@@ -904,6 +909,25 @@ export function PagesScreen(): React.JSX.Element {
   });
   const legacyPageGenerationReadinessUnavailable =
     isLegacyPageGenerationCapabilityUnavailable(pageGenerationReadinessQuery.error);
+
+  useEffect(() => {
+    // Spec 4/6/7/9: the authenticated backend owns readiness and credit checks;
+    // warming is a best-effort, no-charge hint and never blocks generation.
+    void pageGenerationWarmupGateRef.current.request(
+      {
+        eligible: canGenerate && pageGenerationReadinessQuery.data?.ready === true,
+        pageId: selectedPage?.id ?? null,
+        organizationId
+      },
+      async (pageId, scopeId) => api.warmPageGeneration(pageId, scopeId)
+    );
+  }, [
+    api,
+    canGenerate,
+    organizationId,
+    pageGenerationReadinessQuery.data?.ready,
+    selectedPage
+  ]);
 
   useEffect(() => {
     const templates = pageLayoutTemplatesQuery.data?.templates ?? [];
@@ -2171,6 +2195,11 @@ export function PagesScreen(): React.JSX.Element {
   };
 
   const confirmGeneratePage = (): void => {
+    if (selectedPage !== null) {
+      void runBestEffortPageGenerationWarmup(
+        async () => api.warmPageGeneration(selectedPage.id, organizationId)
+      );
+    }
     confirmAction({
       language,
       title: t(language, "generated.screens.PagesScreen.generate.page.image.a3a86143"),

@@ -19,6 +19,8 @@ import { CreditService } from '../src/services/credit/CreditService.js';
 import { EntityGenerationRecoveryService } from '../src/services/entity/EntityGenerationRecoveryService.js';
 import { PageGenerationRecoveryService } from '../src/services/page/PageGenerationRecoveryService.js';
 import { OrganizationService, type OrganizationServicePort } from '../src/services/organization/OrganizationService.js';
+import { EcsTaskProtection } from '../src/infrastructure/aws/EcsTaskProtection.js';
+import { resolveGenerationWorkerWarmService } from '../src/infrastructure/aws/GenerationWorkerWarmRuntime.js';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
 import { GenerationQueuePoller } from '../worker/sqsPoller.js';
 
@@ -38,6 +40,10 @@ async function main(): Promise<void> {
   const organizationService = new OrganizationService(new PostgresOrganizationRepository(db, db));
   const recoveryRunner = new GenerationWorkerRecoveryRunner(organizationService);
   await recoveryRunner.run('startup');
+  const warm = resolveGenerationWorkerWarmService();
+  const protectWork = warm === null
+    ? undefined
+    : createProtectedWork(warm, process.env.ECS_AGENT_URI);
 
   const poller = new GenerationQueuePoller(
     new SQSClient(env.AWS_REGION === undefined ? {} : { region: env.AWS_REGION }),
@@ -46,6 +52,7 @@ async function main(): Promise<void> {
       queueUrl: env.SQS_QUEUE_URL_GENERATION,
       maxNumberOfMessages: env.SQS_GENERATION_MAX_NUMBER_OF_MESSAGES,
       visibilityTimeoutSeconds: env.SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS,
+      ...(protectWork === undefined ? {} : { protectWork }),
     },
   );
 
@@ -71,6 +78,29 @@ async function main(): Promise<void> {
     await closeDatabasePool();
     console.info('[generation-worker] polling stopped');
   }
+}
+
+function createProtectedWork(
+  warm: NonNullable<ReturnType<typeof resolveGenerationWorkerWarmService>>,
+  agentUri: string | undefined,
+): (work: () => Promise<import('../worker/index.js').WorkerBatchResult>) => Promise<import('../worker/index.js').WorkerBatchResult> {
+  if (agentUri === undefined || agentUri.trim().length === 0) {
+    throw new ConfigurationError('ECS_AGENT_URI is required when generation worker warm control is enabled');
+  }
+  const taskProtection = new EcsTaskProtection({
+    agentUri,
+    fetch: (url, init) => fetch(url, init),
+  });
+  return (work) => taskProtection.runProtected(
+    async () => work(),
+    async () => {
+      try {
+        await warm.requestWarm();
+      } catch {
+        console.warn('[generation-worker-warm] completion lease refresh unavailable');
+      }
+    },
+  );
 }
 
 class GenerationWorkerRecoveryRunner {

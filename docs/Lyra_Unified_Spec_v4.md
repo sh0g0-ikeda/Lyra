@@ -222,6 +222,44 @@ job, changes its status, cancels work, or mutates credits. Any future history wr
 must first authorize the job through personal ownership or active organization
 membership.
 
+Generation worker fast start is independently gated by
+`GENERATION_WORKER_WARM_ENABLED`, default false. An authenticated, rate-limited
+page preparation request reuses saved-input generation validation, ownership,
+organization generate capability and available credits without creating a job,
+changing page state, recovering jobs, or charging credits. Preparation failure
+must not block actual generation. Existing clients also benefit from a best-effort
+warm request after the durable SQS send; wake failure never invalidates an
+accepted message or triggers a refund.
+
+A server-configured scalable resource has a shared transactional warm lease.
+JST 13:00-01:00 has a minimum of one worker; outside that window preparation,
+enqueue and work completion keep the minimum at one for twenty minutes. All
+queued/processing generation job types prevent lowering the floor. The
+controller serializes expiry and wake requests across API replicas and changes
+only the minimum capacity; it does not directly set desired count or change
+the existing maximum capacity.
+Suspending AWS scheduled scaling is the explicit handoff that authorizes
+adopting an existing minimum of zero or one. It refuses ownership while AWS
+scheduled scaling remains enabled or dynamic scaling is suspended, and never lowers an unowned/manual higher floor.
+API reconcilers retry failed updates while preserving the lease. Worker-side
+ECS protection is acquired before processing, renewed during long work and
+released only after the completion lease update is attempted. Initial protection
+failure retains the message for retry instead of starting unprotected work.
+Renewal failures are logged and retried without turning an already successful
+job into a duplicate delivery; active-job capacity remains protected by the
+controller floor, while prolonged renewal failure cannot guarantee ECS
+protection beyond its existing expiry.
+
+Enabling this feature requires migration, scoped Application Auto Scaling and
+ECS task-protection permissions, a healthy protection-enabled worker, and a
+controlled handoff from AWS scheduled actions to the API controller. Existing
+SQS scale-out/empty scale-in policies remain the fallback and use the controller
+floor. Deploying code or applying the additive migration alone enables none of
+these AWS changes. Rollback disables the flag and restores the previous
+scheduled-scaling ownership; the additive table is retained. Production
+configuration, model, pricing and API replica count are not changed by this
+implementation.
+
 ## 7. Credits and billing
 
 Text AI operations are free. Entity preview/import analysis and page generation use

@@ -28,7 +28,13 @@ import {
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { StoryHierarchyTree } from './components/StoryHierarchyTree';
-import { decodeJwtPayload, LyraApiClient, type BlobResponse } from './lib/api';
+import {
+  createPageGenerationWarmupGate,
+  decodeJwtPayload,
+  LyraApiClient,
+  runBestEffortPageGenerationWarmup,
+  type BlobResponse,
+} from './lib/api';
 import { shouldAllowManualTokenAuth } from './lib/authMode';
 import {
   formatSubscriptionPlanLabel as formatPlanLabel,
@@ -2379,6 +2385,7 @@ function StudioShell(props: {
     Partial<Record<OrganizationDetailPanelKey, boolean>>
   >({});
   const handledJobsRef = useRef<Set<string>>(new Set());
+  const pageGenerationWarmupGateRef = useRef(createPageGenerationWarmupGate());
   const lastWorkspaceRefreshRef = useRef(0);
   const billingVerificationTargetRef = useRef<BillingReturnMarker | null>(null);
   const [billingReturnChecking, setBillingReturnChecking] = useState(false);
@@ -2916,6 +2923,18 @@ function StudioShell(props: {
   const referenceConfirmationBlocked = hasBlockingErrors(referenceConfirmationBlockers);
   const pageSkeletonBlocked = hasBlockingErrors(pageSkeletonBlockers);
   const storyApplyBlocked = hasBlockingErrors(storyApplyBlockers);
+  useEffect(() => {
+    // Spec 4/6/7/9: the backend rechecks ownership, readiness, and credits;
+    // this best-effort hint creates no job and consumes no credits.
+    void pageGenerationWarmupGateRef.current.request(
+      {
+        eligible: activeTab === 'pages' && !pageGenerationBlocked,
+        pageId: selectedPage?.id ?? null,
+        organizationId: activeOrganizationId,
+      },
+      async (pageId, organizationId) => api.warmPageGeneration(pageId, organizationId),
+    );
+  }, [activeOrganizationId, activeTab, api, pageGenerationBlocked, selectedPage]);
   const navigateToReadinessTarget = useCallback((target: GenerationReadinessTarget): void => {
     if (target === 'entities' || target === 'references') {
       setActiveTab('entities');
@@ -6653,6 +6672,9 @@ function StudioShell(props: {
                                   if (selectedPageHasFramePanelMismatch) {
                                     throw new Error(translateUiString(uiLanguage, 'Frame count and panel count do not match. Adjust frames or panels before generating.'));
                                   }
+                                  void runBestEffortPageGenerationWarmup(
+                                    async () => api.warmPageGeneration(selectedPage.id, activeOrganizationId),
+                                  );
                                   await saveCurrentPageGenerationContext();
                                   const result = await api.generatePage(selectedPage.id, activeOrganizationId);
                                   trackJob(result.job_id);

@@ -792,3 +792,12 @@ describe('assertProductionRuntimeConfig', () => {
     }).toThrow(/CLOUDFRONT_PRIVATE_KEY is required/);
   });
 });
+
+describe('generation worker warm runtime configuration', () => {
+  it('無効時は新しいAWS制御設定がなくても従来設定を許可する', () => {
+    expect(() => assertProductionRuntimeConfig({ ...safeProductionConfig, GENERATION_WORKER_WARM_ENABLED: false }, 'production')).not.toThrow();
+  });
+  it('有効時に対象workerが未設定なら起動前に拒否する', () => {
+    expect(() => assertProductionRuntimeConfig({ ...safeProductionConfig, GENERATION_WORKER_WARM_ENABLED: true }, 'production')).toThrow(/warm control configuration/);
+  });
+});

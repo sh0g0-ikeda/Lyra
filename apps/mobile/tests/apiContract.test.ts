@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { onlineManager } from '@tanstack/react-query';
 
 import type { AtomicSaveAndGeneratePayload } from '@/domain/pageAtomicGeneration';
-import { LyraMobileApiClient } from '@/lib/api';
+import {
+  createPageGenerationWarmupGate,
+  LyraMobileApiClient,
+  runBestEffortPageGenerationWarmup
+} from '@/lib/api';
 import { setOperationalEventSinks } from '@/lib/operationalEvents';
 import { exportJobQueryKey } from '@/lib/queryKeys';
 
@@ -19,6 +23,58 @@ const exportJobResponse = {
 } as const;
 
 describe('LyraMobileApiClient API contract', () => {
+  it('生成warmupは課金bodyなしで認証済みpage scopeへ送る', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(
+      client.warmPageGeneration('page-1', 'organization-1')
+    ).resolves.toBeUndefined();
+
+    const request = fetchMock.mock.calls[0];
+    expect(request?.[0]).toContain(
+      '/api/pages/page-1/generation-warmup?organization_id=organization-1'
+    );
+    expect(request?.[1]).toMatchObject({ method: 'POST' });
+    expect(request?.[1]?.body).toBeUndefined();
+    expect(new Headers(request?.[1]?.headers).get('Authorization')).toBe('Bearer token');
+  });
+
+  it('生成warmupは旧backendの404を生成阻害エラーにしない', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(client.warmPageGeneration('page-1')).resolves.toBeUndefined();
+  });
+
+  it('対象外は送信せず同じscopeとpageは再描画しても1回だけwarmupする', async () => {
+    const gate = createPageGenerationWarmupGate();
+    const warm = vi.fn(async (_pageId: string, _organizationId?: string | null) => undefined);
+
+    await gate.request({ eligible: false, pageId: 'page-1' }, warm);
+    await Promise.all([
+      gate.request({ eligible: true, pageId: 'page-1' }, warm),
+      gate.request({ eligible: true, pageId: 'page-1' }, warm)
+    ]);
+    await gate.request({ eligible: true, pageId: 'page-2' }, warm);
+    await gate.request({ eligible: true, pageId: 'page-1', organizationId: 'org-1' }, warm);
+
+    expect(warm.mock.calls).toEqual([
+      ['page-1', undefined],
+      ['page-2', undefined],
+      ['page-1', 'org-1']
+    ]);
+  });
+
+  it('warmup失敗は生成操作へ例外を返さない', async () => {
+    await expect(
+      runBestEffortPageGenerationWarmup(async () => {
+        throw new Error('warmup unavailable');
+      })
+    ).resolves.toBeUndefined();
+  });
+
   it('organization safety reportは認証付きの固定payloadを202で受領する', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

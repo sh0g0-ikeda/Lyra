@@ -1,3 +1,4 @@
+import { startGenerationWorkerWarmReconciler } from './infrastructure/aws/GenerationWorkerWarmRuntime.js';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
@@ -74,6 +75,8 @@ async function main(): Promise<void> {
       sanitizePersistedErrorMessage(error, 'Entity generation recovery failed'),
     );
   }
+
+  startGenerationWorkerWarmReconciler();
 
   serve(
     {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { AppError, ConfigurationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
+import { AppError, ConfigurationError, ConflictError, InsufficientCreditsError, NotFoundError, ValidationError } from '../../domain/errors/index.js';
 import type { PageGenerationContext } from '../../domain/types/page.js';
-import type { PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
+import type { PageGenerationSelection, PageGenerationRequestKind } from '../../domain/types/pageGeneration.js';
 import type { CreditServicePort } from '../credit/CreditService.js';
 import type { OrganizationServicePort } from '../organization/OrganizationService.js';
 import {
@@ -28,6 +28,7 @@ export interface EnqueuePageGenerationResult {
 }
 
 export interface PageGenerationServicePort {
+  assertReadyForWarmup?(userId: string, pageId: string, organizationId?: string | null): Promise<void>;
   enqueuePageGeneration(
     userId: string,
     pageId: string,
@@ -59,32 +60,8 @@ export class PageGenerationService implements PageGenerationServicePort {
     organizationId: string | null = null,
   ): Promise<EnqueuePageGenerationResult> {
     await this.recoveryService.recoverStaleJobsForPage(userId, pageId, organizationId);
-    if (!this.generationEnabled) {
-      throw new ConflictError('Generation is temporarily disabled');
-    }
-
-    if (organizationId !== null) {
-      await this.getOrganizationService().requireMembership(organizationId, userId, 'generate');
-    }
-
-    const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId, organizationId);
-    if (page === null) {
-      throw new NotFoundError('Page not found');
-    }
-
+    const { page, selection } = await this.resolveReadyPage(userId, pageId, organizationId);
     const pageOrganizationId = page.organizationId ?? null;
-    this.ensurePageCanGenerate(page);
-    const billableReferenceCount = await this.ensureAssignedReferencesAndCountBillableReferences(userId, page);
-    await this.ensureNoActiveGenerationJob(userId, page.pageId, pageOrganizationId);
-
-    const requestKind: PageGenerationRequestKind =
-      page.generatedImage === null ? 'initial' : 'regenerate';
-    const selection = this.modeSelector.selectProfile({
-      entityCount: countUniqueAssignedEntities(page),
-      panelCount: page.panels.length,
-      requestKind,
-      billableReferenceCount,
-    });
 
     let creditsConsumed = false;
     let pageStateUpdated = false;
@@ -218,6 +195,47 @@ export class PageGenerationService implements PageGenerationServicePort {
 
       throw new ConfigurationError('Failed to enqueue page generation job');
     }
+  }
+
+  public async assertReadyForWarmup(userId: string, pageId: string, organizationId: string | null = null): Promise<void> {
+    const { page, selection } = await this.resolveReadyPage(userId, pageId, organizationId);
+    const scope = page.organizationId ?? null;
+    if (scope === null) {
+      if ((await this.creditService.getBalance(userId)).totalCredits < selection.creditCost) throw new InsufficientCreditsError();
+      return;
+    }
+    const balance = await this.getOrganizationService().getCreditBalance(userId, scope);
+    if (balance.monthlyCredits + balance.purchasedCredits < selection.creditCost) throw new InsufficientCreditsError();
+  }
+
+  private async resolveReadyPage(userId: string, pageId: string, organizationId: string | null): Promise<{ page: PageGenerationContext; selection: PageGenerationSelection }> {
+    if (!this.generationEnabled) {
+      throw new ConflictError('Generation is temporarily disabled');
+    }
+
+    if (organizationId !== null) {
+      await this.getOrganizationService().requireMembership(organizationId, userId, 'generate');
+    }
+
+    const page = await this.pageRepository.findGenerationContextByIdAndUserId(pageId, userId, organizationId);
+    if (page === null) {
+      throw new NotFoundError('Page not found');
+    }
+
+    const pageOrganizationId = page.organizationId ?? null;
+    this.ensurePageCanGenerate(page);
+    const billableReferenceCount = await this.ensureAssignedReferencesAndCountBillableReferences(userId, page);
+    await this.ensureNoActiveGenerationJob(userId, page.pageId, pageOrganizationId);
+
+    const requestKind: PageGenerationRequestKind =
+      page.generatedImage === null ? 'initial' : 'regenerate';
+    const selection = this.modeSelector.selectProfile({
+      entityCount: countUniqueAssignedEntities(page),
+      panelCount: page.panels.length,
+      requestKind,
+      billableReferenceCount,
+    });
+    return { page, selection };
   }
 
   private ensurePageCanGenerate(page: PageGenerationContext): void {

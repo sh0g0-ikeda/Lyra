@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ChangeMessageVisibilityBatchCommand,
   DeleteMessageBatchCommand,
@@ -10,7 +10,7 @@ import type { ProcessPageGenerationJobResult } from '../../../src/services/page/
 import type { ProcessEpisodePageSkeletonJobResult } from '../../../src/services/story/EpisodePageSkeletonWorkerService.js';
 import type { ProcessEpisodeStoryAutofillJobResult } from '../../../src/services/story/EpisodeStoryAutofillWorkerService.js';
 import { GenerationQueuePoller, type SqsPollerClient } from '../../../worker/sqsPoller.js';
-import type { WorkerDependencies } from '../../../worker/index.js';
+import type { WorkerBatchResult, WorkerDependencies } from '../../../worker/index.js';
 
 class FakeSqsPollerClient implements SqsPollerClient {
   public deletedEntries: unknown[] = [];
@@ -139,6 +139,69 @@ describe('GenerationQueuePoller', () => {
       retryCount: 1,
     });
     expect(client.deletedEntries).toHaveLength(0);
+  });
+
+  it('保護取得後にだけ受信済みジョブを処理する', async () => {
+    const pageWorker = new FakePageGenerationWorkerService();
+    const protectWork = vi.fn(async (work: () => Promise<WorkerBatchResult>): Promise<WorkerBatchResult> => work());
+    const client = new FakeSqsPollerClient([buildMessage('message-1', 'receipt-1', {
+      job_id: '11111111-1111-4111-8111-111111111111', job_type: 'page_generate',
+    })]);
+    const poller = new GenerationQueuePoller(client, buildDependencies(pageWorker, new FakeEntityGenerationWorkerService()), {
+      queueUrl: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation', protectWork,
+    });
+
+    await poller.pollOnce();
+
+    expect(protectWork).toHaveBeenCalledOnce();
+    expect(pageWorker.calls).toEqual(['11111111-1111-4111-8111-111111111111']);
+  });
+
+  it('保護取得失敗時は処理も削除もせず可視性を即時戻す', async () => {
+    const pageWorker = new FakePageGenerationWorkerService();
+    const client = new FakeSqsPollerClient([buildMessage('message-1', 'receipt-1', {
+      job_id: '11111111-1111-4111-8111-111111111111', job_type: 'page_generate',
+    })]);
+    const poller = new GenerationQueuePoller(client, buildDependencies(pageWorker, new FakeEntityGenerationWorkerService()), {
+      queueUrl: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
+      protectWork: async () => { throw new Error('protection unavailable'); },
+    });
+
+    const result = await poller.pollOnce();
+
+    expect(pageWorker.calls).toEqual([]);
+    expect(client.deletedEntries).toEqual([]);
+    expect(result).toMatchObject({ receivedCount: 1, deletedCount: 0, retryCount: 1, handlerResult: null });
+    expect(client.visibilityInputs).toContainEqual(expect.objectContaining({
+      Entries: [expect.objectContaining({ ReceiptHandle: 'receipt-1', VisibilityTimeout: 0 })],
+    }));
+  });
+
+  it('保護取得失敗の再試行はidle delayを挟む', async () => {
+    vi.useFakeTimers();
+    const client = new FakeSqsPollerClient([buildMessage('message-1', 'receipt-1', {
+      job_id: '11111111-1111-4111-8111-111111111111', job_type: 'page_generate',
+    })]);
+    let attempts = 0;
+    let poller: GenerationQueuePoller;
+    poller = new GenerationQueuePoller(client, buildDependencies(new FakePageGenerationWorkerService(), new FakeEntityGenerationWorkerService()), {
+      queueUrl: 'https://sqs.ap-northeast-1.amazonaws.com/123/lyra-generation',
+      idleDelayMs: 1_000,
+      protectWork: async () => {
+        attempts += 1;
+        if (attempts === 2) poller.stop();
+        throw new Error('protection unavailable');
+      },
+    });
+    const running = poller.run();
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(client.receiveInputs).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await running;
+
+    expect(client.receiveInputs).toHaveLength(2);
+    vi.useRealTimers();
   });
 
   it('receive設定は安全な範囲に丸める', async () => {

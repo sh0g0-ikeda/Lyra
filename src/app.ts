@@ -1,3 +1,6 @@
+import { createPageGenerationWarmupRoutes } from './routes/pageGenerationWarmup.js';
+import { PageGenerationWarmupService } from './services/generation/PageGenerationWarmupService.js';
+import { resolveGenerationWorkerWarmService } from './infrastructure/aws/GenerationWorkerWarmRuntime.js';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { organizationInvitationPreviewResponseSchema } from '../packages/api-contract/src/mobileApiSchemas.js';
@@ -617,6 +620,17 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       }),
     );
   }
+  app.route('/api', createPageGenerationWarmupRoutes({
+    authMiddleware,
+    rateLimitMiddleware,
+    warmupService: new PageGenerationWarmupService({
+      assertReadyForWarmup: async (userId, pageId, organizationId) => {
+        const service = resolvedDependencies.pageGenerationService;
+        if (service.assertReadyForWarmup === undefined) throw new ConfigurationError('Generation warmup readiness is not configured');
+        await service.assertReadyForWarmup(userId, pageId, organizationId);
+      },
+    }, resolveGenerationWorkerWarmService()),
+  }));
   app.route(
     '/api',
     createPageRoutes({
@@ -1274,6 +1288,7 @@ function resolveGenerationQueue(): SqsGenerationQueue | null {
   return new SqsGenerationQueue(
     createGenerationQueueClient(env.AWS_REGION),
     env.SQS_QUEUE_URL_GENERATION,
+    resolveGenerationWorkerWarmService() ?? undefined,
   );
 }
 

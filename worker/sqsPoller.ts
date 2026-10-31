@@ -24,6 +24,7 @@ export interface GenerationQueuePollerOptions {
   waitTimeSeconds?: number;
   visibilityTimeoutSeconds?: number;
   idleDelayMs?: number;
+  protectWork?: (work: () => Promise<WorkerBatchResult>) => Promise<WorkerBatchResult>;
 }
 
 export interface GenerationQueuePollResult {
@@ -60,7 +61,7 @@ export class GenerationQueuePoller {
   public async run(): Promise<void> {
     while (!this.shouldStop) {
       const result = await this.pollOnce();
-      if (result.receivedCount === 0 && !this.shouldStop) {
+      if ((result.receivedCount === 0 || result.retryCount > 0) && !this.shouldStop) {
         await sleep(this.options.idleDelayMs ?? DEFAULT_IDLE_DELAY_MS);
       }
     }
@@ -80,7 +81,7 @@ export class GenerationQueuePoller {
     const stopVisibilityExtension = this.startVisibilityExtension(messages);
     let handlerResult: WorkerBatchResult;
     try {
-      handlerResult = await handleGenerationQueue(
+      const handle = (): Promise<WorkerBatchResult> => handleGenerationQueue(
         {
           Records: messages.map((message) => ({
             messageId: message.MessageId,
@@ -89,6 +90,19 @@ export class GenerationQueuePoller {
         },
         this.dependencies,
       );
+      try {
+        handlerResult = this.options.protectWork === undefined
+          ? await handle()
+          : await this.options.protectWork(handle);
+      } catch {
+        await this.restoreMessagesForRetry(messages);
+        return {
+          receivedCount: messages.length,
+          deletedCount: 0,
+          retryCount: messages.length,
+          handlerResult: null,
+        };
+      }
     } finally {
       stopVisibilityExtension();
     }
@@ -170,6 +184,24 @@ export class GenerationQueuePoller {
         '[generation-worker] failed to extend SQS message visibility timeout',
         sanitizePersistedErrorMessage(error, 'Visibility extension failed'),
       );
+    }
+  }
+
+  private async restoreMessagesForRetry(messages: Message[]): Promise<void> {
+    const entries = buildVisibilityEntries(messages);
+    if (entries.length === 0) return;
+    try {
+      const response = await this.client.send(
+        new ChangeMessageVisibilityBatchCommand({
+          QueueUrl: this.options.queueUrl,
+          Entries: entries.map((entry) => ({ ...entry, VisibilityTimeout: 0 })),
+        }),
+      );
+      if ((response.Failed?.length ?? 0) > 0) {
+        console.warn('[generation-worker] could not immediately restore SQS message visibility after task protection failed');
+      }
+    } catch {
+      console.warn('[generation-worker] could not immediately restore SQS message visibility after task protection failed');
     }
   }
 

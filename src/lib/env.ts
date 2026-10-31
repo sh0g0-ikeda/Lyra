@@ -26,6 +26,8 @@ const envSchema = z.object({
   SES_FROM_EMAIL: z.string().email().optional(),
   SES_CONFIGURATION_SET: z.string().min(1).optional(),
   AWS_REGION: z.string().min(1).optional(),
+  GENERATION_WORKER_WARM_ENABLED: z.string().optional().transform((value) => value === 'true'),
+  GENERATION_WORKER_SCALABLE_RESOURCE_ID: z.string().max(200).regex(/^service\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/).optional(),
   SQS_QUEUE_URL_GENERATION: z.string().url().optional(),
   SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(43_200).optional(),
   SQS_GENERATION_MAX_NUMBER_OF_MESSAGES: z.coerce.number().int().min(1).max(10).default(1),
