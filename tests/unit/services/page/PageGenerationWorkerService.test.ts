@@ -143,6 +143,8 @@ class FakeRenderer implements PageImageRendererPort {
   public shouldFail = false;
   public imageData = Buffer.from('image-bytes');
   public mimeType = 'image/png';
+  public providerPromptSha256: string | undefined;
+  public providerPromptBytes: number | undefined;
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
     this.calls.push(input);
@@ -155,6 +157,12 @@ class FakeRenderer implements PageImageRendererPort {
       mimeType: this.mimeType,
       openaiRequestId: 'openai-1',
       costUsd: 0.07,
+      ...(this.providerPromptSha256 === undefined || this.providerPromptBytes === undefined
+        ? {}
+        : {
+            providerPromptSha256: this.providerPromptSha256,
+            providerPromptBytes: this.providerPromptBytes,
+          }),
     };
   }
 }
@@ -228,6 +236,8 @@ describe('PageGenerationWorkerService', () => {
     const promptCompiler = new FakePromptCompiler();
     const inputImageBuilder = new FakeInputImageBuilder();
     const renderer = new FakeRenderer();
+    renderer.providerPromptSha256 = 'provider-prompt-sha';
+    renderer.providerPromptBytes = 321;
     const storage = new FakeStorage();
     const creditService = new FakeCreditService();
     const service = new PageGenerationWorkerService(
@@ -297,6 +307,8 @@ describe('PageGenerationWorkerService', () => {
       generationMode: 'standard',
       imageModel: null,
       requestKind: 'initial',
+      providerPromptSha256: 'provider-prompt-sha',
+      providerPromptBytes: 321,
       promptMetadata: {
         draftPrompt: 'page-prompt-draft',
         compilerBrief: '[TASK]\npage compiler brief',
@@ -330,6 +342,8 @@ describe('PageGenerationWorkerService', () => {
 
     expect(renderer.calls[0]).toMatchObject({ imageModel: 'gpt-image-2' });
     expect(executionRepository.completionInput).toMatchObject({ imageModel: 'gpt-image-2' });
+    expect(executionRepository.completionInput).not.toHaveProperty('providerPromptSha256');
+    expect(executionRepository.completionInput).not.toHaveProperty('providerPromptBytes');
   });
 
   it('thinking job では planner 出力を render に渡す', async () => {

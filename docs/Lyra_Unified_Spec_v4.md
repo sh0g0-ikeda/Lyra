@@ -79,7 +79,32 @@ cancellation are scoped to personal ownership or active organization membership.
 
 Generation and regeneration both create a new result from the current saved inputs.
 A previous generated page image is not an implicit image reference. Confirmed entity
-reference images are explicit character-consistency inputs.
+reference images are explicit subject-consistency inputs.
+
+Page prompts distinguish registered characters, nonhuman subjects, and objects.
+Subject designs are defined once per page; panel locks retain reference/state
+mapping, actions, interactions, composition, and exact speaker/text attribution.
+Objects use their reference silhouette, component proportions, connections, and
+materials rather than human appearance or body-language instructions. Legacy
+object assignment positions/facing do not become independent screen-space locks;
+authored holder/use/support/contact and explicit composition placement control them.
+Complete bounded interaction/scale sentences must not be discarded merely because
+they occur after the first sentence. Ordinary relative sizes remain coherent at
+comparable depth and across views; perspective and explicit giant, miniature,
+fantasy, and selected-state exceptions are preserved.
+
+The deterministic prompt, optional compiler/planner, and final image renderer share
+`src/services/page/PageVisualPolicy.ts`. The renderer includes this policy once
+after optional planning notes. Prompt compaction removes redundant definitions and
+instructions, not authored constraints to meet an arbitrary word target. Existing
+deterministic lock checks and compiler fallback remain in effect. These safeguards
+guide a generative model; they do not constitute a visual correctness guarantee.
+The provider request is limited to 32,000 Unicode code points including the shared
+policy. If only the supplemental plan exceeds this budget, omit that plan; never
+silently truncate authored inputs. If the base instructions alone exceed it, fail
+before the provider call through the existing failed-job/refund contract. Actual
+provider-prompt SHA-256 and UTF-8 byte counts are retained as optional diagnostics
+without persisting raw prompt text; older/local renderers remain compatible.
 
 Story-to-page autofill plans beat ownership across the complete episode before
 expanding the existing pages. Detail compilation uses adaptive, consecutive page

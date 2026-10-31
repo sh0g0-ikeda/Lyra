@@ -70,7 +70,10 @@ export const MAX_PRODUCTION_EPISODE_LONG_JOB_ACTIVE_JOB_LIMITS = {
 
 export const PAGE_PROMPT_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
 export const PAGE_PROMPT_COMPILER_MAX_TOKENS = 900;
-export const PAGE_PROMPT_COMPILER_VERSION = 'page_prompt_v2';
+export const PAGE_PROMPT_COMPILER_VERSION = 'page_prompt_v3';
+
+// Images generation/edit API limit; includes final integrity policy and any plan.
+export const PAGE_IMAGE_PROMPT_MAX_CHARACTERS = 32_000;
 
 export const STYLE_REFERENCE_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
 export const STYLE_REFERENCE_COMPILER_MAX_TOKENS = 500;

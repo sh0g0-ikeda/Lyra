@@ -4,7 +4,10 @@ import type {
   RenderPageImageResult,
 } from '../../services/page/PageGenerationWorkerService.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
-import { ConfigurationError } from '../../domain/errors/index.js';
+import { PAGE_IMAGE_PROMPT_MAX_CHARACTERS } from '../../domain/constants/generation.js';
+import { ConfigurationError, ValidationError } from '../../domain/errors/index.js';
+import { buildPersistedPromptDiagnostics } from '../../lib/promptDiagnostics.js';
+import { PAGE_VISUAL_INTEGRITY_POLICY } from '../../services/page/PageVisualPolicy.js';
 import { OpenAIClient } from './OpenAIClient.js';
 
 interface OpenAIImageGenerationResponse {
@@ -21,9 +24,10 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
     const model = input.imageModel ?? this.model;
-    const prompt = input.internalPlan === null
-      ? input.prompt
-      : `${input.prompt}\n\nInternal generation plan:\n${input.internalPlan}`;
+    // The renderer is the final provider boundary. Re-add the shared contract here
+    // so a custom compiler or optional planner cannot omit it, but retain it once.
+    const prompt = buildProviderPrompt(input);
+    const providerPromptDiagnostics = buildPersistedPromptDiagnostics(prompt);
 
     const response = input.inputImages.length === 0
       ? await this.client.postJson<OpenAIImageGenerationResponse>('/images/generations', {
@@ -57,8 +61,40 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
       mimeType: 'image/png',
       openaiRequestId: response.requestId,
       costUsd: null,
+      providerPromptSha256: providerPromptDiagnostics.sha256,
+      providerPromptBytes: providerPromptDiagnostics.bytes,
     };
   }
+}
+
+function appendVisualIntegrityPolicy(prompt: string): string {
+  const promptWithoutPolicy = prompt
+    .split(PAGE_VISUAL_INTEGRITY_POLICY)
+    .join('')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim();
+  return `${promptWithoutPolicy}\n\n${PAGE_VISUAL_INTEGRITY_POLICY}`;
+}
+
+function buildProviderPrompt(input: RenderPageImageInput): string {
+  const promptWithPlan = input.internalPlan === null
+    ? input.prompt
+    : `${input.prompt}\n\nInternal generation plan:\n${input.internalPlan}`;
+  const finalizedPrompt = appendVisualIntegrityPolicy(promptWithPlan);
+  if (countPromptCharacters(finalizedPrompt) <= PAGE_IMAGE_PROMPT_MAX_CHARACTERS) {
+    return finalizedPrompt;
+  }
+
+  const finalizedBasePrompt = appendVisualIntegrityPolicy(input.prompt);
+  if (input.internalPlan !== null && countPromptCharacters(finalizedBasePrompt) <= PAGE_IMAGE_PROMPT_MAX_CHARACTERS) {
+    return finalizedBasePrompt;
+  }
+
+  throw new ValidationError('Page image prompt exceeds the provider character limit');
+}
+
+function countPromptCharacters(prompt: string): number {
+  return Array.from(prompt).length;
 }
 
 function buildImageEditFormData(input: {

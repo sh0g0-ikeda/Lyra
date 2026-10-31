@@ -18,6 +18,7 @@ import type { CompositionGalleryRepository } from '../../repositories/Compositio
 import type { EntityReferenceAssignment, EntityRepository, EntityResolvedReferenceImage } from '../../repositories/EntityRepository.js';
 import type { PageRepository } from '../../repositories/PageRepository.js';
 import type { PanelRepository } from '../../repositories/PanelRepository.js';
+import { PAGE_VISUAL_INTEGRITY_POLICY } from './PageVisualPolicy.js';
 
 export interface BuildPagePromptInput {
   userId: string;
@@ -42,7 +43,7 @@ interface NormalizedReferenceRole {
   entityId: string | null;
   stateId: string | null;
   imageLabel: string;
-  role: 'character_reference' | 'layout_reference';
+  role: 'character_reference' | 'nonhuman_reference' | 'object_reference' | 'layout_reference';
   subject: string;
   instruction: string;
 }
@@ -64,6 +65,7 @@ interface NormalizedPagePrompt {
   pageSummary: string;
   pageSetting: string;
   referenceRoles: NormalizedReferenceRole[];
+  subjectDefinitions: string[];
   layoutInstruction: string;
   panelInstructions: NormalizedPanelInstruction[];
   qualityConstraints: string[];
@@ -168,8 +170,9 @@ function buildPageGenerationInputSnapshot(
   };
 }
 
-// The deterministic layer keeps panel order, dialogue, reference roles, and layout fidelity explicit
-// so the LLM compiler only has to rewrite the brief into model-friendly prose instead of inferring structure.
+// Define designs once globally; panel locks carry identities and interactions, not
+// repeated biographies. Object placement follows authored use/contact rather than
+// legacy person-position fields. Never infer a holder from a name or text pattern.
 function normalizePagePrompt(
   page: PagePromptContext,
   panels: Panel[],
@@ -187,6 +190,10 @@ function normalizePagePrompt(
     pageSummary: buildPageSummary(page, input, orderedPanels.length),
     pageSetting: buildPageSetting(page),
     referenceRoles,
+    subjectDefinitions: Array.from(new Set(orderedPanels.flatMap((panel) => panel.entities.map((assignment) => assignment.entityId))))
+      .map((id) => entityMap.get(id))
+      .filter((entity): entity is Entity => entity !== undefined)
+      .map((entity) => `${entity.name} (${entity.entityType}): ${summarizeEntityAnchor(entity)}`),
     layoutInstruction: buildLayoutInstruction(page, orderedPanels.length),
     panelInstructions: orderedPanels.map((panel, index) =>
       buildNormalizedPanelInstruction(
@@ -237,7 +244,7 @@ function buildPageSummary(
   panelCount: number,
 ): string {
   const purpose = page.episodePurpose === null ? 'the current episode beat' : page.episodePurpose;
-  return `Create page ${page.pageNumber} of the episode, covering ${purpose}. This is a ${panelCount}-panel manga page for a fresh ${input.generationMode} generation request based only on the current saved page inputs. Render one new finished manga page image, not separated panel assets, and preserve the authored panel order from panel ${1} through panel ${panelCount}. Do not treat this as an edit, continuation, or restoration of any previously generated page image.`;
+  return `Create page ${page.pageNumber} of the episode, covering ${purpose}. This is a fresh ${input.generationMode} generation request based only on the current saved page inputs. Render one complete ${panelCount}-panel manga page in authored order. Do not treat this as an edit, continuation, or restoration of any previously generated page image.`;
 }
 
 function buildPageSetting(page: PagePromptContext): string {
@@ -286,11 +293,11 @@ function buildReferenceRoles(
   }
 
   const referenceByAssignment = new Map(references.filter(hasResolvedImage).map((reference) => [referenceKey(reference.entityId, reference.stateId), reference]));
-  const roles: NormalizedReferenceRole[] = Array.from(orderedAssignments.entries())
-    .flatMap(([key, assignment], index) => {
+  const roles: NormalizedReferenceRole[] = [];
+  for (const [key, assignment] of orderedAssignments) {
       const reference = referenceByAssignment.get(key);
       if (reference === undefined) {
-        return [];
+        continue;
       }
       const entity = entityMap.get(assignment.entityId);
       const canonicalName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
@@ -299,17 +306,23 @@ function buildReferenceRoles(
         reference.stateName,
         Array.from(orderedAssignments.values()).some((candidate) => candidate.entityId === assignment.entityId && candidate.stateId !== null),
       );
-      const anchor = summarizeEntityAnchor(entity);
       const panelScope = formatPanelOrderList(panelOrdersByAssignment.get(key) ?? []);
-      return [{
+      const entityType = entity?.entityType ?? 'character';
+      const role = entityType === 'object' ? 'object_reference' : entityType === 'nonhuman' ? 'nonhuman_reference' : 'character_reference';
+      const preservation = entityType === 'object'
+        ? 'Preserve its silhouette, component proportions, connections, and distinctive design from this image while changing view and perspective for the authored use. Do not copy the reference display pose or background.'
+        : entityType === 'nonhuman'
+          ? 'Preserve its species-specific anatomy, silhouette, markings, and authored size; do not replace them with human anatomy.'
+          : `Keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable when ${entityName} appears.`;
+      roles.push({
         entityId: assignment.entityId,
         stateId: assignment.stateId,
-        imageLabel: `Image ${index + 1} (${entityName})`,
-        role: 'character_reference' as const,
+        imageLabel: `Image ${roles.length + 1} (${entityName})`,
+        role,
         subject: entityName,
-        instruction: `${entityName} character reference. Use this image only for ${entityName}; never use it as another character. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. Keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable when ${entityName} appears. ${anchor}`.trim(),
-      }];
-    });
+        instruction: `${entityName} ${entityType} reference. Use this image only for ${entityName}; never use it as another ${entityType === 'character' ? 'character' : 'subject'}. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. ${preservation}${reference.stateId === null ? '' : ' This selected state reference controls state-specific changes to the base design.'}`,
+      });
+  }
 
   if (page.layoutConfig.type === 'custom') {
     roles.push({
@@ -329,7 +342,7 @@ function buildReferenceRoles(
 function buildReferenceLabelMap(referenceRoles: NormalizedReferenceRole[]): Map<string, string> {
   return new Map(
     referenceRoles.flatMap((role) =>
-      role.role === 'character_reference' && role.entityId !== null
+      role.role !== 'layout_reference' && role.entityId !== null
         ? [[referenceKey(role.entityId, role.stateId), role.imageLabel] as const]
         : [],
     ),
@@ -348,7 +361,7 @@ function buildNormalizedPanelInstruction(
     order: panel.order,
     role: panel.panelRole,
     size: panel.panelSize,
-    situation: normalizePanelSituation(panel.situationText),
+    situation: normalizeAuthoredField(panel.situationText ?? 'No explicit situation text.', 2000),
     subjectLock: buildSubjectLock(panel, entityMap, referenceLabelByEntityId),
     characterBeat: buildCharacterBeat(panel.entities, entityMap, referenceLabelByEntityId),
     compositionBeat: buildCompositionBeat(panel, compositionMap),
@@ -372,16 +385,16 @@ function buildSubjectLock(
     const entity = entityMap.get(assignment.entityId);
     const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
     const referenceLabel = findReferenceLabel(referenceLabelByEntityId, assignment.entityId, assignment.stateId);
-    const visualAnchor = summarizeEntityVisualIdentity(entity);
-    const position = `${humanizeToken(assignment.position)} zone`;
-    const facing = assignment.facingDirection === null
+    const isObject = entity?.entityType === 'object';
+    const position = isObject ? null : `${humanizeToken(assignment.position)} zone`;
+    const facing = isObject || assignment.facingDirection === null
       ? null
       : `facing ${humanizeToken(assignment.facingDirection)}`;
     return [
       entityName,
       referenceLabel === undefined ? null : `reference ${referenceLabel}`,
-      visualAnchor === null ? null : `visual identity ${visualAnchor}`,
       `role ${assignment.role}`,
+      isObject ? 'object; placement follows authored interaction' : null,
       position,
       facing,
     ]
@@ -389,7 +402,7 @@ function buildSubjectLock(
       .join(', ');
   });
 
-  return `Panel ${panel.order} subject lock: required visible subjects are ${details.join('; ')}. Every listed subject must be visibly present and recognizable in this panel. Do not substitute, merge, swap, or replace these subjects with any other character or reference image. Do not draw unassigned named or referenced characters in this panel.`;
+  return `Panel ${panel.order} subject lock: required visible subjects are ${details.join('; ')}.`;
 }
 
 function dedupeAssignmentsByEntity(assignments: PanelEntityAssignment[]): PanelEntityAssignment[] {
@@ -421,14 +434,20 @@ function buildCharacterBeat(
       const entity = entityMap.get(assignment.entityId);
       const entityName = entity?.name ?? `Unknown entity ${assignment.entityId}`;
       const referenceLabel = findReferenceLabel(referenceLabelByEntityId, assignment.entityId, assignment.stateId);
-      const visualAnchor = summarizeEntityVisualIdentity(entity);
       const expression = assignment.expression === 'custom' ? assignment.customExpression : assignment.expression;
       const action = assignment.action === 'custom' ? assignment.customAction : assignment.action;
+      if (entity?.entityType === 'object') {
+        return [
+          `${entityName}${referenceLabel === undefined ? '' : `, reference ${referenceLabel}`}: object`,
+          assignment.action === 'custom' && assignment.customAction !== null ? `authored interaction/use: ${normalizeSentence(assignment.customAction, false)}` : null,
+          assignment.expression === 'custom' && assignment.customExpression !== null ? `appearance/effect: ${normalizeSentence(assignment.customExpression, false)}` : null,
+          assignment.effectNote === null ? null : `visual detail: ${normalizeSentence(assignment.effectNote, false)}`,
+        ].filter((part): part is string => part !== null).join('; ') + '.';
+      }
       const parts = [
         [
           entityName,
           referenceLabel === undefined ? null : `reference ${referenceLabel}`,
-          visualAnchor === null ? null : `visual identity ${visualAnchor}`,
         ].filter((value): value is string => value !== null).join(', '),
         `is ${assignment.role} in the ${assignment.position} zone`,
         assignment.facingDirection === null ? null : `facing ${humanizeToken(assignment.facingDirection)}`,
@@ -457,7 +476,7 @@ function buildCompositionBeat(
   }
 
   if (panel.composition.compositionPrompt !== null) {
-    parts.push(normalizePromptField(panel.composition.compositionPrompt, 180));
+    parts.push(normalizeAuthoredField(panel.composition.compositionPrompt, 1000));
   }
 
   if (panel.composition.shotType !== null) {
@@ -469,22 +488,22 @@ function buildCompositionBeat(
   }
 
   if (panel.composition.customNote !== null) {
-    parts.push(normalizePromptField(panel.composition.customNote, 140));
+    parts.push(normalizeAuthoredField(panel.composition.customNote, 1000));
   }
 
   if (panel.backgroundNote !== null) {
-    const background = sanitizePromptField(panel.backgroundNote, 100);
-    if (background !== null) {
-      parts.push(`Background: ${normalizeSentence(background, false)}.`);
+    if (panel.backgroundNote.trim().length > 0) {
+      parts.push(`Background: ${normalizeAuthoredField(panel.backgroundNote, 2000)}`);
     }
   }
 
-  if (panel.panelNotes !== null && panel.composition.customNote === null) {
+  if (panel.panelNotes !== null) {
     const panelSpecificNote = sanitizePanelSpecificNote(
       panel.panelNotes,
       panel.situationText,
       panel.composition.compositionPrompt,
       panel.backgroundNote,
+      panel.composition.customNote,
     );
     if (panelSpecificNote !== null) {
       parts.push(`Panel-specific note: ${normalizeSentence(panelSpecificNote, false)}`);
@@ -504,8 +523,12 @@ function buildDialogueBeats(
   referenceLabelByEntityId: Map<string, string>,
 ): string[] {
   return panel.dialogue.map((dialogue) =>
-    formatDialogueLine(panel.order, dialogue, entityMap, referenceLabelByEntityId),
+    formatDialogueLine(panel.order, dialogue, entityMap, referenceLabelByEntityId, findSpeakerStateId(panel, dialogue.entityId)),
   );
+}
+
+function findSpeakerStateId(panel: Panel, entityId: string | null): string | null {
+  return dedupeAssignmentsByEntity(panel.entities).find((assignment) => assignment.entityId === entityId)?.stateId ?? null;
 }
 
 function buildDialogueLock(
@@ -523,7 +546,7 @@ function buildDialogueLock(
       return `line ${ordinal} is narration text and must remain narration, not character speech: "${dialogue.text}"`;
     }
 
-    const speaker = formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
+    const speaker = formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId, findSpeakerStateId(panel, dialogue.entityId));
     return `line ${ordinal} must stay assigned to ${speaker} exactly as written: "${dialogue.text}". Do not assign this line to any other subject or reference image`;
   });
 
@@ -539,7 +562,7 @@ function buildVisualLock(
   const subjectNames = panel.entities
     .slice()
     .sort((left, right) => assignmentRoleWeight(left.role) - assignmentRoleWeight(right.role))
-    .map((assignment) => formatEntityVisualLockSubject(assignment.entityId, entityMap, referenceLabelByEntityId))
+    .map((assignment) => formatEntityVisualLockSubject(assignment.entityId, assignment.stateId, entityMap, referenceLabelByEntityId))
     .filter((value, index, values) => values.indexOf(value) === index);
   const situationCue = normalizePanelSituation(panel.situationText);
   const backgroundCue = sanitizePromptField(panel.backgroundNote, 100) ?? '';
@@ -631,18 +654,14 @@ function buildQualityConstraints(
   referenceRoles: NormalizedReferenceRole[],
 ): string[] {
   const constraints = [
-    'Create a fresh page from the current saved page inputs only; do not preserve, restore, or edit any previous generated page image.',
     `Maintain exactly ${panelCount} readable panels in right-to-left manga reading order.`,
-    'Keep panel borders and gutters clean and unambiguous.',
-    'Preserve the authored action progression from one panel to the next without skipping intermediate beats.',
-    'Do not let any foreground character drift off-model relative to their reference image.',
-    'For every panel, the listed panel subjects are authoritative; do not replace them with a different referenced character and do not move a character into a panel where they are not listed.',
-    'Panel subject lock lines are hard constraints: every listed required subject must be visible in that panel, and unlisted named or referenced characters must not appear there.',
-    'Panel situation cues and background cues are mandatory visual content for their panels, not optional mood notes.',
+    'Follow authored action, composition, and background cues. Each panel subject lock is authoritative: every listed subject must be visible and recognizable, and unlisted named subjects must not appear.',
+    'Do not substitute, merge, swap, or replace these subjects with any other character or reference image.',
+    PAGE_VISUAL_INTEGRITY_POLICY,
   ];
 
   if (referenceRoles.length > 0) {
-    constraints.push('Treat uploaded images only as character or layout references, never as a previous page image or an edit target.');
+    constraints.push('Treat uploaded images only as the declared character, nonhuman, object, or layout references, never as a previous page image or an edit target.');
   }
 
   if (referenceRoles.some((role) => role.role === 'layout_reference')) {
@@ -650,8 +669,7 @@ function buildQualityConstraints(
   }
 
   if (page.pageDialogueToggle && page.dialogueMode !== 'balloon_only') {
-    constraints.push('Keep required dialogue and SFX legible in the artwork without changing the authored wording.');
-    constraints.push('Preserve each baked dialogue line exactly with its authored speaker or narration role. Do not swap speakers, paraphrase lines, or move narration into character speech.');
+    constraints.push('Render required dialogue and SFX legibly and exactly with the locked speaker or narration role.');
   }
 
   return constraints;
@@ -659,11 +677,6 @@ function buildQualityConstraints(
 
 function buildNegativeConstraints(page: PagePromptContext): string[] {
   const constraints = [
-    'No extra panels.',
-    'No missing panels.',
-    'No extra characters beyond the authored cast for each panel.',
-    'No photorealistic rendering.',
-    'No western comic page styling.',
     'No watermark.',
   ];
 
@@ -680,6 +693,7 @@ function buildDraftPrompt(normalized: NormalizedPagePrompt): string {
     normalized.styleLock,
     normalized.pageSetting,
     normalized.layoutInstruction,
+    `Subject definitions (apply throughout the page): ${normalized.subjectDefinitions.join(' ')}`,
     `Reference image roles: ${buildReferenceRoleParagraph(normalized.referenceRoles)}`,
     buildPanelInstructionParagraph(normalized.panelInstructions),
     buildQualityConstraintParagraph(normalized.qualityConstraints, normalized.negativeConstraints),
@@ -692,6 +706,7 @@ function buildCompilerBrief(normalized: NormalizedPagePrompt): string {
   const sections: Array<[string, string[]]> = [
     ['[TASK]', [normalized.pageSummary]],
     ['[GLOBAL STYLE]', [normalized.styleLock]],
+    ['[SUBJECT DEFINITIONS]', normalized.subjectDefinitions],
     [
       '[REFERENCE IMAGE ROLES]',
       normalized.referenceRoles.length === 0
@@ -707,7 +722,7 @@ function buildCompilerBrief(normalized: NormalizedPagePrompt): string {
           `Panel ${panel.order} (${panel.role}, ${panel.size})`,
           `- Situation: ${panel.situation}`,
           panel.subjectLock === null ? null : `- Subject lock: ${panel.subjectLock}`,
-          `- Character beat: ${panel.characterBeat}`,
+          `- Subject beat: ${panel.characterBeat}`,
           `- Composition beat: ${panel.compositionBeat}`,
         ].filter((value): value is string => value !== null);
 
@@ -750,7 +765,7 @@ function buildPanelInstructionParagraph(panelInstructions: NormalizedPanelInstru
         `Panel ${panel.order}: This is a ${panel.role} ${panel.size} beat.`,
         `Panel ${panel.order} situation: ${panel.situation}`,
         panel.subjectLock,
-        `Panel ${panel.order} character direction: ${panel.characterBeat}`,
+        `Panel ${panel.order} subject direction: ${panel.characterBeat}`,
         `Panel ${panel.order} composition and action: ${panel.compositionBeat}`,
         panel.dialogueBeats.length === 0 ? null : `Panel ${panel.order} dialogue and SFX: ${panel.dialogueBeats.join(' ')}`,
         panel.dialogueLock,
@@ -777,10 +792,11 @@ function formatDialogueLine(
   dialogue: PanelDialogueLine,
   entityMap: Map<string, Entity>,
   referenceLabelByEntityId: Map<string, string>,
+  stateId: string | null,
 ): string {
   const speaker = dialogue.entityId === null
     ? null
-    : formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId);
+    : formatEntityReferenceIdentity(dialogue.entityId, entityMap, referenceLabelByEntityId, stateId);
   const prefix =
     speaker === null
       ? `Panel ${panelOrder} dialogue`
@@ -809,6 +825,12 @@ function normalizePanelSituation(value: string | null): string {
   return normalizePromptField(value ?? 'No explicit situation text.', 140);
 }
 
+// Keep complete authored relationship/scale sentences within the persisted field
+// limits. First-sentence summaries are only appropriate for diagnostic lock cues.
+function normalizeAuthoredField(value: string, maxLength: number): string {
+  return normalizeSentence(normalizeWhitespace(value).slice(0, maxLength));
+}
+
 function normalizePromptField(value: string, maxLength: number): string {
   return normalizeSentence(sanitizePromptField(value, maxLength) ?? value);
 }
@@ -818,14 +840,16 @@ function sanitizePanelSpecificNote(
   situation: string | null,
   compositionPrompt: string | null,
   backgroundNote: string | null,
+  customNote: string | null,
 ): string | null {
-  const sanitized = sanitizePromptField(note, 120);
-  if (sanitized === null) {
+  const sentences = normalizeWhitespace(note).slice(0, 2000).split(/(?<=[。！？])\s*|(?<=[.!?])\s+/u);
+  const sanitized = sentences.filter((sentence) => sanitizePromptField(sentence, 2000) !== null).join(' ');
+  if (sanitized.length === 0) {
     return null;
   }
 
-  const comparisons = [situation, compositionPrompt, backgroundNote]
-    .map((value) => sanitizePromptField(value, 120))
+  const comparisons = [situation, compositionPrompt, backgroundNote, customNote]
+    .map((value) => value === null ? null : normalizeWhitespace(value))
     .filter((value): value is string => value !== null);
   if (comparisons.some((comparison) => promptFieldsLookEquivalent(sanitized, comparison))) {
     return null;
@@ -887,8 +911,10 @@ function promptFieldsLookEquivalent(left: string, right: string): boolean {
 
 function summarizeEntityAnchor(entity: Entity | undefined): string {
   const visualIdentity = summarizeEntityVisualIdentity(entity);
-  const source = entity?.promptSupplement ?? entity?.freeDescription ?? '';
-  const normalized = normalizeWhitespace(source);
+  const sources = entity?.entityType === 'character'
+    ? [entity.promptSupplement ?? entity.freeDescription ?? '']
+    : [entity?.freeDescription ?? '', entity?.promptSupplement ?? ''];
+  const normalized = Array.from(new Set(sources.map(normalizeWhitespace).filter((value) => value.length > 0))).join(' ');
   const parts: string[] = [];
 
   if (visualIdentity !== null) {
@@ -896,7 +922,8 @@ function summarizeEntityAnchor(entity: Entity | undefined): string {
   }
 
   if (normalized.length > 0) {
-    const trimmed = normalized.length > 160 ? `${normalized.slice(0, 157).trimEnd()}...` : normalized;
+    const limit = entity?.entityType === 'character' ? 160 : 4000;
+    const trimmed = normalized.length > limit ? `${normalized.slice(0, limit - 3).trimEnd()}...` : normalized;
     parts.push(`Keep these anchor traits stable: ${trimmed}`);
   }
 
@@ -907,15 +934,14 @@ function formatEntityReferenceIdentity(
   entityId: string,
   entityMap: Map<string, Entity>,
   referenceLabelByEntityId: Map<string, string>,
+  stateId: string | null,
 ): string {
   const entity = entityMap.get(entityId);
   const entityName = entity?.name ?? `Unknown entity ${entityId}`;
-  const referenceLabel = findReferenceLabel(referenceLabelByEntityId, entityId, null);
-  const visualIdentity = summarizeEntityVisualIdentity(entity);
+  const referenceLabel = findReferenceLabel(referenceLabelByEntityId, entityId, stateId);
   return [
     entityName,
     referenceLabel === undefined ? null : `reference ${referenceLabel}`,
-    visualIdentity === null ? null : `visual identity ${visualIdentity}`,
   ]
     .filter((value): value is string => value !== null)
     .join(', ');
@@ -923,16 +949,15 @@ function formatEntityReferenceIdentity(
 
 function formatEntityVisualLockSubject(
   entityId: string,
+  stateId: string | null,
   entityMap: Map<string, Entity>,
   referenceLabelByEntityId: Map<string, string>,
 ): string {
   const entity = entityMap.get(entityId);
   const entityName = entity?.name ?? entityId;
-  const referenceLabel = findReferenceLabel(referenceLabelByEntityId, entityId, null);
-  const visualIdentity = summarizeEntityVisualIdentity(entity);
+  const referenceLabel = findReferenceLabel(referenceLabelByEntityId, entityId, stateId);
   const details = [
     referenceLabel,
-    visualIdentity,
   ].filter((value): value is string => value !== undefined && value !== null);
   return details.length === 0 ? entityName : `${entityName} [${details.join(', ')}]`;
 }
@@ -943,21 +968,34 @@ function summarizeEntityVisualIdentity(entity: Entity | undefined): string | nul
   }
 
   const fields = entity.structuredFields;
+  if (entity.entityType !== 'character') {
+    const keys = entity.entityType === 'object'
+      ? ['category', 'material', 'size', 'distinctive_features']
+      : ['base_form', 'size', 'movement', 'distinctive_features'];
+    const details = keys.flatMap((key) => {
+      const value = readFieldString(fields, key);
+      return value === null ? [] : [`${key.replace(/_/gu, ' ')}: ${value}`];
+    });
+    return details.length === 0 ? null : details.join(', ');
+  }
   const parts = [
     readFieldString(fields, 'gender_expression'),
     summarizeHair(fields),
     summarizeEyes(fields),
     summarizeClothing(fields),
-    summarizeBody(fields),
     summarizeExpression(fields),
   ].filter((value): value is string => value !== null);
 
-  if (parts.length === 0) {
+  const body = summarizeBody(fields);
+  if (parts.length === 0 && body === null) {
     return null;
   }
 
   const summary = parts.join(', ');
-  return summary.length > 320 ? `${summary.slice(0, 317).trimEnd()}...` : summary;
+  const appearance = summary.length > 320 ? `${summary.slice(0, 317).trimEnd()}...` : summary;
+  // Scale is independent of the compact appearance summary: long hair/outfit
+  // descriptions must never hide the authored height or body proportions.
+  return [body, appearance].filter((value) => value !== null && value.length > 0).join(', ');
 }
 
 function summarizeHair(fields: Record<string, unknown>): string | null {
@@ -1009,10 +1047,15 @@ function summarizeClothing(fields: Record<string, unknown>): string | null {
 }
 
 function summarizeBody(fields: Record<string, unknown>): string | null {
+  const proportions = readRecord(fields.proportions);
   const values = [
     readFieldString(fields, 'build') === null ? null : `${readFieldString(fields, 'build')} build`,
     readFieldString(fields, 'height') === null ? null : `${readFieldString(fields, 'height')} height`,
     readFieldString(fields, 'age_range') === null ? null : `${readFieldString(fields, 'age_range')} age`,
+    ...['head_to_body_ratio', 'shoulder_width', 'leg_length', 'posture_axis'].flatMap((key) => {
+      const value = readFieldString(proportions, key);
+      return value === null ? [] : [`${key.replace(/_/gu, ' ')}: ${value}`];
+    }),
   ].filter((value): value is string => value !== null);
   return values.length === 0 ? null : values.join(', ');
 }
@@ -1191,12 +1234,12 @@ function buildStyleLock(page: PagePromptContext): string {
 
   return [
     STYLE_LOCK_TEXT,
-    `Named style reference constraint: "${page.styleReference.title}". Treat it as a hard page-wide rendering constraint.`,
+    `Named style reference constraint: "${page.styleReference.title}".`,
     `Generalized style interpretation: ${compactStylePromptText(
       page.styleReference.compiledBrief,
       STYLE_PROMPT_TEXT_LIMITS.compiledBrief,
     )}`,
-    'Keep each character face, eye shape, hair silhouette, body proportions, and outfit silhouette anchored to the character reference images. Apply the style reference to rendering treatment, not to character identity.',
+    'Style changes rendering, never subject identity or geometry.',
     anchorConstraint,
     notes,
   ]

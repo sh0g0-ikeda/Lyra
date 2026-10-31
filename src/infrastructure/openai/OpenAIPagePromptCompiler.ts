@@ -9,6 +9,7 @@ import type {
   CompilePagePromptInput,
   PagePromptCompilerPort,
 } from '../../services/page/PagePromptCompiler.js';
+import { PAGE_VISUAL_INTEGRITY_POLICY } from '../../services/page/PageVisualPolicy.js';
 import { OpenAIClient } from './OpenAIClient.js';
 
 interface OpenAICompilerResponse {
@@ -72,6 +73,8 @@ function buildSystemPrompt(): string {
     'Character identity must stay anchored to the provided character reference images. Do not let the style reference alter face shape, eye shape, hair silhouette, body proportions, or outfit silhouette.',
     'Prioritize: 1. named style constraint and style anchors, 2. exact panel count and reading order, 3. strict layout adherence, 4. stable character identity from the named reference images, 5. coherent action continuity across panels, 6. readable dialogue and SFX only where they are explicitly required in the artwork.',
     'Always keep the reference image mapping explicit. If the brief says "Image 1 (Aoi)", preserve that role clearly so the model knows which image anchors which character.',
+    'Keep object and nonhuman reference types explicit. Preserve each object design, exact geometry and proportions, the authored holder or use relationship, and any explicit giant, miniature, or fantasy scale exception.',
+    'State each subject identity once in the page-wide reference section; do not repeat full subject biographies in every panel unless a panel needs a distinct authored state or action.',
     'Treat every authored dialogue line as a hard lock whenever the brief marks it as baked dialogue. Preserve the exact wording, the exact speaker assignment, and whether the line is narration or character speech.',
     'If a brief says a line belongs to a named character, that same character must visibly own the line in the final page. Do not swap speakers, paraphrase the line, collapse multiple lines into one, or move narration into dialogue.',
     'Convert abstract emotional instructions into visible panel cues, but do not add props, extra characters, omitted panels, scenic backgrounds beyond the described setting, camera effects, or text that is not already present in the brief.',
@@ -79,7 +82,8 @@ function buildSystemPrompt(): string {
     'The result must describe one complete manga page with explicit layout fidelity and full-page framing.',
     'Use clear concrete visual language. Avoid vague praise words like beautiful, cool, high-quality, masterpiece, cinematic, or stunning.',
     'Output the final prompt in the same language that the brief uses for authored dialogue, narration, and editable text fields.',
-    'Keep the final prompt dense but readable, typically around 220 to 360 English-word equivalent unless the brief is very simple.',
+    'Use the minimum text needed for every authored panel, reference mapping, interaction, scale exception, and exact dialogue. Remove repetition instead of dropping constraints to meet an arbitrary word target.',
+    PAGE_VISUAL_INTEGRITY_POLICY,
   ].join(' ');
 }
 

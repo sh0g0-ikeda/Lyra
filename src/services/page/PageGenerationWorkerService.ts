@@ -76,6 +76,8 @@ export interface RenderPageImageResult {
   mimeType: string;
   openaiRequestId: string | null;
   costUsd: number | null;
+  providerPromptSha256?: string;
+  providerPromptBytes?: number;
 }
 
 export interface PageImageRendererPort {
@@ -539,6 +541,12 @@ function buildCompletionInput(
     generatedAt: new Date().toISOString(),
     costUsd: renderResult.costUsd,
     openaiRequestId: renderResult.openaiRequestId,
+    ...(renderResult.providerPromptSha256 === undefined || renderResult.providerPromptBytes === undefined
+      ? {}
+      : {
+          providerPromptSha256: renderResult.providerPromptSha256,
+          providerPromptBytes: renderResult.providerPromptBytes,
+        }),
     promptMetadata,
     stageTimingsMs,
   };

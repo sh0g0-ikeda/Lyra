@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OpenAIPagePromptCompiler } from '../../../../src/infrastructure/openai/OpenAIPagePromptCompiler.js';
 import { OpenAIClient } from '../../../../src/infrastructure/openai/OpenAIClient.js';
+import { PAGE_VISUAL_INTEGRITY_POLICY } from '../../../../src/services/page/PageVisualPolicy.js';
 
 describe('OpenAIPagePromptCompiler', () => {
   it('GPT Image 2 向けの page brief をコンパイルする', async () => {
@@ -30,7 +31,7 @@ describe('OpenAIPagePromptCompiler', () => {
         'Create a complete manga page with stable character references, exact panel order, and readable dialogue baked only where requested.',
       compilerProvider: 'openai',
       compilerModel: 'gpt-5.4-mini',
-      compilerPromptVersion: 'page_prompt_v2',
+      compilerPromptVersion: 'page_prompt_v3',
     });
 
     const request = requests[0];
@@ -40,8 +41,15 @@ describe('OpenAIPagePromptCompiler', () => {
 
     expect(systemPrompt).toContain('exact panel count and reading order');
     expect(systemPrompt).toContain('reference image mapping explicit');
+    expect(systemPrompt).toContain('Remove repetition instead of dropping constraints');
+    expect(systemPrompt).not.toContain('220 to 360');
     expect(systemPrompt).toContain('Output the final prompt in the same language that the brief uses');
     expect(systemPrompt).toContain('Preserve the exact wording, the exact speaker assignment');
+    expect(systemPrompt).toContain(PAGE_VISUAL_INTEGRITY_POLICY);
+    expect(systemPrompt).toContain('object and nonhuman reference types explicit');
+    expect(systemPrompt).toContain('authored holder or use relationship');
+    expect(systemPrompt).toContain('explicit giant, miniature, or fantasy scale exception');
+    expect(systemPrompt).toContain('do not repeat full subject biographies in every panel');
     expect(userPrompt).toContain('[TASK]');
     expect(userPrompt).not.toContain('Deterministic draft prompt:');
     expect(userPrompt).toContain('Write the final GPT Image 2 page-generation prompt now.');

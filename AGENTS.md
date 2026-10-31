@@ -199,6 +199,7 @@ Routes に provider 呼び出し、クレジット計算、SQL 詳細を置か�
 - client error を無条件 retry しない。
 - generation_jobs の active uniqueness、SQS visibility、provider timeout、retry classification、recovery、refund の整合性を崩さない。
 - regeneration は現在保存済み input から新規生成する。過去の生成画像を暗黙の参照画像にしない。
+- 画像プロンプトは登録種別ごとに人物・非人間・物体を区別する。物体の独立した位置ロックより使用・保持関係を優先し、参照形状と相対スケールの契約は Spec §6 と `src/services/page/PageVisualPolicy.ts` に従う。
 
 ## 7. コード品質
 
@@ -268,4 +269,4 @@ Routes に provider 呼び出し、クレジット計算、SQL 詳細を置か�
 
 AGENTS.md は設計、仕様、運用規約が変わった場合に更新する。
 
-最終更新: 2026-07-14
+最終更新: 2026-10-31
