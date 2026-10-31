@@ -12,13 +12,16 @@ export interface PageGenerationWarmupRouteDependencies {
 }
 export function createPageGenerationWarmupRoutes(dependencies: PageGenerationWarmupRouteDependencies): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-  app.use('*', dependencies.authMiddleware);
-  app.use('*', dependencies.rateLimitMiddleware);
-  app.post('/pages/:id/generation-warmup', async (c) => {
-    const parsed = z.string().uuid().safeParse(c.req.param('id'));
-    if (!parsed.success) throw new ValidationError('Invalid page id');
-    await dependencies.warmupService.warmup(c.get('user').id, parsed.data, parseOptionalOrganizationId(c));
-    return c.body(null, 204);
-  });
+  app.post(
+    '/pages/:id/generation-warmup',
+    dependencies.authMiddleware,
+    dependencies.rateLimitMiddleware,
+    async (c) => {
+      const parsed = z.string().uuid().safeParse(c.req.param('id'));
+      if (!parsed.success) throw new ValidationError('Invalid page id');
+      await dependencies.warmupService.warmup(c.get('user').id, parsed.data, parseOptionalOrganizationId(c));
+      return c.body(null, 204);
+    },
+  );
   return app;
 }

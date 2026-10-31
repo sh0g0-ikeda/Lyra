@@ -18,6 +18,28 @@ function appFor(signedIn: boolean): { app: Hono<AppEnv>; warmup: ReturnType<type
 }
 const page = '11111111-1111-4111-8111-111111111111';
 describe('POST page generation warmup', () => {
+  it('無関係な後続APIには予熱用middlewareを適用しない', async () => {
+    const auth = vi.fn<MiddlewareHandler<AppEnv>>(async (c, next) => {
+      c.set('user', { id: 'user-1', supabaseId: 'sub-1', email: 'test@example.test', displayName: null, planCode: 'free' });
+      await next();
+    });
+    const rateLimit = vi.fn<MiddlewareHandler<AppEnv>>(async (_c, next) => next());
+    const app = new Hono<AppEnv>();
+    app.route('/api', createPageGenerationWarmupRoutes({
+      authMiddleware: auth,
+      rateLimitMiddleware: rateLimit,
+      warmupService: { warmup: vi.fn(async () => undefined) },
+    }));
+    app.get('/api/unrelated', (c) => c.text('ok'));
+
+    const response = await app.request('/api/unrelated');
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('ok');
+    expect(auth).not.toHaveBeenCalled();
+    expect(rateLimit).not.toHaveBeenCalled();
+  });
+
   it('認証済み本人と対象scopeだけをserviceへ渡して204を返す', async () => {
     const { app, warmup } = appFor(true);
     const org = '22222222-2222-4222-8222-222222222222';
