@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Pool } from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations, runProduction44Expansion } from '../../src/lib/migrations.js';
 import { attestRuntimeSchema, describeRuntimeSchema, readRuntimeSchemaCatalog } from '../../src/lib/runtimeSchemaAttestation.js';
@@ -20,19 +20,41 @@ function isSyntheticTarget(): boolean {
       || (process.env.CI === 'true' && process.env.GITHUB_ACTIONS === 'true' && ['5432', '5433'].includes(address.port)));
 }
 
-const suite = isSyntheticTarget() ? describe : describe.skip;
-for (const profile of ['canonical', 'expanded'] as const) suite(`generation worker warm attestation ${profile}`, () => {
+// Select suites before registration: Vitest hook contexts are interpreted as
+// done callbacks by Bun. Keep PG16's exact-PG18 fixture visibly skipped in both.
+async function readSyntheticPostgresVersion(): Promise<number> {
+  const probe = new Pool({
+    connectionString: url,
+    max: 1,
+    connectionTimeoutMillis: 5_000,
+    query_timeout: 5_000,
+    options: '-c default_transaction_read_only=on -c statement_timeout=5000',
+  });
+  try {
+    const result = await probe.query<{ version: string }>("SELECT current_setting('server_version_num') AS version");
+    const raw = result.rows[0]?.version;
+    const version = Number(raw);
+    if (result.rows.length !== 1 || raw === undefined || !/^\d+$/u.test(raw)
+      || !Number.isSafeInteger(version) || version < 160000) {
+      throw new Error('Unsupported PostgreSQL version for warm attestation tests');
+    }
+    return version;
+  } finally { await probe.end(); }
+}
+
+const postgresVersion = isSyntheticTarget() ? await readSyntheticPostgresVersion() : null;
+const suites = {
+  canonical: postgresVersion !== null ? describe : describe.skip,
+  expanded: postgresVersion !== null && postgresVersion >= 180000 ? describe : describe.skip,
+};
+for (const profile of ['canonical', 'expanded'] as const) suites[profile](`generation worker warm attestation ${profile}`, () => {
   const schema = 'warm_attest_' + randomUUID().replaceAll('-', '');
   let admin: Pool | undefined;
   let pool: Pool | undefined;
   let database: DatabaseClient & TransactionRunner;
-  let unsupportedVersion = false;
 
   beforeAll(async () => {
     admin = new Pool({ connectionString: url, max: 1 });
-    const version = await admin.query<{ version: string }>("SELECT current_setting('server_version_num') AS version");
-    unsupportedVersion = profile === 'expanded' && Number(version.rows[0]?.version) < 180000;
-    if (unsupportedVersion) return;
     await admin.query('CREATE SCHEMA ' + schema);
     const schemaPool = new Pool({ connectionString: url, options: '-c search_path=' + schema + ',public', max: 3 });
     pool = schemaPool;
@@ -63,12 +85,10 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`generation work
     });
   }, 180_000);
 
-  beforeEach(context => { if (unsupportedVersion) context.skip(); });
-
   afterAll(async () => {
     if (pool !== undefined) await pool.end();
     if (admin !== undefined) {
-      if (!unsupportedVersion) await admin.query('DROP SCHEMA ' + schema + ' CASCADE');
+      await admin.query('DROP SCHEMA IF EXISTS ' + schema + ' CASCADE');
       await admin.end();
     }
   });
@@ -97,7 +117,7 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`generation work
     expect(describeRuntimeSchema({ ...catalog })).toEqual({ kind: 'unsupported', failures: ['GENERATION_WORKER_WARM_SCHEMA_MISMATCH'] });
   });
 
-  it.each([
+  const mutations = [
     ['table欠落', 'DROP TABLE generation_worker_warm_controls'],
     ['別名table', 'ALTER TABLE generation_worker_warm_controls RENAME TO other_warm_controls'],
     ['view偽装', 'DROP TABLE generation_worker_warm_controls; CREATE VIEW generation_worker_warm_controls AS SELECT NULL::text AS resource_id'],
@@ -123,9 +143,19 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`generation work
     ['051履歴欠落', "DELETE FROM schema_migrations WHERE filename='051_add_google_link_recovery.sql'"],
     ['追加warm名前空間artifact', "CREATE TYPE generation_worker_warm_controls_extra AS ENUM ('invalid')"],
     ['既存guard変更', 'ALTER TABLE entity_states DISABLE TRIGGER entity_states_monotonic_revision'],
-  ])('%sの場合に認定を拒否する', async (contextName, sql) => {
-    await withChangedSchema(sql, async runner => {
-      await expect(attestRuntimeSchema(runner), contextName).rejects.toThrow('SCHEMA_UNSUPPORTED');
+  ] as const;
+  for (const [contextName, sql] of mutations) {
+    it(`${contextName}の場合に認定を拒否する`, async () => {
+      await withChangedSchema(sql, async runner => {
+        // Await database I/O outside the matcher: Bun 1.3 on Windows can stall
+        // a pg promise inside rejects.toThrow while its transaction holds locks.
+        const failure = await attestRuntimeSchema(runner).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        expect(failure).toBeInstanceOf(Error);
+        expect(failure).toHaveProperty('message', 'Runtime schema attestation failed: SCHEMA_UNSUPPORTED');
+      });
     });
-  });
+  }
 });
