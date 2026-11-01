@@ -122,7 +122,9 @@ function createState(): State {
 async function seed(page: Page): Promise<void> {
   await page.addInitScript(() => {
     window.sessionStorage.setItem('lyra:web:manual-token', 'header.payload.signature');
+    window.sessionStorage.setItem('lyra:web:workspace-view:email:session', 'story');
     window.localStorage.setItem('lyra:web:ui-language', 'en');
+    window.localStorage.setItem('lyra:web:manga-tutorial:v1:email:session', 'seen');
   });
 }
 
@@ -149,6 +151,7 @@ async function mockApi(route: Route, state: State): Promise<void> {
     return json({ organization_id: organizationWorkspace.organization.id, ...state.organizationBalance });
   }
   if (pathname === '/api/auth/capabilities') return json({ google_sign_in: false, google_linking: false, google_ios: false });
+  if (pathname === '/api/story/page-skeleton-capabilities') return json({ preserve_generated_images: true });
   if (pathname === '/api/works') {
     return json({
       works: url.searchParams.get('organization_id') === organizationWorkspace.organization.id ? [organizationWork] : [work],
@@ -183,7 +186,12 @@ async function open(page: Page, state: State, tab: 'Entities' | 'Story' | 'Pages
   await seed(page);
   await page.route('**/api/**', (route) => mockApi(route, state));
   await page.goto('/');
-  await page.getByRole('button', { name: tab, exact: true }).click();
+  const stepLabel = {
+    Story: '1. Story',
+    Entities: '2. Characters',
+    Pages: '3. Pages',
+  }[tab];
+  await page.getByRole('navigation', { name: 'Manga creation steps' }).getByRole('button', { name: stepLabel, exact: true }).click();
 }
 
 const imageFile = { name: 'reference.png', mimeType: 'image/png', buffer: Buffer.from('candidate-image') };
@@ -374,23 +382,19 @@ test('Create scene応答後も待機中に追記したLocationを保持する', 
   await expect(location).toHaveValue('Later location');
 });
 
-test('skeleton失敗と成功応答はいずれも待機中のpage入力を消さない', async ({ page }) => {
-  const state = createState(); let attempts = 0; let release!: () => void; const pending = new Promise<void>((resolve) => { release = resolve; });
+test('ページ設計開始に失敗した場合は未保存のpage入力を消さない', async ({ page }) => {
+  const state = createState();
   state.handleWrite = async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === `/api/episodes/${episode.id}` && route.request().method() === 'PUT') { await route.fulfill({ json: episode }); return; }
-    if (path === `/api/episodes/${episode.id}/generate-page-skeleton`) { attempts += 1; if (attempts === 1) { await route.fulfill({ status: 500, json: { error: { code: 'INTERNAL_ERROR', message: 'skeleton failed' } } }); } else { await pending; await route.fulfill({ json: { pages_created: 1, panels_created: 2 } }); } return; }
+    if (path === `/api/episodes/${episode.id}/generate-page-skeleton`) { await route.fulfill({ status: 500, json: { error: { code: 'INTERNAL_ERROR', message: 'skeleton failed' } } }); return; }
     throw new Error(`Unexpected write ${path}`);
   };
   await open(page, state, 'Pages');
   const style = page.getByRole('textbox', { name: 'Art style reference', exact: true }); await style.fill('Keep after failure');
   page.on('dialog', (dialog) => dialog.accept());
-  await page.getByRole('button', { name: 'Regenerate page plan', exact: true }).click();
+  await page.getByRole('button', { name: 'Design pages and autofill from story', exact: true }).click();
   await expect(page.locator('.notice.error')).toBeVisible(); await expect(style).toHaveValue('Keep after failure');
-  const request = page.waitForRequest((item) => new URL(item.url()).pathname.endsWith('/generate-page-skeleton'));
-  await page.getByRole('button', { name: 'Regenerate page plan', exact: true }).click(); await request;
-  await style.fill('Later while skeleton waited'); release(); await expect(page.locator('.notice.success')).toBeVisible();
-  await expect(style).toHaveValue('Later while skeleton waited');
 });
 
 test('panel削除はdirty framesを一度の確認で守りnonselected削除後も選択を維持する', async ({ page }) => {

@@ -347,7 +347,12 @@ export class LyraApiClient {
 
   public generatePageSkeleton(
     episodeId: string,
-    body?: { overwrite_existing?: boolean; apply_story_plan?: boolean; language?: 'ja' | 'en' },
+    body?: {
+      overwrite_existing?: boolean;
+      preserve_generated_images?: boolean;
+      apply_story_plan?: boolean;
+      language?: 'ja' | 'en';
+    },
     organizationId?: string | null,
   ): Promise<
     | {
@@ -378,6 +383,12 @@ export class LyraApiClient {
       method: 'POST',
       ...(body === undefined ? {} : { body }),
     });
+  }
+
+  public getPageSkeletonCapabilities(
+    organizationId?: string | null,
+  ): Promise<{ preserve_generated_images: boolean }> {
+    return this.request(`/api/story/page-skeleton-capabilities${organizationQuery(organizationId)}`);
   }
 
   public streamStoryCollaboration(
