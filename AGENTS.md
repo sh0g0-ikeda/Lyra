@@ -1575,3 +1575,7 @@ worker task protection, deploy pre/post-052-compatible code before migration 052
 and keep a compatible flag-OFF rollback image after the migration.
 Workers are on demand at every hour; retain the shared twenty-minute idle lease
 and active-job/task protection when changing warm control.
+
+Personal subscription monthly grants follow Unified Spec §7: Standard 100 credits
+for JPY 1,000 and Premium 350 credits for JPY 3,500, with historical grants and
+refund records preserved. Generated-page editing is permitted on Mobile.

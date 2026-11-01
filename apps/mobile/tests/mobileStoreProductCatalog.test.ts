@@ -36,6 +36,33 @@ describe('mobile store product catalog', () => {
     ]);
   });
 
+  it('サブスク商品説明は据置価格に対応する月次100/350クレジットを表示する', () => {
+    expect(
+      toNativeStoreProductDefinitions({
+        products: [
+          { credit_package_code: null, kind: 'subscription', plan_code: 'standard', product_id: 'apple.standard' },
+          { credit_package_code: null, kind: 'subscription', plan_code: 'premium', product_id: 'apple.premium' },
+        ],
+        store: 'apple',
+      }, 'ja'),
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'apple.standard', description: '毎月100クレジット' }),
+      expect.objectContaining({ id: 'apple.premium', description: '毎月350クレジット' }),
+    ]));
+    expect(
+      toNativeStoreProductDefinitions({
+        products: [
+          { credit_package_code: null, kind: 'subscription', plan_code: 'standard', product_id: 'google.standard' },
+          { credit_package_code: null, kind: 'subscription', plan_code: 'premium', product_id: 'google.premium' },
+        ],
+        store: 'google',
+      }, 'en'),
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'google.standard', description: '100 credits each month' }),
+      expect.objectContaining({ id: 'google.premium', description: '350 credits each month' }),
+    ]));
+  });
+
   it('重複または論理コードのないcatalogを購入定義にしない', () => {
     expect(() =>
       toNativeStoreProductDefinitions({

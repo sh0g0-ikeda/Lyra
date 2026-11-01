@@ -119,6 +119,28 @@ describe('実際のPagesScreenの工程構成', () => {
     expect(root!.root.findAllByType('ConfirmedPageSummary')).toHaveLength(0);
   });
 
+  it('生成済みページは設定を編集して保存できる', async () => {
+    page.status = 'generated';
+    automaticReopen = false;
+    action.mockResolvedValue(page);
+    await act(async () => { root = create(<PagesScreen />); });
+    const style = (): ReactTestRenderer['root'] => root!.root.findAllByType('field').find(
+      (node) => node.props.label === '参考にしたい作品・画風',
+    )!;
+    const save = (): ReactTestRenderer['root'] => root!.root.findAllByType('button').find(
+      (node) => node.props.label === '保存',
+    )!;
+
+    expect(style().props.editable).toBe(true);
+    expect(save().props.disabled).toBe(false);
+    await act(async () => style().props.onChangeText('生成後に調整する画風'));
+    await act(async () => { await save().props.onPress(); });
+
+    expect(action).toHaveBeenCalledWith('page', expect.objectContaining({
+      style_reference: { title: '生成後に調整する画風', notes: null },
+    }), null);
+  });
+
   it('開始状態を自動入力より前に保存し保存失敗では自動入力を送信しない', async () => {
     startingAvailable = true;
     startingEpisode = { id: 'episode', chapter_id: 'chapter', updated_at: 'episode-revision', starting_entity_states: [] };

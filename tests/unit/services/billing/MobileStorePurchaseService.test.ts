@@ -61,10 +61,10 @@ describe('MobileStorePurchaseService', () => {
     );
     const service = createService(repository, credits, new FakeAppleVerifier(), google);
     const first = await service.verifyGooglePurchase({ userId, purchaseToken: 'same-token' });
-    expect(first).toMatchObject({ planCode: 'standard', scheduledPlanCode: 'premium', scheduledPlanEffectiveAt: new Date('2026-08-31T00:00:00Z') });
+    expect(first).toMatchObject({ planCode: 'standard', scheduledPlanCode: 'premium', scheduledPlanEffectiveAt: new Date('2026-08-31T00:00:00Z'), creditsChanged: 100 });
     const duplicate = await service.verifyGooglePurchase({ userId, purchaseToken: 'same-token' }); expect(duplicate.creditsChanged).toBe(0);
     const renewal = await service.verifyGooglePurchase({ userId, purchaseToken: 'same-token' });
-    expect(renewal).toMatchObject({ planCode: 'premium', scheduledPlanCode: null, creditsChanged: 175 });
+    expect(renewal).toMatchObject({ planCode: 'premium', scheduledPlanCode: null, creditsChanged: 350 });
     expect(repository.purchases).toHaveLength(1); expect(repository.purchases[0].productId).toBe('jp.lyra.google.premium.monthly');
     expect(repository.users.get(userId)?.planCode).toBe('premium'); expect(credits.ledger).toHaveLength(2);
   });
@@ -881,7 +881,7 @@ describe('billing release compatibility regressions', () => {
 
     expect(repository.purchases[0]).toEqual(before);
     expect(repository.users.get(userId)?.planCode).toBe('standard');
-    expect(credits.balance.monthlyCredits).toBe(50);
+    expect(credits.balance.monthlyCredits).toBe(100);
     expect(credits.ledger).toHaveLength(2);
     expect(repository.events.filter(event => event.operation === 'reverse')).toHaveLength(1);
   });
@@ -922,7 +922,7 @@ describe('billing release compatibility regressions', () => {
     expect(repository.purchases[0].state).toBe('expired');
     expect(repository.purchases[1]).toMatchObject({ userId, state: 'active', planCode: 'premium' });
     expect(repository.users.get(userId)?.planCode).toBe('premium');
-    expect(credits.balance.monthlyCredits).toBe(175);
+    expect(credits.balance.monthlyCredits).toBe(350);
     expect(credits.ledger).toHaveLength(2);
     expect(restored[0]).toMatchObject({ isDuplicate: true, creditsChanged: 0 });
     expect(google.completions).toHaveLength(4);

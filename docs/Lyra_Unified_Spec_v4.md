@@ -833,6 +833,14 @@ New clients opt in to balance hold/debt fields with X-Lyra-Credit-Recovery: 1;
 omitting that header preserves the older response contract and never bypasses
 the server-side paid-generation guard.
 
+Personal monthly subscriptions retain prices of JPY 1,000 (Standard) and
+JPY 3,500 (Premium), with monthly grants of 100 and 350 credits respectively.
+These amounts apply to newly verified subscriptions, renewals and eligible plan
+changes through the existing grant flow. Existing period balances are not reset
+or retroactively topped up; historical refund recovery uses the recorded grant.
+Free/signup credits, one-time packs, enterprise grants and generation costs retain
+their existing contracts.
+
 ## 8. Input and output safety
 
 Untrusted stored-image decoder inputs must have PNG, JPEG, or WebP magic matching
@@ -1064,6 +1072,10 @@ Account and Guide omit the header credit badge. Billing
 retains total, monthly and purchased credit balances with explicit labels; plan
 controls use the existing native store catalog, verified receipt workflow,
 restore operation and official Apple/Google subscription-management URLs.
+Mobile edits admit generated pages as well as editable
+drafts, while generating pages remain blocked and confirmed-page writes require
+the advertised transactional-reopen capability.
+
 Plans and credit packs are shown separately. Missing or disabled server catalog
 configuration displays disabled purchase actions and a reason; it never grants
 credits or redirects to a different environment. The staging Android package and

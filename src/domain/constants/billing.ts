@@ -7,12 +7,12 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = {
     amountJpy: 0,
   },
   standard: {
-    monthlyCredits: 50,
-    amountJpy: 50 * MINIMUM_JPY_PER_CREDIT,
+    monthlyCredits: 100,
+    amountJpy: 1_000,
   },
   premium: {
-    monthlyCredits: 175,
-    amountJpy: 175 * MINIMUM_JPY_PER_CREDIT,
+    monthlyCredits: 350,
+    amountJpy: 3_500,
   },
 } as const;
 

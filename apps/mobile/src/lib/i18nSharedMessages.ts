@@ -58,9 +58,9 @@ export const sharedTranslations = {
     'shared.session.logout': 'ログアウト',
     'shared.session.empty': 'アカウント情報がありません。読み込みを再試行してください。',
     'shared.storeProduct.standard.title': 'スタンダードプラン',
-    'shared.storeProduct.standard.description': '毎月50クレジット',
+    'shared.storeProduct.standard.description': '毎月100クレジット',
     'shared.storeProduct.premium.title': 'プレミアムプラン',
-    'shared.storeProduct.premium.description': '毎月175クレジット',
+    'shared.storeProduct.premium.description': '毎月350クレジット',
     'shared.storeProduct.credits200.title': '10クレジット追加',
     'shared.storeProduct.credits1000.title': '50クレジット追加',
     'shared.storeProduct.credits3000.title': '150クレジット追加'
@@ -124,9 +124,9 @@ export const sharedTranslations = {
     'shared.session.logout': 'Log out',
     'shared.session.empty': 'Account data is empty. Retry loading it.',
     'shared.storeProduct.standard.title': 'Standard plan',
-    'shared.storeProduct.standard.description': '50 credits each month',
+    'shared.storeProduct.standard.description': '100 credits each month',
     'shared.storeProduct.premium.title': 'Premium plan',
-    'shared.storeProduct.premium.description': '175 credits each month',
+    'shared.storeProduct.premium.description': '350 credits each month',
     'shared.storeProduct.credits200.title': 'Add 10 credits',
     'shared.storeProduct.credits1000.title': 'Add 50 credits',
     'shared.storeProduct.credits3000.title': 'Add 150 credits'

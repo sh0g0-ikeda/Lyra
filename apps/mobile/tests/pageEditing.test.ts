@@ -8,6 +8,7 @@ describe('ページ確定UIを使わない編集', () => {
   });
   it('生成中は能力にかかわらず編集できず通常の下書きは編集できる', () => {
     expect(canEditPageStatus('generating', true)).toBe(false);
+    expect(canEditPageStatus('generated', false)).toBe(true);
     expect(canEditPageStatus('editing', false)).toBe(true);
     expect(canEditPageStatus('designing', false)).toBe(true);
   });
