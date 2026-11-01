@@ -87,6 +87,11 @@ export interface PageGenerationInputSnapshotReference {
 }
 
 export interface PageGenerationInputSnapshot {
+  sceneAudit?: {
+    verdict: 'pass' | 'guidance' | 'uncertain';
+    directiveCount: number;
+    version: string;
+  };
   pageId: string;
   requestKind: PageGenerationRequestKind;
   generationMode: PageGenerationMode;

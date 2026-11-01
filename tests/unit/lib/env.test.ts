@@ -4,6 +4,11 @@ import { parseEnv } from '../../../src/lib/env.js';
 const originalNodeEnv = process.env.NODE_ENV;
 
 describe('parseEnv', () => {
+  it('生成前の場面監査は既定で有効となり明示的な復旧設定だけで無効化できる', () => {
+    expect(parseEnv({}).LLM_PAGE_SCENE_AUDIT_ENABLED).toBe(true);
+    expect(parseEnv({ LLM_PAGE_SCENE_AUDIT_ENABLED: 'false' }).LLM_PAGE_SCENE_AUDIT_ENABLED).toBe(false);
+    expect(() => parseEnv({ LLM_PAGE_SCENE_AUDIT_ENABLED: 'tru' })).toThrow();
+  });
   it('Google iOS設定は明示しない場合にOFFとなり公開設定だけを解釈する', () => {
     const defaults = parseEnv({});
     expect(defaults.GOOGLE_IOS_ENABLED).toBe(false);

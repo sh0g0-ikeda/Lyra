@@ -320,6 +320,43 @@ describe('PromptBuilder', () => {
     expect(result.draftPrompt).toContain('Explicit authored giants');
   });
 
+  it('非人間の走る動作を参照画像の解剖に合わせて人型の手足を捏造しない', async () => {
+    const panels = new FakePanelRepository();
+    panels.panels[0]!.entities = [{
+      ...buildPanel().entities[0]!,
+      action: 'running',
+      customAction: null,
+    }];
+    const entities = new FakeEntityRepository();
+    entities.entities = [buildEntity({
+      name: 'Snail',
+      entityType: 'nonhuman',
+      structuredFields: {
+        base_form: 'giant snail',
+        size: 'small',
+        movement: 'slithering on one muscular foot',
+        distinctive_features: 'spiral shell and two eyestalks',
+      },
+    })];
+
+    const result = await new PromptBuilder(
+      new FakePageRepository(),
+      panels,
+      entities,
+      new FakeCompositionGalleryRepository(),
+    ).buildPagePrompt({
+      userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard',
+    });
+
+    for (const text of [result.draftPrompt, result.compilerBrief]) {
+      expect(text).toContain('Snail, reference Image 1 (Snail): nonhuman');
+      expect(text).toContain('authored action running');
+      expect(text).toContain('adapted to the anatomy shown in reference Image 1 (Snail)');
+      expect(text).toContain('do not invent limbs, joints, or posture absent from that reference');
+      expect(text).not.toContain('with running body language');
+    }
+  });
+
   it('物体の状態が異なる場合に各コマの視覚ロックも対応する状態画像を指定する', async () => {
     const panels = new FakePanelRepository();
     panels.panels = [buildPanel(), { ...buildPanel(), id: 'panel-2', order: 2,
@@ -491,6 +528,144 @@ describe('PromptBuilder', () => {
     expect(monochrome.draftPrompt).toContain('Image 2 (Aki / injured)');
     expect(monochrome.inputSnapshot.references).toEqual(result.inputSnapshot.references);
     expect(monochrome.inputSnapshot.renderStyle).toBe('monochrome');
+  });
+
+  it('同一ページの通常髪と覚醒髪をpanel別に分け、選択stateの外見をbaseより優先する', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [
+      buildPanel(),
+      {
+        ...buildPanel(),
+        id: 'panel-2',
+        order: 2,
+        entities: [{ ...buildPanel().entities[0]!, stateId: 'state-awakened' }],
+      },
+    ];
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.entities = [buildEntity({
+      name: 'Ishii',
+      structuredFields: {
+        hair: { color: 'black', length: 'short', style: 'straight' },
+      },
+    })];
+    entityRepository.resolvedReferences = [
+      {
+        entityId: 'entity-1', stateId: null, stateName: null, stateDescription: null,
+        stateExists: true, ownerUserId: 'user-1', refId: 'base-ref',
+        s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: null, imageModel: 'gpt-image-2',
+      },
+      {
+        entityId: 'entity-1', stateId: 'state-awakened', stateName: 'Awakening',
+        stateDescription: 'Hair becomes long, upward-flowing, and silver.',
+        stateExists: true, ownerUserId: 'user-1', refId: 'awakened-ref',
+        s3Key: 'saved/user-1/entities/entity-1/awakened-ref.png', cdnUrl: null, imageModel: 'gpt-image-2',
+      },
+    ];
+
+    const result = await new PromptBuilder(
+      new FakePageRepository(),
+      panelRepository,
+      entityRepository,
+      new FakeCompositionGalleryRepository(),
+    ).buildPagePrompt({
+      userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'thinking',
+    });
+
+    for (const text of [result.draftPrompt, result.compilerBrief]) {
+      expect(text).toContain('Ishii visual identity: black short straight hair.');
+      expect(text).toContain(
+        'For panel 2, selected state appearance "Awakening" is authoritative over the base subject definition for state-specific appearance: Hair becomes long, upward-flowing, and silver.',
+      );
+      expect(text).toContain('Preserve Ishii / Awakening\'s face and identity traits not changed by this selected state.');
+      expect(text).not.toContain("Keep Ishii / Awakening's face, hair shape");
+      expect(text).not.toContain('For panel 1, selected state appearance');
+      expect(countOccurrences(text, 'Hair becomes long, upward-flowing, and silver.')).toBe(1);
+    }
+    expect(result.inputSnapshot.references).toEqual([
+      {
+        entityId: 'entity-1', stateId: null, refId: 'base-ref',
+        s3Key: 'saved/user-1/entities/entity-1/base-ref.png', imageModel: 'gpt-image-2',
+        subjectLabel: 'Ishii / default', modelInputOrder: 1,
+      },
+      {
+        entityId: 'entity-1', stateId: 'state-awakened', refId: 'awakened-ref',
+        s3Key: 'saved/user-1/entities/entity-1/awakened-ref.png', imageModel: 'gpt-image-2',
+        subjectLabel: 'Ishii / Awakening', modelInputOrder: 2,
+      },
+    ]);
+  });
+
+  it('1000文字を超えるstate説明の末尾にある覚醒髪も切り捨てず渡す', async () => {
+    const essentialHairDescription = 'Essential final appearance: six long silver hair locks rise upward like a crown.';
+    const stateDescription = `Transformation progression: ${'a'.repeat(1_200)} ${essentialHairDescription}`;
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels[0]!.entities = [{
+      ...buildPanel().entities[0]!,
+      stateId: 'state-awakened',
+    }];
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = [{
+      entityId: 'entity-1', stateId: 'state-awakened', stateName: 'Awakening', stateDescription,
+      stateExists: true, ownerUserId: 'user-1', refId: 'awakened-ref',
+      s3Key: 'saved/user-1/entities/entity-1/awakened-ref.png', cdnUrl: null, imageModel: 'gpt-image-2',
+    }];
+
+    const result = await new PromptBuilder(
+      new FakePageRepository(),
+      panelRepository,
+      entityRepository,
+      new FakeCompositionGalleryRepository(),
+    ).buildPagePrompt({
+      userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard',
+    });
+
+    expect(stateDescription.length).toBeLessThanOrEqual(2_000);
+    expect(result.draftPrompt).toContain(essentialHairDescription);
+    expect(result.compilerBrief).toContain(essentialHairDescription);
+  });
+
+  it('画像を共有するlegacy stateには状態外見overrideを作らずbase参照を共有する', async () => {
+    const panelRepository = new FakePanelRepository();
+    panelRepository.panels = [
+      buildPanel(),
+      {
+        ...buildPanel(),
+        id: 'panel-2',
+        order: 2,
+        entities: [{ ...buildPanel().entities[0]!, stateId: 'legacy-state' }],
+      },
+    ];
+    const entityRepository = new FakeEntityRepository();
+    entityRepository.resolvedReferences = [
+      {
+        entityId: 'entity-1', stateId: null, stateName: null, stateDescription: null,
+        stateExists: true, ownerUserId: 'user-1', refId: 'base-ref',
+        s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: null, imageModel: 'gpt-image-2',
+      },
+      {
+        entityId: 'entity-1', stateId: 'legacy-state', stateName: 'Legacy note', stateDescription: null,
+        stateExists: true, ownerUserId: 'user-1', refId: 'base-ref',
+        s3Key: 'saved/user-1/entities/entity-1/base-ref.png', cdnUrl: null, imageModel: 'gpt-image-2',
+      },
+    ];
+
+    const result = await new PromptBuilder(
+      new FakePageRepository(),
+      panelRepository,
+      entityRepository,
+      new FakeCompositionGalleryRepository(),
+    ).buildPagePrompt({
+      userId: 'user-1', pageId: 'page-1', requestKind: 'initial', generationMode: 'standard',
+    });
+
+    expect(result.draftPrompt).toContain('Panel 2 subject lock: required visible subjects are Aki, reference Image 1 (Aki)');
+    expect(result.draftPrompt).not.toContain('selected state appearance');
+    expect(result.draftPrompt).not.toContain('Legacy note');
+    expect(result.inputSnapshot.references).toEqual([{
+      entityId: 'entity-1', stateId: null, refId: 'base-ref',
+      s3Key: 'saved/user-1/entities/entity-1/base-ref.png', imageModel: 'gpt-image-2',
+      subjectLabel: 'Aki', modelInputOrder: 1,
+    }]);
   });
 
   it('未確定variantを旧base画像へ戻さず明示的に止める', async () => {

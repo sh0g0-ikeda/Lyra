@@ -53,7 +53,7 @@ import { PostgresPanelEntityAssignmentRepository } from '../src/repositories/Pan
 import { PostgresCompositionGalleryRepository } from '../src/repositories/CompositionGalleryRepository.js';
 import { PostgresStoryRepository } from '../src/repositories/StoryRepository.js';
 import { ConfigurationError } from '../src/domain/errors/index.js';
-import { IMAGE_GENERATION_OPENAI_MAX_RETRIES } from '../src/domain/constants/generation.js';
+import { IMAGE_GENERATION_OPENAI_MAX_RETRIES, PAGE_SCENE_AUDIT_TIMEOUT_MS, PAGE_SCENE_AUDIT_MAX_RETRIES } from '../src/domain/constants/generation.js';
 import { shouldUseLocalImageFallback } from '../src/domain/generation/LocalImageFallbackPolicy.js';
 import { OpenAIClient } from '../src/infrastructure/openai/OpenAIClient.js';
 import {
@@ -64,6 +64,8 @@ import {
 } from '../src/infrastructure/openai/OpenAIEntityReferenceGenerator.js';
 import { OpenAIPageGenerationPlanner } from '../src/infrastructure/openai/OpenAIPageGenerationPlanner.js';
 import { OpenAIPageImageRenderer } from '../src/infrastructure/openai/OpenAIPageImageRenderer.js';
+import { OpenAIPagePreRenderSceneAuditor } from '../src/infrastructure/openai/OpenAIPagePreRenderSceneAuditor.js';
+import { NoopPagePreRenderSceneAuditor, type PagePreRenderSceneAuditorPort } from '../src/services/page/PagePreRenderSceneAudit.js';
 import { OpenAIPagePromptCompiler } from '../src/infrastructure/openai/OpenAIPagePromptCompiler.js';
 import { OpenAIEpisodeBeatPlanCompiler } from '../src/infrastructure/openai/OpenAIEpisodeBeatPlanCompiler.js';
 import { OpenAIEpisodePlanAuditCompiler } from '../src/infrastructure/openai/OpenAIEpisodePlanAuditCompiler.js';
@@ -151,6 +153,7 @@ export interface WorkerDependencyOverrides {
   pagePromptCompiler?: PagePromptCompilerPort;
   pageGenerationInputImageBuilder?: PageGenerationInputImageBuilderPort;
   pageGenerationPlanner?: PageGenerationPlannerPort;
+  pagePreRenderSceneAuditor?: PagePreRenderSceneAuditorPort;
   pageImageRenderer?: PageImageRendererPort;
   pageImageStorage?: PageImageStoragePort;
   entityReferencePromptBuilder?: EntityReferencePromptBuilderPort;
@@ -346,6 +349,7 @@ export function resolveWorkerDependencies(
       generationJobCancellationControl,
       quotedInputs,
       env.OPENAI_API_KEY !== undefined && !env.LOCAL_IMAGE_FALLBACK_ENABLED ? env.OPENAI_IMAGE_MODEL : undefined,
+      overrides.pagePreRenderSceneAuditor ?? resolvePagePreRenderSceneAuditor(),
     ),
     entityGenerationWorkerService: new EntityGenerationWorkerService(
       entityGenerationExecutionRepository,
@@ -429,6 +433,17 @@ function resolvePageGenerationPlanner(): PageGenerationPlannerPort {
   return new OpenAIPageGenerationPlanner(client);
 }
 
+function resolvePagePreRenderSceneAuditor(): PagePreRenderSceneAuditorPort {
+  if (!env.LLM_PAGE_SCENE_AUDIT_ENABLED || env.LOCAL_IMAGE_FALLBACK_ENABLED) {
+    return new NoopPagePreRenderSceneAuditor();
+  }
+  const client = buildOpenAIClient({
+    maxRetries: PAGE_SCENE_AUDIT_MAX_RETRIES,
+    timeoutMs: Math.min(env.OPENAI_TIMEOUT_MS, PAGE_SCENE_AUDIT_TIMEOUT_MS),
+  });
+  return client === null ? new NoopPagePreRenderSceneAuditor() : new OpenAIPagePreRenderSceneAuditor(client);
+}
+
 function resolvePageImageRenderer(): PageImageRendererPort {
   const client = buildOpenAIClient({ maxRetries: IMAGE_GENERATION_OPENAI_MAX_RETRIES });
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
@@ -451,7 +466,7 @@ function resolvePageImageRenderer(): PageImageRendererPort {
   return primaryRenderer;
 }
 
-function buildOpenAIClient(options: { maxRetries?: number } = {}): OpenAIClient | null {
+function buildOpenAIClient(options: { maxRetries?: number; timeoutMs?: number } = {}): OpenAIClient | null {
   if (env.OPENAI_API_KEY === undefined) {
     return null;
   }
@@ -459,7 +474,7 @@ function buildOpenAIClient(options: { maxRetries?: number } = {}): OpenAIClient 
   return new OpenAIClient({
     apiKey: env.OPENAI_API_KEY,
     baseUrl: env.OPENAI_BASE_URL,
-    timeoutMs: env.OPENAI_TIMEOUT_MS,
+    timeoutMs: options.timeoutMs ?? env.OPENAI_TIMEOUT_MS,
     maxRetries: options.maxRetries,
   });
 }

@@ -306,6 +306,28 @@ optional plan as a whole, or fail before the provider call when the base exceeds
 the limit. Persist only its SHA-256 and UTF-8 byte count as additive diagnostics.
 The shared visual policy lives in `src/services/page/PageVisualPolicy.ts`.
 
+Pre-render scene integrity (2026-11-01): selected-state descriptions and confirmed
+state references govern the affected panel's appearance; page-wide base anchors
+must not override those changes. Nonhuman movement uses the confirmed anatomy,
+including intentionally authored transformations, rather than inventing human
+limbs. Authored holder/use/contact relations continue to take precedence over an
+object's independent position/facing fields.
+
+A separate scene audit runs after the exact quoted or resolved reference images
+and optional plan are available, before the image renderer, for both standard and
+thinking jobs. It assesses whether the whole authored scene is drawable using
+those references and the saved panel map. Its bounded structured directives may
+reinforce existing panel subjects, reference/state precedence, locomotion,
+interaction, object integrity and perspective; they cannot introduce characters,
+states, holders, dialogue, coordinates, or a rewritten plot. Ambiguous visual
+judgments remain uncertain and do not reject intentional fantasy. Invalid targets,
+invalid structured output or unavailable audit execution stop before rendering
+through the existing failure/refund path. Cancellation is checked around the audit.
+Audit guidance is mandatory prompt content, retained when an optional plan exceeds
+the existing prompt limit. No completed image is audited and no post-render
+quality-based regeneration is introduced. API/UI, generation prices, migrations,
+quoted input immutability and existing saved images remain unchanged.
+
 Mobile state-preview availability follows the persisted primary character image,
 not the reference-set image count. A matching Mobile-compatible confirmed primary
 image is sufficient even when one or two images leave the set `partial`. Missing

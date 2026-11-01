@@ -81,6 +81,7 @@ const envSchema = z.object({
   LLM_PAGE_PROMPT_COMPILER_ENABLED: z.string().optional().transform((value) => value === 'true'),
   LLM_ENTITY_REFERENCE_PROMPT_COMPILER_ENABLED: z.string().optional().transform((value) => value === 'true'),
   LLM_PAGE_GENERATION_PLANNER_ENABLED: z.string().optional().transform((value) => value === 'true'),
+  LLM_PAGE_SCENE_AUDIT_ENABLED: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
   EPISODE_PAGE_PLAN_CONTINUITY_V3_ENABLED: z
     .string()
     .optional()

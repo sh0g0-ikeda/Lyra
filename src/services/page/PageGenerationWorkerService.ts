@@ -25,6 +25,12 @@ import type {
   PagePromptCompilerPort,
 } from './PagePromptCompiler.js';
 import type { PromptBuilderPort } from './PromptBuilder.js';
+import {
+  buildPageSceneGuidance,
+  NoopPagePreRenderSceneAuditor,
+  type PagePreRenderSceneAuditorPort,
+} from './PagePreRenderSceneAudit.js';
+import { PAGE_SCENE_AUDIT_VERSION } from '../../domain/constants/generation.js';
 import type {
   CompletePageGenerationInput,
   PageGenerationExecutionRepository,
@@ -61,6 +67,7 @@ export interface PageGenerationStageTimingsMs {
   prompt_compile: number;
   reference_images: number;
   planning: number;
+  scene_audit?: number;
   rendering: number;
   storage: number;
   total_before_persist: number;
@@ -76,6 +83,7 @@ export interface PageGenerationPlannerPort {
 }
 
 export interface RenderPageImageInput extends PageGenerationPlanInput {
+  sceneGuidance?: string | null;
   layoutControl?: PageGenerationLayoutControl | null;
   panelCount?: number;
   renderStyle?: PersistedPageGenerationJobParams['render_style'];
@@ -148,6 +156,7 @@ export class PageGenerationWorkerService {
     private readonly cancellationControl?: GenerationJobCancellationControlRepository,
     private readonly quotedInputs?: QuotedGenerationInputsPort,
     private readonly configuredImageModel?: string,
+    private readonly sceneAuditor: PagePreRenderSceneAuditorPort = new NoopPagePreRenderSceneAuditor(),
   ) {}
 
   public async processJob(jobId: string): Promise<ProcessPageGenerationJobResult> {
@@ -238,6 +247,39 @@ export class PageGenerationWorkerService {
         }
       }
 
+      // Audit only the frozen pre-render inputs. The result can reinforce existing
+      // panel contracts; it cannot rewrite saved content or inspect a finished image.
+      const sceneAuditInput = {
+        prompt: compiledPrompt.prompt,
+        compilerBrief: builtPrompt.compilerBrief,
+        inputSnapshot: builtPrompt.inputSnapshot,
+        inputImages,
+        layoutControl: builtPrompt.layoutControl,
+        internalPlan,
+      };
+      const sceneAudit = await measurePageGenerationStage(stageTimingsMs, 'scene_audit', () =>
+        this.withProgressHeartbeat(job, 'Checking page scene consistency before generation.', () =>
+          this.sceneAuditor.audit(sceneAuditInput),
+        ),
+      );
+      const sceneGuidance = buildPageSceneGuidance(sceneAuditInput, sceneAudit);
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
+      if (!(this.sceneAuditor instanceof NoopPagePreRenderSceneAuditor)) {
+        await this.saveInputSnapshot(job, {
+          ...appendInputImageSnapshot(builtPrompt.inputSnapshot, inputImages),
+          sceneAudit: {
+            verdict: sceneAudit.verdict,
+            directiveCount: sceneAudit.directives.length,
+            version: PAGE_SCENE_AUDIT_VERSION,
+          },
+        });
+      }
+      if (await this.finalizeCancellationIfRequested(job.id)) {
+        return { status: 'processed', jobStatus: 'cancelled' };
+      }
+
       const renderResult = await measurePageGenerationStage(stageTimingsMs, 'rendering', () =>
         this.withProgressHeartbeat(job, 'Requesting page image from image model.', () =>
           this.renderer.render({
@@ -252,6 +294,7 @@ export class PageGenerationWorkerService {
             renderStyle: params.render_style,
             internalPlan,
             inputImages,
+            sceneGuidance,
             layoutControl: builtPrompt.layoutControl,
             panelCount: builtPrompt.layoutControl === undefined ? undefined : builtPrompt.inputSnapshot.panelCount,
           }),

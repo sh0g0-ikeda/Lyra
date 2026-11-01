@@ -326,22 +326,29 @@ function buildReferenceRoles(
     );
     const entityType = entity?.entityType ?? 'character';
     const referenceRole = entityType === 'object' ? 'object_reference' : entityType === 'nonhuman' ? 'nonhuman_reference' : 'character_reference';
+    const selectedStateDescription = reference.stateId === null ? null : reference.stateDescription;
+    const hasSelectedStateAppearance = selectedStateDescription !== null;
     const preservation = entityType === 'object'
       ? 'Preserve its silhouette, component proportions, connections, and distinctive design from this image while changing view and perspective for the authored use. Do not copy the reference display pose or background.'
       : entityType === 'nonhuman'
         ? 'Preserve its species-specific anatomy, silhouette, markings, and authored size; do not replace them with human anatomy.'
-        : `Keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable when ${entityName} appears.`;
+        : hasSelectedStateAppearance
+          ? `Preserve ${entityName}'s face and identity traits not changed by this selected state. Use this state reference, not the base appearance, for state-specific hair, clothing, color, anatomy, and transformation details.`
+          : `Keep ${entityName}'s face, hair shape, clothing silhouette, and color blocking stable when ${entityName} appears.`;
     const assignmentKeys = assignments.map((assignment) => referenceKey(assignment.entityId, assignment.stateId));
     const panelOrders = Array.from(new Set(assignmentKeys.flatMap((key) => panelOrdersByAssignment.get(key) ?? [])))
       .sort((left, right) => left - right);
     const panelScope = formatPanelOrderList(panelOrders);
+    const selectedStateAppearance = selectedStateDescription !== null
+      ? ` For ${panelScope}, selected state appearance ${JSON.stringify(reference.stateName ?? 'selected state')} is authoritative over the base subject definition for state-specific appearance: ${normalizeSentence(selectedStateDescription)}`
+      : '';
     roles.push({
       entityId: reference.entityId,
       assignmentKeys,
       imageLabel: `Image ${roles.length + 1} (${entityName})`,
       role: referenceRole,
       subject: entityName,
-      instruction: `${entityName} ${entityType} reference. Use this image only for ${entityName}; never use it as another ${entityType === 'character' ? 'character' : 'subject'}. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. ${preservation}${assignments.some(assignment => assignment.stateId !== null) ? ' The selected state controls state-specific changes to the base design.' : ''}`,
+      instruction: `${entityName} ${entityType} reference. Use this image only for ${entityName}; never use it as another ${entityType === 'character' ? 'character' : 'subject'}. ${entityName} is allowed only in ${panelScope} where listed in the subject lock. ${preservation}${selectedStateAppearance}`,
     });
   }
 
@@ -463,6 +470,21 @@ function buildCharacterBeat(
           `${entityName}${referenceLabel === undefined ? '' : `, reference ${referenceLabel}`}: object`,
           assignment.action === 'custom' && assignment.customAction !== null ? `authored interaction/use: ${normalizeSentence(assignment.customAction, false)}` : null,
           assignment.expression === 'custom' && assignment.customExpression !== null ? `appearance/effect: ${normalizeSentence(assignment.customExpression, false)}` : null,
+          assignment.effectNote === null ? null : `visual detail: ${normalizeSentence(assignment.effectNote, false)}`,
+        ].filter((part): part is string => part !== null).join('; ') + '.';
+      }
+      if (entity?.entityType === 'nonhuman') {
+        const anatomyGroundedAction = action === null
+          ? null
+          : referenceLabel === undefined
+            ? `authored action ${humanizeToken(action)}, adapted to its registered nonhuman anatomy; do not invent limbs, joints, or posture absent from that anatomy`
+            : `authored action ${humanizeToken(action)}, adapted to the anatomy shown in reference ${referenceLabel}; do not invent limbs, joints, or posture absent from that reference`;
+        return [
+          `${entityName}${referenceLabel === undefined ? '' : `, reference ${referenceLabel}`}: nonhuman`,
+          `role ${assignment.role} in the ${assignment.position} zone`,
+          assignment.facingDirection === null ? null : `facing ${humanizeToken(assignment.facingDirection)}`,
+          expression === null ? null : `showing ${humanizeToken(expression)} through its available anatomy`,
+          anatomyGroundedAction,
           assignment.effectNote === null ? null : `visual detail: ${normalizeSentence(assignment.effectNote, false)}`,
         ].filter((part): part is string => part !== null).join('; ') + '.';
       }
