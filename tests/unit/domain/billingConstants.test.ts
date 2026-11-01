@@ -22,16 +22,15 @@ describe('billing constants', () => {
     }
   });
 
-  it('keeps consumer paid subscriptions at or above 20 JPY per monthly credit', () => {
-    for (const [planCode, definition] of Object.entries(SUBSCRIPTION_PLAN_DEFINITIONS)) {
-      if (planCode === 'free') {
-        continue;
-      }
-
-      expect(definition.amountJpy).toBeGreaterThanOrEqual(
-        definition.monthlyCredits * MINIMUM_JPY_PER_CREDIT,
-      );
-    }
+  it('個人サブスクは価格を据え置きながら月次creditを2倍にする', () => {
+    expect(SUBSCRIPTION_PLAN_DEFINITIONS.standard).toEqual({
+      monthlyCredits: 100,
+      amountJpy: 1_000,
+    });
+    expect(SUBSCRIPTION_PLAN_DEFINITIONS.premium).toEqual({
+      monthlyCredits: 350,
+      amountJpy: 3_500,
+    });
   });
 
   it('defines enterprise plans as cheaper monthly contracts without trial credits', () => {

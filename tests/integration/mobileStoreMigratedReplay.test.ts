@@ -164,13 +164,13 @@ databaseDescribe('migrated production store replay and refund safety', () => {
       subscriptionNotification: { notificationType: 4, purchaseToken: verified.externalPurchaseId, subscriptionId: 'premium' },
     });
     await Promise.all([service.handleGoogleRtdn(notification), service.handleGoogleRtdn(notification)]);
-    expect(await balance(fixture.userId)).toEqual({ monthly_credits: 175, purchased_credits: 7 });
+    expect(await balance(fixture.userId)).toEqual({ monthly_credits: 350, purchased_credits: 7 });
     expect((await pool.query('SELECT plan_code FROM users WHERE id=$1', [fixture.userId])).rows[0].plan_code).toBe('premium');
     const restored = await service.restorePurchases({
       userId: fixture.userId, appleSignedTransactions: [], googlePurchaseTokens: [verified.externalPurchaseId],
     });
     expect(restored[0]).toMatchObject({ isDuplicate: true, creditsChanged: 0 });
-    expect(await balance(fixture.userId)).toEqual({ monthly_credits: 175, purchased_credits: 7 });
+    expect(await balance(fixture.userId)).toEqual({ monthly_credits: 350, purchased_credits: 7 });
     expect((await pool.query('SELECT state FROM mobile_store_purchases WHERE id=$1', [fixture.purchaseId])).rows[0].state).toBe('expired');
     expect((await pool.query('SELECT plan_code FROM users WHERE id=$1', [fixture.userId])).rows[0].plan_code).toBe('premium');
     expect((await pool.query("SELECT COUNT(*)::int AS n FROM credit_ledger WHERE user_id=$1 AND type='monthly_grant'", [fixture.userId])).rows[0].n).toBe(2);

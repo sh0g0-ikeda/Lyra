@@ -478,7 +478,7 @@ describe('StripeWebhookService', () => {
     expect(repository.updatedPlans[0]).toEqual({ userId: 'user-1', planCode: 'standard' });
     expect(creditGrantService.monthlyGrants[0]).toMatchObject({
       userId: 'user-1',
-      amount: 50,
+      amount: 100,
       stripeEventId: 'evt_checkout_sub',
     });
     expect(repository.paymentRecords[0]).toMatchObject({
@@ -766,7 +766,7 @@ describe('StripeWebhookService', () => {
     expect(creditGrantService.monthlyGrants).toHaveLength(1);
     expect(creditGrantService.monthlyGrants[0]).toMatchObject({
       userId: 'user-1',
-      amount: 50,
+      amount: 100,
       stripeEventId: 'evt_invoice_paid',
     });
     expect(creditGrantService.monthlyGrants[0]?.description).toContain('Monthly subscription renewal grant');
@@ -1066,7 +1066,7 @@ describe('StripeWebhookService', () => {
     expect(creditGrantService.monthlyGrants).toHaveLength(1);
     expect(creditGrantService.monthlyGrants[0]).toMatchObject({
       userId: 'user-1',
-      amount: 175,
+      amount: 350,
       stripeEventId: 'evt_invoice_upgrade',
     });
     expect(creditGrantService.monthlyGrants[0]?.description).toContain('Subscription plan change grant');

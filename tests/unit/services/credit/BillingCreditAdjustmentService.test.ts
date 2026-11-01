@@ -24,6 +24,11 @@ describe('BillingCreditAdjustmentService', () => {
     expect(calculateProportionalCreditRecovery(200, 4_000, 2_000)).toBe(200);
   });
 
+  it('旧個人プランの返金は保存済み50または175creditを上限にする', () => {
+    expect(calculateProportionalCreditRecovery(50, 1_000, 1_000)).toBe(50);
+    expect(calculateProportionalCreditRecovery(175, 3_500, 3_500)).toBe(175);
+  });
+
   it('残高不足の成功返金は残額だけ回収して不足分を保留する', async () => {
     const fixture = createFixture({ purchasedCredits: 50 });
     const result = await fixture.service.applyObservation(

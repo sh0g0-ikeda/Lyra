@@ -123,13 +123,13 @@ const subscriptionPurchaseOptions: Array<{
 }> = [
   {
     code: 'standard',
-    credits: 50,
+    credits: 100,
     priceJpy: 1000,
     label: { en: 'Standard', ja: '\u30b9\u30bf\u30f3\u30c0\u30fc\u30c9' },
   },
   {
     code: 'premium',
-    credits: 175,
+    credits: 350,
     priceJpy: 3500,
     label: { en: 'Premium', ja: '\u30d7\u30ec\u30df\u30a2\u30e0' },
   },
