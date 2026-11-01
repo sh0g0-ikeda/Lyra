@@ -22,6 +22,7 @@ const suite = isSyntheticTarget() ? describe : describe.skip;
 for (const profile of ['canonical', 'expanded'] as const) suite(`Google recovery PostgreSQL ${profile}`, () => {
     const schema = 'google_recovery_attest_' + randomUUID().replaceAll('-', '');
     let admin: Pool, pool: Pool, database: DatabaseClient & TransactionRunner;
+    let initialReleaseReport: Awaited<ReturnType<typeof checkReleaseCompatibility>> | undefined;
     beforeAll(async () => {
         admin = new Pool({ connectionString: url, max: 1 });
         await admin.query('CREATE SCHEMA ' + schema);
@@ -45,6 +46,14 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`Google recovery
                     await client.query(await readFile(join(process.cwd(), 'migrations/051_add_google_link_recovery.sql'), 'utf8'));
                     await client.query("INSERT INTO schema_migrations(filename) VALUES('051_add_google_link_recovery.sql')");
                 });
+                // The global invalid-index check must share the migration lock: other
+                // suites temporarily expose invalid indexes during concurrent builds.
+                initialReleaseReport = await checkReleaseCompatibility(database, { profile: 'backend-only', mobileClientIds: [], runtime: {
+                    generationQuotesEnabled: true, generationEnabled: true, pageGenerationEnabled: true, entityGenerationEnabled: true,
+                    entityImportAnalysisEnabled: true, entityReferenceDirectUploadEnabled: true, openAiApiKeyConfigured: true, openAiImageModel: 'gpt-image-2',
+                    generationQueueConfigured: true, imageStorageConfigured: true, awsRegionConfigured: true, localImageFallbackEnabled: false,
+                    webImageDeliveryClientIds: [], stateReferenceCopyV2AdmissionEnabled: false, stateReferenceCopyV2StorageContractAttested: false,
+                } }, { schemaProfile: 'production44_expanded_pg18_v1' });
             }
         });
     }, 180000);
@@ -70,13 +79,7 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`Google recovery
             expect((await createTerminalGenerationNotificationRecoveryRepository(database, 'production44_expanded_pg18_v1')).profile).toBe('production44_expanded_pg18_v1');
         });
         it('051の拡張schemaでrelease preflightを読取専用で認定する', async () => {
-            const result = await checkReleaseCompatibility(database, { profile: 'backend-only', mobileClientIds: [], runtime: {
-                generationQuotesEnabled: true, generationEnabled: true, pageGenerationEnabled: true, entityGenerationEnabled: true,
-                entityImportAnalysisEnabled: true, entityReferenceDirectUploadEnabled: true, openAiApiKeyConfigured: true, openAiImageModel: 'gpt-image-2',
-                generationQueueConfigured: true, imageStorageConfigured: true, awsRegionConfigured: true, localImageFallbackEnabled: false,
-                webImageDeliveryClientIds: [], stateReferenceCopyV2AdmissionEnabled: false, stateReferenceCopyV2StorageContractAttested: false,
-            } }, { schemaProfile: 'production44_expanded_pg18_v1' });
-            expect(result).toMatchObject({ ok: true, violations: [] });
+            expect(initialReleaseReport).toMatchObject({ ok: true, violations: [] });
         });
     }    it('051以前のschemaは復旧capabilityなしで従来通り認定する', async () => {
         await withChangedSchema("DROP TABLE retired_auth_subjects; ALTER TABLE oauth_identity_links DROP COLUMN operation_phase, DROP COLUMN source_subject_key; DELETE FROM schema_migrations WHERE filename='051_add_google_link_recovery.sql'", async runner => {
