@@ -9,6 +9,29 @@ import { PAGE_VISUAL_INTEGRITY_POLICY } from '../../../../src/services/page/Page
 import { buildPersistedPromptDiagnostics } from '../../../../src/lib/promptDiagnostics.js';
 
 describe('OpenAIPageImageRenderer', () => {
+  it('任意planが長すぎる場合にも生成前の場面指示を省略せず描画へ渡す', async () => {
+    const postJson = vi.fn().mockResolvedValue({ body: { data: [{ b64_json: 'cG5n' }] }, requestId: 'req-1' });
+    const client = {
+      postJson,
+      postFormData: vi.fn(),
+    } as unknown as OpenAIClient;
+    await new OpenAIPageImageRenderer(client).render({ jobId: 'job', userId: 'user', pageId: 'page',
+      requestKind: 'initial', generationMode: 'standard', quality: 'medium', prompt: 'authored scene',
+      internalPlan: 'optional '.repeat(5_000), sceneGuidance: 'Keep the selected state anatomy in panel 1.', inputImages: [] });
+    const sent = postJson.mock.calls[0]?.[1] as { prompt: string } | undefined;
+    expect(sent?.prompt).toContain('Pre-render scene guidance:');
+    expect(sent?.prompt).toContain('Keep the selected state anatomy in panel 1.');
+    expect(sent?.prompt).not.toContain('Internal generation plan:');
+  });
+
+  it('必須の場面指示だけで上限を超える場合に黙って削らずprovider前に拒否する', async () => {
+    const client = { postJson: vi.fn(), postFormData: vi.fn() } as unknown as OpenAIClient;
+    await expect(new OpenAIPageImageRenderer(client).render({ jobId: 'job', userId: 'user', pageId: 'page',
+      requestKind: 'initial', generationMode: 'standard', quality: 'medium', prompt: 'authored scene',
+      internalPlan: null, sceneGuidance: 'g'.repeat(32_000), inputImages: [] })).rejects.toBeInstanceOf(ValidationError);
+    expect(client.postJson).not.toHaveBeenCalled();
+  });
+
   it('binds saved geometry after compiler, planner and monochrome instructions', async () => {
     const postJson = vi.fn().mockResolvedValue({body:{data:[{b64_json:Buffer.from('png').toString('base64')}]},requestId:'fixture'});
     const control = resolvePageGenerationLayoutControl({type:'template',template_id:'splash_1'},1)!;

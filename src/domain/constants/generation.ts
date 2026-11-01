@@ -76,6 +76,15 @@ export const PAGE_PROMPT_COMPILER_VERSION = 'page_prompt_v6';
 // Includes the final layout/style constraints and optional internal plan.
 export const PAGE_IMAGE_PROMPT_MAX_CHARACTERS = 32_000;
 
+export const PAGE_SCENE_AUDIT_MODEL = 'gpt-5.4-mini';
+export const PAGE_SCENE_AUDIT_MAX_TOKENS = 1600;
+export const PAGE_SCENE_AUDIT_VERSION = 'pre_render_scene_v1';
+export const PAGE_SCENE_AUDIT_MAX_DIRECTIVES = 12;
+export const PAGE_SCENE_AUDIT_MAX_BRIEF_CHARACTERS = 64_000;
+export const PAGE_SCENE_AUDIT_MAX_INPUT_IMAGES = 13;
+export const PAGE_SCENE_AUDIT_TIMEOUT_MS = 90_000;
+export const PAGE_SCENE_AUDIT_MAX_RETRIES = 2;
+
 export const STYLE_REFERENCE_COMPILER_OPENAI_MODEL = 'gpt-5.4-mini';
 export const STYLE_REFERENCE_COMPILER_MAX_TOKENS = 500;
 export const STYLE_REFERENCE_COMPILER_VERSION = 'style_ref_v3';

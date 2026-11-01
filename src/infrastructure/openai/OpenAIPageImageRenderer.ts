@@ -91,7 +91,10 @@ function assembleStyledPagePrompt(input: RenderPageImageInput, includePlan: bool
   const promptWithPlan = includePlan && input.internalPlan !== null
     ? `${input.prompt}\n\nInternal generation plan:\n${input.internalPlan}`
     : input.prompt;
-  const integrityPrompt = appendVisualIntegrityPolicy(promptWithPlan);
+  const scenePrompt = input.sceneGuidance == null || input.sceneGuidance.trim().length === 0
+    ? promptWithPlan
+    : `${promptWithPlan}\n\nPre-render scene guidance:\n${input.sceneGuidance}`;
+  const integrityPrompt = appendVisualIntegrityPolicy(scenePrompt);
   const styledPrompt = input.renderStyle === 'monochrome'
     ? `${integrityPrompt}\n\nFinal rendering constraint: black-and-white manga ink with grayscale screentones only; no colored fills.`
     : integrityPrompt;

@@ -40,6 +40,11 @@ import type {
 import { PageGenerationWorkerService } from '../../../../src/services/page/PageGenerationWorkerService.js';
 import type { BuiltPagePrompt, BuildPagePromptInput, PromptBuilderPort } from '../../../../src/services/page/PromptBuilder.js';
 import type { PagePromptCompilerPort } from '../../../../src/services/page/PagePromptCompiler.js';
+import type {
+  PagePreRenderSceneAuditInput,
+  PagePreRenderSceneAuditResult,
+  PagePreRenderSceneAuditorPort,
+} from '../../../../src/services/page/PagePreRenderSceneAudit.js';
 
 class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public claimedJob: GenerationJob | null = buildJob();
@@ -50,6 +55,7 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
   public snapshotInputs: SavePageGenerationInputSnapshotInput[] = [];
   public snapshotFailure: 'reject' | 'throw' | null = null;
   public snapshotFailureWrite = 1;
+  public onSnapshotSave: (input: SavePageGenerationInputSnapshotInput) => void = () => undefined;
   public shouldFailCompletion = false;
   public failureResult = true;
 
@@ -68,6 +74,7 @@ class FakeExecutionRepository implements PageGenerationExecutionRepository {
 
   public async savePageGenerationInputSnapshot(input: SavePageGenerationInputSnapshotInput): Promise<boolean> {
     this.snapshotInputs.push(input);
+    this.onSnapshotSave(input);
     if (this.snapshotInputs.length === this.snapshotFailureWrite) {
       if (this.snapshotFailure === 'throw') throw new Error('postgres://user:private-password@db.invalid/lyra');
       if (this.snapshotFailure === 'reject') return false;
@@ -95,6 +102,23 @@ class FakePlanner implements PageGenerationPlannerPort {
     this.calls += 1;
     this.inputs.push(input);
     return this.output;
+  }
+}
+
+class FakeSceneAuditor implements PagePreRenderSceneAuditorPort {
+  public inputs: PagePreRenderSceneAuditInput[] = [];
+  public result: PagePreRenderSceneAuditResult = {
+    verdict: 'guidance',
+    directives: [{ panelOrder: 1, kind: 'anatomy_motion', entityIds: ['entity-1'] }],
+  };
+  public onAudit: () => void = () => undefined;
+  public shouldFail = false;
+
+  public async audit(input: PagePreRenderSceneAuditInput): Promise<PagePreRenderSceneAuditResult> {
+    this.inputs.push(input);
+    this.onAudit();
+    if (this.shouldFail) throw new ConfigurationError('Pre-render scene audit unavailable');
+    return this.result;
   }
 }
 
@@ -811,6 +835,7 @@ describe('PageGenerationWorkerService', () => {
       'Building page prompt.',
       'Compiling page prompt.',
       'Preparing reference images.',
+      'Checking page scene consistency before generation.',
       'Requesting page image from image model.',
       'Storing generated page image.',
       'Saving generated page result.',
@@ -1398,6 +1423,107 @@ function buildInputSnapshot(): PageGenerationInputSnapshot {
     ],
   };
 }
+
+describe('生成前の場面整合性監査', () => {
+  it.each([false, true])('planner指定が%sの場合にも描画前に一度だけ監査し完成画像を渡さない', async (requiresPlanner) => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob = buildJob({ params: { ...buildJob().params, requires_planner: requiresPlanner } });
+    if (requiresPlanner) {
+      repository.claimedJob.generationMode = 'thinking';
+      repository.claimedJob.params.generation_mode = 'thinking';
+    }
+    const auditor = new FakeSceneAuditor();
+    const renderer = new FakeRenderer();
+    const images = new FakeInputImageBuilder();
+    const planner = new FakePlanner();
+    auditor.onAudit = () => { expect(renderer.calls).toHaveLength(0); };
+    const service = new PageGenerationWorkerService(repository, new FakePromptBuilder(), new FakePromptCompiler(),
+      images, planner, renderer, new FakeStorage(), new FakeCreditService(), true,
+      undefined, undefined, undefined, undefined, auditor);
+
+    expect((await service.processJob('job-1')).jobStatus).toBe('completed');
+    expect(auditor.inputs).toHaveLength(1);
+    expect(auditor.inputs[0]?.inputImages).toBe(images.images);
+    expect(auditor.inputs[0]?.internalPlan).toBe(requiresPlanner ? 'planner-output' : null);
+    expect(auditor.inputs[0]).not.toHaveProperty('imageData');
+    expect(renderer.calls).toHaveLength(1);
+    expect(renderer.calls[0]?.sceneGuidance).toMatch(/panel 1/iu);
+    expect(renderer.calls[0]?.sceneGuidance).toContain('Aoi');
+    expect(repository.snapshotInputs.at(-1)?.snapshot.sceneAudit?.verdict).toBe('guidance');
+  });
+
+  it('監査が完了できない場合に描画と画像保存をせず既存経路で返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    const auditor = new FakeSceneAuditor(); auditor.shouldFail = true;
+    const renderer = new FakeRenderer(); const storage = new FakeStorage(); const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(repository, new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, storage, credits, true,
+      undefined, undefined, undefined, undefined, auditor);
+    expect((await service.processJob('job-1')).jobStatus).toBe('failed');
+    expect(renderer.calls).toHaveLength(0); expect(storage.calls).toHaveLength(0);
+    expect(credits.refunds).toHaveLength(1);
+  });
+
+  it('監査が未割当の人物を対象に返した場合に描画前に拒否する', async () => {
+    const auditor = new FakeSceneAuditor();
+    auditor.result = { verdict: 'guidance', directives: [{ panelOrder: 1, kind: 'appearance', entityIds: ['foreign-entity'] }] };
+    const renderer = new FakeRenderer(); const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(new FakeExecutionRepository(), new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, new FakeStorage(), credits, true,
+      undefined, undefined, undefined, undefined, auditor);
+    expect((await service.processJob('job-1')).jobStatus).toBe('failed');
+    expect(renderer.calls).toHaveLength(0); expect(credits.refunds).toHaveLength(1);
+  });
+
+  it('監査中に取消された場合に描画も二重返金もしない', async () => {
+    const auditor = new FakeSceneAuditor(); const cancel = new FakeCancellationControl();
+    auditor.onAudit = () => { cancel.cancellationRequested = true; };
+    const renderer = new FakeRenderer(); const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(new FakeExecutionRepository(), new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, new FakeStorage(), credits, true,
+      undefined, cancel, undefined, undefined, auditor);
+    expect((await service.processJob('job-1')).jobStatus).toBe('cancelled');
+    expect(renderer.calls).toHaveLength(0); expect(credits.refunds).toHaveLength(0);
+  });
+
+  it('凍結quoteの場合に保存後の下書きを再読込せず同じ参照配列を監査と描画へ渡す', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.claimedJob = buildJob({ params: { ...buildJob().params, quote_id: 'quote-1' } });
+    const builder = new FakePromptBuilder();
+    const frozen = { ...builder.builtPrompt, draftPrompt: 'frozen authored scene' };
+    const images = new FakeInputImageBuilder(); const frozenImages = [...images.images];
+    const auditor = new FakeSceneAuditor(); const renderer = new FakeRenderer();
+    const quoted = { page: async () => ({ prompt: frozen, inputImages: frozenImages }),
+      entity: async (): Promise<never> => { throw new Error('not an entity job'); } };
+    const service = new PageGenerationWorkerService(repository, builder, new FakePromptCompiler(), images,
+      new FakePlanner(), renderer, new FakeStorage(), new FakeCreditService(), true,
+      undefined, undefined, quoted, undefined, auditor);
+    expect((await service.processJob('job-1')).jobStatus).toBe('completed');
+    expect(builder.calls).toHaveLength(0); expect(images.calls).toBe(0);
+    expect(auditor.inputs[0]?.inputImages).toBe(frozenImages);
+    expect(auditor.inputs[0]?.compilerBrief).toBe(frozen.compilerBrief);
+    expect(renderer.calls[0]?.inputImages).toBe(frozenImages);
+    expect(frozen.draftPrompt).toBe('frozen authored scene');
+  });
+
+  it('監査結果の保存中に取消された場合にも画像生成へ進まず二重返金しない', async () => {
+    const repository = new FakeExecutionRepository();
+    const cancel = new FakeCancellationControl();
+    repository.onSnapshotSave = (input) => {
+      if (input.snapshot.sceneAudit !== undefined) cancel.cancellationRequested = true;
+    };
+    const auditor = new FakeSceneAuditor();
+    const renderer = new FakeRenderer();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(repository, new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, new FakeStorage(), credits, true,
+      undefined, cancel, undefined, undefined, auditor);
+    expect((await service.processJob('job-1')).jobStatus).toBe('cancelled');
+    expect(auditor.inputs).toHaveLength(1);
+    expect(renderer.calls).toHaveLength(0);
+    expect(credits.refunds).toHaveLength(0);
+  });
+});
 
 function buildJob(overrides: Partial<GenerationJob> = {}): GenerationJob {
   return {

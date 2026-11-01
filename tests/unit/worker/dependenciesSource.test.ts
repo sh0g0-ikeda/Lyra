@@ -35,6 +35,18 @@ describe('worker dependency policy', () => {
     );
   });
 
+  it('場面監査をplanner flagから独立して接続し明示OFFとローカルだけ無効にする', () => {
+    const source = readFileSync(join(process.cwd(), 'worker/dependencies.ts'), 'utf8');
+    const auditFactory = source.slice(source.indexOf('function resolvePagePreRenderSceneAuditor()'),
+      source.indexOf('function resolvePageImageRenderer()'));
+    expect(source).toContain('overrides.pagePreRenderSceneAuditor ?? resolvePagePreRenderSceneAuditor()');
+    expect(auditFactory).toContain('!env.LLM_PAGE_SCENE_AUDIT_ENABLED || env.LOCAL_IMAGE_FALLBACK_ENABLED');
+    expect(auditFactory).toContain('new OpenAIPagePreRenderSceneAuditor(client)');
+    expect(auditFactory).toContain('timeoutMs: Math.min(env.OPENAI_TIMEOUT_MS, PAGE_SCENE_AUDIT_TIMEOUT_MS)');
+    expect(auditFactory).not.toContain('LLM_PAGE_PLANNER_ENABLED');
+    expect(auditFactory).not.toContain('LLM_PAGE_PROMPT_COMPILER_ENABLED');
+  });
+
   it('production worker起動前にtask protection opt-in設定を検証する', () => {
     const source = readFileSync(join(process.cwd(), 'scripts', 'startProductionWorker.ts'), 'utf8');
 
