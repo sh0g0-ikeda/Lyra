@@ -1,4 +1,4 @@
-import { expect, test as base, type ConsoleMessage, type Page, type Route } from '@playwright/test';
+import { expect, test as base, type ConsoleMessage, type Locator, type Page, type Route } from '@playwright/test';
 import type { CurrentSessionRecord, OrganizationWorkspaceRecord } from '../src/types/api';
 
 // React's error boundary catches render failures before pageerror can report them.
@@ -29,6 +29,8 @@ const test = base.extend<{ browserRuntimeErrors: void }>({
 
 const manualTokenStorageKey = 'lyra:web:manual-token';
 const uiLanguageStorageKey = 'lyra:web:ui-language';
+const workspaceViewStorageKey = 'lyra:web:workspace-view:email:session';
+const mangaTutorialStorageKey = 'lyra:web:manga-tutorial:v1:email:session';
 const legacyTrackedJobsStorageKey = 'lyra:web:tracked-jobs:email:session';
 const personalTrackedJobsStorageKey = `${legacyTrackedJobsStorageKey}:workspace:personal`;
 const cancellableStoryJobId = '77777777-7777-4777-8777-777777777777';
@@ -246,6 +248,10 @@ async function mockApi(
     return json({ google_sign_in: false, google_linking: false, google_ios: false });
   }
 
+  if (pathname === '/api/story/page-skeleton-capabilities') {
+    return json({ preserve_generated_images: true });
+  }
+
   if (pathname === '/api/works') {
     if (route.request().method() === 'GET') {
       return json({ works: [work] });
@@ -299,6 +305,14 @@ async function mockApi(
 
   if (pathname === `/api/pages/${pageRecord.id}` && route.request().method() === 'PUT') {
     return json(pageRecord);
+  }
+
+  if (pathname === `/api/pages/${pageRecord.id}/export-image`) {
+    return route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+    });
   }
   if (pathname === `/api/panels/${panel.id}` && route.request().method() === 'PUT') {
     return json(panel);
@@ -471,10 +485,42 @@ async function mockApi(
   });
 }
 
-async function seedAuthenticatedSession(page: Page): Promise<void> {
-  await page.addInitScript((storageKey) => {
-    window.sessionStorage.setItem(storageKey, 'header.payload.signature');
-  }, manualTokenStorageKey);
+// Unified Spec §2/§10: the four-destination shell only changes navigation.
+// Returning-editor fixtures explicitly restore Story while fresh fixtures exercise
+// the library/tutorial entry; neither path may save, generate, or discard drafts.
+async function seedAuthenticatedSession(page: Page, options: { fresh?: boolean } = {}): Promise<void> {
+  await page.addInitScript(({ fresh, manualTokenKey, tutorialKey, workspaceViewKey }) => {
+    window.sessionStorage.setItem(manualTokenKey, 'header.payload.signature');
+    if (!fresh) {
+      window.sessionStorage.setItem(workspaceViewKey, 'story');
+      window.localStorage.setItem(tutorialKey, 'seen');
+    }
+  }, {
+    fresh: options.fresh === true,
+    manualTokenKey: manualTokenStorageKey,
+    tutorialKey: mangaTutorialStorageKey,
+    workspaceViewKey: workspaceViewStorageKey,
+  });
+}
+
+function mangaCreationSteps(page: Page): Locator {
+  return page.getByRole('navigation', { name: 'Manga creation steps' });
+}
+
+async function openMangaStep(page: Page, label: '1. Story' | '2. Characters' | '3. Pages'): Promise<void> {
+  const step = mangaCreationSteps(page).getByRole('button', { name: label, exact: true });
+  if (await step.count() === 0) {
+    const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+    const mobileNavigation = page.getByRole('navigation', { name: 'Mobile navigation' });
+    const desktopEdit = primaryNavigation.getByRole('button', { name: 'Edit', exact: true });
+    const edit = await desktopEdit.isVisible()
+      ? desktopEdit
+      : mobileNavigation.getByRole('button', { name: 'Edit', exact: true });
+    await edit.click();
+    await page.getByRole('button', { name: label.replace('. ', ' '), exact: true }).click();
+    return;
+  }
+  await step.click();
 }
 
 async function seedEnglishUi(page: Page): Promise<void> {
@@ -625,15 +671,15 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await expect(page.getByRole('button', { name: '1 First movement', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Expand work', exact: true }).click();
   await expect(page.getByRole('button', { name: '1 First movement', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Story', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Entities', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Pages', exact: true })).toBeVisible();
+  await expect(mangaCreationSteps(page).getByRole('button', { name: '1. Story', exact: true })).toBeVisible();
+  await expect(mangaCreationSteps(page).getByRole('button', { name: '2. Characters', exact: true })).toBeVisible();
+  await expect(mangaCreationSteps(page).getByRole('button', { name: '3. Pages', exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   await expect(page.getByText('Mizuki')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Generate full-body preview' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await openMangaStep(page, '3. Pages');
   await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
 });
@@ -647,9 +693,9 @@ test('回収保留の場合に有料画像生成を止めて無料の話編集�
   const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
   await draft.fill('Editing remains available during recovery');
   await expect(draft).toHaveValue('Editing remains available during recovery');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   await expect(page.getByRole('button', { name: 'Generate full-body preview' })).toBeDisabled();
-  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await openMangaStep(page, '3. Pages');
   await expect(page.getByRole('button', { name: 'Generate in color', exact: true })).toBeDisabled();
 });
 
@@ -691,7 +737,7 @@ test('未保存の話を破棄して移動し戻る場合はサーバー本文�
 
   const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
   await draft.fill('Discard this local draft');
-  page.once('dialog', (dialog) => dialog.accept());
+  page.on('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: '2 Countermarch', exact: true }).click();
   await expect(draft).toHaveValue('Server text for the second episode.');
   await page.getByRole('button', { name: '1 Arrival', exact: true }).click();
@@ -711,8 +757,8 @@ test('同じ話の再選択とタブ往復では未保存の本文を確認な�
   await draft.fill('Keep this draft across harmless navigation');
   page.on('dialog', (dialog) => { throw new Error(`unexpected ${dialog.type()} dialog: ${dialog.message()}`); });
   await page.getByRole('button', { name: '1 Arrival', exact: true }).click();
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
-  await page.getByRole('button', { name: 'Story', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
+  await openMangaStep(page, '1. Story');
 
   await expect(draft).toHaveValue('Keep this draft across harmless navigation');
 });
@@ -862,7 +908,7 @@ test('desktop Scope と Account Current workspace は未保存話をCancelで保
   page.once('dialog', (dialog) => dialog.dismiss());
   await currentWorkspace.selectOption(organizationWorkspace.organization.id);
   await expect(currentWorkspace).toHaveValue('');
-  await page.getByRole('button', { name: 'Story', exact: true }).click();
+  await openMangaStep(page, '1. Story');
   await expect(draft).toHaveValue('Keep through desktop scope cancel');
   await page.getByRole('button', { name: 'Account menu', exact: true }).click();
   await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
@@ -870,7 +916,7 @@ test('desktop Scope と Account Current workspace は未保存話をCancelで保
   await currentWorkspace.selectOption(organizationWorkspace.organization.id);
   await expect(currentWorkspace).toHaveValue(organizationWorkspace.organization.id);
   await desktopScope.selectOption('');
-  await page.getByRole('button', { name: 'Story', exact: true }).click();
+  await openMangaStep(page, '1. Story');
   await expect(draft).toHaveValue('Arrival at the fort.\n\nA suspicious briefing.\n\nA duel in the rain.\n\nAn unseen observer.');
   await draft.fill('Guard after workspace roundtrip');
   page.once('dialog', (dialog) => dialog.dismiss());
@@ -1063,7 +1109,7 @@ test('未保存キャラから別キャラを選ぶ場合にCancelすると入�
     await pendingRoute.fulfill({ json: entity });
   }));
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
 
   const description = page.getByRole('textbox', { name: 'Free description', exact: true });
   await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Mizuki');
@@ -1091,7 +1137,7 @@ test('同じキャラのreconnect refetchは未保存の自由記述を上書き
     await mockEntityDirtyApi(route);
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
 
   const description = page.getByRole('textbox', { name: 'Free description', exact: true });
   await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Mizuki');
@@ -1129,7 +1175,7 @@ test('遅いキャラ保存の応答は保存待機中の追加入力を上書�
     await pendingRoute.fulfill({ json: { ...entity, free_description: 'Stale saved description', updated_at: '2026-04-26T00:00:02.000Z' } });
   }));
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
 
   const description = page.getByRole('textbox', { name: 'Free description', exact: true });
   await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Mizuki');
@@ -1156,7 +1202,7 @@ test('未保存キャラを破棄して別キャラへ移動し戻る場合は�
     await pendingRoute.fulfill({ json: entity });
   }));
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
 
   const description = page.getByRole('textbox', { name: 'Free description', exact: true });
   await expect(description).toHaveValue(entity.free_description);
@@ -1176,7 +1222,7 @@ test('新規キャラdraftから既存キャラを選ぶ場合にCancelすると
   await seedAuthenticatedSession(page);
   await page.route('**/api/**', (route) => mockEntityDirtyApi(route));
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Mizuki');
   await page.getByRole('button', { name: 'New character', exact: true }).first().click();
 
@@ -1197,7 +1243,7 @@ test('キャラResetをCancelすると入力を保持し破棄確定後は同じ
     return mockEntityDirtyApi(route);
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   const name = page.getByRole('textbox', { name: 'Name', exact: true });
   const description = page.getByRole('textbox', { name: 'Free description', exact: true });
   await expect(name).toHaveValue(entity.name);
@@ -1223,7 +1269,7 @@ test('キャラ保存が失敗した場合に入力を保持して再編集と�
     await pendingRoute.fulfill({ status: 500, json: { error: { code: 'INTERNAL_ERROR', message: 'Temporary test failure' } } });
   }));
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   const description = page.getByRole('textbox', { name: 'Free description', exact: true });
   await expect(description).toHaveValue(entity.free_description);
   await description.fill('Failed save keeps this character');
@@ -1250,7 +1296,7 @@ test('キャラ保存を連打しても保存中は要求を一回だけ送る',
     await r.fulfill({ json: { ...entity, updated_at: '2026-04-26T00:00:02.000Z' } });
   }));
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(entity.name);
   const request = page.waitForRequest((r) => r.method() === 'PUT' && new URL(r.url()).pathname === '/api/entities/' + entity.id);
   const response = page.waitForResponse((r) => r.request().method() === 'PUT' && new URL(r.url()).pathname === '/api/entities/' + entity.id);
@@ -1292,7 +1338,7 @@ test('キャラ作成待機中の追加入力は作成成功後も新しいキ�
     await mockEntityDirtyApi(route);
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(entity.name);
   await page.getByRole('button', { name: 'New character', exact: true }).first().click();
   await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Created test character');
@@ -1328,7 +1374,7 @@ test('キャラ保存済みの入力を変えず切替える場合は確認せ�
     });
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   const description = page.getByRole('textbox', { name: 'Free description', exact: true });
   await expect(description).toHaveValue(entity.free_description);
   await description.fill('Clean saved character');
@@ -1356,7 +1402,7 @@ test('キャラの未保存入力がある場合にworkspaceと別作品の切�
     await mockStoryNavigationWithOrganizationApi(route, fixtures);
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   const description = page.getByRole('textbox', { name: 'Free description', exact: true });
   await expect(description).toHaveValue(entity.free_description);
   await description.fill('Keep character through context cancellation');
@@ -1375,7 +1421,7 @@ test('キャラの未保存入力がある場合にブラウザ再読込をCance
   await seedAuthenticatedSession(page);
   await page.route('**/api/**', (route) => mockEntityDirtyApi(route));
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   const description = page.getByRole('textbox', { name: 'Free description', exact: true });
   await expect(description).toHaveValue(entity.free_description);
   await description.fill('Keep character through reload cancellation');
@@ -1415,7 +1461,7 @@ test('Mobileが保存した開始状態を旧Webの話とbaseキャラ保存で�
 
   expect(episodePayload).not.toHaveProperty('starting_entity_states');
 
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   const characterEditor = page
     .getByRole('heading', { name: 'Character editor', exact: true })
     .locator('xpath=ancestor::section[1]');
@@ -1442,7 +1488,7 @@ test('キャラ編集では画像取り込みを自由記述の前に置き不�
   await page.route('**/api/**', (route) => mockApi(route));
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
 
   const editorSection = page
     .getByRole('heading', { name: 'Character editor', exact: true })
@@ -1536,7 +1582,7 @@ test('初心者向け案内とページ編集の情報境界を明確にする',
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
 
   const characterEditor = page.locator('.character-editor-section');
   await expect(
@@ -1553,7 +1599,7 @@ test('初心者向け案内とページ編集の情報境界を明確にする',
   ).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Current episode selection', exact: true })).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await openMangaStep(page, '3. Pages');
   await expect(page.getByRole('heading', { name: 'Current episode selection', exact: true })).toHaveCount(0);
 
   const pageStack = page.locator('.page-sections-stack');
@@ -1613,7 +1659,7 @@ test('初心者向け案内とページ編集の情報境界を明確にする',
   await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
   await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: 'キャラクター', exact: true }).click();
+  await page.getByRole('navigation', { name: '漫画の制作工程' }).getByRole('button', { name: '2. キャラクター', exact: true }).click();
   await expect(
     page.getByText('手元のキャラクター画像をアップロードすると、その見た目を参考にLyraの漫画へ登場させられます。', {
       exact: true,
@@ -1653,7 +1699,7 @@ test('初心者向け案内とページ編集の情報境界を明確にする',
   }
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: 'ページ', exact: true }).click();
+  await page.getByRole('navigation', { name: '漫画の制作工程' }).getByRole('button', { name: '3. ページ', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'ページの絵柄・雰囲気', exact: true })).toBeVisible();
   await expect(page.locator('.character-assignment-card')).toBeVisible();
   await expect(page.locator('.dialogue-line-card')).toBeVisible();
@@ -1714,18 +1760,14 @@ test('ページ設計とページ生成の操作をページ編集の保存導�
 
   await expect(page.getByRole('heading', { name: 'Page planning', exact: true })).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await openMangaStep(page, '3. Pages');
 
   const pagePlanningSection = page
     .getByRole('heading', { name: 'Page planning', exact: true })
     .locator('xpath=ancestor::section[1]');
-  await expect(
-    pagePlanningSection.getByText('Use these two steps to turn the episode story into panel details.', { exact: true }),
-  ).toBeVisible();
-  await expect(pagePlanningSection.getByRole('button', { name: 'Regenerate page plan', exact: true })).toBeVisible();
-  await expect(
-    pagePlanningSection.getByRole('button', { name: 'Autofill page settings from story', exact: true }),
-  ).toBeVisible();
+  await expect(pagePlanningSection.getByRole('button', { name: 'Design pages and autofill from story', exact: true })).toBeVisible();
+  await expect(pagePlanningSection.getByRole('button', { name: 'Regenerate page plan', exact: true })).toHaveCount(0);
+  await expect(pagePlanningSection.getByRole('button', { name: 'Autofill page settings from story', exact: true })).toHaveCount(0);
 
   const pageStack = page.locator('.page-sections-stack');
   await expect(pageStack.locator('.page-section-frames-panels + .page-section-generate')).toHaveCount(1);
@@ -1742,7 +1784,7 @@ test('ページ設計とページ生成の操作をページ編集の保存導�
   await page.getByRole('button', { name: 'Account menu', exact: true }).click();
   await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
   await expect(page.getByRole('heading', { name: 'ページ設計', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'ストーリーから設定を自動入力', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'ページを設計してストーリーから自動入力', exact: true })).toBeVisible();
   await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'カラー生成', exact: true })).toBeVisible();
   await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
   const flexibleGenerationJa = page.getByRole('region', { name: 'より自由な生成', exact: true });
@@ -1752,6 +1794,141 @@ test('ページ設計とページ生成の操作をページ編集の保存導�
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
+});
+
+test('単一のページ設計操作は骨格完了後にだけ自動入力を一度開始し生成画像を保護する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  const skeletonJobId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const autofillJobId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  let skeletonRequests = 0;
+  let autofillRequests = 0;
+  let pageGenerationRequests = 0;
+  let skeletonPayload: Record<string, unknown> | null = null;
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/episodes/${episode.id}/generate-page-skeleton` && request.method() === 'POST') {
+      skeletonRequests += 1;
+      skeletonPayload = request.postDataJSON() as Record<string, unknown>;
+      await route.fulfill({ json: { job_id: skeletonJobId, queued: true, story_plan_applied: false } });
+      return;
+    }
+    if (pathname === `/api/jobs/${skeletonJobId}`) {
+      await route.fulfill({ json: {
+        id: skeletonJobId, job_type: 'episode_page_skeleton', status: 'completed', generation_mode: null,
+        credit_cost: 0, params: { episode_id: episode.id, language: 'en' }, result: {}, error_message: null,
+        retry_count: 0, created_at: '2026-10-27T00:00:00.000Z', started_at: '2026-10-27T00:00:01.000Z',
+        completed_at: '2026-10-27T00:00:02.000Z', expires_at: null, cancel_requested_at: null,
+        cancelled_at: null, commit_started_at: null,
+      } });
+      return;
+    }
+    if (pathname === `/api/episodes/${episode.id}/autofill-pages-from-story` && request.method() === 'POST') {
+      autofillRequests += 1;
+      expect(request.postDataJSON()).toEqual({ language: 'en' });
+      await route.fulfill({ json: { job_id: autofillJobId } });
+      return;
+    }
+    if (pathname === `/api/jobs/${autofillJobId}`) {
+      await route.fulfill({ json: {
+        id: autofillJobId, job_type: 'episode_story_autofill', status: 'queued', generation_mode: null,
+        credit_cost: 0, params: { episode_id: episode.id, language: 'en' }, result: {}, error_message: null,
+        retry_count: 0, created_at: '2026-10-27T00:00:03.000Z', started_at: null, completed_at: null,
+        expires_at: null, cancel_requested_at: null, cancelled_at: null, commit_started_at: null,
+      } });
+      return;
+    }
+    if (pathname === `/api/pages/${pageRecord.id}/generate` && request.method() === 'POST') pageGenerationRequests += 1;
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await openMangaStep(page, '3. Pages');
+  page.once('dialog', (dialog) => dialog.accept());
+  const designPages = page.getByRole('button', { name: 'Design pages and autofill from story', exact: true });
+  await designPages.evaluate((button) => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click(); });
+
+  await expect.poll(() => skeletonRequests).toBe(1);
+  await expect.poll(() => autofillRequests).toBe(1);
+  expect(skeletonPayload).toEqual({
+    overwrite_existing: true,
+    preserve_generated_images: true,
+    apply_story_plan: false,
+    language: 'en',
+  });
+  expect(pageGenerationRequests).toBe(0);
+});
+
+test('骨格jobが失敗した場合は自動入力せず単一操作から再試行できる', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  const failedSkeletonJobId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  let skeletonRequests = 0;
+  let skeletonJobReads = 0;
+  let autofillRequests = 0;
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === `/api/episodes/${episode.id}/generate-page-skeleton` && request.method() === 'POST') {
+      skeletonRequests += 1;
+      await route.fulfill({ json: { job_id: failedSkeletonJobId, queued: true, story_plan_applied: false } });
+      return;
+    }
+    if (pathname === `/api/jobs/${failedSkeletonJobId}`) {
+      skeletonJobReads += 1;
+      await route.fulfill({ json: {
+        id: failedSkeletonJobId, job_type: 'episode_page_skeleton', status: 'failed', generation_mode: null,
+        credit_cost: 0, params: { episode_id: episode.id, language: 'en' }, result: {}, error_message: 'Skeleton failed',
+        retry_count: 0, created_at: '2026-10-27T00:00:00.000Z', started_at: '2026-10-27T00:00:01.000Z',
+        completed_at: '2026-10-27T00:00:02.000Z', expires_at: null, cancel_requested_at: null,
+        cancelled_at: null, commit_started_at: null,
+      } });
+      return;
+    }
+    if (pathname === `/api/episodes/${episode.id}/autofill-pages-from-story` && request.method() === 'POST') {
+      autofillRequests += 1;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await openMangaStep(page, '3. Pages');
+  page.on('dialog', (dialog) => dialog.accept());
+  const designPages = page.getByRole('button', { name: 'Design pages and autofill from story', exact: true });
+  await designPages.click();
+  await expect.poll(() => skeletonRequests).toBe(1);
+  await expect.poll(() => skeletonJobReads).toBeGreaterThanOrEqual(1);
+  await expect(designPages).toBeEnabled();
+  expect(autofillRequests).toBe(0);
+
+  await designPages.click();
+  await expect.poll(() => skeletonRequests).toBe(2);
+  expect(autofillRequests).toBe(0);
+});
+
+test('既存画像を保護できない環境ではページ再設計を開始しない', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  let skeletonRequests = 0;
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/story/page-skeleton-capabilities') {
+      await route.fulfill({ json: { preserve_generated_images: false } });
+      return;
+    }
+    if (pathname === `/api/episodes/${episode.id}/generate-page-skeleton` && request.method() === 'POST') {
+      skeletonRequests += 1;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await openMangaStep(page, '3. Pages');
+
+  await expect(page.getByRole('button', { name: 'Design pages and autofill from story', exact: true })).toBeDisabled();
+  expect(skeletonRequests).toBe(0);
 });
 
 test('キャラ画面ではHy4 PreviewをWeb限定の自由生成として案内し、未設定時に受付しない', async ({ page }) => {
@@ -1768,7 +1945,7 @@ test('キャラ画面ではHy4 PreviewをWeb限定の自由生成として案内
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
 
   const flexibleGeneration = page.getByRole('region', { name: 'More flexible generation', exact: true });
   await expect(flexibleGeneration.getByText('More flexible generation: Hy4 Preview (Tencent). Requests and references are not sent to OpenAI image models. Images are available only on the web.', { exact: true })).toBeVisible();
@@ -1818,7 +1995,7 @@ test('Hy4確定キャラを使うページ生成は通常CTAを止め、キャ�
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await openMangaStep(page, '3. Pages');
 
   await expect(page.getByRole('button', { name: 'Generate in color', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Generate monochrome page', exact: true })).toBeDisabled();
@@ -1868,7 +2045,7 @@ test('Hy4確定レファレンスはWeb限定バッジを表示し、通常画�
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
 
   await expect(page.getByText('Hy4 Preview · Web only', { exact: true })).toBeVisible();
   await expect(page.getByText('https://cdn.example.test/ref-1.png', { exact: true })).toHaveCount(0);
@@ -1927,7 +2104,7 @@ test('Hy4生成候補はWeb配信権限なしでは通常候補画像口とCDN�
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
 
   await expect(page.getByText('This image cannot be viewed or saved in this session. You can continue editing the work and page.', { exact: true })).toBeVisible();
   expect(regularCandidateImageRequests).toBe(0);
@@ -1950,7 +2127,7 @@ test('白黒で生成は保存後に白黒指定のページjobを送る', async
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'Pages', exact: true }).click();
+  await openMangaStep(page, '3. Pages');
   const generationRequest = page.waitForRequest((request) =>
     request.method() === 'POST' && new URL(request.url()).pathname === `/api/pages/${pageRecord.id}/generate`,
   );
@@ -1997,6 +2174,168 @@ test('creates works from the sidebar without rendering a work overview editor', 
   await expect(page.getByRole('textbox', { name: 'Genre', exact: true })).toHaveCount(0);
 });
 
+test('スマホWebの初回表示は4ナビと漫画一覧から安全に始まる', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page, { fresh: true });
+  let writeRequests = 0;
+  await page.route('**/api/**', async (route) => {
+    if (route.request().method() !== 'GET') {
+      writeRequests += 1;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+
+  const mobileNavigation = page.getByRole('navigation', { name: 'Mobile navigation' });
+  await expect(mobileNavigation.getByRole('button')).toHaveCount(4);
+  await expect(mobileNavigation.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
+  await expect(mobileNavigation.getByRole('button', { name: 'Assets', exact: true })).toBeVisible();
+  await expect(mobileNavigation.getByRole('button', { name: 'My Page', exact: true })).toBeVisible();
+  await expect(mobileNavigation.getByRole('button', { name: 'Guide', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Manga library', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue selected episode', exact: true })).toBeVisible();
+  const tutorial = page.getByRole('dialog', { name: 'Welcome to Lyra', exact: true });
+  await expect(tutorial).toBeVisible();
+  await expect(tutorial.getByRole('heading', { name: '1. Story', exact: true })).toBeFocused();
+  await tutorial.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(tutorial.getByRole('heading', { name: '2. Characters', exact: true })).toBeFocused();
+  await tutorial.getByRole('button', { name: 'Back', exact: true }).click();
+  await expect(tutorial.getByRole('heading', { name: '1. Story', exact: true })).toBeFocused();
+  await tutorial.getByRole('button', { name: 'Skip tutorial', exact: true }).click();
+  await expect(tutorial).toHaveCount(0);
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), mangaTutorialStorageKey)).toBe('seen');
+
+  await page.reload();
+  await expect(page.getByRole('dialog', { name: 'Welcome to Lyra', exact: true })).toHaveCount(0);
+  const replayTutorial = page.getByRole('button', { name: 'View tutorial', exact: true });
+  await replayTutorial.click();
+  await expect(tutorial).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(tutorial).toHaveCount(0);
+  await expect(replayTutorial).toBeFocused();
+  expect(writeRequests).toBe(0);
+});
+
+test('制作工程とガイドを往復しても未保存ストーリーを保持し書込まない', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  let writeRequests = 0;
+  await page.route('**/api/**', async (route) => {
+    if (route.request().method() !== 'GET') writeRequests += 1;
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+
+  const steps = mangaCreationSteps(page);
+  await expect(steps.getByRole('button')).toHaveCount(3);
+  await expect(steps.getByRole('button', { name: '1. Story', exact: true })).toHaveAttribute('aria-current', 'step');
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Keep this draft across the unified navigation');
+  await page.getByRole('button', { name: 'Next: Characters', exact: true }).click();
+  await expect(steps.getByRole('button', { name: '2. Characters', exact: true })).toHaveAttribute('aria-current', 'step');
+  await page.getByRole('button', { name: 'Previous step', exact: true }).click();
+  await expect(draft).toHaveValue('Keep this draft across the unified navigation');
+
+  const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await primaryNavigation.getByRole('button', { name: 'Guide', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Open Story', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open Characters', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open Pages', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open Story', exact: true }).click();
+  await expect(draft).toHaveValue('Keep this draft across the unified navigation');
+  expect(writeRequests).toBe(0);
+});
+
+test('アセットは現在の話の生成済みページを認証済み経路で表示する', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  let authenticatedImageRequests = 0;
+  let rawCdnRequests = 0;
+  await page.route('https://cdn.example.test/**', async (route) => {
+    rawCdnRequests += 1;
+    await route.abort();
+  });
+  await page.route('**/api/**', async (route) => {
+    if (new URL(route.request().url()).pathname === `/api/pages/${pageRecord.id}/export-image`) {
+      authenticatedImageRequests += 1;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('navigation', { name: 'Mobile navigation' }).getByRole('button', { name: 'Assets', exact: true }).click();
+
+  await expect(page.getByRole('region', { name: 'Manga reader', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Page 1', exact: true })).toBeVisible();
+  expect(authenticatedImageRequests).toBe(1);
+  expect(rawCdnRequests).toBe(0);
+});
+
+test('アセットに生成済み画像がない場合は空状態からページ編集へ戻れる', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    if (new URL(route.request().url()).pathname === `/api/episodes/${episode.id}/pages`) {
+      await route.fulfill({ json: { pages: [{ ...pageRecord, generated_image: null, status: 'draft' }] } });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+  await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name: 'Assets', exact: true }).click();
+
+  await expect(page.getByRole('heading', { name: 'No generated pages yet', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open Pages', exact: true }).click();
+  await expect(mangaCreationSteps(page).getByRole('button', { name: '3. Pages', exact: true })).toHaveAttribute('aria-current', 'step');
+});
+
+test('320px幅でも主要4ナビと漫画一覧が横にはみ出さない', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', (route) => mockApi(route));
+
+  await page.goto('/');
+  await page.getByRole('navigation', { name: 'Mobile navigation' }).getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Manga library', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
+test('作品閲覧権限がない組織ではマイページとガイドだけを表示する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.addInitScript((organizationId) => {
+    window.localStorage.setItem('lyra:web:selected-organization:email:session', organizationId);
+  }, organizationWorkspace.organization.id);
+  const billingWorkspace: OrganizationWorkspaceRecord = {
+    ...organizationWorkspace,
+    membership: { ...organizationWorkspace.membership, role: 'billing' },
+  };
+  await page.route('**/api/**', async (route) => {
+    if (new URL(route.request().url()).pathname === '/api/organizations') {
+      await route.fulfill({ json: { organizations: [billingWorkspace] } });
+      return;
+    }
+    await mockApi(route);
+  });
+
+  await page.goto('/');
+
+  const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await expect(primaryNavigation.getByRole('button')).toHaveCount(2);
+  await expect(primaryNavigation.getByRole('button', { name: 'My Page', exact: true })).toBeVisible();
+  await expect(primaryNavigation.getByRole('button', { name: 'Guide', exact: true })).toBeVisible();
+  await expect(primaryNavigation.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
+  await expect(primaryNavigation.getByRole('button', { name: 'Assets', exact: true })).toHaveCount(0);
+});
+
 test('PCヘッダーで制作ナビと設定メニューを階層分離する', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await seedEnglishUi(page);
@@ -2007,10 +2346,11 @@ test('PCヘッダーで制作ナビと設定メニューを階層分離する', 
 
   const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
   await expect(primaryNavigation).toBeVisible();
-  await expect(primaryNavigation.getByRole('button')).toHaveCount(3);
-  await expect(primaryNavigation.getByRole('button', { name: 'Story', exact: true })).toBeVisible();
-  await expect(primaryNavigation.getByRole('button', { name: 'Entities', exact: true })).toBeVisible();
-  await expect(primaryNavigation.getByRole('button', { name: 'Pages', exact: true })).toBeVisible();
+  await expect(primaryNavigation.getByRole('button')).toHaveCount(4);
+  await expect(primaryNavigation.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
+  await expect(primaryNavigation.getByRole('button', { name: 'Assets', exact: true })).toBeVisible();
+  await expect(primaryNavigation.getByRole('button', { name: 'My Page', exact: true })).toBeVisible();
+  await expect(primaryNavigation.getByRole('button', { name: 'Guide', exact: true })).toBeVisible();
   await expect(primaryNavigation.getByRole('button', { name: 'Workspace', exact: true })).toHaveCount(0);
 
   const sidebar = page.locator('aside.sidebar');
@@ -2046,15 +2386,24 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await page.goto('/');
 
   const sidebar = page.locator('aside.sidebar');
-  await expect(sidebar.getByText('New work', { exact: true })).toBeVisible();
-  await expect(sidebar.getByRole('textbox', { name: 'Title', exact: true })).toBeVisible();
+  await expect(sidebar).toBeHidden();
+  const openSelection = page.getByRole('button', { name: 'Select work, chapter and episode', exact: true });
+  await expect(openSelection).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Select work, chapter and episode', exact: true })).toHaveCount(0);
+  await openSelection.click();
+  const hierarchyDialog = page.getByRole('dialog', { name: 'Select work, chapter and episode', exact: true });
+  await expect(hierarchyDialog).toBeVisible();
+  await expect(hierarchyDialog.getByText('New work', { exact: true })).toBeVisible();
+  await expect(hierarchyDialog.getByRole('textbox', { name: 'Title', exact: true })).toBeVisible();
+  const expandWorks = hierarchyDialog.getByRole('button', { name: 'Expand works', exact: true });
+  if (await expandWorks.isVisible()) await expandWorks.click();
 
-  await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '1 First movement', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '1 Arrival', exact: true })).toBeVisible();
+  await expect(hierarchyDialog.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
+  await expect(hierarchyDialog.getByRole('button', { name: '1 First movement', exact: true })).toBeVisible();
+  await expect(hierarchyDialog.getByRole('button', { name: '1 Arrival', exact: true })).toBeVisible();
 
   await expect(page.getByRole('menuitem', { name: 'Rename chapter', exact: true })).toHaveCount(0);
-  const workMenuTrigger = page.getByRole('button', { name: 'Actions for work “Moonlit Regiment”', exact: true });
+  const workMenuTrigger = hierarchyDialog.getByRole('button', { name: 'Actions for work “Moonlit Regiment”', exact: true });
   await workMenuTrigger.click();
   await expect(page.getByRole('menuitem', { name: 'Rename work', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Add chapter', exact: true })).toBeVisible();
@@ -2064,7 +2413,7 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await expect(page.getByRole('menu', { name: 'Actions for work “Moonlit Regiment”', exact: true })).toHaveCount(0);
   await expect(workMenuTrigger).toBeFocused();
 
-  const episodeMenuTrigger = page.getByRole('button', { name: 'Actions for episode “Arrival”', exact: true });
+  const episodeMenuTrigger = hierarchyDialog.getByRole('button', { name: 'Actions for episode “Arrival”', exact: true });
   await expect(episodeMenuTrigger).toBeVisible();
 
   const titleAndTriggerDoNotOverlap = await page.evaluate(() => {
@@ -2091,10 +2440,6 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await expect(renameEpisode).toBeFocused();
   await page.keyboard.press('End');
   await expect(deleteEpisode).toBeFocused();
-  await page.setViewportSize({ width: 761, height: 844 });
-  await expect(deleteEpisode).toBeFocused();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(deleteEpisode).toBeFocused();
   await page.keyboard.press('Home');
   await expect(renameEpisode).toBeFocused();
 
@@ -2102,6 +2447,11 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await expect(episodeMenu).toHaveCount(0);
   await expect(episodeMenuTrigger).toBeFocused();
   await expect(episodeMenuTrigger).toHaveAttribute('aria-expanded', 'false');
+
+  await page.setViewportSize({ width: 761, height: 844 });
+  await expect(hierarchyDialog).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSelection.click();
 
   await episodeMenuTrigger.click();
   await page.getByRole('menuitem', { name: 'Rename episode', exact: true }).click();
@@ -2117,7 +2467,8 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await expect(page.getByRole('menuitem', { name: 'Move chapter up', exact: true })).toBeDisabled();
   await expect(page.getByRole('menuitem', { name: 'Move chapter down', exact: true })).toBeDisabled();
   await expect(page.getByRole('menuitem', { name: 'Delete chapter', exact: true })).toBeVisible();
-  await page.mouse.click(380, 800);
+  await hierarchyDialog.getByRole('button', { name: 'Close selection', exact: true }).click();
+  await expect(hierarchyDialog).toHaveCount(0);
   await expect(page.getByRole('menuitem', { name: 'Add episode', exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
@@ -2131,21 +2482,16 @@ test('スマホWebで作品一覧と編集操作を作業導線に合わせて�
   await page.goto('/');
 
   const sidebar = page.locator('aside.sidebar');
-  await expect(sidebar.locator('.sidebar-workspace-switcher')).toBeHidden();
-
-  const worksToggle = sidebar.getByRole('button', { name: 'Collapse works', exact: true });
-  const worksContent = sidebar.locator('.sidebar-works-content');
-  await expect(worksToggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(worksContent).toBeVisible();
-  await worksToggle.click();
-  await expect(sidebar.getByRole('button', { name: 'Expand works', exact: true })).toHaveAttribute(
-    'aria-expanded',
-    'false',
-  );
-  await expect(worksContent).toBeHidden();
+  await expect(sidebar).toBeHidden();
+  const openSelection = page.getByRole('button', { name: 'Select work, chapter and episode', exact: true });
+  await openSelection.click();
+  const hierarchyDialog = page.getByRole('dialog', { name: 'Select work, chapter and episode', exact: true });
+  await expect(hierarchyDialog).toBeVisible();
+  await hierarchyDialog.getByRole('button', { name: 'Close selection', exact: true }).click();
+  await expect(hierarchyDialog).toHaveCount(0);
 
   const mobileNavigation = page.getByRole('navigation', { name: 'Mobile navigation' });
-  await mobileNavigation.getByRole('button', { name: 'Account', exact: true }).click();
+  await mobileNavigation.getByRole('button', { name: 'My Page', exact: true }).click();
   const accountWorkspace = page
     .getByRole('heading', { name: 'Workspace', exact: true })
     .locator('xpath=ancestor::section[1]');
@@ -2154,7 +2500,8 @@ test('スマホWebで作品一覧と編集操作を作業導線に合わせて�
   await expect(accountWorkspace.getByRole('combobox').locator('option:checked')).toHaveText('Personal');
   await expect(accountWorkspace.getByRole('button', { name: 'Create organization', exact: true })).toBeVisible();
 
-  await mobileNavigation.getByRole('button', { name: 'Story', exact: true }).click();
+  await mobileNavigation.getByRole('button', { name: 'Edit', exact: true }).click();
+  await openMangaStep(page, '1. Story');
   const episodeSection = page
     .getByRole('heading', { name: 'Episode draft', exact: true })
     .locator('xpath=ancestor::section[1]');
@@ -2172,7 +2519,7 @@ test('スマホWebで作品一覧と編集操作を作業導線に合わせて�
     }),
   ).toBe(true);
 
-  await mobileNavigation.getByRole('button', { name: 'Entities', exact: true }).click();
+  await openMangaStep(page, '2. Characters');
   const characterList = page
     .getByRole('heading', { name: 'Character list', exact: true })
     .locator('xpath=ancestor::section[1]');
@@ -2196,7 +2543,7 @@ test('スマホWebで作品一覧と編集操作を作業導線に合わせて�
   await mobileNavigation.getByRole('button', { name: 'Guide', exact: true }).click();
   await expect(
     page.getByText(
-      'On desktop, change workspace in the left sidebar. On mobile, open Account to change workspace.',
+      'On desktop, change workspace in the left sidebar. On mobile, open My Page to change workspace.',
       { exact: true },
     ),
   ).toBeVisible();
@@ -2214,7 +2561,7 @@ test('スマホWebで作品一覧と編集操作を作業導線に合わせて�
   ).toBeVisible();
   await expect(
     page.getByText(
-      'After creating the needed characters, open Page planning at the top of Pages and use Generate page plan.',
+      'After creating the needed characters, open Page planning at the top of Pages and use Design pages and autofill from story.',
       { exact: true },
     ),
   ).toBeVisible();
@@ -2262,7 +2609,7 @@ test('keeps the console usable with a legacy billing response', async ({ page })
   await page.goto('/');
 
   await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Story', exact: true })).toBeVisible();
+  await expect(mangaCreationSteps(page).getByRole('button', { name: '1. Story', exact: true })).toBeVisible();
 });
 
 for (const [caseName, session] of [
@@ -2285,7 +2632,7 @@ for (const [caseName, session] of [
 
     await expect(page.getByRole('button', { name: 'Moonlit Regiment', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Verify existing login and link Google' })).toHaveCount(0);
-    await page.getByRole('button', { name: 'Pages', exact: true }).click();
+    await openMangaStep(page, '3. Pages');
     await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
     await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
     await expect(page.getByRole('heading', { name: 'The screen could not be displayed' })).toHaveCount(0);
@@ -2309,7 +2656,7 @@ for (const width of [1440, 390]) {
       await mockApi(route);
     });
     await page.goto('/');
-    await page.getByRole('button', { name: 'Pages', exact: true }).click();
+    await openMangaStep(page, '3. Pages');
     const generate = page.getByRole('button', { name: 'Generate in color', exact: true });
     await generate.scrollIntoViewIfNeeded();
     await generate.click();
@@ -2333,7 +2680,7 @@ test('jaではページ骨格生成の待機中と処理中を自動入力と混
 
   await page.goto('/');
   await page.getByRole('button', { name: '1 Arrival', exact: true }).click();
-  await page.getByRole('button', { name: 'ページ', exact: true }).click();
+  await page.getByRole('navigation', { name: '漫画の制作工程' }).getByRole('button', { name: '3. ページ', exact: true }).click();
 
   await expect(page.getByText('ページ骨格生成', { exact: true })).toBeVisible();
   await expect(page.getByText('ページ骨格生成を待機しています。この処理は20分程度かかる場合があります。', { exact: true })).toBeVisible();
@@ -2347,7 +2694,7 @@ test('jaではページ骨格生成の処理中fallbackを表示する', async (
 
   await page.goto('/');
   await page.getByRole('button', { name: '1 Arrival', exact: true }).click();
-  await page.getByRole('button', { name: 'ページ', exact: true }).click();
+  await page.getByRole('navigation', { name: '漫画の制作工程' }).getByRole('button', { name: '3. ページ', exact: true }).click();
 
   await expect(page.getByText('ページ骨格を生成しています。この処理は20分程度かかる場合があります。', { exact: true })).toBeVisible();
   await expect(page.getByText('ストーリーからページとコマの設定を自動入力しています。この処理は20分程度かかる場合があります。', { exact: true })).toHaveCount(0);
@@ -2364,7 +2711,7 @@ test('外部更新で選択中キャラが消えた場合に未保存入力を�
     }
     await mockEntityDirtyApi(route);
   });
-  await page.goto('/'); await page.getByRole('button', { name: 'Entities', exact: true }).click();
+  await page.goto('/'); await openMangaStep(page, '2. Characters');
   const draft=page.getByRole('textbox', { name: 'Free description', exact: true });
   await expect(draft).toHaveValue(entity.free_description); await draft.fill('Keep externally removed character draft');
   removed=true; await page.waitForTimeout(5100);
@@ -2385,7 +2732,7 @@ test('外部更新で選択中作品が消えた場合に未保存キャラを�
     if(path==='/api/works/'+work.id+'/entities') {await mockEntityDirtyApi(route);return;}
     await mockStoryNavigationApi(route,fixtures);
   });
-  await page.goto('/'); await page.getByRole('button',{name:'Entities',exact:true}).click();
+  await page.goto('/'); await openMangaStep(page, '2. Characters');
   const draft=page.getByRole('textbox',{name:'Free description',exact:true});
   await expect(draft).toHaveValue(entity.free_description);await draft.fill('Keep missing work local draft');
   removed=true;await page.waitForTimeout(5100);
@@ -2407,7 +2754,7 @@ test('外部更新で法人参加権限が消えた場合に未保存キャラ�
     await mockStoryNavigationApi(route,fixtures);
   });
   await page.goto('/');await page.locator('aside.sidebar').getByRole('combobox',{name:'Scope',exact:true}).selectOption(organizationWorkspace.organization.id);
-  await page.getByRole('button',{name:'Entities',exact:true}).click();
+  await openMangaStep(page, '2. Characters');
   const draft=page.getByRole('textbox',{name:'Free description',exact:true});
   await expect(draft).toHaveValue(entity.free_description);await draft.fill('Keep revoked workspace local draft');
   removed=true;await page.waitForTimeout(5100);
@@ -2426,7 +2773,7 @@ test('外部更新より古いキャラ保存応答はbaselineとquery cacheを�
     if(path==='/api/entities/'+entity.id && method==='PUT'){await pending;await route.fulfill({json:{...entity,free_description:'Submitted stale save',updated_at:'2026-04-26T00:00:02.000Z'}});return;}
     await mockEntityDirtyApi(route);
   });
-  await page.goto('/');await page.getByRole('button',{name:'Entities',exact:true}).click();
+  await page.goto('/');await openMangaStep(page, '2. Characters');
   const draft=page.getByRole('textbox',{name:'Free description',exact:true});
   await expect(draft).toHaveValue(entity.free_description);await draft.fill('Submitted stale save');
   const put=page.waitForRequest(r=>r.method()==='PUT'&&new URL(r.url()).pathname==='/api/entities/'+entity.id);

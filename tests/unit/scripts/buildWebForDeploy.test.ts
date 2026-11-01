@@ -22,4 +22,22 @@ describe('buildWebDeployEnv', () => {
     expect(env.VITE_SUPABASE_URL).toBe('https://example.supabase.co');
     expect(env.VITE_SUPABASE_ANON_KEY).toBe('anon-key');
   });
+
+  it('法人機能フラグが未設定の場合は本番用に有効化する', () => {
+    const env = buildWebDeployEnv({});
+
+    expect(env.VITE_ORGANIZATION_FEATURES_ENABLED).toBe('true');
+  });
+
+  it('法人機能フラグが false の場合は本番ビルドを拒否する', () => {
+    expect(() => buildWebDeployEnv({ VITE_ORGANIZATION_FEATURES_ENABLED: 'false' })).toThrow(
+      'VITE_ORGANIZATION_FEATURES_ENABLED must be true for deployment builds',
+    );
+  });
+
+  it('法人機能フラグが true の場合は維持する', () => {
+    const env = buildWebDeployEnv({ VITE_ORGANIZATION_FEATURES_ENABLED: 'true' });
+
+    expect(env.VITE_ORGANIZATION_FEATURES_ENABLED).toBe('true');
+  });
 });

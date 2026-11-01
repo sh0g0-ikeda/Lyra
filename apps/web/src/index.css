@@ -4205,3 +4205,105 @@ details.stack summary {
     grid-template-columns: 1fr;
   }
 }
+
+/* Native navigation parity: four destinations and a separate three-step editor. */
+.workspace-mobile-brand { display: none; }
+.workspace-credit-badge { display: flex; align-items: center; justify-content: center; gap: 5px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid #b3a16a; border-radius: 8px; color: #e5c76b; font-size: .72rem; }
+.workspace-credit-badge strong { color: #f8efcc; font-size: 1rem; }
+.topbar { grid-template-columns: minmax(0, 1fr) auto; }
+.primary-navigation { grid-column: 1; grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 600px; }
+.topbar-account { grid-column: 2; }
+.tutorial-group li { font-size: .875rem; line-height: 1.65; }
+.creation-workflow-header { position: sticky; top: 76px; z-index: 4; padding: 12px 20px; background: #0a0a0af5; border-bottom: 1px solid #b3a16a; }
+.creation-context { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; min-width: 0; }
+.creation-context > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; }
+.creation-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.creation-steps button { min-width: 0; min-height: 48px; border: 1px solid #b3a16a; border-radius: 8px; background: #171717; color: #f0e7c5; font-weight: 700; }
+.creation-steps button.active { background: #e5c76b; color: #111; border-color: #e5c76b; }
+.creation-steps button:disabled { opacity: .45; cursor: not-allowed; }
+.creation-workflow-actions { position: sticky; bottom: 0; z-index: 4; display: flex; justify-content: space-between; gap: 12px; padding: 12px 20px; background: #0a0a0af5; border-top: 1px solid #b3a16a; }
+.creation-workflow-actions button { min-height: 46px; }
+.manga-library, .manga-reader { max-width: 1180px; margin: 0 auto; padding: 24px 20px 32px; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.manga-library h1, .manga-reader h1 { font-size: 1.45rem; color: #f5e7b6; margin: 0 0 8px; }
+.manga-library h2, .manga-reader h2 { font-size: 1.05rem; color: #e5c76b; margin: 0; }
+.manga-library p, .manga-reader p { margin: 0; color: #c8c8c8; line-height: 1.6; }
+.manga-library-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
+.manga-library-heading > div { min-width: 0; overflow-wrap: anywhere; }
+.manga-resume-card { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; border: 1px solid #b3a16a; background: #e5c76b0a; padding: 20px; border-radius: 8px; }
+.manga-library-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.manga-library-steps button { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 64px; border: 1px solid #b3a16a; border-radius: 8px; background: #111; color: #f0e7c5; }
+.manga-library-steps button:disabled { opacity: .45; cursor: not-allowed; }
+.manga-library-steps span { display: grid; place-items: center; width: 25px; height: 25px; flex: 0 0 auto; border-radius: 50%; background: #e5c76b; color: #111; }
+.manga-work-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr)); gap: 12px; }
+.manga-work-card { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; min-height: 150px; padding: 18px; border: 1px solid #b3a16a; border-radius: 8px; background: #131313; color: #eee; text-align: left; overflow-wrap: anywhere; }
+.manga-work-card.active { border-color: #e5c76b; background: #e5c76b0a; }
+.manga-work-card svg { color: #e5c76b; }
+.manga-work-card span { font-size: .78rem; color: #bebebe; }
+.tutorial-entry { padding: 18px 20px 0; max-width: 1180px; margin: 0 auto; }
+.tutorial-entry[hidden] { display: none; }
+.web-manga-tutorial-replay { display: inline-flex; align-items: center; justify-content: center; min-height: 46px; padding: 10px 20px; background: #e5c76b; color: #111; border: 1px solid #e5c76b; border-radius: 8px; font-weight: 700; }
+.web-manga-tutorial-warning { color: #f3cd7a; }
+.web-manga-tutorial-dialog, .workspace-hierarchy-dialog { color: #eee; background: #080808; border: 1px solid #b3a16a; border-radius: 10px; width: min(680px, calc(100% - 32px)); max-width: 100%; max-height: calc(100dvh - 32px); padding: 0; box-shadow: 0 20px 80px #000b; }
+.web-manga-tutorial-dialog::backdrop, .workspace-hierarchy-dialog::backdrop { background: #000b; backdrop-filter: blur(6px); }
+.web-manga-tutorial-dialog[open] { display: flex; flex-direction: column; }
+.web-manga-tutorial-header, .hierarchy-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid #b3a16a; }
+.web-manga-tutorial-header h2 { margin: 0; font-size: 1.2rem; }
+.web-manga-tutorial-close { width: 44px; height: 44px; flex-shrink: 0; border: 1px solid #b3a16a; border-radius: 8px; background: #151515; color: #eee; font-size: 1.5rem; }
+.web-manga-tutorial-credits { padding: 0 20px; color: #e5c76b; }
+.web-manga-tutorial-body { overflow-y: auto; padding: 12px 24px 32px; min-height: 180px; flex: 1; line-height: 1.65; }
+.web-manga-tutorial-body h3 { color: #e5c76b; font-size: 1.3rem; }
+.web-manga-tutorial-actions { display: flex; flex-wrap: wrap; gap: 10px; padding: 16px 20px; border-top: 1px solid #b3a16a; }
+.web-manga-tutorial-actions button { flex: 1; min-width: 90px; min-height: 46px; padding: 8px; border: 1px solid #b3a16a; border-radius: 8px; background: #181818; color: #eee; }
+.web-manga-tutorial-actions button:last-child { background: #e5c76b; color: #111; font-weight: 700; }
+.workspace-hierarchy-dialog .sidebar { border: 0; }
+.hierarchy-dialog-header { position: sticky; top: 0; background: #080808; z-index: 2; }
+.reader-toolbar, .reader-pagination { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; }
+.reader-toolbar button[aria-pressed=true] { border-color: #e5c76b; color: #e5c76b; background: #e5c76b14; }
+.reader-current { margin: 0 auto; width: min(100%, 720px); text-align: center; }
+.reader-current img, .reader-vertical img { display: block; width: 100%; height: auto; }
+.reader-vertical { width: min(100%, 720px); margin: auto; }
+.reader-vertical figure { margin: 0 0 18px; text-align: center; }
+.reader-vertical figcaption { padding: 8px; color: #b7b7b7; }
+.reader-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; padding: 60px 10px; }
+.workspace-selection-button { min-height: 44px; }
+.tutorial-group > button { margin-top: 14px; min-height: 44px; }
+
+@media (max-width: 1200px) and (min-width: 761px) {
+  .topbar-identity { display: none; }
+  .creation-workflow-header { top: 72px; }
+}
+@media (max-width: 760px) {
+  .mobile-bottom-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .mobile-bottom-nav button { font-size: .7rem; }
+  .workspace-mobile-brand { display: block; font-size: 1.2rem; color: #e5c76b; }
+  .topbar-account { justify-content: space-between; }
+  .topbar-identity { display: none; }
+  .workspace-credit-badge { padding: 6px 8px; max-width: 78%; }
+  .manga-library, .manga-reader { gap: 16px; padding: 18px 12px 28px; }
+  .manga-library-heading { align-items: stretch; flex-direction: column; gap: 14px; }
+  .manga-library-heading > button { min-height: 46px; }
+  .manga-resume-card { padding: 16px; }
+  .manga-library-steps button { flex-direction: column; padding: 10px 2px; font-size: clamp(.65rem, 2.6vw, .85rem); }
+  .creation-workflow-header { top: 64px; padding: 8px 10px; }
+  .creation-context { flex-wrap: wrap; gap: 6px; }
+  .creation-context > span { font-size: .7rem; }
+  .creation-context > .workspace-selection-button { width: 100%; }
+  .creation-steps { gap: 5px; }
+  .creation-steps button { font-size: clamp(.65rem, 2.7vw, .85rem); padding: 6px 2px; }
+  .creation-workflow-actions { bottom: calc(72px + env(safe-area-inset-bottom)); gap: 8px; padding: 10px; }
+  .creation-workflow-actions button { font-size: .78rem; }
+  .tutorial-entry { padding: 14px 12px 0; }
+  .web-manga-tutorial-replay { width: 100%; }
+  .web-manga-tutorial-dialog { width: 100%; height: 100dvh; max-height: 100dvh; max-width: 100%; margin: 0; border: 0; border-radius: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .web-manga-tutorial-header, .web-manga-tutorial-actions { padding: 12px; }
+  .web-manga-tutorial-body { padding: 12px 18px; }
+  .workspace-hierarchy-dialog { width: 100%; max-height: 94dvh; margin: auto 0 0; border-radius: 14px 14px 0 0; }
+  .hierarchy-dialog-header { padding: 12px; font-size: .8rem; }
+  .hierarchy-dialog-header button { min-width: 90px; }
+  .reader-toolbar button { min-height: 44px; }
+}
+
+.page-editing-content { padding: 0; margin: 0; border: 0; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+
+.page-section-planning .section-toggle-actions .toolbar { grid-template-columns: minmax(0, 1fr); width: 100%; }
+.page-section-planning .skeleton-plan-button { width: 100%; min-height: 48px; justify-content: center; }
