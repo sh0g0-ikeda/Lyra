@@ -4,6 +4,10 @@
     "slug": "lyra-mobile",
     "scheme": "lyra-mobile",
     "version": "1.0.11",
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",

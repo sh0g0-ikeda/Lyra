@@ -3,7 +3,7 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api';
 import { EntityStateEditor } from '@/components/EntityStateEditor';
-const test = vi.hoisted(() => ({ api: { getJob: vi.fn(), saveNamedEntityState: vi.fn(), generateEntityStateReference: vi.fn(), confirmEntityStateReference: vi.fn(), createGenerationQuote: vi.fn(), acceptGenerationQuote: vi.fn(), getGenerationQuote: vi.fn() }, session: {} as Record<string, unknown>, language: 'ja' as 'ja' | 'en', sessionKey: 'session', organizationId: null as string | null, states: [] as unknown[], jobs: [] as unknown[], referenceSet: {} as Record<string, unknown>, confirmation: null as null | { onConfirm: () => void }, dirtyRegistration: null as unknown, resolveDirtyEditors: vi.fn(async () => true), trackJob: vi.fn(async () => undefined), queryClient: { getQueryData: vi.fn(), invalidateQueries: vi.fn(async () => undefined), setQueryData: vi.fn() } }));
+const test = vi.hoisted(() => ({ api: { getJob: vi.fn(), saveNamedEntityState: vi.fn(), generateEntityStateReference: vi.fn(), confirmEntityStateReference: vi.fn(), createGenerationQuote: vi.fn(), createPreferredGenerationQuote: vi.fn(), acceptGenerationQuote: vi.fn(), getGenerationQuote: vi.fn() }, session: {} as Record<string, unknown>, language: 'ja' as 'ja' | 'en', sessionKey: 'session', organizationId: null as string | null, states: [] as unknown[], jobs: [] as unknown[], referenceSet: {} as Record<string, unknown>, confirmation: null as null | { onConfirm: () => void }, dirtyRegistration: null as unknown, resolveDirtyEditors: vi.fn(async () => true), trackJob: vi.fn(async () => undefined), queryClient: { getQueryData: vi.fn(), invalidateQueries: vi.fn(async () => undefined), setQueryData: vi.fn() } }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.mock('@/lib/config', () => ({ config: { apiBaseUrl: 'https://api.example' } }));
 vi.mock('@/state/appState', () => ({ useAppState: () => ({ api: test.api, language: test.language, session: test.session, selection: { organizationId: test.organizationId }, sessionKey: test.sessionKey, tokens: null, trackJob: test.trackJob, hasCapability: () => true }) }));
@@ -40,7 +40,7 @@ describe('EntityStateEditor', () => {
     test.queryClient.getQueryData.mockImplementation(() => ({ entity_states: test.states }));
     test.resolveDirtyEditors.mockResolvedValue(true);
     test.queryClient.setQueryData.mockImplementation((_key: unknown, updater: (previous: { entity_states: unknown[] }) => { entity_states: unknown[] }) => { test.states = updater({ entity_states: test.states }).entity_states; }); test.states = [state]; test.jobs = []; test.referenceSet = { primary_ref_id: 'base', status: 'ready', reference_images: [{ ref_id: 'base', source: 'generated', created_at: '2026-01-01T00:00:00Z' }], updated_at: '2026-01-01T00:00:00Z' }; test.session = {}; test.confirmation = null;
-    test.api.createGenerationQuote.mockResolvedValue({ quote_id: 'quote', quote_token: 'opaque', operation: 'entity_state_preview', target_id: 'state', billing_scope: { kind: 'personal', organization_id: null }, image_model: 'gpt-image-2', quality: 'medium', render_style: 'color', amount_credits: 7, reference_count: 1, expires_at: '2099-01-01T00:00:00Z', blockers: [] });
+    test.api.createPreferredGenerationQuote.mockResolvedValue({ quote_id: 'quote', quote_token: 'opaque', operation: 'entity_state_preview', target_id: 'state', billing_scope: { kind: 'personal', organization_id: null }, image_model: 'gpt-image-2', quality: 'medium', render_style: 'color', amount_credits: 7, reference_count: 1, expires_at: '2099-01-01T00:00:00Z', blockers: [] });
     test.api.acceptGenerationQuote.mockResolvedValue({ quote_id: 'quote', job_id: 'job', accepted_at: state.created_at, amount_credits: 7 });
     test.api.getJob.mockResolvedValue(completedPreview);
     test.api.getGenerationQuote.mockResolvedValue({ quote_id: 'quote', job_id: null, accepted_at: null, amount_credits: 7 });
@@ -64,7 +64,7 @@ describe('EntityStateEditor', () => {
     test.session = { capabilities: { entity_state_reference_generation: true, generation_quotes: true } };
     const renderer = render();
     await act(async () => { await action(renderer, 'キャラをプレビューする').props.onPress(); });
-    expect(test.api.createGenerationQuote).toHaveBeenCalledWith({ operation: 'entity_state_preview', target_id: 'state', entity_id: 'entity' }, null);
+    expect(test.api.createPreferredGenerationQuote).toHaveBeenCalledWith({ operation: 'entity_state_preview', target_id: 'state', entity_id: 'entity' }, null);
     expect(test.api.acceptGenerationQuote).not.toHaveBeenCalled();
     expect(renderer.root.findByType('quote-dialog').props.state.quote.amount_credits).toBe(7);
     await act(async () => { renderer.root.findByType('quote-dialog').props.onAccept(); renderer.root.findByType('quote-dialog').props.onAccept(); });
@@ -79,7 +79,7 @@ describe('EntityStateEditor', () => {
     const renderer = render();
     expect(action(renderer, 'キャラをプレビューする').props.disabled).toBe(false);
     await act(async () => { await action(renderer, 'キャラをプレビューする').props.onPress(); });
-    expect(test.api.createGenerationQuote).toHaveBeenCalledWith({ operation: 'entity_state_preview', target_id: 'state', entity_id: 'entity' }, null);
+    expect(test.api.createPreferredGenerationQuote).toHaveBeenCalledWith({ operation: 'entity_state_preview', target_id: 'state', entity_id: 'entity' }, null);
     expect(test.api.acceptGenerationQuote).not.toHaveBeenCalled();
     await act(async () => { await renderer.root.findByType('quote-dialog').props.onAccept(); });
     expect(test.api.acceptGenerationQuote).toHaveBeenCalledOnce();
