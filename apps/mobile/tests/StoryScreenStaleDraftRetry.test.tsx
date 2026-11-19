@@ -10,7 +10,7 @@ import { defaultSelection, episodesQueryKey } from '@/lib/queryKeys';
 let episode: EpisodeRecord;
 let selection = { ...defaultSelection, workId: 'work', chapterId: 'chapter', episodeId: 'episode' };
 let sessionKey = 'user';
-let registration: { save: () => Promise<void> };
+let registration: { dirty: boolean; save: () => Promise<void> };
 let root: ReactTestRenderer | undefined;
 const updateEpisode = vi.fn();
 const getEpisodes = vi.fn();
@@ -142,6 +142,23 @@ describe('Story stale draft retry', () => {
     });
     expect(updateEpisode.mock.calls[0]?.[1]).not.toHaveProperty('production_notes_enabled');
     expect(root!.root.findAllByProps({ accessibilityLabel: '演出指示を有効にする' })).toHaveLength(0);
+  });
+
+  it('演出指示の有効化を保存した後は本文を変えない限り再保存を要求しない', async () => {
+    productionNotesEnabled = true;
+    episode = { ...episode, story_full_draft: 'A。B。\n＃ 「A」と「B」は同じコマ。' };
+    updateEpisode.mockImplementation(async () => {
+      episode = { ...episode, version: 2, updated_at: 'saved-revision' };
+      return episode;
+    });
+    await render();
+    await act(async () => root!.root.findByProps({ accessibilityLabel: '演出指示を有効にする' }).props.onPress());
+    expect(registration.dirty).toBe(true);
+    await act(async () => registration.save());
+    await render();
+    expect(updateEpisode).toHaveBeenCalledTimes(1);
+    expect(registration.dirty).toBe(false);
+    expect(body().props.value).toBe(episode.story_full_draft);
   });
 
   it('本人が選んだ演出提案だけを本文へ追加してopt-in保存する', async () => {

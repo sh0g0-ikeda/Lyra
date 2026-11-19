@@ -1,8 +1,9 @@
 import { workDeletionSchema, workDeletionsSchema, type WorkDeletionRecord, type WorkDeletionsRecord } from '@/domain/workDeletion';
 import { pageSkeletonCapabilitiesSchema, type PageSkeletonCapabilities } from '@/domain/pageSkeletonCapabilities';
 import {
+  characterSuggestionsSchema,
   type EpisodeCharacterSuggestion,
-} from '../../../../packages/api-contract/src/characterSuggestions';
+} from '@/domain/characterSuggestionsContract';
 
 export type CharacterSuggestion = EpisodeCharacterSuggestion;
 import type { GenerationQuote, GenerationQuoteReceipt, GenerationQuoteAcceptance, GenerationQuoteRequest } from '@/domain/pageGenerationQuote';
@@ -310,27 +311,6 @@ const organizationQuery = (organizationId?: string | null): string => {
 
 const characterSuggestionCapabilitiesSchema = z.object({
   enabled: z.boolean(),
-}).strict();
-
-const mobileCharacterSuggestionsSchema = z.object({
-  version: z.number().int().min(0),
-  characters: z.array(z.object({
-    name: z.string().trim().min(1).max(100),
-    name_quote: z.string().trim().min(1).max(500),
-    entity_type: z.enum(['character', 'nonhuman']).nullable(),
-    status: z.enum(['new', 'existing', 'ambiguous']),
-    entity_ids: z.array(z.string().uuid()),
-    appearance: z.array(z.object({
-      field: z.enum(['hair_color', 'hair_length', 'hair_style', 'eye_color', 'clothing', 'features']),
-      value: z.string().trim().min(1).max(200),
-      quote: z.string().trim().min(1).max(500),
-    }).strict()).max(6),
-    changes: z.array(z.object({
-      label: z.string().trim().min(1).max(100),
-      description: z.string().trim().min(1).max(300),
-      quote: z.string().trim().min(1).max(500),
-    }).strict()).max(4),
-  }).strict()).max(30),
 }).strict();
 
 const characterSuggestionRequestSchema = z.object({
@@ -945,7 +925,7 @@ export class LyraMobileApiClient {
     const requestBody = characterSuggestionRequestSchema.parse(body);
     return this.request(
       `/api/episodes/${encodeURIComponent(episodeId)}/character-suggestions${organizationQuery(organizationId)}`,
-      mobileCharacterSuggestionsSchema,
+      characterSuggestionsSchema,
       { method: 'POST', body: requestBody },
     );
   }

@@ -107,13 +107,14 @@ for (const profile of ['canonical', 'expanded'] as const) suites[profile](`gener
   it('実DDLの052を追加した場合に既存profileと全capabilityを維持する', async () => {
     const withoutNotes = `ALTER TABLE episodes DROP COLUMN production_notes_enabled;
       DELETE FROM schema_migrations WHERE filename='${notesMigration}'`;
+    let beforeNotes: Awaited<ReturnType<typeof attestRuntimeSchema>> | undefined;
     await withChangedSchema(withoutNotes, async runner => {
-      const beforeNotes = await attestRuntimeSchema(runner);
+      beforeNotes = await attestRuntimeSchema(runner);
       expect(beforeNotes.repositoryProfile).toBe(profile === 'canonical' ? 'canonical' : 'production44_expanded_pg18_v1');
       expect(beforeNotes.capabilities).toEqual({ entityStateMonotonicRevision: true, stripeCreditRecovery: true, workDeletion: true, googleIdentityRecovery: true });
-      await runner.transaction(async (client) => {
-        await client.query(`DROP TABLE generation_worker_warm_controls; DELETE FROM schema_migrations WHERE filename='${migration}'`);
-      });
+    });
+    await withChangedSchema(`${withoutNotes}; DROP TABLE generation_worker_warm_controls;
+      DELETE FROM schema_migrations WHERE filename='${migration}'`, async runner => {
       expect(await attestRuntimeSchema(runner)).toEqual(beforeNotes);
     });
   });
@@ -123,7 +124,8 @@ for (const profile of ['canonical', 'expanded'] as const) suites[profile](`gener
     expect(proof.repositoryProfile).toBe(profile === 'canonical' ? 'canonical' : 'production44_expanded_pg18_v1');
     expect(proof.capabilities.productionNotes).toBe(true);
     await withChangedSchema('ALTER TABLE episodes ALTER COLUMN production_notes_enabled SET DEFAULT true', async runner => {
-      await expect(attestRuntimeSchema(runner)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+      const failure = await attestRuntimeSchema(runner).then(() => null, (error: unknown) => error);
+      expect(failure).toHaveProperty('message', 'Runtime schema attestation failed: SCHEMA_UNSUPPORTED');
     });
   });
 

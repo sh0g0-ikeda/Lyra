@@ -36,6 +36,7 @@ const checkOnly = process.argv.slice(2).includes('--check');
 const contracts = [
   ['packages/api-contract/src/mobileApiSchemas.ts', 'apps/mobile/src/domain/apiSchemas.ts', `\n${compatibilityExport}`],
   ['packages/api-contract/src/episodePageLimits.ts', 'apps/mobile/src/domain/episodePageLimits.ts', ''],
+  ['packages/api-contract/src/characterSuggestions.ts', 'apps/mobile/src/domain/characterSuggestionsContract.ts', ''],
 ];
 
 for (const [canonicalFile, generatedFile, suffix] of contracts) {

@@ -112,6 +112,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   const [episodeTitle, setEpisodeTitle] = useState('');
   const [episodeDraft, setEpisodeDraft] = useState('');
   const [productionNotesEnabled, setProductionNotesEnabled] = useState(false);
+  const [productionNotesSavedScope, setProductionNotesSavedScope] = useState<string | null>(null);
   const [estimatedPages, setEstimatedPages] = useState('4');
   const [sceneId, setSceneId] = useState<string | null>(null);
   const [sceneOrder, setSceneOrder] = useState('1');
@@ -205,14 +206,15 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
 
   const episodeScopeKey = JSON.stringify([sessionKey, organizationId, selectedEpisode?.id ?? null]);
   const productionNotesOptedIn =
-    productionNotesEnabled && /(^|\n)\s*#/u.test(episodeDraft);
+    productionNotesEnabled && /(^|\n)[ \t]*[#＃][ \t]+\S/u.test(episodeDraft);
+  const productionNotesPending = productionNotesOptedIn && productionNotesSavedScope !== episodeScopeKey;
   const episodeDirty =
     selectedEpisode === null
-      ? [episodeTitle, episodeDraft, estimatedPages].some((value) => value.trim().length > 0 && value !== '4') || productionNotesOptedIn
+      ? [episodeTitle, episodeDraft, estimatedPages].some((value) => value.trim().length > 0 && value !== '4') || productionNotesPending
       : episodeTitle !== (selectedEpisode.title ?? '') ||
         episodeDraft !== episodeMobileDraft(selectedEpisode) ||
         estimatedPages !== String(selectedEpisode.estimated_pages ?? 4) ||
-        productionNotesOptedIn;
+        productionNotesPending;
 
   const sceneDirty =
     selectedScene === null
@@ -267,7 +269,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     lastSyncedEpisodeId.current = nextId;
     setEpisodeTitle(selectedEpisode?.title ?? '');
     setEpisodeDraft(selectedEpisode === null ? '' : episodeMobileDraft(selectedEpisode));
-    setProductionNotesEnabled(false);
+    setProductionNotesEnabled(productionNotesSavedScope === episodeScopeKey);
     setEstimatedPages(String(selectedEpisode?.estimated_pages ?? 4));
     setImprovement(null);
     setSelectedProductionNotes([]);
@@ -275,7 +277,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     collaborationRequestIdRef.current += 1;
     setCollaborationProposal('');
     setCollaborationError(null);
-  }, [episodeDirty, selectedEpisode]);
+  }, [episodeDirty, episodeScopeKey, productionNotesSavedScope, selectedEpisode]);
 
   useEffect(() => () => collaborationAbortRef.current?.abort(), []);
 
@@ -338,6 +340,9 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       );
     },
     onSuccess: async (updatedEpisode) => {
+      if (productionNotesOptedIn && currentStoryDraftRef.current.scope === episodeScopeKey) {
+        setProductionNotesSavedScope(episodeScopeKey);
+      }
       queryClient.setQueryData<{ episodes: EpisodeRecord[] }>(
         episodesQueryKey(sessionKey, selectedChapter?.id ?? null, organizationId),
         (current) => replaceEpisodeInResponse(current, updatedEpisode)
@@ -415,7 +420,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   const discardStoryDrafts = useCallback((): void => {
     setEpisodeTitle(selectedEpisode?.title ?? '');
     setEpisodeDraft(selectedEpisode === null ? '' : episodeMobileDraft(selectedEpisode));
-    setProductionNotesEnabled(false);
+    setProductionNotesEnabled(productionNotesSavedScope === episodeScopeKey);
     setEstimatedPages(String(selectedEpisode?.estimated_pages ?? 4));
     setSceneOrder(String(selectedScene?.order ?? (scenesQuery.data?.scenes.length ?? 0) + 1));
     setSceneLocation(selectedScene?.location ?? '');
@@ -429,6 +434,8 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     setCollaborationError(null);
     setDirtySaveError(null);
   }, [
+    episodeScopeKey,
+    productionNotesSavedScope,
     scenesQuery.data?.scenes.length,
     selectedEpisode,
     selectedScene,
@@ -610,6 +617,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
         (current) => replaceEpisodeInResponse(current, updatedEpisode),
       );
       if (sameScope()) {
+        if (submitted.productionNotesOptedIn) setProductionNotesSavedScope(submitted.scope);
         clearPendingStaleActionSaveError();
         setStaleResource((current) => current?.id === submitted.episodeId ? null : current);
       }
