@@ -92,7 +92,8 @@ test('話から抽出した外見をキャラ欄で確認でき、既存キャ�
     if (path === '/api/story/character-suggestion-capabilities') return route.fulfill({ json: { enabled: true } });
     if (path.endsWith('/character-suggestions')) return route.fulfill({ json: { version: 1, characters: [
       { name: 'Rin', name_quote: 'Rin wears a silver coat.', entity_type: 'character', status: 'new', entity_ids: [],
-        appearance: [{ field: 'clothing', value: 'silver coat', quote: 'Rin wears a silver coat.' }], changes: [] },
+        appearance: [{ field: 'clothing', value: 'silver coat', quote: 'Rin wears a silver coat.' },
+          { field: 'clothing', value: 'blue belt', quote: 'Rin has a blue belt.' }], changes: [] },
       { name: entity.name, name_quote: 'Mizuki tears her sleeve.', entity_type: 'character', status: 'existing', entity_ids: [entity.id],
         appearance: [], changes: [{ label: 'Torn sleeve', description: 'tears her sleeve', quote: 'Mizuki tears her sleeve.' }] },
     ] } });
@@ -107,7 +108,7 @@ test('話から抽出した外見をキャラ欄で確認でき、既存キャ�
   await page.getByRole('button', { name: 'Find from this episode' }).click();
   await page.getByRole('button', { name: 'Open new draft' }).click();
   await expect(page.getByLabel('Name', { exact: true }).first()).toHaveValue('Rin');
-  await expect(page.getByLabel('Clothing details', { exact: true })).toHaveValue('silver coat');
+  await expect(page.getByLabel('Clothing details', { exact: true })).toHaveValue('silver coat / blue belt');
   await expect(page.getByLabel('Free description', { exact: true }).first()).toHaveValue('');
   await page.getByRole('button', { name: 'Edit state', exact: true }).click();
   await page.getByLabel('State description', { exact: true }).fill('Her left sleeve is torn');

@@ -40,10 +40,11 @@ export function groundCharacterSuggestions(
       containsQuote(evidence) && mentionsName(evidence, character.name) && evidence.includes(value)
       && !/(?:もし|ならば|だったら|ではない|じゃない|かもしれ|\b(?:if|might|not)\b)/iu.test(evidence)
       && !otherNames.some((name) => mentionsName(evidence, name));
-    const usedFields = new Set<string>();
+    const usedTraits = new Set<string>();
     const appearance = matches.length > 0 ? [] : character.appearance.filter((trait) => {
-      if (usedFields.has(trait.field) || !supported(trait.quote, trait.value)) return false;
-      usedFields.add(trait.field);
+      const key = JSON.stringify([trait.field, trait.value]);
+      if (usedTraits.has(key) || !supported(trait.quote, trait.value)) return false;
+      usedTraits.add(key);
       return true;
     });
 

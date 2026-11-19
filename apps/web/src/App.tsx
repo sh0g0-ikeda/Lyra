@@ -4130,7 +4130,7 @@ function StudioShell(props: {
     for (const item of suggestion.appearance) {
       const field = item.field === 'clothing' ? 'clothing_description'
         : item.field === 'features' ? 'distinguishing_features' : item.field;
-      appearance[field] = item.value;
+      appearance[field] = [appearance[field], item.value].filter(Boolean).join(' / ');
     }
     storeDraftImportedReference(null);
     savedEntityDraftRef.current = null;
@@ -6616,7 +6616,7 @@ function StudioShell(props: {
                             <strong>{suggestion.name}</strong>
                             <p className="muted small">{suggestion.name_quote}</p>
                             {suggestion.appearance.map((item) => (
-                              <p className="muted small" key={`${item.field}:${item.quote}`}>
+                              <p className="muted small" key={`${item.field}:${item.value}`}>
                                 {item.value}（{item.quote}）
                               </p>
                             ))}

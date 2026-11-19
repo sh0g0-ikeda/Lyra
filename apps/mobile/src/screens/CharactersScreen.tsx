@@ -124,15 +124,12 @@ const draftFromCharacterSuggestion = (
   const structuredFields: DraftRecord = {};
   const featureValues: string[] = [];
   for (const appearance of suggestion.appearance) {
-    switch (appearance.field) {
-      case 'clothing':
-        structuredFields.clothing_description = appearance.value;
-        break;
-      case 'features':
-        featureValues.push(appearance.value);
-        break;
-      default:
-        structuredFields[appearance.field] = appearance.value;
+    // Nonhuman forms use the free description for anatomical details.
+    if (appearance.field === 'features' || suggestion.entity_type === 'nonhuman') {
+      featureValues.push(appearance.value);
+    } else {
+      const field = appearance.field === 'clothing' ? 'clothing_description' : appearance.field;
+      structuredFields[field] = [structuredFields[field], appearance.value].filter(Boolean).join(' / ');
     }
   }
   return {

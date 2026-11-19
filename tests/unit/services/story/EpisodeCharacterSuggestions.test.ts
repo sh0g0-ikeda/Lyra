@@ -7,6 +7,15 @@ const roster = [{
 }];
 
 describe('groundCharacterSuggestions', () => {
+  it('同じ人外キャラの輪郭と部位数をすべて残し重複する特徴だけをまとめる', () => {
+    const quote = 'ルゥは青いしずく形で赤い角が二本、金色の目が三つある。';
+    const traits = ['青いしずく形', '赤い角が二本', '金色の目が三つ'];
+    const [result] = groundCharacterSuggestions([quote], [], [{
+      name: 'ルゥ', name_quote: quote, entity_type: 'nonhuman', changes: [],
+      appearance: [...traits, traits[0]!].map(value => ({ field: 'features', value, quote })),
+    }]);
+    expect(result?.appearance.map(trait => trait.value)).toEqual(traits);
+  });
   it('別の登場人物や仮定と同じ引用にある外見を確定欄へ入れない', () => {
     const group = 'ミオの隣に黒髪のルカがいた。もしミオが銀髪だったら。';
     const [mio] = groundCharacterSuggestions([group], roster, [{
