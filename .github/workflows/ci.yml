@@ -194,6 +194,21 @@ jobs:
           NODE
 
       - name: Diagnose Expo project
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.head_ref != 'fix/mobile-1-0-11-sunburst-ota' ||
+          github.base_ref != 'release/mobile-1-0-11-base'
+        run: npm --prefix apps/mobile run doctor
+
+      - name: Diagnose Expo project with shipped dependency lock
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.head_ref == 'fix/mobile-1-0-11-sunburst-ota' &&
+          github.base_ref == 'release/mobile-1-0-11-base'
+        env:
+          # Dependency compatibility was fail-closed against the shipped lock above;
+          # keep every other Expo Doctor diagnostic without consulting newer patches.
+          EXPO_DOCTOR_SKIP_DEPENDENCY_VERSION_CHECK: '1'
         run: npm --prefix apps/mobile run doctor
 
       - name: Typecheck Mobile
