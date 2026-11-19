@@ -119,6 +119,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # The 1.0.11 OTA lane compares native inputs with the shipped commit.
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -134,7 +137,61 @@ jobs:
         run: npm run mobile:contracts:check
 
       - name: Verify Expo dependencies
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.head_ref != 'fix/mobile-1-0-11-sunburst-ota' ||
+          github.base_ref != 'release/mobile-1-0-11-base'
         run: npm --prefix apps/mobile run expo:check
+
+      - name: Verify shipped 1.0.11 native dependency lock
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.head_ref == 'fix/mobile-1-0-11-sunburst-ota' &&
+          github.base_ref == 'release/mobile-1-0-11-base'
+        env:
+          EXPO_OFFLINE: '1'
+          CI: '1'
+          SHIPPED_MOBILE_COMMIT: 88737aa8b6be50bf601e00541da831b5524cf0a6
+        shell: bash
+        run: |
+          # Validate against the Expo native-module map installed by the frozen lockfile,
+          # rather than newer patch recommendations fetched from the registry.
+          npm --prefix apps/mobile run expo:check
+
+          # OTA JavaScript must retain the exact dependencies and dynamic native config
+          # used by the shipped 1.0.11 binary.
+          git diff --exit-code "$SHIPPED_MOBILE_COMMIT" -- \
+            apps/mobile/package.json \
+            apps/mobile/package-lock.json \
+            apps/mobile/app.config.js \
+            apps/mobile/eas.json \
+            apps/mobile/assets/icon.png \
+            apps/mobile/assets/splash.png \
+            apps/mobile/assets/adaptive-icon.png
+
+          # `platforms` only limits this OTA export to the shipped native targets. It is
+          # not native configuration; every other app.json value must match 1.0.11.
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const { readFileSync } = require('node:fs');
+
+          const shippedCommit = process.env.SHIPPED_MOBILE_COMMIT;
+          const shipped = JSON.parse(execFileSync(
+            'git',
+            ['show', `${shippedCommit}:apps/mobile/app.json`],
+            { encoding: 'utf8' },
+          );
+          const candidate = JSON.parse(readFileSync('apps/mobile/app.json', 'utf8'));
+          const candidatePlatforms = candidate.expo?.platforms;
+          delete candidate.expo.platforms;
+
+          if (JSON.stringify(candidate) !== JSON.stringify(shipped)) {
+            throw new Error('OTA candidate changes shipped native app configuration');
+          }
+          if (JSON.stringify(candidatePlatforms) !== JSON.stringify(['ios', 'android'])) {
+            throw new Error('OTA candidate platforms must be exactly ios and android');
+          }
+          NODE
 
       - name: Diagnose Expo project
         run: npm --prefix apps/mobile run doctor

@@ -1,6 +1,9 @@
 name: Mobile 1.0.11 OTA candidate export
 
 on:
+  pull_request:
+    branches:
+      - release/mobile-1-0-11-base
   workflow_dispatch:
 
 permissions:
@@ -8,6 +11,9 @@ permissions:
 
 jobs:
   export:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.head_ref == 'fix/mobile-1-0-11-sunburst-ota'
     name: Export Android and iOS OTA bundles
     runs-on: ubuntu-24.04
     env:
@@ -44,8 +50,8 @@ jobs:
       - name: Write bundle checksums
         shell: bash
         run: |
-          find apps/mobile/dist/android -type f -print0 | sort -z | xargs -0 sha256sum > apps/mobile/dist/android/SHA256SUMS
-          find apps/mobile/dist/ios -type f -print0 | sort -z | xargs -0 sha256sum > apps/mobile/dist/ios/SHA256SUMS
+          find apps/mobile/dist/android -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > apps/mobile/dist/android/SHA256SUMS
+          find apps/mobile/dist/ios -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > apps/mobile/dist/ios/SHA256SUMS
 
       - name: Upload Android OTA export
         uses: actions/upload-artifact@v4
