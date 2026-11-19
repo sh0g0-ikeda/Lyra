@@ -10,6 +10,7 @@ import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
 
 const url = process.env.DATABASE_URL;
 const migration = '052_add_generation_worker_warm_control.sql';
+const notesMigration = '053_add_episode_production_notes.sql';
 function isSyntheticTarget(): boolean {
   if (process.env.APP_ENV !== 'test' || url === undefined) return false;
   const address = new URL(url);
@@ -75,7 +76,7 @@ for (const profile of ['canonical', 'expanded'] as const) suites[profile](`gener
       await runPendingMigrations(database, profile === 'canonical' ? undefined : { migrationsDir: join(process.cwd(), 'tests/fixtures/production44-pg18') });
       if (profile === 'expanded') {
         await runProduction44Expansion(schemaPool);
-        for (const filename of ['051_add_google_link_recovery.sql', migration]) {
+        for (const filename of ['051_add_google_link_recovery.sql', migration, notesMigration]) {
           await database.transaction(async client => {
             await client.query(await readFile(join(process.cwd(), 'migrations', filename), 'utf8'));
             await client.query('INSERT INTO schema_migrations(filename) VALUES($1)', [filename]);
@@ -104,17 +105,31 @@ for (const profile of ['canonical', 'expanded'] as const) suites[profile](`gener
   }
 
   it('実DDLの052を追加した場合に既存profileと全capabilityを維持する', async () => {
-    const expanded = await attestRuntimeSchema(database);
-    expect(expanded.repositoryProfile).toBe(profile === 'canonical' ? 'canonical' : 'production44_expanded_pg18_v1');
-    expect(expanded.capabilities).toEqual({ entityStateMonotonicRevision: true, stripeCreditRecovery: true, workDeletion: true, googleIdentityRecovery: true });
-    await withChangedSchema(`DROP TABLE generation_worker_warm_controls; DELETE FROM schema_migrations WHERE filename='${migration}'`, async runner => {
-      expect(await attestRuntimeSchema(runner)).toEqual(expanded);
+    const withoutNotes = `ALTER TABLE episodes DROP COLUMN production_notes_enabled;
+      DELETE FROM schema_migrations WHERE filename='${notesMigration}'`;
+    await withChangedSchema(withoutNotes, async runner => {
+      const beforeNotes = await attestRuntimeSchema(runner);
+      expect(beforeNotes.repositoryProfile).toBe(profile === 'canonical' ? 'canonical' : 'production44_expanded_pg18_v1');
+      expect(beforeNotes.capabilities).toEqual({ entityStateMonotonicRevision: true, stripeCreditRecovery: true, workDeletion: true, googleIdentityRecovery: true });
+      await runner.transaction(async (client) => {
+        await client.query(`DROP TABLE generation_worker_warm_controls; DELETE FROM schema_migrations WHERE filename='${migration}'`);
+      });
+      expect(await attestRuntimeSchema(runner)).toEqual(beforeNotes);
+    });
+  });
+
+  it('実DDLで053を適用すると同じprofileで演出指示の保存を認定する', async () => {
+    const proof = await attestRuntimeSchema(database);
+    expect(proof.repositoryProfile).toBe(profile === 'canonical' ? 'canonical' : 'production44_expanded_pg18_v1');
+    expect(proof.capabilities.productionNotes).toBe(true);
+    await withChangedSchema('ALTER TABLE episodes ALTER COLUMN production_notes_enabled SET DEFAULT true', async runner => {
+      await expect(attestRuntimeSchema(runner)).rejects.toThrow('SCHEMA_UNSUPPORTED');
     });
   });
 
   it('カタログを複製して同一transactionのversion証跡を失った場合に拒否する', async () => {
     const catalog = await readRuntimeSchemaCatalog(database, { includeFunctionBodies: true, includeLegacyAttributes: true });
-    expect(describeRuntimeSchema({ ...catalog })).toEqual({ kind: 'unsupported', failures: ['GENERATION_WORKER_WARM_SCHEMA_MISMATCH'] });
+    expect(describeRuntimeSchema({ ...catalog })).toEqual({ kind: 'unsupported', failures: ['EPISODE_PRODUCTION_NOTES_SCHEMA_MISMATCH'] });
   });
 
   const mutations = [

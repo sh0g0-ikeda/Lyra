@@ -20,7 +20,7 @@ export function createGenerationQuoteRoutes(dependencies:{authMiddleware:Middlew
   generationQuoteService:GenerationQuoteServicePort;organizationService?:OrganizationServicePort}):Hono<AppEnv>{
   const app=new Hono<AppEnv>();app.use('*',dependencies.authMiddleware);app.use('*',dependencies.rateLimitMiddleware);
   app.get('/generation-quote-capabilities',(c)=>c.json({
-    image_model: env.OPENAI_IMAGE_SUNBURST_ENABLED && env.OPENAI_IMAGE_MODEL === GPT_IMAGE_2
+    image_model: env.GENERATION_QUOTES_ENABLED && env.OPENAI_IMAGE_SUNBURST_ENABLED && env.OPENAI_IMAGE_MODEL === GPT_IMAGE_2
       ? GPT_IMAGE_25_SUNBURST : GPT_IMAGE_2,
   }));
   app.post('/generation-quotes',async(c)=>{

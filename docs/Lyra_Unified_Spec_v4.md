@@ -1280,7 +1280,14 @@ contracts apply after the save.
 
 Migration 053 adds an opt-in Boolean to episodes with false as the default.
 Existing episode response shapes remain stable. Supporting clients discover
-the capability before opting in. Story improvement accepts the optional
+the capability before opting in. The API advertises writes only after the
+column, default, and migration history have been attested. Deploy the
+pre/post-053-compatible API and Worker before applying migration 053. On
+the expanded PostgreSQL 18 lineage, use the existing one-off additive
+migration procedure after 052 and insert the 053 receipt in the same
+transaction. Restart the compatible API to refresh its schema proof. Use
+the compatible build when rolling back feature activation after 053.
+Story improvement accepts the optional
 `include_production_notes` flag and returns the separate suggestion list only
 when requested. Authored notes survive improvement when their anchors still
 resolve, otherwise the input draft is returned for review.

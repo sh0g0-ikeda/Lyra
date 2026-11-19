@@ -54,6 +54,7 @@ import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface StoryRouteDependencies {
+  productionNotesAvailable?: boolean;
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   pageSkeletonService: PageSkeletonServicePort;
@@ -79,7 +80,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.get('/story/character-suggestion-capabilities', (c) =>
     c.json({ enabled: dependencies.storyCollaborationService.suggestEpisodeCharacters !== undefined }));
-  app.get('/story/production-notes-capabilities', (c) => c.json({ enabled: true }));
+  app.get('/story/production-notes-capabilities', (c) => c.json({ enabled: dependencies.productionNotesAvailable !== false }));
 
   app.post('/episodes/:episodeId/character-suggestions', async (c) => {
     const episodeId = storyUuidParamSchema.safeParse(c.req.param('episodeId'));
@@ -136,7 +137,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
 
     const result = await dependencies.storyCollaborationService.improveEpisodeDraft(user.id, {
-      ...(body.data.include_production_notes === true ? { includeProductionNotes: true } : {}),
+      ...(body.data.include_production_notes === true && dependencies.productionNotesAvailable !== false
+        ? { includeProductionNotes: true } : {}),
       episodeId: body.data.episode_id,
       instruction: body.data.instruction,
       language: body.data.language,
@@ -421,6 +423,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
+    }
+    if (body.data.production_notes_enabled !== undefined && dependencies.productionNotesAvailable === false) {
+      throw new ConfigurationError('Episode production notes are unavailable');
     }
 
     const episode = await dependencies.storyService.updateEpisode(user.id, episodeId, {

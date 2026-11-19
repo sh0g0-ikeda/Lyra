@@ -722,6 +722,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   app.route(
     '/api',
     createStoryRoutes({
+      productionNotesAvailable: dependencies.attestedRuntime?.capabilities.productionNotes === true || env.NODE_ENV === 'test',
       authMiddleware,
       rateLimitMiddleware,
       pageSkeletonService: resolvedDependencies.pageSkeletonService,
