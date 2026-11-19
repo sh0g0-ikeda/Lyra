@@ -82,6 +82,40 @@ const uiLanguageStorageKey = 'lyra:web:ui-language';
 const workspaceViewStorageKey = 'lyra:web:workspace-view:email:session';
 const mangaTutorialStorageKey = 'lyra:web:manga-tutorial:v1:email:session';
 const legacyTrackedJobsStorageKey = 'lyra:web:tracked-jobs:email:session';
+
+test('話から抽出した外見をキャラ欄で確認でき、既存キャラには編集した状態だけを保存する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  const writes: { path: string; body: unknown }[] = [];
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/story/character-suggestion-capabilities') return route.fulfill({ json: { enabled: true } });
+    if (path.endsWith('/character-suggestions')) return route.fulfill({ json: { version: 1, characters: [
+      { name: 'Rin', name_quote: 'Rin wears a silver coat.', entity_type: 'character', status: 'new', entity_ids: [],
+        appearance: [{ field: 'clothing', value: 'silver coat', quote: 'Rin wears a silver coat.' }], changes: [] },
+      { name: entity.name, name_quote: 'Mizuki tears her sleeve.', entity_type: 'character', status: 'existing', entity_ids: [entity.id],
+        appearance: [], changes: [{ label: 'Torn sleeve', description: 'tears her sleeve', quote: 'Mizuki tears her sleeve.' }] },
+    ] } });
+    if (route.request().method() !== 'GET') writes.push({ path, body: route.request().postDataJSON() });
+    if (path === '/api/entities/' + entity.id + '/states') {
+      return route.fulfill({ json: route.request().method() === 'GET' ? { entity_states: [] } : { id: 'new-state' } });
+    }
+    return mockApi(route);
+  });
+  await page.goto('/');
+  await openMangaStep(page, '2. Characters');
+  await page.getByRole('button', { name: 'Find from this episode' }).click();
+  await page.getByRole('button', { name: 'Open new draft' }).click();
+  await expect(page.getByLabel('Name', { exact: true }).first()).toHaveValue('Rin');
+  await expect(page.getByLabel('Clothing details', { exact: true })).toHaveValue('silver coat');
+  await expect(page.getByLabel('Free description', { exact: true }).first()).toHaveValue('');
+  await page.getByRole('button', { name: 'Edit state', exact: true }).click();
+  await page.getByLabel('State description', { exact: true }).fill('Her left sleeve is torn');
+  expect(writes).toEqual([]);
+  await page.getByRole('button', { name: 'Save state', exact: true }).click();
+  await expect.poll(() => writes).toEqual([{ path: '/api/entities/' + entity.id + '/states',
+    body: { name: 'Torn sleeve', description: 'Her left sleeve is torn' } }]);
+});
 const personalTrackedJobsStorageKey = `${legacyTrackedJobsStorageKey}:workspace:personal`;
 const cancellableStoryJobId = '77777777-7777-4777-8777-777777777777';
 const skeletonProgressJobId = '99999999-9999-4999-8999-999999999999';

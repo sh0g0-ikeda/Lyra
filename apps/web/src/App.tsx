@@ -4125,10 +4125,13 @@ function StudioShell(props: {
 
   const applySuggestedNewEntity = (suggestion: EpisodeCharacterSuggestion): void => {
     if (!confirmEntityNavigation()) return;
-    const appearance = Object.fromEntries(suggestion.appearance.map((item) => [
-      item.field === 'clothing' ? 'clothing_description' : item.field === 'features' ? 'distinguishing_features' : item.field,
-      item.value,
-    ]));
+    // Use the same field format as manual entry so quoted traits remain editable.
+    const appearance = parseCharacterStructuredFieldsDraft('{}');
+    for (const item of suggestion.appearance) {
+      const field = item.field === 'clothing' ? 'clothing_description'
+        : item.field === 'features' ? 'distinguishing_features' : item.field;
+      appearance[field] = item.value;
+    }
     storeDraftImportedReference(null);
     savedEntityDraftRef.current = null;
     hydratedEntityRevisionRef.current = null;
@@ -4138,7 +4141,7 @@ function StudioShell(props: {
       ...createEmptyEntityDraft(),
       name: suggestion.name,
       entity_type: suggestion.entity_type === 'nonhuman' ? 'nonhuman' : 'character',
-      structured_fields: JSON.stringify(appearance, null, 2),
+      structured_fields: serializeCharacterStructuredFieldsDraft(appearance),
     });
     setReferenceSelection([]);
     setReferencePrimaryKey('');
