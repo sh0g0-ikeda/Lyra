@@ -1,4 +1,7 @@
 import { expect, test as base, type ConsoleMessage, type Locator, type Page, type Route } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { CurrentSessionRecord, OrganizationWorkspaceRecord } from '../src/types/api';
 
 // React's error boundary catches render failures before pageerror can report them.
@@ -28,6 +31,53 @@ const test = base.extend<{ browserRuntimeErrors: void }>({
 });
 
 const manualTokenStorageKey = 'lyra:web:manual-token';
+
+test('配信中のWebで開いたタブが切り替え後も下書きを保持してPDFを保存できる', async ({ page }, testInfo) => {
+  const assets = testInfo.outputPath('released-assets');
+  execFileSync('node', ['scripts/restoreReleasedAssets.mjs', assets]);
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.addInitScript(() => {
+    const expiresAt = Date.now() + 3_600_000;
+    const audience = '6b2h941o888u2l7ejhv5jog94';
+    const token = (claims: Record<string, string | number>): string =>
+      'fixture.' + btoa(JSON.stringify({ exp: Math.floor(expiresAt / 1000), ...claims })) + '.fixture';
+    sessionStorage.setItem('lyra:web:cognito-session', JSON.stringify({
+      accessToken: token({ token_use: 'access', client_id: audience }),
+      idToken: token({ token_use: 'id', aud: audience }),
+      expiresAt,
+    }));
+  });
+  const pdfChunk = 'jspdf.es.min-7UXyf_23.js';
+  let cutover = false;
+  const requestedAfterCutover: string[] = [];
+  await page.route('**/*', async route => {
+    const url = new URL(route.request().url());
+    if (url.origin !== 'https://app.lyra-editor.com') return route.abort();
+    if (url.pathname.startsWith('/api/')) return mockApi(route);
+    if (url.pathname === '/') return route.fulfill({ contentType: 'text/html',
+      body: '<!doctype html><html><head><link rel="stylesheet" href="/assets/index-CYnoo3yv.css"></head><body><div id="root"></div><script type="module" src="/assets/index-D8wmWVX6.js"></script></body></html>',
+    });
+    const filename = /^\/assets\/([\w.-]+\.(?:js|css))$/u.exec(url.pathname)?.[1];
+    if (!filename || (filename === pdfChunk && !cutover)) return route.abort();
+    if (cutover) requestedAfterCutover.push(filename);
+    return route.fulfill({ body: await readFile(join(assets, filename)), contentType: filename.endsWith('.css') ? 'text/css' : 'text/javascript' });
+  });
+  await page.goto('https://app.lyra-editor.com/');
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  await draft.fill('Unsaved text from the released tab');
+  cutover = true;
+  await openMangaStep(page, '3. Pages');
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export all', exact: true }).click();
+  const download = await downloadPromise;
+  const pdfPath = testInfo.outputPath('released-tab.pdf');
+  await download.saveAs(pdfPath);
+  expect((await readFile(pdfPath)).subarray(0, 5).toString()).toBe('%PDF-');
+  expect(requestedAfterCutover).toContain(pdfChunk);
+  await openMangaStep(page, '1. Story');
+  await expect(draft).toHaveValue('Unsaved text from the released tab');
+});
 const uiLanguageStorageKey = 'lyra:web:ui-language';
 const workspaceViewStorageKey = 'lyra:web:workspace-view:email:session';
 const mangaTutorialStorageKey = 'lyra:web:manga-tutorial:v1:email:session';
