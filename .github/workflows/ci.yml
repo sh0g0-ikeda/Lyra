@@ -180,7 +180,7 @@ jobs:
             'git',
             ['show', `${shippedCommit}:apps/mobile/app.json`],
             { encoding: 'utf8' },
-          );
+          ));
           const candidate = JSON.parse(readFileSync('apps/mobile/app.json', 'utf8'));
           const candidatePlatforms = candidate.expo?.platforms;
           delete candidate.expo.platforms;
