@@ -49,7 +49,7 @@ describePostgres('generation worker warm control', () => {
       new PoolTransactionDatabase(pool),
       { migrationLockPollMs: 1, migrationLockMaxAttempts: 10 },
     ));
-    expect(applied.at(-1)).toBe('053_add_episode_production_notes.sql');
+    expect(applied.slice(-2)).toEqual(['053_add_episode_production_notes.sql', '054_add_episode_production_note_list.sql']);
   }, 120_000);
 
   beforeEach(async () => {

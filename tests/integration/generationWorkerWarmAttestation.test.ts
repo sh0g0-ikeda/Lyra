@@ -138,6 +138,11 @@ for (const profile of ['canonical', 'expanded'] as const) suites[profile](`gener
       const failure = await attestRuntimeSchema(runner).then(() => null, (error: unknown) => error);
       expect(failure).toHaveProperty('message', 'Runtime schema attestation failed: SCHEMA_UNSUPPORTED');
     });
+    await withChangedSchema(`ALTER TABLE episodes DROP CONSTRAINT episodes_production_notes_shape_check;
+      ALTER TABLE episodes ADD CONSTRAINT episodes_production_notes_shape_check CHECK (true)`, async runner => {
+      const failure = await attestRuntimeSchema(runner).then(() => null, (error: unknown) => error);
+      expect(failure).toHaveProperty('message', 'Runtime schema attestation failed: SCHEMA_UNSUPPORTED');
+    });
   });
 
   it('カタログを複製して同一transactionのversion証跡を失った場合に拒否する', async () => {
