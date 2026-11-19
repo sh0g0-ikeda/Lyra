@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { SignJWT } from 'jose';
+import { createApp } from '../../src/app.js';
 import { Pool, type QueryResult, type QueryResultRow } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
@@ -44,6 +46,37 @@ describePostgres('story shipped revision compatibility', () => {
     await pool.query('INSERT INTO episodes (id,chapter_id,"order",introduction) VALUES ($1,$2,1,\'keep introduction\')', [episode,chapter]);
     return { user,work,chapter,episode };
   }
+
+  it('新版で付けた演出指示が旧版で本文を保存した後にも残り、個別に無効化できる', async () => {
+    const ids = await fixture();
+    const jwtSecret = randomUUID();
+    const actor = { id: ids.user, supabaseId: ids.user, email: ids.user + '@example.invalid', planCode: 'free' as const, displayName: null };
+    const app = createApp({ storyService: service, authProvider: 'supabase', jwtSecret,
+      userProvisioningService: { provisionFromSupabaseClaims: async () => ({ user: actor, isNewUser: false }) },
+    });
+    const token = await new SignJWT({ email: actor.email }).setProtectedHeader({ alg: 'HS256' })
+      .setSubject(ids.user).setIssuedAt().setExpirationTime('5m').sign(new TextEncoder().encode(jwtSecret));
+    const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+    const update = (query: string, body: object): Promise<Response> => Promise.resolve(
+      app.request('/api/episodes/' + ids.episode + query, { method: 'PUT', headers, body: JSON.stringify(body) }));
+    const list = (query: string): Promise<Response> => Promise.resolve(
+      app.request('/api/chapters/' + ids.chapter + '/episodes' + query, { headers }));
+    const notes = ['「扉が開く」と「ミオが笑う」は別のコマ'];
+    const original = '# 序章\n扉が開く。ミオが笑う。';
+    expect((await update('?version=2', { story_input_mode: 'full', story_full_draft: original,
+      production_notes_enabled: true, production_notes: notes })).status).toBe(200);
+    const legacy = await (await list('')).json() as { episodes: Record<string, unknown>[] };
+    expect(legacy.episodes[0]).toMatchObject({ story_full_draft: original });
+    expect(legacy.episodes[0]).not.toHaveProperty('production_notes');
+    expect(legacy.episodes[0]).not.toHaveProperty('production_notes_enabled');
+    const edited = '# 序章\n扉が閉じる。ミオが笑う。';
+    expect((await update('', { story_full_draft: edited })).status).toBe(200);
+    const revised = await (await list('?version=2')).json() as { episodes: Record<string, unknown>[] };
+    expect(revised.episodes[0]).toMatchObject({ story_full_draft: edited, production_notes: notes, production_notes_enabled: true });
+    expect((await update('?version=2', { production_notes_enabled: false })).status).toBe(200);
+    const stored = await repository.findEpisodeByIdAndUserId(ids.episode, ids.user);
+    expect(stored).toMatchObject({ storyFullDraft: edited, productionNotes: notes, productionNotesEnabled: false });
+  });
 
   it.each(['work','chapter','episode'] as const)('%s 同一revisionの競合保存は一件だけ成功し履歴を増やす', async (kind) => {
     const ids = await fixture();
