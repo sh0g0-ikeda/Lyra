@@ -1298,7 +1298,9 @@ registered character state or base-state return at a quoted event. The episode
 planner separates these directions from prose and validates their placement
 before applying the plan. Registered state references and the existing visual
 fallback rules apply. Missing, ambiguous, or conflicting anchors stop plan
-application. Valid AI-selected layout templates survive skeleton repair and
+application. Legacy single-page autofill remains available on opted-in
+episodes and uses the story prose within the selected page. Valid AI-selected
+layout templates survive skeleton repair and
 subsequent autofill when the template, frame and panel counts agree.
 
 ### Image generation model rollout

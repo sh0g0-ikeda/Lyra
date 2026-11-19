@@ -5927,6 +5927,30 @@ describe('PageService', () => {
     expect(compilerBrief).toContain('(none)');
   });
 
+  it('演出指示を有効にした話でも単ページ自動入力は物語本文を使って続けられる', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.autofillContext = {
+      ...buildAutofillContext(),
+      productionNotesEnabled: true,
+      introduction: 'ルカが森に入る。\n# 演出指示は別ページを参照する',
+      middle: '# ここには演出指示だけがある',
+    };
+    const compiler = new FakePageAutofillCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      compiler,
+    );
+
+    const result = await service.autofillFromScenes('user-1', 'page-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    const compilerBrief = compiler.lastInput?.compilerBrief ?? '';
+    expect(compilerBrief).toContain('ルカが森に入る。');
+    expect(compilerBrief).not.toContain('演出指示');
+  });
+
   it('frame 数と panel 数がずれていると autofill を拒否する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.autofillContext = { ...buildAutofillContext(), frameCount: 2 };

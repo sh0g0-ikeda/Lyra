@@ -7,6 +7,7 @@ import { normalizeAutofillDialogueReadingOrder } from '../../domain/policies/aut
   ValidationError,
 } from '../../domain/errors/index.js';
 import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
+import { productionNotesPrompt, readEpisodeProductionNotes, splitEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
 import {
   canonicalizeEntityMentionsInText,
   extractEntityAliases,
@@ -51,6 +52,7 @@ import type { StyleReferenceCompilerPort } from '../style/StyleReferenceCompiler
 import { resolveStyleReferenceForPersistence } from '../style/styleReferencePersistence.js';
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
 import type { PageAutofillCompilerPort } from './PageAutofillCompiler.js';
+import { validateAndPlaceProductionDirectives } from './EpisodeProductionPlan.js';
 import type { EpisodeAutofillCharacterReference, EpisodePagePlanCompilerPort } from './EpisodePagePlanCompiler.js';
 import {
   buildEpisodeAutofillCharacterReferences,
@@ -299,15 +301,23 @@ export class PageService implements PageServicePort {
       throw new ConfigurationError('Page autofill service is not fully configured');
     }
 
-    const context = await this.pageRepository.findAutofillContextByIdAndUserId(pageId, userId, organizationId);
-    if (context === null) {
+    const savedContext = await this.pageRepository.findAutofillContextByIdAndUserId(pageId, userId, organizationId);
+    if (savedContext === null) {
       throw new NotFoundError('Page not found');
     }
 
-    ensurePageEditable(context.status, 'scene autofill');
-    if (context.productionNotesEnabled === true) {
-      throw new ValidationError('Use episode story autofill to apply production notes across pages');
-    }
+    ensurePageEditable(savedContext.status, 'scene autofill');
+    // Single-page autofill keeps its legacy scope. Episode-wide planning
+    // resolves and applies directives against the complete panel sequence.
+    const proseOnly = (text: string | null): string | null =>
+      text === null ? null : splitEpisodeProductionNotes(text, true).body.trim() || null;
+    const context = savedContext.productionNotesEnabled === true ? {
+      ...savedContext,
+      introduction: proseOnly(savedContext.introduction),
+      middle: proseOnly(savedContext.middle),
+      climax: proseOnly(savedContext.climax),
+      endingHook: proseOnly(savedContext.endingHook),
+    } : savedContext;
     if (context.frameCount === 0) {
       throw new ValidationError('Page must have frames before scene autofill can run');
     }
@@ -5299,5 +5309,3 @@ function isMeaningfulText(value: string | null | undefined): value is string {
 function isBlank(value: string | null | undefined): boolean {
   return !isMeaningfulText(value);
 }
-import { productionNotesPrompt, readEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
-import { validateAndPlaceProductionDirectives } from './EpisodeProductionPlan.js';
