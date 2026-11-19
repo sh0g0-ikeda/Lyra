@@ -24,6 +24,15 @@ describe('state editor contracts', () => {
     expect(stateOptionSelectable({ ...named, reference_status: undefined, reference_image: undefined })).toBe(false);
     expect(stateLabel(named, 'アキラ', 'ja')).toBe('アキラ・外傷');
   });
+  it('固定snapshotまで確認できたSunburstの状態画像だけを選択できる', () => {
+    const verified = { ...named, reference_image: {
+      ...named.reference_image,
+      image_model: 'gpt-image-2.5-sunburst', provider: 'openai',
+      provider_model_id: 'gpt-image-2.5-sunburst-2026-09-08', mobile_access: 'available'
+    } };
+    expect(stateOptionSelectable(verified)).toBe(true);
+    expect(stateOptionSelectable({ ...verified, reference_image: { ...verified.reference_image, provider_model_id: 'gpt-image-2.5-sunburst-2026-09-09' } })).toBe(false);
+  });
   it('候補は同じentity/state/revisionの実provider完了jobだけを利用する', () => {
     const job = { id: 'job', job_type: 'entity_generate', status: 'completed', params: { target: 'entity_state', entity_id: 'entity', entity_state_id: 'state', state_revision: named.updated_at }, result: { provider_result: true, candidates: [{ candidate_token: 'opaque', cdn_url: 'https://cdn.example/image' }] } };
     expect(stateReferenceCandidates(job, named)).toHaveLength(1);

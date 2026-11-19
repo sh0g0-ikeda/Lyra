@@ -1278,6 +1278,35 @@ export class LyraMobileApiClient {
     });
   }
 
+  // Discover the server-selected model before quoting. Import analysis remains
+  // model-free, and unknown legacy servers retain the released 1.0.11 request.
+  public async createPreferredGenerationQuote(
+    input: GenerationQuoteRequest,
+    organizationId?: string | null,
+  ): Promise<GenerationQuote> {
+    if (input.operation === 'entity_import_analysis' || input.image_model !== undefined) {
+      return this.createGenerationQuote(input, organizationId);
+    }
+    let preferred: 'gpt-image-2' | 'gpt-image-2.5-sunburst' = 'gpt-image-2';
+    try {
+      const capability = await this.request(
+        `/api/generation-quote-capabilities${organizationQuery(organizationId)}`,
+        z.object({ image_model: z.enum(['gpt-image-2', 'gpt-image-2.5-sunburst']) }).strict(),
+      );
+      preferred = capability.image_model;
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) throw error;
+    }
+    const quote = await this.createGenerationQuote(
+      preferred === 'gpt-image-2.5-sunburst' ? { ...input, image_model: preferred } : input,
+      organizationId,
+    );
+    if (quote.image_model !== preferred) {
+      throw new ApiError('API response did not match the requested image model.', 502, 'INVALID_API_RESPONSE');
+    }
+    return quote;
+  }
+
   public acceptGenerationQuote(quoteId: string, input: GenerationQuoteAcceptance, organizationId?: string | null): Promise<GenerationQuoteReceipt> {
     return this.request(`/api/generation-quotes/${encodeURIComponent(quoteId)}/accept${organizationQuery(organizationId)}`, generationQuoteReceiptSchema, {
       method: 'POST', body: generationQuoteAcceptanceSchema.parse(input)
