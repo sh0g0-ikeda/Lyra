@@ -1,0 +1,64 @@
+name: Mobile 1.0.11 OTA candidate export
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    name: Export Android and iOS OTA bundles
+    runs-on: ubuntu-24.04
+    env:
+      EXPO_NO_TELEMETRY: '1'
+      SENTRY_DISABLE_AUTO_UPLOAD: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Install frozen mobile dependencies
+        run: npm --prefix apps/mobile ci
+
+      - name: Load production export configuration
+        shell: bash
+        run: |
+          node -e "const { build } = require('./apps/mobile/eas.json'); process.stdout.write(Object.entries(build.production.env).map(([key, value]) => key + '=' + value).join('\\n') + '\\n')" >> "$GITHUB_ENV"
+
+      - name: Verify generated API contract
+        run: npm run mobile:contracts:check
+
+      - name: Export Android OTA bundle
+        run: npm run mobile:export:android
+
+      - name: Export iOS OTA bundle
+        run: npm run mobile:export:ios
+
+      - name: Write bundle checksums
+        shell: bash
+        run: |
+          find apps/mobile/dist/android -type f -print0 | sort -z | xargs -0 sha256sum > apps/mobile/dist/android/SHA256SUMS
+          find apps/mobile/dist/ios -type f -print0 | sort -z | xargs -0 sha256sum > apps/mobile/dist/ios/SHA256SUMS
+
+      - name: Upload Android OTA export
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-1.0.11-ota-android
+          path: apps/mobile/dist/android
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload iOS OTA export
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-1.0.11-ota-ios
+          path: apps/mobile/dist/ios
+          if-no-files-found: error
+          retention-days: 14
