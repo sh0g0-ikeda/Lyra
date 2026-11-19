@@ -15,6 +15,7 @@ import { EpisodeStatePlanError } from '../page/EpisodeStateAssignmentResolver.js
 import type {
   EpisodePagePlanExecutionControl,
   EpisodePagePlanProgress,
+  EpisodeProductionNotePlanOptions,
   EpisodeStateAutofillOptions,
   PageServicePort,
 } from '../page/PageService.js';
@@ -83,6 +84,18 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
       });
       return { status: 'processed', jobStatus: 'failed' };
     }
+    const productionNoteOptions = readProductionNoteOptions(job.params);
+    if (productionNoteOptions === null) {
+      if (this.legacyAttempt !== undefined) {
+        return this.settleLegacyFailure(job, 'Episode story autofill job has invalid production notes version');
+      }
+      await this.repository.failEpisodeStoryAutofill({
+        jobId: job.id,
+        userId: job.userId,
+        errorMessage: 'Episode story autofill job has invalid production notes version',
+      });
+      return { status: 'processed', jobStatus: 'failed' };
+    }
 
     try {
       await this.recordProgress(job, {
@@ -109,6 +122,7 @@ export class EpisodeStoryAutofillWorkerService implements EpisodeStoryAutofillWo
         job.organizationId,
         executionControl,
         stateOptions,
+        productionNoteOptions,
       );
       if (!result.compilerUsed) {
         throw new ValidationError(
@@ -330,6 +344,15 @@ function readStateAutofillOptions(
     return null;
   }
   return { statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: policy };
+}
+
+function readProductionNoteOptions(
+  params: Record<string, unknown>,
+): EpisodeProductionNotePlanOptions | undefined | null {
+  const version = params.production_notes_version;
+  if (version === undefined) return undefined;
+  if (version === 'v1') return { applyProductionNotes: true };
+  return null;
 }
 
 class EpisodeStoryAutofillCancelledError extends Error {

@@ -796,6 +796,73 @@ describe('story routes', () => {
     expect(episodesPayload.episodes[0]).not.toHaveProperty('edit_history');
   });
 
+  it('旧Episode GETは本文だけを返しv2 GETだけが明示ノートと無効化状態を返す', async () => {
+    const storyService = new FakeStoryService();
+    storyService.listEpisodes = async () => [buildEpisode({
+      storyFullDraft: '# 既存のMarkdown見出し\n本文',
+      productionNotesEnabled: false,
+      productionNotes: ['「本文」のコマで「ミオ」は通常に戻る。'],
+    })];
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const legacy = await app.request(`/api/chapters/${chapterId}/episodes`, { headers });
+    const versioned = await app.request(`/api/chapters/${chapterId}/episodes?version=2`, { headers });
+    const legacyEpisode = ((await legacy.json()) as { episodes: Array<Record<string, unknown>> }).episodes[0];
+    const versionedEpisode = ((await versioned.json()) as { episodes: Array<Record<string, unknown>> }).episodes[0];
+
+    expect(legacy.status).toBe(200);
+    expect(legacyEpisode).toMatchObject({ story_full_draft: '# 既存のMarkdown見出し\n本文' });
+    expect(legacyEpisode).not.toHaveProperty('production_notes_enabled');
+    expect(legacyEpisode).not.toHaveProperty('production_notes');
+    expect(versioned.status).toBe(200);
+    expect(versionedEpisode).toMatchObject({
+      story_full_draft: '# 既存のMarkdown見出し\n本文',
+      production_notes_enabled: false,
+      production_notes: ['「本文」のコマで「ミオ」は通常に戻る。'],
+    });
+  });
+
+  it('旧Episode PUTは保存済みノートに触れずv2 PUTは明示ノートと無効化を更新する', async () => {
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const legacy = await app.request(`/api/episodes/${episodeId}`, {
+      method: 'PUT', headers, body: JSON.stringify({ story_full_draft: '# 見出し\n更新本文' }),
+    });
+    expect(legacy.status).toBe(200);
+    expect(storyService.lastEpisodeUpdate).not.toHaveProperty('productionNotesEnabled');
+    expect(storyService.lastEpisodeUpdate).not.toHaveProperty('productionNotes');
+
+    const versioned = await app.request(`/api/episodes/${episodeId}?version=2`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        production_notes_enabled: false,
+        production_notes: ['「更新本文」のコマで「ミオ」は通常に戻る。'],
+      }),
+    });
+    expect(versioned.status).toBe(200);
+    expect(storyService.lastEpisodeUpdate).toMatchObject({
+      productionNotesEnabled: false,
+      productionNotes: ['「更新本文」のコマで「ミオ」は通常に戻る。'],
+    });
+  });
+
+  it('Episode HTTP versionは省略または2だけを受け付ける', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+    const responses = await Promise.all([
+      app.request(`/api/chapters/${chapterId}/episodes?version=1`, { headers }),
+      app.request(`/api/chapters/${chapterId}/episodes?version=2&version=2`, { headers }),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([422, 422]);
+  });
+
   it('returns 401 when authentication is missing', async () => {
     const app = createTestApp();
 

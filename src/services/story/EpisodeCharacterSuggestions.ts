@@ -1,14 +1,13 @@
 import type { EpisodeCharacterSuggestion, ExtractedCharacter } from '../../../packages/api-contract/src/characterSuggestions.js';
-import { splitEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
 import type { Episode } from '../../domain/types/story.js';
 import type { StoryEntitySummary } from '../../domain/types/storyAi.js';
 
-export function episodeCharacterSource(episode: Episode, productionNotesEnabled: boolean): string[] {
+export function episodeCharacterSource(episode: Episode, _productionNotesEnabled: boolean): string[] {
   const body = episode.storyInputMode === 'full' ? [episode.storyFullDraft] :
     [episode.introduction, episode.middle, episode.climax, episode.endingHook];
   return body.flatMap((field) => {
     if (field === null) return [];
-    const prose = splitEpisodeProductionNotes(field, productionNotesEnabled).body.trim();
+    const prose = field.trim();
     return prose.length === 0 ? [] : [prose];
   });
 }

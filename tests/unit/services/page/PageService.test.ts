@@ -1238,6 +1238,85 @@ describe('PageService', () => {
     });
   });
 
+  it('全話プランは全文を分割する前に明示sidecar指示を解決してproviderへ渡す', async () => {
+    const context = buildEpisodePlanningContext();
+    context.episode.storyFullDraft = '扉を押す。隙間をのぞく。';
+    context.episode.productionNotesEnabled = true;
+    context.episode.productionNotes = ['「扉を押す」と「隙間をのぞく」は同じコマにする。'];
+    const compiler = new FakeEpisodePagePlanCompiler();
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      undefined,
+      {
+        compilePlan: async (input) => {
+          const result = await compiler.compilePlan(input);
+          result.suggestion.pages[0]!.panels[0]!.situationText = '扉を押す。隙間をのぞく。';
+          return result;
+        },
+      },
+    );
+
+    await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null, undefined, undefined,
+      { applyProductionNotes: true },
+    );
+
+    expect(compiler.lastInput?.compilerBrief).toContain('扉を押す。隙間をのぞく。');
+    expect(compiler.lastInput?.compilerBrief).toContain('AUTHOR PRODUCTION CONSTRAINTS');
+  });
+
+  it('stale sidecar引用は全話プランだけをreview待ちにして書き込まない', async () => {
+    const context = buildEpisodePlanningContext();
+    context.episode.storyFullDraft = '新しい本文。';
+    context.episode.productionNotesEnabled = true;
+    context.episode.productionNotes = ['「消えた本文」と「新しい本文」は別のコマにする。'];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const compiler = new FakeEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      undefined,
+      compiler,
+    );
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null, undefined, undefined,
+      { applyProductionNotes: true },
+    ))
+      .rejects.toThrow('missing or ambiguous quotation');
+    expect(compiler.inputs).toHaveLength(0);
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+  });
+
+  it('旧版の全話プランはstale sidecarを適用せず通常の本文で完走する', async () => {
+    const context = buildEpisodePlanningContext();
+    context.episode.storyFullDraft = '新しい本文。';
+    context.episode.productionNotesEnabled = true;
+    context.episode.productionNotes = ['「消えた本文」と「新しい本文」は別のコマにする。'];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const compiler = new FakeEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      undefined,
+      compiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(compiler.inputs).toHaveLength(1);
+    expect(compiler.lastInput?.compilerBrief).not.toContain('AUTHOR PRODUCTION CONSTRAINTS');
+  });
+
   it.each([
     { atomic: false, savedStateId: 'state-1', suggestedStateId: null },
     { atomic: true, savedStateId: 'state-1', suggestedStateId: null },
@@ -5932,8 +6011,8 @@ describe('PageService', () => {
     pageRepository.autofillContext = {
       ...buildAutofillContext(),
       productionNotesEnabled: true,
-      introduction: 'ルカが森に入る。\n# 演出指示は別ページを参照する',
-      middle: '# ここには演出指示だけがある',
+      introduction: 'ルカが森に入る。',
+      middle: null,
     };
     const compiler = new FakePageAutofillCompiler();
     const service = new PageService(

@@ -7,7 +7,7 @@ import { normalizeAutofillDialogueReadingOrder } from '../../domain/policies/aut
   ValidationError,
 } from '../../domain/errors/index.js';
 import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
-import { productionNotesPrompt, readEpisodeProductionNotes, splitEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
+import { productionNotesPrompt, readEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
 import {
   canonicalizeEntityMentionsInText,
   extractEntityAliases,
@@ -133,7 +133,12 @@ export interface PageServicePort {
     organizationId?: string | null,
     executionControl?: EpisodePagePlanExecutionControl,
     stateOptions?: EpisodeStateAutofillOptions,
+    productionNoteOptions?: EpisodeProductionNotePlanOptions,
   ): Promise<EpisodePagePlanApplyResult>;
+}
+
+export interface EpisodeProductionNotePlanOptions {
+  applyProductionNotes: true;
 }
 
 export interface EpisodeStateAutofillOptions {
@@ -307,17 +312,9 @@ export class PageService implements PageServicePort {
     }
 
     ensurePageEditable(savedContext.status, 'scene autofill');
-    // Single-page autofill keeps its legacy scope. Episode-wide planning
-    // resolves and applies directives against the complete panel sequence.
-    const proseOnly = (text: string | null): string | null =>
-      text === null ? null : splitEpisodeProductionNotes(text, true).body.trim() || null;
-    const context = savedContext.productionNotesEnabled === true ? {
-      ...savedContext,
-      introduction: proseOnly(savedContext.introduction),
-      middle: proseOnly(savedContext.middle),
-      climax: proseOnly(savedContext.climax),
-      endingHook: proseOnly(savedContext.endingHook),
-    } : savedContext;
+    // Single-page autofill keeps its legacy scope and never interprets prose
+    // headings as production notes. Episode-wide planning owns note validation.
+    const context = savedContext;
     if (context.frameCount === 0) {
       throw new ValidationError('Page must have frames before scene autofill can run');
     }
@@ -450,6 +447,7 @@ export class PageService implements PageServicePort {
     organizationId: string | null = null,
     executionControl?: EpisodePagePlanExecutionControl,
     stateOptions?: EpisodeStateAutofillOptions,
+    productionNoteOptions?: EpisodeProductionNotePlanOptions,
   ): Promise<EpisodePagePlanApplyResult> {
     await executionControl?.checkpoint();
     const storyAutofillJobId = executionControl?.jobId;
@@ -522,7 +520,10 @@ export class PageService implements PageServicePort {
       this.episodePlanContinuityV3Enabled || shouldUseAtomicPersistence
       ? initialContextFingerprint ?? fingerprintEpisodePlanningContext(context)
       : null;
-    const production = context.episode.productionNotesEnabled === true ? readEpisodeProductionNotes(context.episode) : null;
+    const production = productionNoteOptions?.applyProductionNotes === true
+      && context.episode.productionNotesEnabled === true
+      ? readEpisodeProductionNotes(context.episode, context.episode.productionNotes ?? [])
+      : null;
     const compilationContext = production === null ? context : {
       ...context,
       episode: { ...context.episode, ...production.prose },

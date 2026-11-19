@@ -338,16 +338,16 @@ export class LyraApiClient {
     return this.requestVoid(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
-  public getEpisodes(chapterId: string, organizationId?: string | null): Promise<{ episodes: EpisodeRecord[] }> {
-    return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`);
+  public getEpisodes(chapterId: string, organizationId?: string | null, version2 = false): Promise<{ episodes: EpisodeRecord[] }> {
+    return this.request(`/api/chapters/${chapterId}/episodes${episodeContractQuery(organizationId, version2)}`);
   }
 
   public createEpisode(chapterId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<EpisodeRecord> {
     return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public updateEpisode(episodeId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<EpisodeRecord> {
-    return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
+  public updateEpisode(episodeId: string, body: Record<string, unknown>, organizationId?: string | null, version2 = false): Promise<EpisodeRecord> {
+    return this.request(`/api/episodes/${episodeId}${episodeContractQuery(organizationId, version2)}`, { method: 'PUT', body });
   }
 
   public moveEpisode(
@@ -571,12 +571,17 @@ export class LyraApiClient {
     return this.request(`/api/pages/${pageId}/autofill-from-scenes${organizationQuery(organizationId)}`, { method: 'POST', body: { language } });
   }
 
-  public autofillEpisodePagesFromStory(episodeId: string, language: 'ja' | 'en', organizationId?: string | null): Promise<{
+  public autofillEpisodePagesFromStory(
+    episodeId: string,
+    language: 'ja' | 'en',
+    organizationId?: string | null,
+    applyProductionNotes = false,
+  ): Promise<{
     job_id: string;
   }> {
     return this.request(`/api/episodes/${episodeId}/autofill-pages-from-story${organizationQuery(organizationId)}`, {
       method: 'POST',
-      body: { language },
+      body: { language, ...(applyProductionNotes ? { production_notes_version: 'v1' } : {}) },
     });
   }
 
@@ -1043,4 +1048,14 @@ function organizationQuery(organizationId: string | null | undefined): string {
   }
 
   return `?organization_id=${encodeURIComponent(organizationId)}`;
+}
+
+function episodeContractQuery(organizationId: string | null | undefined, version2: boolean): string {
+  const params = new URLSearchParams();
+  if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
+    params.set('organization_id', organizationId);
+  }
+  if (version2) params.set('version', '2');
+  const query = params.toString();
+  return query.length === 0 ? '' : `?${query}`;
 }

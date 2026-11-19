@@ -1,6 +1,5 @@
 ﻿import { PANEL_FRAME_TEMPLATES, listPanelFrameTemplateDefinitions } from '../../domain/constants/panelFrameTemplates.js';
 import { fingerprintPageSkeletonContext } from '../../domain/pageSkeletonFingerprint.js';
-import { assertProductionPanelConstraints, productionNotesPrompt, readEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
 import { inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
@@ -139,14 +138,14 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       );
     }
 
-    const production = context.productionNotesEnabled === true ? readEpisodeProductionNotes(context) : null;
-    const promptContext = { ...context, ...production?.prose, estimatedPages: plannedPageCount };
-    const productionPrompt = productionNotesPrompt(production?.directives ?? []);
+    // Skeleton generation remains the legacy full-story operation. Authored
+    // notes are applied only by episode-wide story planning after segmentation.
+    const promptContext = { ...context, estimatedPages: plannedPageCount };
     let pages: PageSkeletonPageDraft[];
     try {
       pages = await this.storyAiClient.generatePageSkeleton({
         systemPrompt: buildPageSkeletonSystemPrompt(plannedPageCount, language),
-        userPrompt: [buildPageSkeletonUserPrompt(promptContext), productionPrompt].filter(Boolean).join('\n\n'),
+        userPrompt: buildPageSkeletonUserPrompt(promptContext),
       });
     } catch (error) {
       if (error instanceof AppError) {
@@ -157,7 +156,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
         episodeId,
         reason: fallbackReason,
       });
-      if (!allowCompilerFallback || productionPrompt.length > 0) {
+      if (!allowCompilerFallback) {
         throw new ValidationError(
           'AI page skeleton generation did not complete. Please retry after a few minutes.',
         );
@@ -179,7 +178,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
         episodeId,
         reason: sanitizePersistedErrorMessage(error, 'Page skeleton validation failed'),
       });
-      if (!allowCompilerFallback || productionPrompt.length > 0) {
+      if (!allowCompilerFallback) {
         throw new ValidationError(
           'AI page skeleton result was incomplete. Please retry after a few minutes.',
         );
@@ -189,13 +188,6 @@ export class PageSkeletonService implements PageSkeletonServicePort {
         allowedEntityIds,
       );
       validatePageSkeleton(plannedPageCount, allowedEntityIds, pages);
-    }
-
-    if (production !== null) {
-      assertProductionPanelConstraints(
-        pages.flatMap((page) => page.panels.map((panel) => ({ text: [panel.situationHint, panel.suggestedDialogueHint] }))),
-        production.directives,
-      );
     }
 
     return {
@@ -279,6 +271,7 @@ function buildPageSkeletonUserPrompt(context: {
   chapterPurpose: string | null;
   episodeTitle: string | null;
   episodePurpose: string | null;
+  storyFullDraft?: string | null;
   introduction: string | null;
   middle: string | null;
   climax: string | null;
@@ -303,6 +296,7 @@ function buildPageSkeletonUserPrompt(context: {
     `Theme: ${canonicalize(context.theme)}`,
     `Episode title: ${canonicalize(context.episodeTitle)}`,
     `Episode purpose: ${canonicalize(context.episodePurpose)}`,
+    `Full story source: ${compactCanonicalStoryPromptText(context.storyFullDraft, context.entities, 8_000) ?? '(none)'}`,
     `Introduction: ${canonicalize(context.introduction)}`,
     `Middle: ${canonicalize(context.middle)}`,
     `Climax: ${canonicalize(context.climax)}`,
@@ -365,17 +359,20 @@ function buildFallbackPageSkeleton(context: {
   climax: string | null;
   endingHook: string | null;
   episodePurpose: string | null;
+  storyFullDraft?: string | null;
   sceneSummaries: string[];
   language: AppLanguage;
 }): PageSkeletonPageDraft[] {
   const distributedBeats = buildDistributedStoryBeats(
-    [
-      context.introduction,
-      context.middle,
-      context.climax,
-      context.endingHook,
-      context.episodePurpose,
-    ],
+    context.storyFullDraft !== null && context.storyFullDraft !== undefined
+      ? [context.storyFullDraft]
+      : [
+          context.introduction,
+          context.middle,
+          context.climax,
+          context.endingHook,
+          context.episodePurpose,
+        ],
     context.estimatedPages,
     context.language,
   );

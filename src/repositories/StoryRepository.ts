@@ -189,6 +189,7 @@ interface ChapterRow extends QueryResultRow {
 
 interface EpisodeRow extends QueryResultRow {
   production_notes_enabled?: boolean;
+  production_notes?: unknown;
   id: string;
   chapter_id: string;
   order: number;
@@ -252,6 +253,7 @@ interface CollaborationRow extends QueryResultRow {
 
 interface EpisodeSkeletonContextRow extends QueryResultRow {
   production_notes_enabled?: boolean;
+  production_notes?: unknown;
   production_notes_full_draft?: string | null;
   graph_fingerprint?: string;
   episode_id: string;
@@ -1350,6 +1352,7 @@ export class PostgresStoryRepository
         UPDATE episodes
         SET "order" = COALESCE($3, episodes."order"),
             ${input.productionNotesEnabled === undefined ? '' : 'production_notes_enabled = $28::boolean,'}
+            ${input.productionNotes === undefined ? '' : `production_notes = $${input.productionNotesEnabled === undefined ? 28 : 29}::jsonb,`}
             title = CASE WHEN $4::boolean THEN $5 ELSE episodes.title END,
             purpose = CASE WHEN $6::boolean THEN $7 ELSE episodes.purpose END,
             story_input_mode = CASE WHEN $8::boolean THEN $9 ELSE episodes.story_input_mode END,
@@ -1450,6 +1453,7 @@ export class PostgresStoryRepository
           organizationId,
           input.expectedUpdatedAt ?? null,
           ...(input.productionNotesEnabled === undefined ? [] : [input.productionNotesEnabled]),
+          ...(input.productionNotes === undefined ? [] : [JSON.stringify(input.productionNotes)]),
         ],
       );
 
@@ -2195,6 +2199,7 @@ export class PostgresStoryRepository
       `
       SELECT episodes.id AS episode_id,
              (to_jsonb(episodes)->>'production_notes_enabled')::boolean AS production_notes_enabled,
+             to_jsonb(episodes)->'production_notes' AS production_notes,
              episodes.story_full_draft AS production_notes_full_draft,
              episodes.chapter_id,
              works.id AS work_id,
@@ -2314,9 +2319,12 @@ export class PostgresStoryRepository
 
     return {
       ...(this.schemaProfile === 'legacy_2debe_v1' ? { graphFingerprint: row.graph_fingerprint } : {}),
-      ...(row.production_notes_enabled === true ? {
-        productionNotesEnabled: true,
-        storyFullDraft: normalizeNullableText(row.production_notes_full_draft ?? null),
+      storyFullDraft: normalizeNullableText(row.production_notes_full_draft ?? null),
+      ...(row.production_notes_enabled !== undefined ? {
+        productionNotesEnabled: row.production_notes_enabled === true,
+      } : {}),
+      ...(row.production_notes !== undefined ? {
+        productionNotes: toStringArray(row.production_notes),
       } : {}),
       episodeId: row.episode_id,
       chapterId: row.chapter_id,
@@ -3250,7 +3258,8 @@ function mapEpisodeRow(row: EpisodeRow): Episode {
     purpose: normalizeNullableText(row.purpose),
     storyInputMode: row.story_input_mode,
     storyFullDraft: normalizeNullableText(row.story_full_draft),
-    ...(row.production_notes_enabled === true ? { productionNotesEnabled: true } : {}),
+    ...(row.production_notes_enabled !== undefined ? { productionNotesEnabled: row.production_notes_enabled } : {}),
+    ...(row.production_notes !== undefined ? { productionNotes: toStringArray(row.production_notes) } : {}),
     introduction: normalizeNullableText(row.introduction),
     middle: normalizeNullableText(row.middle),
     climax: normalizeNullableText(row.climax),

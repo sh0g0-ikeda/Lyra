@@ -1,6 +1,6 @@
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { canonicalizeEntityMentionsInText } from '../../domain/entityAliases.js';
-import { episodeProseFields, parseProductionDirective, readEpisodeProductionNotes, splitEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
+import { parseProductionDirective, readEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
 import {
   buildFullStoryDraftFromStructuredSections,
   normalizeEpisodeStoryInput,
@@ -134,46 +134,10 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
     input: StoryEpisodeImprovementInput,
     organizationId: string | null = null,
   ): Promise<StoryEpisodeImprovementResult> {
-    const base = input.baseDraft;
-    const activeFields = base.storyInputMode === 'full'
-      ? ['storyFullDraft'] as const : episodeProseFields.slice(1);
-    const noteFields = activeFields.flatMap((field) => {
-      const raw = base[field];
-      if (raw === null) return [];
-      const split = splitEpisodeProductionNotes(raw, true);
-      return split.notes.length === 0 ? [] : [{ field, raw, split }];
-    });
-    const previouslyEnabled = input.includeProductionNotes !== true && noteFields.length > 0
-      && (await this.storyRepository.findEpisodeByIdAndUserId(input.episodeId, userId, organizationId))?.productionNotesEnabled === true;
-    if (input.includeProductionNotes !== true && !previouslyEnabled) {
-      return this.improveEpisodeProse(userId, input, organizationId);
-    }
-    const prose = { ...base };
-    for (const { field, split } of noteFields) prose[field] = split.body;
-    const result = await this.improveEpisodeProse(userId, { ...input, baseDraft: prose }, organizationId);
-    if (result.compilerProvider === 'fallback') return { ...result, draft: base };
-
-    const draft = { ...result.draft };
-    for (const field of activeFields) {
-      if (draft[field] !== null) draft[field] = splitEpisodeProductionNotes(draft[field], true).body;
-    }
-    const revisedProse = Object.fromEntries(activeFields.map((field) => [field, draft[field]]));
-    for (const { field, raw, split } of noteFields) {
-      const originalLines = split.notes.map((note) => raw.slice(note.start, note.end)).join('\n');
-      draft[field] = [draft[field], originalLines].filter(Boolean).join('\n');
-      try {
-        readEpisodeProductionNotes(draft);
-      } catch (error) {
-        if (!(error instanceof ValidationError)) throw error;
-        return { ...result, draft: base, compilerProvider: 'fallback', compilerError: 'An authored production note needs a new quotation' };
-      }
-    }
-    if (activeFields.some((field) => (draft[field]?.length ?? 0) > (field === 'storyFullDraft' ? 8_000 : 2_000))) {
-      return { ...result, draft: base, compilerProvider: 'fallback', compilerError: 'The updated story and its production notes exceed the field limit' };
-    }
-    if (input.includeProductionNotes !== true || this.storyAiClient.suggestEpisodeProductionNotes === undefined) {
-      return { ...result, draft };
-    }
+    const result = await this.improveEpisodeProse(userId, input, organizationId);
+    if (result.compilerProvider === 'fallback' || input.includeProductionNotes !== true
+      || this.storyAiClient.suggestEpisodeProductionNotes === undefined) return result;
+    const draft = result.draft;
     try {
       const notes = await this.storyAiClient.suggestEpisodeProductionNotes({
         systemPrompt: [
@@ -186,20 +150,18 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
           '「event」のコマで「character」は通常に戻る。',
           'Prefer directions that make the visual sequence and changes clearer. Return an empty list if none apply.',
         ].join('\n'),
-        userPrompt: JSON.stringify(revisedProse),
+        userPrompt: JSON.stringify(draft),
       });
-      const existing = new Set(noteFields.flatMap(({ split }) => split.notes.map((note) => note.text)));
-      const current = readEpisodeProductionNotes(draft);
       const productionNotes: string[] = [];
       for (const note of new Set(notes)) {
         const directive = parseProductionDirective(note);
-        if (existing.has(note) || directive === null) continue;
+        if (directive === null) continue;
+        const current = readEpisodeProductionNotes(draft, productionNotes);
         if ('first' in directive && current.directives.some((prior) => 'first' in prior &&
           ((prior.first === directive.first && prior.second === directive.second) ||
             (prior.first === directive.second && prior.second === directive.first)))) continue;
         try {
-          const field = base.storyInputMode === 'full' ? 'storyFullDraft' : 'endingHook';
-          readEpisodeProductionNotes({ ...draft, [field]: `${draft[field] ?? ''}\n# ${note}` });
+          readEpisodeProductionNotes(draft, [note]);
           productionNotes.push(note);
         } catch (error) {
           if (!(error instanceof ValidationError)) throw error;

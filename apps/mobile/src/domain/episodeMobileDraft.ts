@@ -7,6 +7,29 @@ const nullableText = (value: string): string | null => {
   return normalized.length === 0 ? null : normalized;
 };
 
+const quoted = '「[^」\\r\\n]{1,160}」';
+const pairNote = new RegExp(`^${quoted}と${quoted}は(?:同じコマ|別(?:の)?コマ)(?:にする)?[。.]?$`, 'u');
+const stateStartNote = new RegExp(`^${quoted}のコマから${quoted}は${quoted}(?:状態)?[。.]?$`, 'u');
+const stateEndNote = new RegExp(`^${quoted}のコマ(?:で|から)${quoted}は通常に戻(?:す|る)[。.]?$`, 'u');
+
+export function separateProductionNoteLines(
+  draft: string,
+  enabled: boolean,
+  preservedNotes: readonly string[] = [],
+): { body: string; notes: string[] } {
+  const body: string[] = [];
+  const notes: string[] = [];
+  const preserved = new Set(preservedNotes);
+  for (const line of draft.split(/\r?\n/u)) {
+    const match = /^[ \t]*[#＃][ \t]*(\S.*)$/u.exec(line);
+    const note = match?.[1]?.trimEnd();
+    if (note !== undefined && ((enabled && (pairNote.test(note) || stateStartNote.test(note) || stateEndNote.test(note)))
+      || (!enabled && preserved.has(note)))) notes.push(note);
+    else body.push(line);
+  }
+  return { body: body.join('\n'), notes: enabled ? [...new Set(notes)] : [...preservedNotes] };
+}
+
 export const episodeMobileDraft = (
   episode: Pick<
     EpisodeRecord,
@@ -16,12 +39,11 @@ export const episodeMobileDraft = (
     | 'middle'
     | 'story_full_draft'
     | 'story_input_mode'
+    | 'production_notes'
+    | 'production_notes_enabled'
   >
 ): string => {
-  if (episode.story_input_mode === 'full') {
-    return episode.story_full_draft ?? '';
-  }
-  return [
+  const prose = episode.story_input_mode === 'full' ? episode.story_full_draft ?? '' : [
     episode.introduction,
     episode.middle,
     episode.climax,
@@ -29,6 +51,8 @@ export const episodeMobileDraft = (
   ]
     .filter((value): value is string => value !== null && value.length > 0)
     .join('\n\n');
+  const noteLines = (episode.production_notes ?? []).map((note) => `# ${note}`);
+  return [prose, ...noteLines].filter((part) => part.length > 0).join('\n');
 };
 
 export const buildEpisodeMobileUpdatePayload = (input: {

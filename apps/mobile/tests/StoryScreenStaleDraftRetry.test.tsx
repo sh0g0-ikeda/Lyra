@@ -85,7 +85,7 @@ describe('Story stale draft retry', () => {
     improveEpisodeDraft.mockReset().mockResolvedValue({
       draft: { title: null, purpose: null, story_input_mode: 'full', story_full_draft: '改善後の本文', introduction: null, middle: null, climax: null, ending_hook: null },
       compiler_provider: 'openai', compiler_model: 'gpt-5', compiler_prompt_version: 'v1', compiler_error: null,
-      production_notes: ['扉を押すとのぞくは同じコマにする'],
+      production_notes: ['「扉を押す」と「のぞく」は同じコマにする。'],
     });
     confirmAction.mockReset();
     productionNotesEnabled = false;
@@ -127,9 +127,10 @@ describe('Story stale draft retry', () => {
     await act(async () => registration.save());
 
     expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({
-      story_full_draft: '# 「扉を押す」と「のぞく」は同じコマにする。',
+      story_full_draft: null,
       production_notes_enabled: true,
-    }), null);
+      production_notes: ['「扉を押す」と「のぞく」は同じコマにする。'],
+    }), null, true);
   });
 
   it('旧server相当でcapabilityが無い場合は#付きMarkdownを従来payloadのまま保存する', async () => {
@@ -147,8 +148,16 @@ describe('Story stale draft retry', () => {
   it('演出指示の有効化を保存した後は本文を変えない限り再保存を要求しない', async () => {
     productionNotesEnabled = true;
     episode = { ...episode, story_full_draft: 'A。B。\n＃ 「A」と「B」は同じコマ。' };
-    updateEpisode.mockImplementation(async () => {
-      episode = { ...episode, version: 2, updated_at: 'saved-revision' };
+    updateEpisode.mockImplementation(async (_id, bodyPayload) => {
+      const body = bodyPayload as Record<string, unknown>;
+      episode = {
+        ...episode,
+        story_full_draft: body.story_full_draft as string,
+        production_notes_enabled: body.production_notes_enabled as boolean,
+        production_notes: body.production_notes as string[],
+        version: 2,
+        updated_at: 'saved-revision',
+      };
       return episode;
     });
     await render();
@@ -158,24 +167,54 @@ describe('Story stale draft retry', () => {
     await render();
     expect(updateEpisode).toHaveBeenCalledTimes(1);
     expect(registration.dirty).toBe(false);
-    expect(body().props.value).toBe(episode.story_full_draft);
+    expect(body().props.value).toBe('A。B。\n# 「A」と「B」は同じコマ。');
+  });
+
+  it('演出指示を無効化してもsidecarを消さず旧本文へ#行を混ぜない', async () => {
+    productionNotesEnabled = true;
+    const savedNote = '「A」と「B」は別のコマにする。';
+    episode = {
+      ...episode,
+      story_full_draft: '# 通常のMarkdown見出し\nA。B。',
+      production_notes_enabled: true,
+      production_notes: [savedNote],
+    };
+    updateEpisode.mockImplementation(async (_id, bodyPayload) => ({
+      ...episode,
+      ...(bodyPayload as Partial<EpisodeRecord>),
+    }));
+    await render();
+
+    expect(body().props.value).toContain(`# ${savedNote}`);
+    await act(async () => root!.root.findByProps({ accessibilityLabel: '演出指示を有効にする' }).props.onPress());
+    await act(async () => registration.save());
+
+    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({
+      story_full_draft: '# 通常のMarkdown見出し\nA。B。',
+      production_notes_enabled: false,
+      production_notes: [savedNote],
+    }), null, true);
   });
 
   it('本人が選んだ演出提案だけを本文へ追加してopt-in保存する', async () => {
     productionNotesEnabled = true;
-    episode = { ...episode, story_full_draft: 'Saved story\n# 既存の演出' };
+    const authoredNote = '「Saved story」と「次の場面」は別のコマにする。';
+    episode = { ...episode, story_full_draft: `Saved story\n# ${authoredNote}` };
     await render();
     const panel = () => root!.root.findByType('episode-improvement');
     await act(async () => panel().props.onImprove());
     await act(async () => confirmAction.mock.calls[0]?.[0].onConfirm());
-    expect(body().props.value).toBe('Saved story\n# 既存の演出');
-    expect(panel().props.productionNotes).toEqual(['扉を押すとのぞくは同じコマにする']);
+    expect(body().props.value).toBe(`Saved story\n# ${authoredNote}`);
+    expect(panel().props.productionNotes).toEqual(['「扉を押す」と「のぞく」は同じコマにする。']);
 
-    await act(async () => panel().props.onToggleProductionNote('扉を押すとのぞくは同じコマにする'));
+    await act(async () => panel().props.onToggleProductionNote('「扉を押す」と「のぞく」は同じコマにする。'));
     await act(async () => panel().props.onApply());
-    expect(body().props.value).toBe('改善後の本文\n# 既存の演出\n# 扉を押すとのぞくは同じコマにする');
+    expect(body().props.value).toBe(`改善後の本文\n# ${authoredNote}\n# 「扉を押す」と「のぞく」は同じコマにする。`);
     await act(async () => registration.save());
-    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({ production_notes_enabled: true }), null);
+    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({
+      production_notes_enabled: true,
+      production_notes: [authoredNote, '「扉を押す」と「のぞく」は同じコマにする。'],
+    }), null, true);
   });
 
   it('既存25ページの話を26ページへ増やす場合は保存しない', async () => {

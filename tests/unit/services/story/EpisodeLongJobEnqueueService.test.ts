@@ -236,6 +236,19 @@ describe('Episode long job enqueue services', () => {
     });
   });
 
+  it('演出指示は新版の明示opt-inだけをjob paramsへ固定し旧版省略は不変にする', async () => {
+    const repository = new FakeEpisodeStoryAutofillRepository();
+    const service = new EpisodeStoryAutofillService(repository, new FakeStoryQueue());
+
+    await service.enqueueEpisodeStoryAutofill(
+      'user-1', 'episode-v2', 'ja', null, { productionNotesVersion: 'v1' },
+    );
+    await service.enqueueEpisodeStoryAutofill('user-1', 'episode-v1', 'ja');
+
+    expect(repository.createdJobs[0]?.params).toMatchObject({ production_notes_version: 'v1' });
+    expect(repository.createdJobs[1]?.params).not.toHaveProperty('production_notes_version');
+  });
+
   it('server defaultは話全体の自動再入力として既存状態も更新するintentをjobへ固定する', async () => {
     const repository = new FakeEpisodeStoryAutofillRepository();
     const service = new EpisodeStoryAutofillService(

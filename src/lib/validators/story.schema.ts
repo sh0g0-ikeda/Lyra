@@ -12,6 +12,7 @@ const uuidArray = z.array(z.string().uuid()).max(100);
 const keyBeatsArray = z.array(z.string().trim().min(1).max(500)).max(50);
 const statusSchema = z.enum(['draft', 'reviewing', 'ready']);
 const episodeStoryInputModeSchema = z.enum(['structured', 'full']);
+export const episodeProductionNotesSchema = z.array(z.string().trim().min(1).max(600)).max(24);
 const storyItemMoveDirectionSchema = z.enum(['up', 'down']);
 const episodeStartingEntityStatesSchema = z
   .array(z.object({
@@ -114,9 +115,7 @@ export const createEpisodeBodySchema = z
   })
   .strict();
 
-export const updateEpisodeBodySchema = z
-  .object({
-    production_notes_enabled: z.boolean().optional(),
+const updateEpisodeBodyFields = {
     expected_updated_at: expectedUpdatedAtSchema.optional(),
     order: z.number().int().min(1).max(1000).optional(),
     title: nullableText200.optional(),
@@ -131,6 +130,20 @@ export const updateEpisodeBodySchema = z
     entities_involved: uuidArray.optional(),
     starting_entity_states: episodeStartingEntityStatesSchema.optional(),
     status: statusSchema.optional(),
+} as const;
+
+export const updateEpisodeBodySchema = z
+  .object(updateEpisodeBodyFields)
+  .strict()
+  .refine((body) => Object.keys(body).some((key) => key !== 'expected_updated_at'), {
+    message: 'At least one field is required',
+  });
+
+export const updateEpisodeV2BodySchema = z
+  .object({
+    ...updateEpisodeBodyFields,
+    production_notes_enabled: z.boolean().optional(),
+    production_notes: episodeProductionNotesSchema.optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).some((key) => key !== 'expected_updated_at'), {

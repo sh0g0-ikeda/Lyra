@@ -41,6 +41,7 @@ export interface Chapter {
 
 export interface Episode {
   productionNotesEnabled?: boolean;
+  productionNotes?: string[];
   id: string;
   chapterId: string;
   order: number;
@@ -135,6 +136,7 @@ export interface CreateEpisodeInput {
 
 export interface UpdateEpisodeInput {
   productionNotesEnabled?: boolean;
+  productionNotes?: string[];
   expectedUpdatedAt?: string;
   order?: number;
   title?: string | null;

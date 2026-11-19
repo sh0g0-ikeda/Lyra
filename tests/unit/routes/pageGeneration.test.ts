@@ -612,6 +612,25 @@ describe('page generation routes', () => {
     });
   });
 
+  it('episode story autofillは新版の演出指示opt-inをserviceへ渡し旧版省略は適用しない', async () => {
+    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
+    const app = createTestApp(
+      new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService(),
+      new FakePageQueryService(), new FakePageService(), new FakePageExportService(), episodeStoryAutofillService,
+    );
+    const token = await createToken();
+    const path = '/api/episodes/33333333-3333-4333-8333-333333333333/autofill-pages-from-story';
+
+    const response = await app.request(path, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ production_notes_version: 'v1' }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(episodeStoryAutofillService.options).toEqual({ productionNotesVersion: 'v1' });
+  });
+
   it('episode story autofillはversionなしのstate assignment policyを422で拒否する', async () => {
     const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
     const app = createTestApp(

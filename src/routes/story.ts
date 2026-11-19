@@ -5,7 +5,9 @@ import {
   chapterSchema,
   chaptersResponseSchema,
   episodeSchema,
+  episodeV2Schema,
   episodesResponseSchema,
+  episodesV2ResponseSchema,
   pageSkeletonResponseSchema,
   storyCollaborationEventSchema,
   storyEpisodeImprovementSchema,
@@ -34,6 +36,7 @@ import {
   storyUuidParamSchema,
   updateChapterBodySchema,
   updateEpisodeBodySchema,
+  updateEpisodeV2BodySchema,
   updateWorkBodySchema,
 } from '../lib/validators/story.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
@@ -408,10 +411,14 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const chapterId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const contractVersion = parseEpisodeContractVersion(c);
     const episodes = await dependencies.storyService.listEpisodes(user.id, chapterId, organizationId);
 
-    const payload = { episodes: episodes.map(toEpisodeResponse) };
-    return c.json(assertMobileResponseContract(episodesResponseSchema, payload));
+    const payload = { episodes: episodes.map((episode) => toEpisodeResponse(episode, contractVersion)) };
+    return c.json(assertMobileResponseContract(
+      contractVersion === 'v2' ? episodesV2ResponseSchema : episodesResponseSchema,
+      payload,
+    ));
   });
 
   app.put('/episodes/:id', async (c) => {
@@ -419,17 +426,30 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const episodeId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
-    const body = updateEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
+    const contractVersion = parseEpisodeContractVersion(c);
+    const body = (contractVersion === 'v2' ? updateEpisodeV2BodySchema : updateEpisodeBodySchema)
+      .safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
-    if (body.data.production_notes_enabled !== undefined && dependencies.productionNotesAvailable === false) {
+    const rawProductionNotesEnabled = contractVersion === 'v2' && 'production_notes_enabled' in body.data
+      ? body.data.production_notes_enabled : undefined;
+    const productionNotesEnabled = typeof rawProductionNotesEnabled === 'boolean'
+      ? rawProductionNotesEnabled : undefined;
+    const rawProductionNotes = contractVersion === 'v2' && 'production_notes' in body.data
+      ? body.data.production_notes : undefined;
+    const productionNotes = Array.isArray(rawProductionNotes)
+      ? rawProductionNotes as string[] : undefined;
+    if (contractVersion === 'v2'
+      && (productionNotesEnabled !== undefined || productionNotes !== undefined)
+      && dependencies.productionNotesAvailable === false) {
       throw new ConfigurationError('Episode production notes are unavailable');
     }
 
     const episode = await dependencies.storyService.updateEpisode(user.id, episodeId, {
-      ...(body.data.production_notes_enabled === undefined ? {} : { productionNotesEnabled: body.data.production_notes_enabled }),
+      ...(productionNotesEnabled === undefined ? {} : { productionNotesEnabled }),
+      ...(productionNotes === undefined ? {} : { productionNotes }),
       expectedUpdatedAt: body.data.expected_updated_at,
       order: body.data.order,
       title: body.data.title,
@@ -450,8 +470,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }, organizationId);
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.updated', 'episode', episodeId);
 
-    const payload = toEpisodeResponse(episode);
-    return c.json(assertMobileResponseContract(episodeSchema, payload));
+    const payload = toEpisodeResponse(episode, contractVersion);
+    return c.json(assertMobileResponseContract(contractVersion === 'v2' ? episodeV2Schema : episodeSchema, payload));
   });
 
   app.delete('/episodes/:id', async (c) => {
@@ -680,7 +700,7 @@ function toChapterResponse(chapter: Chapter): Record<string, unknown> {
   };
 }
 
-function toEpisodeResponse(episode: Episode): Record<string, unknown> {
+function toEpisodeResponse(episode: Episode, contractVersion: 'v1' | 'v2' = 'v1'): Record<string, unknown> {
   return {
     id: episode.id,
     chapter_id: episode.chapterId,
@@ -704,7 +724,18 @@ function toEpisodeResponse(episode: Episode): Record<string, unknown> {
     status: episode.status,
     created_at: episode.createdAt.toISOString(),
     updated_at: episode.updatedAt.toISOString(),
+    ...(contractVersion === 'v2' ? {
+      production_notes_enabled: episode.productionNotesEnabled === true,
+      production_notes: episode.productionNotes ?? [],
+    } : {}),
   };
+}
+
+function parseEpisodeContractVersion(c: Context<AppEnv>): 'v1' | 'v2' {
+  const versions = c.req.queries('version') ?? [];
+  if (versions.length === 0) return 'v1';
+  if (versions.length === 1 && versions[0] === '2') return 'v2';
+  throw new ValidationError('version must be omitted or exactly 2');
 }
 
 function createSseResponse(stream: AsyncIterable<string>): Response {

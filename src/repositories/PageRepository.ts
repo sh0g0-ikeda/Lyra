@@ -119,6 +119,7 @@ interface PromptContextRow extends QueryResultRow {
 }
 
 interface AutofillContextRow extends QueryResultRow {
+  production_notes_enabled: boolean | null;
   layout_config: unknown;
   page_id: string;
   work_id: string;
@@ -146,6 +147,8 @@ interface AutofillContextRow extends QueryResultRow {
 }
 
 interface EpisodePlanContextRow extends QueryResultRow {
+  production_notes_enabled: boolean | null;
+  production_notes: unknown;
   episode_id: string;
   work_id: string;
   chapter_id: string;
@@ -949,6 +952,7 @@ export class PostgresPageRepository
              episodes.purpose AS episode_purpose,
              episodes.story_full_draft,
              (to_jsonb(episodes)->>'production_notes_enabled')::boolean AS production_notes_enabled,
+             to_jsonb(episodes)->'production_notes' AS production_notes,
              episodes.introduction,
              episodes.middle,
              episodes.climax,
@@ -1129,7 +1133,8 @@ export class PostgresPageRepository
         title: normalizeNullableText(row.episode_title),
         purpose: normalizeNullableText(row.episode_purpose),
         storyFullDraft: normalizeNullableText(row.story_full_draft),
-        ...(row.production_notes_enabled === true ? { productionNotesEnabled: true } : {}),
+        ...(row.production_notes_enabled !== null ? { productionNotesEnabled: row.production_notes_enabled === true } : {}),
+        ...(row.production_notes !== null ? { productionNotes: toStringArray(row.production_notes) } : {}),
         introduction: normalizeNullableText(row.introduction),
         middle: normalizeNullableText(row.middle),
         climax: normalizeNullableText(row.climax),

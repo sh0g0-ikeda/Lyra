@@ -1,40 +1,3 @@
-export interface EpisodeProductionNote {
-  readonly text: string;
-  readonly start: number;
-  readonly end: number;
-}
-
-export interface SplitEpisodeProductionNotes {
-  readonly body: string;
-  readonly notes: readonly EpisodeProductionNote[];
-}
-
-const noteLine = /^[ \t]*[#＃][ \t]+(\S.*)$/u;
-const escapedNoteLine = /^([ \t]*)\\(?=[#＃][ \t]+\S)/u;
-
-/**
- * Offsets address the original UTF-16 draft. Eligibility is decided at the
- * caller so existing Markdown headings retain their original meaning.
- */
-export function splitEpisodeProductionNotes(
-  draft: string,
-  enabled: boolean,
-): SplitEpisodeProductionNotes {
-  if (!enabled) return { body: draft, notes: [] };
-
-  const body: string[] = [];
-  const notes: EpisodeProductionNote[] = [];
-  for (const line of draft.matchAll(/([^\r\n]*)(\r\n|\r|\n|$)/gu)) {
-    const text = line[1] ?? '';
-    const match = noteLine.exec(text);
-    if (match?.[1] !== undefined) {
-      notes.push({ text: match[1].trimEnd(), start: line.index, end: line.index + text.length });
-    } else {
-      body.push(text.replace(escapedNoteLine, '$1') + (line[2] ?? ''));
-    }
-  }
-  return { body: body.join(''), notes };
-}
 import { ValidationError } from './errors/index.js';
 import { deriveStructuredStorySections } from './episodeStoryInput.js';
 
@@ -52,26 +15,26 @@ const stateStart = new RegExp(`^${quotedTarget}のコマから${quotedTarget}は
 const stateEnd = new RegExp(`^${quotedTarget}のコマ(?:で|から)${quotedTarget}は通常に戻(?:す|る)[。.]?$`, 'u');
 const maxDirectives = 24;
 
-/** Resolve separately from the authored manuscript, leaving its storage and revision intact. */
-export function readEpisodeProductionNotes(input: ProseFields): {
+/** Resolve explicitly authored notes separately from the manuscript. */
+export function readEpisodeProductionNotes(
+  input: ProseFields,
+  authoredNotes: readonly string[],
+): {
   prose: ProseFields;
   directives: EpisodeProductionDirective[];
 } {
-  const notes: EpisodeProductionNote[] = [];
   const prose: ProseFields = {};
   const activeFields = input.storyFullDraft == null
     ? episodeProseFields.slice(1) : ['storyFullDraft'] as const;
   for (const field of activeFields) {
     const value = input[field];
     if (typeof value !== 'string') continue;
-    const split = splitEpisodeProductionNotes(value, true);
-    prose[field] = split.body;
-    notes.push(...split.notes);
+    prose[field] = value;
   }
-  if (notes.length > maxDirectives) throw new ValidationError('Too many episode production notes');
+  if (authoredNotes.length > maxDirectives) throw new ValidationError('Too many episode production notes');
   const body = Object.values(prose);
-  const directives = notes.map((note) => {
-    const directive = parseProductionDirective(note.text);
+  const directives = authoredNotes.map((note) => {
+    const directive = parseProductionDirective(note);
     if (directive === null) throw new ValidationError('Episode production note has an unsupported form');
     const anchors = 'at' in directive ? [directive.at] : [directive.first, directive.second];
     for (const anchor of anchors) {

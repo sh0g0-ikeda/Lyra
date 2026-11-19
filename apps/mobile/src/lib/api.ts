@@ -38,7 +38,9 @@ import {
   entityReferenceSetSchema,
   entitySchema,
   episodeSchema,
+  episodeV2Schema,
   episodesResponseSchema,
+  episodesV2ResponseSchema,
   episodeExportStatusResponseSchema,
   frameTemplateResponseSchema,
   framesResponseSchema,
@@ -308,6 +310,16 @@ const organizationQuery = (organizationId?: string | null): string => {
     return '';
   }
   return `?organization_id=${encodeURIComponent(organizationId)}`;
+};
+
+const episodeContractQuery = (organizationId: string | null | undefined, version2: boolean): string => {
+  const params = new URLSearchParams();
+  if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
+    params.set('organization_id', organizationId);
+  }
+  if (version2) params.set('version', '2');
+  const query = params.toString();
+  return query.length === 0 ? '' : `?${query}`;
 };
 
 const characterSuggestionCapabilitiesSchema = z.object({
@@ -858,8 +870,9 @@ export class LyraMobileApiClient {
     return this.requestVoid(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
-  public getEpisodes(chapterId: string, organizationId?: string | null): Promise<{ episodes: EpisodeRecord[] }> {
-    return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`, episodesResponseSchema);
+  public getEpisodes(chapterId: string, organizationId?: string | null, version2 = false): Promise<{ episodes: EpisodeRecord[] }> {
+    return this.request(`/api/chapters/${chapterId}/episodes${episodeContractQuery(organizationId, version2)}`,
+      version2 ? episodesV2ResponseSchema : episodesResponseSchema);
   }
 
   public createEpisode(
@@ -875,10 +888,12 @@ export class LyraMobileApiClient {
 
   public updateEpisode(
     episodeId: string,
-    body: UpdateEpisodePayload & { production_notes_enabled?: boolean },
-    organizationId?: string | null
+    body: UpdateEpisodePayload & { production_notes_enabled?: boolean; production_notes?: string[] },
+    organizationId?: string | null,
+    version2 = false,
   ): Promise<EpisodeRecord> {
-    return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
+    return this.request(`/api/episodes/${episodeId}${episodeContractQuery(organizationId, version2)}`,
+      version2 ? episodeV2Schema : episodeSchema, {
       method: 'PUT',
       body
     });
@@ -1380,13 +1395,18 @@ export class LyraMobileApiClient {
     language: 'ja' | 'en',
     organizationId?: string | null,
     stateOptions?: EpisodeStateAutofillRequestOptions,
+    applyProductionNotes = false,
   ): Promise<{ job_id: string }> {
     return this.request(
       `/api/episodes/${episodeId}/autofill-pages-from-story${organizationQuery(organizationId)}`,
       jobAcceptedSchema,
       {
       method: 'POST',
-      body: { language, ...stateOptions }
+      body: {
+        language,
+        ...stateOptions,
+        ...(applyProductionNotes ? { production_notes_version: 'v1' } : {}),
+      }
       }
     );
   }

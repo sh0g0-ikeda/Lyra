@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { EpisodeRecord } from '@/domain/types';
 import {
   buildEpisodeMobileUpdatePayload,
-  episodeMobileDraft
+  episodeMobileDraft,
+  separateProductionNoteLines,
 } from '@/domain/episodeMobileDraft';
 
 const structuredEpisode: EpisodeRecord = {
@@ -97,6 +98,37 @@ describe('episode Mobile full-draft compatibility', () => {
     expect(payload).toHaveProperty('starting_entity_states', []);
     expect(payload).not.toHaveProperty('introduction');
     expect(payload).not.toHaveProperty('entities_involved');
+  });
+
+  it('v2の保存済み指示を全文欄へ戻して再編集できる', () => {
+    expect(episodeMobileDraft({
+      ...structuredEpisode,
+      production_notes_enabled: false,
+      production_notes: ['「導入の本文」と「中盤の本文」は別のコマにする。'],
+    })).toContain('# 「導入の本文」と「中盤の本文」は別のコマにする。');
+  });
+
+  it('明示有効時も対応構文だけをsidecarへ分けてMarkdown見出しを本文に保つ', () => {
+    expect(separateProductionNoteLines(
+      '# 第一章\n本文\n＃ 「本文」のコマで「ミオ」は通常に戻る。',
+      true,
+    )).toEqual({
+      body: '# 第一章\n本文',
+      notes: ['「本文」のコマで「ミオ」は通常に戻る。'],
+    });
+  });
+
+  it('半角空白なしの対応構文を分け、無効化保存では既存sidecarだけを保持する', () => {
+    const saved = '「本文A」と「本文B」は別のコマにする。';
+    expect(separateProductionNoteLines(
+      `本文A。本文B。\n#${saved}\n#「新規A」と「新規B」は同じコマにする。\n#通常見出し`,
+      false,
+      [saved],
+    )).toEqual({
+      body: '本文A。本文B。\n#「新規A」と「新規B」は同じコマにする。\n#通常見出し',
+      notes: [saved],
+    });
+    expect(separateProductionNoteLines(`#${saved}`, true)).toEqual({ body: '', notes: [saved] });
   });
 
 });

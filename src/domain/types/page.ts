@@ -155,6 +155,7 @@ export interface EpisodePagePlanContext {
   };
   episode: {
     productionNotesEnabled?: boolean;
+    productionNotes?: string[];
     title: string | null;
     purpose: string | null;
     storyFullDraft?: string | null;

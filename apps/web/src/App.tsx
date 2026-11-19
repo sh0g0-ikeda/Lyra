@@ -102,6 +102,7 @@ import type {
 type WorkspaceTab = WebWorkspaceView;
 type UiLanguage = 'ja' | 'en';
 type PendingPageDesign = PageDesignIntent & {
+  applyProductionNotes: boolean;
   organizationId: string | null;
   language: UiLanguage;
   synchronous: boolean;
@@ -2867,9 +2868,16 @@ function StudioShell(props: {
   const chapters = useMemo(() => chaptersQuery.data?.chapters ?? [], [chaptersQuery.data?.chapters]);
   const selectedChapter = useRetainedSelection(chapters, selectedChapterId, JSON.stringify([activeOrganizationId, selectedWorkId]));
 
+  const storyProductionNoteCapabilities = useQuery({
+    queryKey: scopedQueryKey(['story-production-note-capabilities']),
+    queryFn: () => api.getStoryProductionNoteCapabilities(),
+    enabled: selectedChapter !== null,
+    retry: false,
+  });
+  const productionNotesV2 = storyProductionNoteCapabilities.data?.enabled === true;
   const episodesQuery = useQuery({
-    queryKey: scopedQueryKey(['episodes', selectedChapter?.id ?? '']),
-    queryFn: () => api.getEpisodes(selectedChapter?.id ?? '', activeOrganizationId),
+    queryKey: scopedQueryKey(['episodes', selectedChapter?.id ?? '', productionNotesV2 ? 'v2' : 'v1']),
+    queryFn: () => api.getEpisodes(selectedChapter?.id ?? '', activeOrganizationId, productionNotesV2),
     enabled: selectedChapter !== null,
   });
   const episodes = useMemo(() => episodesQuery.data?.episodes ?? [], [episodesQuery.data?.episodes]);
@@ -2903,17 +2911,18 @@ function StudioShell(props: {
     enabled: activeTab === 'entities' && selectedWork !== null && selectedEpisode !== null,
     retry: false,
   });
-  const storyProductionNoteCapabilities = useQuery({
-    queryKey: scopedQueryKey(['story-production-note-capabilities']),
-    queryFn: () => api.getStoryProductionNoteCapabilities(),
-    enabled: activeTab === 'story' && selectedEpisode !== null,
-    retry: false,
-  });
   const productionNotesRequested = storyProductionNoteCapabilities.data?.enabled === true &&
     productionNoteScope === readerScope;
-  const episodeProductionNotePayload = productionNotesRequested &&
-    /^[ \t]*[#＃][ \t]+\S/mu.test(episodeDraft.story_full_draft)
-    ? { production_notes_enabled: true } : {};
+  const separatedProductionNotes = separateWebProductionNoteLines(
+    episodeDraft.story_full_draft,
+    productionNotesRequested,
+    selectedEpisode?.production_notes ?? [],
+  );
+  const episodeProseDraft = { ...episodeDraft, story_full_draft: separatedProductionNotes.body };
+  const episodeProductionNotePayload = productionNotesV2 ? {
+    production_notes_enabled: productionNotesRequested,
+    production_notes: separatedProductionNotes.notes,
+  } : {};
   const suggestedEntityStatesQuery = useQuery({
     queryKey: scopedQueryKey(['entity-states', suggestedStateDraft?.entityId ?? '']),
     queryFn: () => api.getEntityStates(suggestedStateDraft?.entityId ?? '', activeOrganizationId),
@@ -3546,12 +3555,13 @@ function StudioShell(props: {
     }
     savedEpisodeDraftRef.current = { scope: activeOrganizationId ?? 'personal', id: selectedEpisode.id, draft: savedDraft };
     hydratedEpisodeVersionRef.current = hydrationKey;
+    setProductionNoteScope(selectedEpisode.production_notes_enabled === true ? readerScope : null);
     setEpisodeDraft((current) =>
       previous?.scope === (activeOrganizationId ?? 'personal') && previous.id === selectedEpisode.id && !sameStoryDraft(current, previous.draft)
         ? current
         : savedDraft,
     );
-  }, [activeOrganizationId, selectedEpisode]);
+  }, [activeOrganizationId, readerScope, selectedEpisode]);
 
   useEffect(() => {
     savedEntityDraftRef.current = null;
@@ -4075,9 +4085,9 @@ function StudioShell(props: {
   const saveCurrentEpisodeContext = async (): Promise<void> => {
     if (selectedEpisode !== null) {
       const saved = await api.updateEpisode(selectedEpisode.id, {
-        ...toEpisodeAutosavePayload(episodeDraft, selectedEpisode.estimated_pages),
+        ...toEpisodeAutosavePayload(episodeProseDraft, selectedEpisode.estimated_pages),
         ...episodeProductionNotePayload,
-      }, activeOrganizationId);
+      }, activeOrganizationId, productionNotesV2);
       acceptSavedEpisode(saved, episodeDraft, false);
     }
 
@@ -4448,8 +4458,9 @@ function StudioShell(props: {
     void runAction('Save episode', async () => {
       const saved = await api.updateEpisode(
         selectedEpisode.id,
-        { ...toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds, selectedEpisode.estimated_pages), ...episodeProductionNotePayload },
+        { ...toEpisodePayload(episodeProseDraft, loadedSelectedWorkEntityIds, selectedEpisode.estimated_pages), ...episodeProductionNotePayload },
         activeOrganizationId,
+        productionNotesV2,
       );
       acceptSavedEpisode(saved, episodeDraft);
       await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
@@ -5487,7 +5498,12 @@ function StudioShell(props: {
     void runAction('Apply story plan', async () => {
       try {
         if (pageDesignScopeRef.current !== intent.scope) return;
-        const result = await api.autofillEpisodePagesFromStory(intent.episodeId, intent.language, intent.organizationId);
+        const result = await api.autofillEpisodePagesFromStory(
+          intent.episodeId,
+          intent.language,
+          intent.organizationId,
+          intent.applyProductionNotes,
+        );
         if (pageDesignScopeRef.current !== intent.scope) return;
         setPageDesignJobId(result.job_id);
         trackJob(result.job_id);
@@ -5533,6 +5549,7 @@ function StudioShell(props: {
     const intent: PendingPageDesign = {
       scope: pageDesignScope, episodeId: selectedEpisode.id, organizationId: activeOrganizationId,
       language: uiLanguage, skeletonJobId: '', synchronous: false,
+      applyProductionNotes: productionNotesRequested,
     };
     pageDesignIntentRef.current = intent;
     setPageDesignStage('skeleton');
@@ -6242,12 +6259,12 @@ function StudioShell(props: {
                         <label>
                           <input type="checkbox" checked={productionNotesRequested}
                             onChange={(event) => setProductionNoteScope(event.target.checked ? readerScope : null)} />
-                          {pickUiText(uiLanguage, 'Use # production notes', '# 行を漫画の演出指示として使う')}
+                          {pickUiText(uiLanguage, 'Use production notes', '漫画の演出指示を使う')}
                         </label>
+                        {separatedProductionNotes.notes.map((note) => <small key={note}># {note}</small>)}
                         {productionNotesRequested ? <small>{pickUiText(uiLanguage,
-                          '# 「first beat」と「second beat」は同じコマにする。',
-                          '# 「扉を押す」と「隙間をのぞく」は同じコマにする。',
-                        )}</small> : null}
+                          'Examples: #「A」と「B」は同じコマ / 別のコマ, #「A」のコマから「ミオ」は「雨ぬれ」状態, #「B」のコマで「ミオ」は通常に戻る',
+                          '書き方例: #「A」と「B」は同じコマ / 別のコマ、#「A」のコマから「ミオ」は「雨ぬれ」状態、#「B」のコマで「ミオ」は通常に戻る')}</small> : null}
                       </div>
                     ) : null}
                     <div className="episode-save-mobile">
@@ -6285,7 +6302,7 @@ function StudioShell(props: {
                                   instruction: storyInstruction,
                                   language: uiLanguage,
                                   base_draft: {
-                                    ...toEpisodeBaseDraftPayload(episodeDraft),
+                                    ...toEpisodeBaseDraftPayload(episodeProseDraft),
                                   },
                                 }, activeOrganizationId);
                                 setStoryImprovementDraft(result.draft);
@@ -6370,15 +6387,9 @@ function StudioShell(props: {
                           <button
                             className="secondary-button"
                             onClick={() =>
-                              setEpisodeDraft((current) => ({
-                                ...current,
-                                story_input_mode: 'full',
-                                story_full_draft: storyImprovementDraft?.story_full_draft ?? current.story_full_draft,
-                                introduction: '',
-                                middle: '',
-                                climax: '',
-                                ending_hook: '',
-                              }))
+                              setEpisodeDraft((current) => storyImprovementDraft === null
+                                ? current
+                                : applyStoryImprovementDraftToEpisodeDraft(current, storyImprovementDraft))
                             }
                             type="button"
                           >
@@ -9260,13 +9271,16 @@ function toChapterDraft(chapter: ChapterRecord): ChapterDraft {
 }
 
 function toEpisodeDraft(episode: EpisodeRecord): EpisodeDraft {
-  const storyFullDraft = buildFullEpisodeStoryText({
+  const prose = buildFullEpisodeStoryText({
     story_full_draft: episode.story_full_draft,
     introduction: episode.introduction,
     middle: episode.middle,
     climax: episode.climax,
     ending_hook: episode.ending_hook,
   });
+  const storyFullDraft = [prose, ...(episode.production_notes ?? []).map((note) => `# ${note}`)]
+    .filter((part) => part.length > 0)
+    .join('\n');
   return {
     order: String(episode.order),
     title: episode.title ?? '',
@@ -9281,6 +9295,38 @@ function toEpisodeDraft(episode: EpisodeRecord): EpisodeDraft {
     entities_involved: episode.entities_involved.join(', '),
     status: episode.status,
   };
+}
+
+const webProductionNoteQuoted = '「[^」\\r\\n]{1,160}」';
+const webProductionPairNote = new RegExp(
+  `^${webProductionNoteQuoted}と${webProductionNoteQuoted}は(?:同じコマ|別(?:の)?コマ)(?:にする)?[。.]?$`,
+  'u',
+);
+const webProductionStateStartNote = new RegExp(
+  `^${webProductionNoteQuoted}のコマから${webProductionNoteQuoted}は${webProductionNoteQuoted}(?:状態)?[。.]?$`,
+  'u',
+);
+const webProductionStateEndNote = new RegExp(
+  `^${webProductionNoteQuoted}のコマ(?:で|から)${webProductionNoteQuoted}は通常に戻(?:す|る)[。.]?$`,
+  'u',
+);
+
+function separateWebProductionNoteLines(
+  draft: string,
+  enabled: boolean,
+  preservedNotes: readonly string[] = [],
+): { body: string; notes: string[] } {
+  const body: string[] = [];
+  const notes: string[] = [];
+  const preserved = new Set(preservedNotes);
+  for (const line of draft.split(/\r?\n/u)) {
+    const note = /^[ \t]*[#＃][ \t]*(\S.*)$/u.exec(line)?.[1]?.trimEnd();
+    if (note !== undefined && ((enabled && (webProductionPairNote.test(note)
+      || webProductionStateStartNote.test(note) || webProductionStateEndNote.test(note)))
+      || (!enabled && preserved.has(note)))) notes.push(note);
+    else body.push(line);
+  }
+  return { body: body.join('\n'), notes: enabled ? [...new Set(notes)] : [...preservedNotes] };
 }
 
 function buildFullEpisodeStoryText(parts: {
@@ -9554,10 +9600,15 @@ function applyStoryImprovementDraftToEpisodeDraft(
     climax: improvement.climax ?? draft.climax,
     ending_hook: improvement.ending_hook ?? draft.ending_hook,
   });
+  const existingNotes = separateWebProductionNoteLines(draft.story_full_draft, true).notes;
+  const improved = separateWebProductionNoteLines(storyFullDraft, true);
+  const productionNotes = [...new Set([...existingNotes, ...improved.notes])];
   return {
     ...draft,
     story_input_mode: 'full',
-    story_full_draft: storyFullDraft,
+    story_full_draft: [improved.body, ...productionNotes.map((note) => `# ${note}`)]
+      .filter(Boolean)
+      .join('\n'),
     introduction: '',
     middle: '',
     climax: '',

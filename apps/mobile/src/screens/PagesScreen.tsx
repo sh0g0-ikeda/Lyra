@@ -664,7 +664,12 @@ export function PagesScreen(): React.JSX.Element {
   const stateAutofillScope = JSON.stringify([sessionKey, organizationId, selection.workId, selection.episodeId]);
   const stateAutofillAvailable = session?.capabilities?.episode_state_autofill_v1 === true;
   const currentAutofillScope = useRef({ scope: stateAutofillScope, available: stateAutofillAvailable, canGenerate });
-  const pendingStoryAutofillAfterSkeleton = useRef<{ scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined } | null>(null);
+  const pendingStoryAutofillAfterSkeleton = useRef<{
+    applyProductionNotes: boolean;
+    scope: string;
+    episodeId: string;
+    options: EpisodeStateAutofillRequestOptions | undefined;
+  } | null>(null);
   useEffect(() => {
     currentAutofillScope.current = { scope: stateAutofillScope, available: stateAutofillAvailable, canGenerate };
     if (pendingStoryAutofillAfterSkeleton.current?.scope !== stateAutofillScope) pendingStoryAutofillAfterSkeleton.current = null;
@@ -729,6 +734,22 @@ export function PagesScreen(): React.JSX.Element {
   const activeWorkId = workspaceContext.selectedWorkId;
   const activeEpisodeId = workspaceContext.selectedEpisodeId;
   const startingEpisode = workspaceContext.episodes?.find((episode) => episode.id === activeEpisodeId) ?? null;
+  const productionNotesCapabilitiesQuery = useQuery({
+    enabled: startingEpisode !== null,
+    queryKey: ['production-notes-capabilities', sessionKey],
+    queryFn: () => api.getProductionNotesCapabilities(),
+    retry: false,
+  });
+  const productionNotesEpisodeQuery = useQuery({
+    enabled: productionNotesCapabilitiesQuery.data?.enabled === true && startingEpisode !== null,
+    queryKey: [
+      ...episodesQueryKey(sessionKey, startingEpisode?.chapter_id ?? null, organizationId),
+      'v2-page-planning',
+    ],
+    queryFn: () => api.getEpisodes(startingEpisode?.chapter_id ?? '', organizationId, true),
+  });
+  const productionNotesPlanningEnabled = productionNotesEpisodeQuery.data?.episodes
+    .find((episode) => episode.id === activeEpisodeId)?.production_notes_enabled === true;
   const persistStartingStates = useCallback(async (episodeId: string, payload: { starting_entity_states: EpisodeStartingState[]; expected_updated_at: string }): Promise<void> => {
     const updated = await api.updateEpisode(episodeId, payload, organizationId);
     const key = episodesQueryKey(sessionKey, updated.chapter_id, organizationId);
@@ -1769,7 +1790,12 @@ export function PagesScreen(): React.JSX.Element {
       setLocalPageDesignJob(null);
       setPageDesignJobEnqueued(false);
     },
-    mutationFn: async (request: { scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined }) => {
+    mutationFn: async (request: {
+      applyProductionNotes: boolean;
+      scope: string;
+      episodeId: string;
+      options: EpisodeStateAutofillRequestOptions | undefined;
+    }) => {
       const canSubmit = (): boolean => currentAutofillScope.current.scope === request.scope && currentAutofillScope.current.canGenerate &&
         (request.options === undefined || currentAutofillScope.current.available);
       if (!canSubmit()) throw new Error(t(language, 'shared.error.workspacePermission'));
@@ -1779,7 +1805,8 @@ export function PagesScreen(): React.JSX.Element {
         request.episodeId,
         language,
         organizationId,
-        request.options
+        request.options,
+        request.applyProductionNotes,
       );
     },
     onSuccess: async (result, request) => {
@@ -2113,7 +2140,12 @@ export function PagesScreen(): React.JSX.Element {
             })}\n${t(language, 'screen.pages.safeRedesignPreservationSummary')}`
           : undefined,
         onConfirm: (options) => {
-          const request = { scope, episodeId, options };
+          const request = {
+            applyProductionNotes: productionNotesPlanningEnabled,
+            scope,
+            episodeId,
+            options,
+          };
           pendingStoryAutofillAfterSkeleton.current = request;
           pageSkeletonMutation.mutate({
             ...request,

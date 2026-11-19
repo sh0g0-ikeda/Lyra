@@ -61,6 +61,8 @@ export interface EpisodeRecord {
   status: StoryStatus;
   created_at: string;
   updated_at: string;
+  production_notes_enabled?: boolean;
+  production_notes?: string[];
 }
 
 export interface EntityRecord {

@@ -287,7 +287,7 @@ function buildSectionPlan(objective: string) {
 }
 
 describe('StoryCollaborationService', () => {
-  it('作者の指示は改善結果に残し、AIの指示は原文にある引用だけ別の提案にする', async () => {
+  it('改善本文と分離して原文にある引用だけを演出指示候補にする', async () => {
     const client = new class extends FakeStoryAiClient {
       public override async improveEpisodeDraft(request: StoryAiModelRequest) {
         this.lastRequest = request;
@@ -298,20 +298,20 @@ describe('StoryCollaborationService', () => {
           '「隙間をのぞく」と「知らない台詞」は同じコマ。'];
       }
     }();
-    const originalNote = '# 「扉を押す」と「隙間をのぞく」は同じコマ。';
     const service = new StoryCollaborationService(new FakeStoryRepository(), client);
     const result = await service.improveEpisodeDraft('actor', {
       includeProductionNotes: true,
       episodeId: '33333333-3333-4333-8333-333333333333',
       instruction: '漫画に整理', language: 'ja',
       baseDraft: { title: '話', purpose: null, storyInputMode: 'full',
-        storyFullDraft: `扉を押す。隙間をのぞく。息をのむ。\n${originalNote}`,
+        storyFullDraft: '扉を押す。隙間をのぞく。息をのむ。',
         introduction: null, middle: null, climax: null, endingHook: null },
     });
-    expect(client.lastRequest?.userPrompt).not.toContain(originalNote);
-    expect(result.draft.storyFullDraft).toContain(originalNote);
     expect(result.draft.storyFullDraft).not.toContain('# 「隙間をのぞく」と「息をのむ」');
-    expect(result.productionNotes).toEqual(['「隙間をのぞく」と「息をのむ」は別コマ。']);
+    expect(result.productionNotes).toEqual([
+      '「扉を押す」と「隙間をのぞく」は別コマ。',
+      '「隙間をのぞく」と「息をのむ」は別コマ。',
+    ]);
   });
   it('builds a collaboration prompt with scenes and entity context', async () => {
     const repository = new FakeStoryRepository();

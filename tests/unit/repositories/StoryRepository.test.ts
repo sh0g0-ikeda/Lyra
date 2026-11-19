@@ -655,6 +655,40 @@ describe('PostgresStoryRepository', () => {
     expect(client.updateValues?.[18]).toBeNull();
   });
 
+  it('旧episode更新はsidecarを保持しv2更新だけがflagと明示ノートを書き込む', async () => {
+    const client = new EpisodeUpdateCapturingClient({
+      ...episodeRow(),
+      production_notes_enabled: true,
+      production_notes: ['「本文」のコマで「ミオ」は通常に戻る。'],
+    });
+    const repository = new PostgresStoryRepository(client);
+
+    await repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { title: '旧clientの更新' },
+    );
+    const legacySql = client.queries.filter((sql) => sql.includes('UPDATE episodes')).at(-1) ?? '';
+    expect(legacySql).not.toContain('production_notes =');
+    expect(legacySql).not.toContain('production_notes_enabled =');
+
+    await repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      {
+        productionNotesEnabled: false,
+        productionNotes: ['「更新本文」のコマで「ミオ」は通常に戻る。'],
+      },
+    );
+    const versionedSql = client.queries.filter((sql) => sql.includes('UPDATE episodes')).at(-1) ?? '';
+    expect(versionedSql).toContain('production_notes_enabled = $28::boolean');
+    expect(versionedSql).toContain('production_notes = $29::jsonb');
+    expect(client.updateValues?.slice(-2)).toEqual([
+      false,
+      '["「更新本文」のコマで「ミオ」は通常に戻る。"]',
+    ]);
+  });
+
   it('episode page増加を認可済み現在値とUPDATE条件の両方で拒否する', async () => {
     const legacy25 = new EpisodeUpdateCapturingClient({ ...episodeRow(), estimated_pages: 25 });
     await expect(new PostgresStoryRepository(legacy25).updateEpisode(

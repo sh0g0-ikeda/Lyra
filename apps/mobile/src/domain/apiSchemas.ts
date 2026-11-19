@@ -766,6 +766,15 @@ export const episodesResponseSchema = z.object({
   episodes: z.array(episodeSchema),
 });
 
+export const episodeV2Schema = episodeSchema.extend({
+  production_notes_enabled: z.boolean(),
+  production_notes: z.array(z.string().min(1).max(600)).max(24),
+});
+
+export const episodesV2ResponseSchema = z.object({
+  episodes: z.array(episodeV2Schema),
+});
+
 export const storyEpisodeImprovementSchema = z.object({
   draft: z.object({
     title: nullableStringSchema,

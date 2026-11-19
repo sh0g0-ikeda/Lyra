@@ -61,7 +61,11 @@ export const SECURITY_RUNTIME_MIGRATIONS = [...CANONICAL_RUNTIME_MIGRATIONS, '04
 export const WORK_DELETION_RUNTIME_MIGRATIONS = [...SECURITY_RUNTIME_MIGRATIONS, '050_add_work_deletion.sql'] as const;
 export const GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS = [...WORK_DELETION_RUNTIME_MIGRATIONS, '051_add_google_link_recovery.sql'] as const;
 export const GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS = [...GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, '052_add_generation_worker_warm_control.sql'] as const;
-export const EPISODE_PRODUCTION_NOTES_RUNTIME_MIGRATIONS = [...GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS, '053_add_episode_production_notes.sql'] as const;
+export const EPISODE_PRODUCTION_NOTES_RUNTIME_MIGRATIONS = [
+  ...GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS,
+  '053_add_episode_production_notes.sql',
+  '054_add_episode_production_note_list.sql',
+] as const;
 
 export interface RuntimeSchemaCatalog {
   // Additive-table evidence only; removed after exact 052 validation so existing
@@ -835,38 +839,67 @@ function sameCatalogRows(actual: readonly object[], expected: readonly object[])
 }
 
 const EPISODE_PRODUCTION_NOTES_MIGRATION = '053_add_episode_production_notes.sql';
+const EPISODE_PRODUCTION_NOTE_LIST_MIGRATION = '054_add_episode_production_note_list.sql';
 const PRODUCTION_NOTES_COLUMN = 'production_notes_enabled';
+const PRODUCTION_NOTE_LIST_COLUMN = 'production_notes';
 
 /** Check the additive footprint before comparing it with the pre-053 proof. */
 function projectEpisodeProductionNotes(catalog: RuntimeSchemaCatalog): { catalog: RuntimeSchemaCatalog; enabled: boolean } | null {
-  const ownsColumn = (row: RuntimeSchemaCatalog['columns'][number]): boolean =>
+  const ownsFlagColumn = (row: RuntimeSchemaCatalog['columns'][number]): boolean =>
     row.relation === 'episodes' && row.name === PRODUCTION_NOTES_COLUMN;
-  const constraintName = `episodes_${PRODUCTION_NOTES_COLUMN}_not_null`;
-  const ownsConstraint = (row: RuntimeSchemaCatalog['constraints'][number]): boolean =>
-    row.relation === 'episodes' && row.name === constraintName;
-  const migrations = catalog.migrationFilenames.filter((file) => file === EPISODE_PRODUCTION_NOTES_MIGRATION);
-  if (migrations.length === 0) {
-    return catalog.columns.some(ownsColumn) || catalog.constraints.some(ownsConstraint) ? null : { catalog, enabled: false };
+  const ownsListColumn = (row: RuntimeSchemaCatalog['columns'][number]): boolean =>
+    row.relation === 'episodes' && row.name === PRODUCTION_NOTE_LIST_COLUMN;
+  const flagConstraintName = `episodes_${PRODUCTION_NOTES_COLUMN}_not_null`;
+  const listNotNullConstraintName = `episodes_${PRODUCTION_NOTE_LIST_COLUMN}_not_null`;
+  const shapeConstraintName = 'episodes_production_notes_shape_check';
+  const ownsConstraint = (row: RuntimeSchemaCatalog['constraints'][number]): boolean => row.relation === 'episodes'
+    && [flagConstraintName, listNotNullConstraintName, shapeConstraintName].includes(row.name);
+  const flagMigrations = catalog.migrationFilenames.filter((file) => file === EPISODE_PRODUCTION_NOTES_MIGRATION);
+  const listMigrations = catalog.migrationFilenames.filter((file) => file === EPISODE_PRODUCTION_NOTE_LIST_MIGRATION);
+  if (flagMigrations.length === 0) {
+    return listMigrations.length > 0 || catalog.columns.some(ownsFlagColumn) || catalog.columns.some(ownsListColumn)
+      || catalog.constraints.some(ownsConstraint) ? null : { catalog, enabled: false };
   }
   const version = runtimeSchemaPostgresVersions.get(catalog);
-  if (migrations.length !== 1 || !catalog.migrationFilenames.includes('052_add_generation_worker_warm_control.sql')
+  if (flagMigrations.length !== 1 || listMigrations.length > 1
+    || !catalog.migrationFilenames.includes('052_add_generation_worker_warm_control.sql')
     || version === undefined || version < MIN_SUPPORTED_POSTGRES_VERSION_NUM) return null;
-  const expectedConstraints = version < POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM ? [] : [{
-    relation: 'episodes', name: constraintName, type: 'n', validated: true,
+  const expectedFlagConstraints = version < POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM ? [] : [{
+    relation: 'episodes', name: flagConstraintName, type: 'n', validated: true,
     definitionSha256: googleRecoveryDigest(`NOT NULL ${PRODUCTION_NOTES_COLUMN}`),
   }];
-  if (!sameCatalogRows(catalog.columns.filter(ownsColumn), [{
+  if (!sameCatalogRows(catalog.columns.filter(ownsFlagColumn), [{
     relation: 'episodes', name: PRODUCTION_NOTES_COLUMN, type: 'boolean', nullable: false,
     defaultExpressionSha256: googleRecoveryDigest('false'), identityGeneration: null, generatedExpressionSha256: null,
-  }]) || !sameCatalogRows(catalog.constraints.filter(ownsConstraint), expectedConstraints)) return null;
+  }]) || !sameCatalogRows(catalog.constraints.filter((row) => row.name === flagConstraintName), expectedFlagConstraints)) return null;
+
+  const listEnabled = listMigrations.length === 1;
+  if (!listEnabled && (catalog.columns.some(ownsListColumn)
+    || catalog.constraints.some((row) => [listNotNullConstraintName, shapeConstraintName].includes(row.name)))) return null;
+  if (listEnabled) {
+    const expectedListNotNull = version < POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM ? [] : [{
+      relation: 'episodes', name: listNotNullConstraintName, type: 'n', validated: true,
+      definitionSha256: googleRecoveryDigest(`NOT NULL ${PRODUCTION_NOTE_LIST_COLUMN}`),
+    }];
+    const shape = catalog.constraints.filter((row) => row.relation === 'episodes' && row.name === shapeConstraintName);
+    if (!sameCatalogRows(catalog.columns.filter(ownsListColumn), [{
+      relation: 'episodes', name: PRODUCTION_NOTE_LIST_COLUMN, type: 'jsonb', nullable: false,
+      defaultExpressionSha256: googleRecoveryDigest("'[]'::jsonb"), identityGeneration: null, generatedExpressionSha256: null,
+    }]) || !sameCatalogRows(catalog.constraints.filter((row) => row.name === listNotNullConstraintName), expectedListNotNull)
+      || shape.length !== 1 || shape[0]?.type !== 'c' || shape[0].validated !== true
+      || shape[0].definitionSha256 !== googleRecoveryDigest(
+        "CHECK (jsonb_typeof(production_notes) = 'array'::text AND jsonb_array_length(production_notes) <= 24)",
+      )) return null;
+  }
   const baseline = {
     ...catalog,
-    migrationFilenames: catalog.migrationFilenames.filter((file) => file !== EPISODE_PRODUCTION_NOTES_MIGRATION),
-    columns: catalog.columns.filter((row) => !ownsColumn(row)),
+    migrationFilenames: catalog.migrationFilenames.filter((file) =>
+      file !== EPISODE_PRODUCTION_NOTES_MIGRATION && file !== EPISODE_PRODUCTION_NOTE_LIST_MIGRATION),
+    columns: catalog.columns.filter((row) => !ownsFlagColumn(row) && !ownsListColumn(row)),
     constraints: catalog.constraints.filter((row) => !ownsConstraint(row)),
   };
   runtimeSchemaPostgresVersions.set(baseline, version);
-  return { catalog: baseline, enabled: true };
+  return { catalog: baseline, enabled: listEnabled };
 }
 
 const GENERATION_WORKER_WARM_MIGRATION = '052_add_generation_worker_warm_control.sql';

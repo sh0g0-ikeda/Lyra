@@ -345,6 +345,23 @@ describe('PageSkeletonService', () => {
     expect(client.lastRequest?.userPrompt).not.toContain('Chapter purpose:');
   });
 
+  it('旧full skeletonはstale sidecarを本文へ混ぜず生成を止めない', async () => {
+    const repository = new FakeStoryRepository();
+    repository.skeletonContext = {
+      ...repository.skeletonContext!,
+      productionNotesEnabled: true,
+      productionNotes: ['「消えた出来事」と「別の出来事」は別のコマにする。'],
+    };
+    const client = new FakeStoryAiClient();
+    const service = new PageSkeletonService(repository, client);
+
+    await expect(service.generateForEpisode(
+      'user-1',
+      '33333333-3333-4333-8333-333333333333',
+    )).resolves.toMatchObject({ pagesCreated: 2 });
+    expect(client.lastRequest?.userPrompt).not.toContain('消えた出来事');
+  });
+
   it('fallback skeleton は同じ導入を複数ページにそのまま貼らずページごとの beat に分ける', async () => {
     const repository = new FakeStoryRepository();
     repository.skeletonContext = {

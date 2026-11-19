@@ -144,6 +144,7 @@ export interface PageSkeletonPageDraft {
 
 export interface EpisodePageSkeletonContext {
   productionNotesEnabled?: boolean;
+  productionNotes?: string[];
   storyFullDraft?: string | null;
   /** Opaque digest of legacy persisted graph; concurrency control, not prompt data. */
   graphFingerprint?: string;

@@ -13,6 +13,7 @@ import type {
 import type {
   EpisodePagePlanExecutionControl,
   EpisodePagePlanProgressReporter,
+  EpisodeProductionNotePlanOptions,
   EpisodeStateAutofillOptions,
   PageServicePort,
 } from '../../../../src/services/page/PageService.js';
@@ -94,6 +95,7 @@ class FakeExecutionRepository implements EpisodeStoryAutofillExecutionRepository
 class ControlledPageService implements PageServicePort {
   public executionControl: EpisodePagePlanExecutionControl | undefined;
   public stateOptions: EpisodeStateAutofillOptions | undefined;
+  public productionNoteOptions: EpisodeProductionNotePlanOptions | undefined;
   public onAutofill: ((progressReporter?: EpisodePagePlanProgressReporter) => Promise<void>) | null = null;
   public result = buildApplyResult();
   public autofillCalls = 0;
@@ -114,10 +116,12 @@ class ControlledPageService implements PageServicePort {
     _organizationId?: string | null,
     executionControl?: EpisodePagePlanExecutionControl,
     stateOptions?: EpisodeStateAutofillOptions,
+    productionNoteOptions?: EpisodeProductionNotePlanOptions,
   ): Promise<EpisodePagePlanApplyResult> {
     this.autofillCalls += 1;
     this.executionControl = executionControl;
     this.stateOptions = stateOptions;
+    this.productionNoteOptions = productionNoteOptions;
     await this.onAutofill?.(progressReporter);
     return this.result;
   }
@@ -292,6 +296,22 @@ describe('EpisodeStoryAutofillWorkerService cancellation', () => {
       statePlanVersion: 'episode_state_plan_v1',
       stateAssignmentPolicy: 'overwrite_existing',
     });
+  });
+
+  it('新版の明示opt-inだけが演出指示の厳格適用をworkerへ渡す', async () => {
+    const repository = new FakeExecutionRepository();
+    repository.job.params = { ...repository.job.params, production_notes_version: 'v1' };
+    const pageService = new ControlledPageService();
+    const worker = new EpisodeStoryAutofillWorkerService(repository, pageService, true);
+
+    expect(await worker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(pageService.productionNoteOptions).toEqual({ applyProductionNotes: true });
+
+    const legacyRepository = new FakeExecutionRepository();
+    const legacyPageService = new ControlledPageService();
+    const legacyWorker = new EpisodeStoryAutofillWorkerService(legacyRepository, legacyPageService, true);
+    expect(await legacyWorker.processJob('job-1')).toMatchObject({ jobStatus: 'completed' });
+    expect(legacyPageService.productionNoteOptions).toBeUndefined();
   });
 
   it('過去のserver default preserve intentは保存方針を保ったまま視覚fallbackを許可する', async () => {
