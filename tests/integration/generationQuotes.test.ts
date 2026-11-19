@@ -38,11 +38,12 @@ describePostgres('atomic generation quotes', () => {
     if (pool) await pool.end();
     if (admin) { await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
   });
-  function service(client = database): GenerationQuoteService {
+  function service(client = database, cutover = false): GenerationQuoteService {
     return new GenerationQuoteService({
       database: client,
-      resolver: new PostgresGenerationQuotePlanResolver({ imageModel: 'gpt-image-2', generationEnabled: true, stateGenerationEnabled: true, importEnabled: true }),
+      resolver: new PostgresGenerationQuotePlanResolver({ imageModel: 'gpt-image-2', sunburstEnabled: cutover, generationEnabled: true, stateGenerationEnabled: true, importEnabled: true }),
       enabled: true,
+      requiredImageModel: cutover ? 'gpt-image-2.5-sunburst' : undefined,
     });
   }
   async function fixture(): Promise<{ userId: string; pageId: string; panelId: string; workId: string }> {
@@ -71,6 +72,26 @@ describePostgres('atomic generation quotes', () => {
       expect(result.quote.expiresAt.getTime()-Date.now()).toBeGreaterThan(290_000);
     }
     expect(await (money(ids.userId))).toEqual({ purchased_credits:30, debits:0, jobs:0 });
+  });
+  it('2.5 cutoverは旧Mobileと未accept旧quoteを無課金で拒否し受諾済みreceiptを一度だけ返す', async () => {
+    const ids = await fixture();
+    const legacy = await service().issue(ids.userId, { operation: 'page_generate', targetId: ids.pageId });
+    const cutover = service(database, true);
+    await expect(cutover.issue(ids.userId, { operation: 'page_generate', targetId: ids.pageId })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(cutover.issue(ids.userId, { operation: 'page_generate', targetId: ids.pageId, imageModel: 'gpt-image-2' })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(cutover.accept(ids.userId, legacy.quote.id, legacy.quoteToken, randomUUID())).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await money(ids.userId)).toEqual({ purchased_credits: 30, debits: 0, jobs: 0 });
+
+    const current = await cutover.issue(ids.userId, { operation: 'page_generate', targetId: ids.pageId, imageModel: 'gpt-image-2.5-sunburst' });
+    expect(current.quote.plan).toMatchObject({ imageModel: 'gpt-image-2.5-sunburst', providerModelId: 'gpt-image-2.5-sunburst-2026-09-08' });
+    const requestKey = randomUUID();
+    const accepted = await cutover.accept(ids.userId, current.quote.id, current.quoteToken, requestKey);
+    const replay = await cutover.accept(ids.userId, current.quote.id, current.quoteToken, requestKey);
+    expect(replay.quote.acceptedJobId).toBe(accepted.quote.acceptedJobId);
+    expect((await pool.query(`SELECT params->>'image_model' AS image_model, params->>'provider_model_id' AS provider_model_id, params->>'provider' AS provider FROM generation_jobs WHERE id=$1`, [accepted.quote.acceptedJobId])).rows[0]).toEqual({
+      image_model: 'gpt-image-2.5-sunburst', provider_model_id: 'gpt-image-2.5-sunburst-2026-09-08', provider: 'openai',
+    });
+    expect(await money(ids.userId)).toEqual({ purchased_credits: 27, debits: 1, jobs: 1 });
   });
   it('作品削除フェンス中の期限切れ見積を保持し他作品の期限切れ見積だけを整理する', async () => {
     // Quote maintenance is not part of the deletion claim. It must leave the

@@ -1,5 +1,5 @@
 import { hasWebImageDeliveryAccess, requireWebImageDeliveryAccess } from './webImageDelivery.js';
-import { imageMobileAccess, publicImageProvenance } from '../domain/generation/ImageAccessPolicy.js';
+import { imageMobileAccess, publicImageProvenance, toImageProvenanceRecord } from '../domain/generation/ImageAccessPolicy.js';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import {
@@ -569,6 +569,7 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       state_id: result.stateId,
       state_revision: result.stateRevision,
       reference_image: {
+        ...toImageProvenanceRecord(result.referenceImage),
         ref_id: result.referenceImage.refId,
         image_model: result.referenceImage.imageModel,
         base_ref_id: result.referenceImage.baseRefId,

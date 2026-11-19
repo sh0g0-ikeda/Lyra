@@ -33,6 +33,7 @@ import {
 import {
   ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS,
 } from './domain/constants/entityReferenceUpload.js';
+import { GPT_IMAGE_25_SUNBURST, resolveOpenAIImageRuntimeProvenance } from './domain/constants/openAIImageModel.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
 import { S3EntityImageStorage, createStateReferenceCopyClient, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
@@ -942,6 +943,7 @@ function resolveDependencies(
     database: db,
     persistenceProfile,
     enabled: env.GENERATION_QUOTES_ENABLED,
+    requiredImageModel: env.OPENAI_IMAGE_SUNBURST_ENABLED ? GPT_IMAGE_25_SUNBURST : undefined,
     resolver: new PostgresGenerationQuotePlanResolver({
       persistenceProfile,
       imageModel: env.OPENAI_IMAGE_MODEL,
@@ -1130,6 +1132,10 @@ function resolveDependencies(
   const entityService =
     dependencies.entityService ??
     new EntityService(entityRepository, new PostgresWorkRepository(db), resolveStyleReferenceCompiler());
+  const imageRuntimeProvenance = resolveOpenAIImageRuntimeProvenance(
+    env.OPENAI_IMAGE_MODEL,
+    env.OPENAI_IMAGE_SUNBURST_ENABLED,
+  );
   const entityReferenceService =
     dependencies.entityReferenceService ??
     new EntityReferenceService(
@@ -1147,6 +1153,7 @@ function resolveDependencies(
       entityGenerationRecoveryService,
       env.GENERATION_ENABLED && env.ENTITY_IMPORT_ANALYSIS_ENABLED,
       organizationService,
+      imageRuntimeProvenance,
     );
   const entityStateReferenceService =
     dependencies.entityStateReferenceService ??
@@ -1158,7 +1165,8 @@ function resolveDependencies(
       imageStorage: resolveEntityImageStorage(),
       storedImageLoader: resolveStoredPageImageLoader(),
       generationQueue: entityGenerationQueue,
-      imageModel: env.OPENAI_IMAGE_MODEL,
+      imageModel: imageRuntimeProvenance.imageModel,
+      providerModelId: imageRuntimeProvenance.providerModelId,
       generationEnabled:
         env.GENERATION_ENABLED
         && env.ENTITY_GENERATION_ENABLED
@@ -1224,6 +1232,7 @@ function resolveDependencies(
       },
       env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED,
       organizationService,
+      imageRuntimeProvenance,
     );
   const pageFinalizeService =
     dependencies.pageFinalizeService ??

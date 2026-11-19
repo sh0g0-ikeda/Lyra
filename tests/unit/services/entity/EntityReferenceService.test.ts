@@ -21,6 +21,7 @@ import type {
   EntityImportAnalyzerPort,
 } from '../../../../src/infrastructure/openai/OpenAIEntityImportAnalyzer.js';
 import { EntityReferenceService } from '../../../../src/services/entity/EntityReferenceService.js';
+import type { OpenAIImageRuntimeProvenance } from '../../../../src/domain/constants/openAIImageModel.js';
 import type { EntityGenerationQueuePort } from '../../../../src/services/entity/EntityGenerationQueue.js';
 import type { EntityGenerationRecoveryServicePort } from '../../../../src/services/entity/EntityGenerationRecoveryService.js';
 import type {
@@ -470,6 +471,20 @@ describe('EntityReferenceService', () => {
     expect(jobs.attachedMessageId).toBe('message-1');
   });
 
+  it('2.5 cutover中の旧Web直entity jobへ照合3項目を固定する', async () => {
+    const jobs = new FakeGenerationJobRepository();
+    const service = buildService({
+      generationJobRepository: jobs,
+      imageProvenance: { imageModel: 'gpt-image-2.5-sunburst', providerModelId: 'gpt-image-2.5-sunburst-2026-09-08', provider: 'openai' },
+    });
+    await service.enqueueReferenceGeneration('user-1', 'entity-1');
+    expect(jobs.createdInput?.params).toMatchObject({
+      image_model: 'gpt-image-2.5-sunburst',
+      provider_model_id: 'gpt-image-2.5-sunburst-2026-09-08',
+      provider: 'openai',
+    });
+  });
+
   it('generate-reference は import 画像の source_s3_key を job params に積む', async () => {
     const jobs = new FakeGenerationJobRepository();
     const service = buildService({
@@ -724,6 +739,7 @@ function buildService(overrides: {
   capacityLimits?: { perUser: number; global: number };
   generationEnabled?: boolean;
   importAnalysisEnabled?: boolean;
+  imageProvenance?: OpenAIImageRuntimeProvenance;
 } = {}): EntityReferenceService {
   return new EntityReferenceService(
     overrides.repository ?? new FakeEntityReferenceRepository(),
@@ -736,6 +752,8 @@ function buildService(overrides: {
     overrides.generationEnabled,
     overrides.recoveryService,
     overrides.importAnalysisEnabled,
+    undefined,
+    overrides.imageProvenance,
   );
 }
 

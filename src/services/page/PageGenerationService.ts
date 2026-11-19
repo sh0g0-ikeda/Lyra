@@ -26,6 +26,7 @@ import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPol
 import { pageReferenceImageKey } from './PageReferenceIdentity.js';
 import { requireOpenAIImageInputCompatible } from '../../domain/generation/ImageInputProviderPolicy.js';
 import { requireAssignedCharacterPrimariesCompatible } from './PageCharacterPrimaryReferencePolicy.js';
+import type { OpenAIImageRuntimeProvenance } from '../../domain/constants/openAIImageModel.js';
 
 export interface EnqueuePageGenerationResult {
   jobId: string;
@@ -57,6 +58,7 @@ export class PageGenerationService implements PageGenerationServicePort {
     private readonly capacityLimits: GenerationCapacityLimits = DEFAULT_GENERATION_CAPACITY_LIMITS,
     private readonly generationEnabled = true,
     private readonly organizationService?: OrganizationServicePort,
+    private readonly imageProvenance?: OpenAIImageRuntimeProvenance,
   ) {}
 
   public async enqueuePageGeneration(
@@ -93,6 +95,11 @@ export class PageGenerationService implements PageGenerationServicePort {
           previous_page_status: page.status,
           previous_generation_mode: page.generationMode,
           render_style: renderStyle,
+          ...(this.imageProvenance === undefined ? {} : {
+            image_model: this.imageProvenance.imageModel,
+            provider_model_id: this.imageProvenance.providerModelId,
+            provider: this.imageProvenance.provider,
+          }),
         },
       });
       createdJobId = job.id;

@@ -32,8 +32,9 @@ export function validateQuoteSelection(
     }
     return { imageModel: null, providerModelId: ENTITY_IMPORT_ANALYSIS_MODEL, quality: null, renderStyle: null };
   }
-  const imageModel = request.imageModel ?? ENTITY_REFERENCE_GENERATION.MODEL;
-  if (imageModel !== ENTITY_REFERENCE_GENERATION.MODEL && (!sunburstEnabled || imageModel !== GPT_IMAGE_25_SUNBURST)) {
+  const imageModel = request.imageModel ?? (sunburstEnabled ? GPT_IMAGE_25_SUNBURST : ENTITY_REFERENCE_GENERATION.MODEL);
+  const requiredModel = sunburstEnabled ? GPT_IMAGE_25_SUNBURST : ENTITY_REFERENCE_GENERATION.MODEL;
+  if (imageModel !== requiredModel) {
     throw new ValidationError('Selected image model is not available');
   }
   if (configuredImageModel !== ENTITY_REFERENCE_GENERATION.MODEL) {
@@ -52,6 +53,25 @@ export function validateQuoteSelection(
     quality: 'medium',
     renderStyle: isPage ? request.renderStyle ?? 'color' : 'color',
   };
+}
+
+/** Public Mobile quotes must prove 2.5 awareness; internal legacy Web flows use server selection. */
+export function requireExplicitQuoteImageModel(request: GenerationQuoteRequest, requiredImageModel?: string): void {
+  if (request.operation === 'entity_import_analysis' || requiredImageModel === undefined) return;
+  if (request.imageModel !== requiredImageModel) {
+    throw new ValidationError(`This client must explicitly request ${requiredImageModel}`);
+  }
+}
+
+export function assertQuoteMatchesRequiredImageModel(
+  plan: Pick<GenerationQuotePlan, 'operation' | 'imageModel' | 'providerModelId'>,
+  requiredImageModel?: string,
+): void {
+  if (plan.operation === 'entity_import_analysis' || requiredImageModel === undefined) return;
+  if (plan.imageModel !== requiredImageModel
+    || plan.providerModelId !== GPT_IMAGE_25_SUNBURST_SNAPSHOT) {
+    throw new ConflictError('Generation model changed; request a new quote');
+  }
 }
 
 export function fingerprintQuoteInput(value: unknown): string {

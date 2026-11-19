@@ -28,6 +28,14 @@ describe('entity state reference presentation', () => {
   expect(JSON.stringify(result)).not.toContain('saved/');
   expect(JSON.stringify(result)).not.toContain(ownerId);
  });
+ it('2.5確定画像の一覧は検証済みproviderと固定model IDを保持する', () => {
+  const result=presentEntityStateReference({...state,baseReferenceId:'base',referenceImage:{
+   ...descriptor,image_model:'gpt-image-2.5-sunburst',provider:'openai',provider_model_id:'gpt-image-2.5-sunburst-2026-09-08',
+  }});
+  expect(result.reference_image).toMatchObject({
+   mobile_access:'available',image_model:'gpt-image-2.5-sunburst',provider:'openai',provider_model_id:'gpt-image-2.5-sunburst-2026-09-08',
+  });
+ });
  it('base変更・本文変更・不正キーを未反映として示す', () => {
   for(const changed of [
    {...state,baseReferenceId:'new-base',referenceImage:descriptor},

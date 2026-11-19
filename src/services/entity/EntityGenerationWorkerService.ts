@@ -1,4 +1,5 @@
 import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityReference.js';
+import { GPT_IMAGE_25_SUNBURST_SNAPSHOT } from '../../domain/constants/openAIImageModel.js';
 import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
@@ -162,7 +163,9 @@ export class EntityGenerationWorkerService {
           ? { providerModelId } : {}),
       });
       assertGeneratedCandidates(generated.candidates);
-      if (providerModelId !== this.imageModel && generated.providerModelId !== providerModelId) {
+      if (providerModelId !== undefined
+        && (providerModelId !== this.imageModel || providerModelId === GPT_IMAGE_25_SUNBURST_SNAPSHOT)
+        && generated.providerModelId !== providerModelId) {
         throw new ConfigurationError('Entity preview did not return the quoted model');
       }
 
@@ -264,7 +267,6 @@ export class EntityGenerationWorkerService {
       || state.stateDescription !== params.state_description
       || state.baseReference.refId !== params.base_primary_ref_id
       || currentFingerprint !== params.state_input_fingerprint
-      || params.image_model !== this.imageModel
     ) {
       throw new ConfigurationError('Entity state or base reference changed after the preview was queued');
     }

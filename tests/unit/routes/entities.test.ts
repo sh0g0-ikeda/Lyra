@@ -349,7 +349,9 @@ class FakeEntityStateReferenceService implements EntityStateReferenceServicePort
         refId: `${input.jobId}-1`,
         s3Key: `saved/${userId}/entities/${requestedEntityId}/states/${requestedStateId}/${input.jobId}-1.png`,
         storageOwnerUserId: userId,
-        imageModel: 'gpt-image-2',
+        imageModel: 'gpt-image-2.5-sunburst',
+        providerModelId: 'gpt-image-2.5-sunburst-2026-09-08',
+        provider: 'openai',
         baseRefId: 'base-ref-1',
         createdAt: '2026-04-22T00:00:01.000Z',
         inputFingerprint: 'a'.repeat(64),
@@ -452,6 +454,11 @@ describe('entity routes', () => {
     const payload = await response.json() as Record<string, unknown>;
     expect(JSON.stringify(payload)).not.toContain('s3_key');
     expect(JSON.stringify(payload)).not.toContain('storage_owner_user_id');
+    expect(payload).toMatchObject({ reference_image: {
+      image_model: 'gpt-image-2.5-sunburst',
+      provider_model_id: 'gpt-image-2.5-sunburst-2026-09-08',
+      provider: 'openai',
+    }});
     expect(stateReferences.confirmInput).toMatchObject({ jobId, candidateS3Key, stateId });
   });
   it('JWTが正しい場合にエンティティを作成できる', async () => {

@@ -209,6 +209,9 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
   public candidates: Array<{ imageData: Buffer; mimeType: string }> = [
     { imageData: Buffer.from('a'), mimeType: 'image/png' },
   ];
+  public imageModel: string | undefined;
+  public providerModelId: string | undefined;
+  public provider: string | undefined;
 
   public async generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<{
     candidates: Array<{ imageData: Buffer; mimeType: string }>;
@@ -226,6 +229,9 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
       candidates: this.candidates,
       openaiRequestId: 'req-1',
       costUsd: null,
+      ...(this.imageModel === undefined ? {} : { imageModel: this.imageModel }),
+      ...(this.providerModelId === undefined ? {} : { providerModelId: this.providerModelId }),
+      ...(this.provider === undefined ? {} : { provider: this.provider }),
     };
   }
 }
@@ -734,6 +740,23 @@ describe('EntityGenerationWorkerService', () => {
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
     expect(executionRepository.completed?.imageModel).toBe('gpt-image-2-mini');
+  });
+
+  it('2.5 cutoverの旧Web entity jobは固定snapshot以外の候補を保存せず返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.imageModel = 'gpt-image-2';
+    referenceGenerator.providerModelId = 'gpt-image-2';
+    referenceGenerator.provider = 'openai';
+    const imageStorage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository, referenceGenerator, imageStorage, creditService,
+      imageModel: 'gpt-image-2.5-sunburst-2026-09-08',
+    });
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(imageStorage.generatedCandidateCalls).toEqual([]);
+    expect(creditService.refunded).toMatchObject({ jobId: 'job-1' });
   });
 
   it('job ごとに variation profile が変わる', async () => {

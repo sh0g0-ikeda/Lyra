@@ -194,6 +194,9 @@ class FakeRenderer implements PageImageRendererPort {
   public onRender: () => void = () => undefined;
   public providerPromptSha256: string | undefined;
   public providerPromptBytes: number | undefined;
+  public imageModel: string | undefined;
+  public providerModelId: string | undefined;
+  public provider: string | undefined;
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
     this.calls.push(input);
@@ -207,6 +210,9 @@ class FakeRenderer implements PageImageRendererPort {
       mimeType: this.mimeType,
       openaiRequestId: 'openai-1',
       costUsd: 0.07,
+      ...(this.imageModel === undefined ? {} : { imageModel: this.imageModel }),
+      ...(this.providerModelId === undefined ? {} : { providerModelId: this.providerModelId }),
+      ...(this.provider === undefined ? {} : { provider: this.provider }),
       ...(this.providerPromptSha256 === undefined || this.providerPromptBytes === undefined
         ? {}
         : { providerPromptSha256: this.providerPromptSha256, providerPromptBytes: this.providerPromptBytes }),
@@ -328,6 +334,24 @@ describe('PageGenerationWorkerService', () => {
     expect(storage.calls).toEqual([]);
     expect(credits.refunds).toHaveLength(1);
     expect(repository.failureInput?.errorMessage).toContain('confirmed character reference');
+  });
+
+  it('2.5 cutoverの旧Web jobは固定snapshot以外の出力を保存せず返金する', async () => {
+    const repository = new FakeExecutionRepository();
+    const renderer = new FakeRenderer();
+    renderer.imageModel = 'gpt-image-2';
+    renderer.providerModelId = 'gpt-image-2';
+    renderer.provider = 'openai';
+    const storage = new FakeStorage();
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      repository, new FakePromptBuilder(), new FakePromptCompiler(), new FakeInputImageBuilder(), new FakePlanner(),
+      renderer, storage, credits, true, undefined, undefined, undefined, 'gpt-image-2.5-sunburst-2026-09-08',
+    );
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(renderer.calls).toHaveLength(1);
+    expect(storage.calls).toEqual([]);
+    expect(credits.refunds).toHaveLength(1);
   });
 
   it('quote対応workerがない場合はproviderを呼ばず失敗・返金する', async () => {

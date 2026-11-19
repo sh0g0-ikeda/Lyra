@@ -1,4 +1,5 @@
 import { resolveEpisodeOpenAIModelProfile } from '../src/infrastructure/openai/EpisodeOpenAIModelProfile.js';
+import { resolveOpenAIImageRuntimeModel } from '../src/domain/constants/openAIImageModel.js';
 import { resolveEpisodeExportWorkerDependencies } from './episodeExportDependencies.js';
 import type { EpisodeExportWorkerPort } from './episodeExport.js';
 import { db } from '../src/lib/db.js';
@@ -315,8 +316,9 @@ export function resolveWorkerDependencies(
       overrides.storyAiClient ?? resolveStoryAiClient(),
     );
 
+  const runtimeImageModel = resolveOpenAIImageRuntimeModel(env.OPENAI_IMAGE_MODEL, env.OPENAI_IMAGE_SUNBURST_ENABLED);
   const quotedInputs = new QuotedGenerationInputs(
-    db, env.OPENAI_API_KEY !== undefined && !env.LOCAL_IMAGE_FALLBACK_ENABLED ? env.OPENAI_IMAGE_MODEL : 'unavailable',
+    db, env.OPENAI_API_KEY !== undefined && (!env.LOCAL_IMAGE_FALLBACK_ENABLED || env.OPENAI_IMAGE_SUNBURST_ENABLED) ? runtimeImageModel : 'unavailable',
     storedImageLoader, new LayoutGuideImageRenderer(), persistenceProfile,
   );
   const importClient = buildOpenAIClient();
@@ -348,7 +350,7 @@ export function resolveWorkerDependencies(
       organizationService,
       generationJobCancellationControl,
       quotedInputs,
-      env.OPENAI_API_KEY !== undefined && !env.LOCAL_IMAGE_FALLBACK_ENABLED ? env.OPENAI_IMAGE_MODEL : undefined,
+      env.OPENAI_API_KEY !== undefined && (!env.LOCAL_IMAGE_FALLBACK_ENABLED || env.OPENAI_IMAGE_SUNBURST_ENABLED) ? runtimeImageModel : undefined,
       overrides.pagePreRenderSceneAuditor ?? resolvePagePreRenderSceneAuditor(),
     ),
     entityGenerationWorkerService: new EntityGenerationWorkerService(
@@ -360,7 +362,7 @@ export function resolveWorkerDependencies(
       entityImageStorage,
       creditService,
       storedImageLoader,
-      env.OPENAI_IMAGE_MODEL,
+      runtimeImageModel,
       env.GENERATION_ENABLED && env.ENTITY_GENERATION_ENABLED,
       organizationService,
       generationJobCancellationControl,
@@ -449,7 +451,7 @@ function resolvePageImageRenderer(): PageImageRendererPort {
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
   const localFallbackEnabled = shouldUseLocalImageFallback({
     localAssetStorageConfigured: localAssetConfig !== null,
-    localImageFallbackEnabled: env.LOCAL_IMAGE_FALLBACK_ENABLED,
+    localImageFallbackEnabled: env.LOCAL_IMAGE_FALLBACK_ENABLED && !env.OPENAI_IMAGE_SUNBURST_ENABLED,
   });
 
   if (client === null) {
@@ -458,7 +460,7 @@ function resolvePageImageRenderer(): PageImageRendererPort {
       : new UnconfiguredPageImageRenderer();
   }
 
-  const primaryRenderer = new OpenAIPageImageRenderer(client, env.OPENAI_IMAGE_MODEL);
+  const primaryRenderer = new OpenAIPageImageRenderer(client, resolveOpenAIImageRuntimeModel(env.OPENAI_IMAGE_MODEL, env.OPENAI_IMAGE_SUNBURST_ENABLED));
   if (localFallbackEnabled) {
     return new LocalResilientPageImageRenderer(primaryRenderer, new LocalPreviewPageImageRenderer());
   }
@@ -500,7 +502,7 @@ function resolveEntityReferenceGenerator(): EntityReferenceGeneratorPort {
   const localAssetConfig = resolveConfiguredLocalAssetConfig();
   const localFallbackEnabled = shouldUseLocalImageFallback({
     localAssetStorageConfigured: localAssetConfig !== null,
-    localImageFallbackEnabled: env.LOCAL_IMAGE_FALLBACK_ENABLED,
+    localImageFallbackEnabled: env.LOCAL_IMAGE_FALLBACK_ENABLED && !env.OPENAI_IMAGE_SUNBURST_ENABLED,
   });
 
   if (client === null) {
@@ -509,7 +511,7 @@ function resolveEntityReferenceGenerator(): EntityReferenceGeneratorPort {
       : new UnconfiguredEntityReferenceGenerator();
   }
 
-  const primaryGenerator = new OpenAIEntityReferenceGenerator(client, env.OPENAI_IMAGE_MODEL);
+  const primaryGenerator = new OpenAIEntityReferenceGenerator(client, resolveOpenAIImageRuntimeModel(env.OPENAI_IMAGE_MODEL, env.OPENAI_IMAGE_SUNBURST_ENABLED));
   if (localFallbackEnabled) {
     return new LocalResilientEntityReferenceGenerator(
       primaryGenerator,

@@ -84,6 +84,20 @@ describe('EntityStateReferenceService', () => {
     }));
   });
 
+  it('2.5 cutoverはstate jobへ表示名と固定provider modelを同時に保存する', async () => {
+    const fixture = createFixture({
+      generationEnabled: true,
+      imageModel: 'gpt-image-2.5-sunburst',
+      providerModelId: 'gpt-image-2.5-sunburst-2026-09-08',
+    });
+    await fixture.service.enqueueReferenceGeneration(userId, entityId, stateId, null);
+    expect(fixture.jobs.create).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({
+      image_model: 'gpt-image-2.5-sunburst',
+      provider_model_id: 'gpt-image-2.5-sunburst-2026-09-08',
+      provider: 'openai',
+    }) }));
+  });
+
   it('queue失敗時は作成済みjobをfailedにして1クレジットを返金する', async () => {
     const fixture = createFixture({ generationEnabled: true, queueError: new Error('queue failed') });
 
@@ -199,6 +213,8 @@ function createFixture(options: {
   queueError?: Error;
   completedJob?: boolean;
   baseImageModel?: string;
+  imageModel?: string;
+  providerModelId?: string;
 }) {
   const context = buildContext();
   if (context.baseReference !== null && options.baseImageModel !== undefined) {
@@ -264,7 +280,8 @@ function createFixture(options: {
       imageStorage: storage as unknown as EntityImageStoragePort,
       storedImageLoader: loader as StoredImageLoaderPort,
       generationQueue: queue as EntityGenerationQueuePort,
-      imageModel: 'gpt-image-2',
+      imageModel: options.imageModel ?? 'gpt-image-2',
+      providerModelId: options.providerModelId,
       generationEnabled: options.generationEnabled,
       organizationService: organization as unknown as OrganizationServicePort,
     }),

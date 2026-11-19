@@ -9,6 +9,7 @@ import type { ImageProvenance } from '../../domain/generation/ImageAccessPolicy.
 import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import sharp from 'sharp';
 import { assertRasterImageInput } from '../../domain/generation/RasterImageInput.js';
+import { GPT_IMAGE_25_SUNBURST_SNAPSHOT } from '../../domain/constants/openAIImageModel.js';
 import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS, PAGE_GENERATION_MONOCHROME_MAX_INPUT_PIXELS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
@@ -306,7 +307,9 @@ export class PageGenerationWorkerService {
         ),
       );
       assertRenderedPageImage(renderResult);
-      if (providerModelId !== this.configuredImageModel && renderResult.providerModelId !== providerModelId) {
+      if (providerModelId !== undefined
+        && (providerModelId !== this.configuredImageModel || providerModelId === GPT_IMAGE_25_SUNBURST_SNAPSHOT)
+        && renderResult.providerModelId !== providerModelId) {
         throw new ConfigurationError('Page render did not return the quoted model');
       }
 

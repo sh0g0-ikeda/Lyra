@@ -53,7 +53,7 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`Google recovery
                 // suites temporarily expose invalid indexes during concurrent builds.
                 initialReleaseReport = await checkReleaseCompatibility(database, { profile: 'backend-only', mobileClientIds: [], runtime: {
                     generationQuotesEnabled: true, generationEnabled: true, pageGenerationEnabled: true, entityGenerationEnabled: true,
-                    entityImportAnalysisEnabled: true, entityReferenceDirectUploadEnabled: true, openAiApiKeyConfigured: true, openAiImageModel: 'gpt-image-2',
+                    entityImportAnalysisEnabled: true, entityReferenceDirectUploadEnabled: true, openAiApiKeyConfigured: true, openAiImageModel: 'gpt-image-2', openAiImageSunburstEnabled: false,
                     generationQueueConfigured: true, imageStorageConfigured: true, awsRegionConfigured: true, localImageFallbackEnabled: false,
                     webImageDeliveryClientIds: [], stateReferenceCopyV2AdmissionEnabled: false, stateReferenceCopyV2StorageContractAttested: false,
                 } }, { schemaProfile: 'production44_expanded_pg18_v1' });
