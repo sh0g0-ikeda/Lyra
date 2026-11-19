@@ -1273,44 +1273,60 @@ operations then fail closed; production still requires a real provider key.
 
 The authenticated character suggestion endpoint reads a saved episode version
 in the actor's work scope. It returns editable suggestions with literal source
-quotations. An existing name or registered alias never causes an update to a
+quotations, retaining multiple details such as a nonhuman character's
+silhouette, colors and part counts. Match names and registered aliases across
+the work, including cast from episodes other than the selected one. A match never causes an update to a
 base character. The user saves a character or state draft explicitly before
 requesting an image preview. The existing generation and credit admission
 contracts apply after the save.
 
-Migration 053 adds an opt-in Boolean to episodes with false as the default.
-Existing episode response shapes remain stable. Supporting clients discover
-the capability before opting in. The API advertises writes only after the
-column, default, and migration history have been attested. Deploy the
-pre/post-053-compatible API and Worker before applying migration 053. On
-the expanded PostgreSQL 18 lineage, use the existing one-off additive
-migration procedure after 052 and insert the 053 receipt in the same
-transaction. Restart the compatible API to refresh its schema proof. Use
-the compatible build when rolling back feature activation after 053.
-Story improvement accepts the optional
-`include_production_notes` flag and returns the separate suggestion list only
-when requested. Authored notes survive improvement when their anchors still
-resolve, otherwise the input draft is returned for review.
+Migration 053 adds the episode opt-in flag (default false). Migration 054
+stores the directions separately from the manuscript (default empty list).
+Deploy a compatible API and Worker first. For the expanded PostgreSQL 18
+lineage apply each additive migration with its receipt, in order, after 052.
+Refresh the runtime schema proof before enabling writes. Keep a compatible
+image for rollback. The original episode API continues to read and edit
+prose, including pre-existing Markdown headings. Its saves preserve the
+directions. Version 2 of the episode list and update APIs also returns the
+saved directions and opt-in flag. Turning directions off keeps them available
+for later editing. Story improvement can return a separate editable list
+when the client requests it with `include_production_notes`.
 
-An opted-in episode accepts `# ` and `＃ ` lines with quoted source fragments.
+An opted-in episode accepts lines beginning with `#` or `＃` followed by a
+supported direction with quoted source fragments. The space after the marker
+is optional. Ordinary Markdown headings remain part of the manuscript.
 Supported commands group two events in a panel, separate two events, or set a
 registered character state or base-state return at a quoted event. The episode
 planner separates these directions from prose and validates their placement
 before applying the plan. Registered state references and the existing visual
-fallback rules apply. Missing, ambiguous, or conflicting anchors stop plan
-application. Legacy single-page autofill remains available on opted-in
-episodes and uses the story prose within the selected page. Valid AI-selected
-layout templates survive skeleton repair and
+fallback rules apply. A client requests enforcement on the whole-episode
+autofill job with `production_notes_version: "v1"`. Missing, ambiguous or
+conflicting anchors in this mode require review before applying the plan.
+Released clients can continue using full-episode and single-page autofill
+with the saved prose, including after they edit a quoted passage. Valid
+AI-selected layout templates survive skeleton repair and
 subsequent autofill when the template, frame and panel counts agree.
 
 ### Image generation model rollout
 
-Enable `OPENAI_IMAGE_SUNBURST_ENABLED` after deploying a Worker that executes
-frozen legacy and Sunburst quotes side by side. Keep the legacy
-`OPENAI_IMAGE_MODEL=gpt-image-2` setting. Compatible clients discover the
-preferred model through the quote capability endpoint and explicitly request
-Sunburst. Unspecified requests continue to quote GPT Image 2. Sunburst quotes
-pin `gpt-image-2.5-sunburst-2026-09-08`. Legacy delivery projects verified
-Sunburst output into the compatible image response while retaining true model
-provenance in storage and enforcing scoped access. Disabling the flag stops new
-Sunburst quotes. Accepted jobs use their frozen model.
+Mobile 1.0.11 requires the compatible JavaScript update to display and accept
+new paid image quotes after cutover. It discovers the preferred model,
+displays the returned price and model, and recognizes verified 2.5 state
+images. Stage this update against the released native dependency lock. Retain
+the previous Web release's hashed JavaScript and CSS across the switch so
+open tabs can finish lazy-loading the PDF exporter.
+
+Before activation, stop new image admissions and drain image jobs accepted
+under the previous policy. Then enable `OPENAI_IMAGE_SUNBURST_ENABLED` on
+both API and Worker, retaining `OPENAI_IMAGE_MODEL=gpt-image-2` as the
+pre-cutover configuration value. Active generation pins page generation,
+regeneration, base references and state references to
+`gpt-image-2.5-sunburst-2026-09-08`. A direct request from the released Web
+uses the same pin. Mobile must explicitly request the advertised model.
+An unaccepted GPT Image 2 quote requires a new quote before charging. A
+replayed accepted request returns its existing receipt. Provider failure
+follows the generation failure and credit recovery path. Record the actual
+provider and snapshot on generated images. Imported-image analysis retains
+its separate model and pricing. If the active snapshot becomes unavailable,
+pause new image admissions until 2.5 is healthy. Preserve the original
+model, ledger and receipt for historical jobs.

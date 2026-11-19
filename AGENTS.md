@@ -1579,3 +1579,9 @@ and active-job/task protection when changing warm control.
 Personal subscription monthly grants follow Unified Spec §7: Standard 100 credits
 for JPY 1,000 and Premium 350 credits for JPY 3,500, with historical grants and
 refund records preserved. Generated-page editing is permitted on Mobile.
+
+Episode updates from released clients preserve separately stored production
+notes. Enable new note writes only after the 053 and 054 schema checks pass.
+The image cutover contract in the Unified Spec requires the compatible
+Mobile 1.0.11 update, a drained legacy queue and the same pinned GPT Image
+2.5 snapshot for all new page and character image generation.

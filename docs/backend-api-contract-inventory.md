@@ -27,7 +27,7 @@ Endpoint count: 161
 | `/api/billing/customer-portal` | POST | Authenticated | Strict JSON | `billingCustomerPortalResponseSchema` | Complete collection | `src/routes/billing.ts` |
 | `/api/chapters/:id` | DELETE | Authenticated | Empty | No content (204) | Complete collection | `src/routes/story.ts` |
 | `/api/chapters/:id` | PUT | Authenticated | Strict JSON | `chapterSchema` | Complete collection | `src/routes/story.ts` |
-| `/api/chapters/:id/episodes` | GET | Authenticated | Strict JSON | `episodesResponseSchema` | Complete collection | `src/routes/story.ts` |
+| `/api/chapters/:id/episodes` | GET | Authenticated | Strict JSON | `contractVersion === 'v2' ? episodesV2ResponseSchema : episodesResponseSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/chapters/:id/episodes` | POST | Authenticated | Strict JSON | `episodeSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/chapters/:id/move` | POST | Authenticated | Strict JSON | `chapterSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/compositions` | GET | Authenticated | Strict JSON | `compositionsResponseSchema` | Bounded limit (1-250) | `src/routes/compositions.ts` |
@@ -53,7 +53,7 @@ Endpoint count: 161
 | `/api/episodes/:episodeId/character-suggestions` | POST | Authenticated | Strict JSON | `characterSuggestionsSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/episodes/:episodeId/exports` | POST | Authenticated | Strict JSON | `episodeExportAcceptedResponseSchema` | Complete collection | `src/routes/episodeExports.ts` |
 | `/api/episodes/:id` | DELETE | Authenticated | Empty | No content (204) | Complete collection | `src/routes/story.ts` |
-| `/api/episodes/:id` | PUT | Authenticated | Strict JSON | `episodeSchema` | Complete collection | `src/routes/story.ts` |
+| `/api/episodes/:id` | PUT | Authenticated | Strict JSON | `contractVersion === 'v2' ? episodeV2Schema : episodeSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/episodes/:id/autofill-pages-from-story` | POST | Authenticated | Strict JSON | `pageJobAcceptedResponseSchema` | Complete collection | `src/routes/pages.ts` |
 | `/api/episodes/:id/generate-page-skeleton` | POST | Authenticated | Strict JSON | `pageSkeletonResponseSchema` | Complete collection | `src/routes/story.ts` |
 | `/api/episodes/:id/move` | POST | Authenticated | Strict JSON | `episodeSchema` | Complete collection | `src/routes/story.ts` |
