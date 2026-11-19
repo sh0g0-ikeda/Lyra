@@ -5,7 +5,6 @@ import {
   type EpisodeCharacterSuggestion,
 } from '@/domain/characterSuggestionsContract';
 
-export type CharacterSuggestion = EpisodeCharacterSuggestion;
 import type { GenerationQuote, GenerationQuoteReceipt, GenerationQuoteAcceptance, GenerationQuoteRequest } from '@/domain/pageGenerationQuote';
 import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStartBody, type GoogleLinkStatus } from '@/domain/googleAuth';
 import { z, type ZodType } from 'zod';
@@ -184,6 +183,8 @@ import {
   SSE_IDLE_TIMEOUT_MS,
   STORY_AI_WRITE_TIMEOUT_MS,
 } from '@/lib/requestPolicy';
+
+export type CharacterSuggestion = EpisodeCharacterSuggestion;
 
 type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: unknown; timeoutMs?: number };
 
