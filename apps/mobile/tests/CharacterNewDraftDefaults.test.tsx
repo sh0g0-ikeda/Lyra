@@ -15,7 +15,7 @@ let language: 'ja' | 'en';
 const refetchEntity = vi.fn();
 let pages: { entities: EntityRecord[] }[];
 let registration: {dirty:boolean;save:()=>Promise<void>;discard:()=>void};
-const updateEntity=vi.fn(); const createEntity=vi.fn(); const navigate=vi.fn(); const trackJob=vi.fn();
+const updateEntity=vi.fn(); const createEntity=vi.fn(); const getEpisodes=vi.fn(); const suggestEpisodeCharacters=vi.fn(); const getCharacterSuggestionCapabilities=vi.fn(); const navigate=vi.fn(); const trackJob=vi.fn();
 const resolveDirtyEditors = vi.fn();
 const assetQuoteCapture = vi.hoisted(() => ({ options: null as Record<string, unknown> | null }));
 const updateSelection = vi.fn(async (next: Partial<typeof selection>) => { selection = { ...selection, ...next }; return true; });
@@ -26,16 +26,19 @@ vi.mock('@react-navigation/native',()=>({useNavigation:()=>({navigate})}));
 vi.mock('@tanstack/react-query',()=>({useQueryClient:()=>queryClient,
  useInfiniteQuery:()=>({...query({pages}),error:entitiesError,hasNextPage:false,isFetchingNextPage:false,fetchNextPage:vi.fn()}),
  useQuery:(options:{queryKey:readonly unknown[]})=>options.queryKey[0] === 'entity-detail'
-   ? {...query(entityDetail),error:entityDetailError,refetch:refetchEntity} : query(undefined),
+   ? {...query(entityDetail),error:entityDetailError,refetch:refetchEntity}
+   : options.queryKey[0] === 'character-suggestion-capabilities'
+     ? query({enabled:true})
+     : query(undefined),
  useMutation:(options:{mutationFn:(variables?:unknown)=>Promise<unknown>;onSuccess?:(value:unknown,variables?:unknown)=>Promise<void>;onError?:(error:unknown)=>void})=>{
  const run=async(variables?:unknown):Promise<unknown>=>{try{const value=await options.mutationFn(variables);await options.onSuccess?.(value,variables);return value;}catch(error){options.onError?.(error);throw error;}};
  return {mutateAsync:run,mutate:(variables?:unknown)=>{void run(variables);},isPending:false,error:null,reset:vi.fn()};}
 }));
-vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob,updateSelection})}));
+vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity,getEpisodes,suggestEpisodeCharacters,getCharacterSuggestionCapabilities},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob,updateSelection})}));
 vi.mock('@/state/dirtyState',()=>({useDirtyState:()=>({resolveDirtyEditors}),useDirtyEditorRegistration:(input:typeof registration)=>{registration=input;}}));
 vi.mock('@/hooks/useActiveResourceJobId',()=>({useActiveResourceJobId:()=>null}));
 vi.mock('@/hooks/useAssetGenerationQuote',()=>({useAssetGenerationQuote:(options: Record<string, unknown>)=>{assetQuoteCapture.options=options;return {state:{phase:'closed',visible:false},controller:{open:vi.fn(),close:vi.fn(),accept:vi.fn(),reconcile:vi.fn(),canAccept:()=>false}};}}));
-vi.mock('@/components/WorkspaceContextPicker',()=>({useWorkspaceContextSelection:()=>({selectedWorkId:selection.workId,selectedEpisodeId:'episode'})}));
+vi.mock('@/components/WorkspaceContextPicker',()=>({useWorkspaceContextSelection:()=>({selectedWorkId:selection.workId,selectedChapterId:'chapter',selectedEpisodeId:'episode'})}));
 vi.mock('@/lib/config',()=>({config:{apiBaseUrl:'https://example.test'}}));
 vi.mock('@/lib/api',()=>({ApiError:class ApiError extends Error{}}));
 vi.mock('@/lib/download',()=>({appendOrganizationQuery:vi.fn(),downloadAuthenticatedFile:vi.fn()}));
@@ -45,6 +48,7 @@ vi.mock('@/components/Screen',()=>({Screen:({children}:{children:React.ReactNode
 vi.mock('@/components/Section',()=>({Section:({children,...props}:{children:React.ReactNode})=>React.createElement('Section',props,children)}));
 vi.mock('@/components/ActionableErrorNotice',()=>({ActionableErrorNotice:(props:Record<string,unknown>)=>React.createElement('ActionableErrorNotice',props)}));
 vi.mock('@/components/CharacterChoiceField',()=>({CharacterChoiceField:(props:Record<string,unknown>)=>React.createElement('CharacterChoiceField',props)}));
+vi.mock('@/components/CharacterThumbnailPicker',()=>({CharacterThumbnailPicker:(props:Record<string,unknown>)=>React.createElement('CharacterThumbnailPicker',props)}));
 vi.mock('@/components/CharacterOutfitField',()=>({CharacterOutfitField:(props:Record<string,unknown>)=>React.createElement('CharacterOutfitField',props)}));
 vi.mock('@/components/EntityGenerationBlockers',()=>({EntityGenerationBlockers:(props:Record<string,unknown>)=>React.createElement('EntityGenerationBlockers',props)}));
 vi.mock('@/components/AssetGenerationQuoteDialog',()=>({AssetGenerationQuoteDialog:(props:Record<string,unknown>)=>React.createElement('AssetGenerationQuoteDialog',props)}));
@@ -86,6 +90,9 @@ beforeEach(() => {
   pages = [{ entities: [entity] }];
   updateEntity.mockReset().mockResolvedValue(entity);
   createEntity.mockReset().mockResolvedValue({ ...entity, id: 'created' });
+  getEpisodes.mockReset().mockResolvedValue({ episodes: [{ id: 'episode', version: 3 }] });
+  suggestEpisodeCharacters.mockReset().mockResolvedValue({ version: 3, characters: [] });
+  getCharacterSuggestionCapabilities.mockReset().mockResolvedValue({ enabled: true });
   updateSelection.mockClear();
   resolveDirtyEditors.mockReset().mockResolvedValue(true);
   trackJob.mockReset().mockResolvedValue(undefined);
@@ -133,6 +140,30 @@ describe('新規人物だけの編集可能な初期値', () => {
       ['顔', '髪', '服装'].includes(node.props.accessibilityLabel));
     expect(detailGroups).toHaveLength(3);
     expect(detailGroups.every(node => node.props.accessibilityState.expanded === false)).toBe(true);
+  });
+
+  it('明示選択した話の候補だけを新規下書きへ反映し、人物presetを混ぜない', async () => {
+    suggestEpisodeCharacters.mockResolvedValueOnce({
+      version: 3,
+      characters: [{
+        name: '澪', name_quote: '澪は窓辺に立った。', entity_type: 'character', status: 'new', entity_ids: [],
+        appearance: [
+          { field: 'hair_color', value: '黒', quote: '黒髪が風になびく。' },
+          { field: 'features', value: '赤いスカーフ', quote: '赤いスカーフを巻く。' },
+        ], changes: [],
+      }],
+    });
+    await render();
+    await act(async () => root!.root.findAllByType('PrimaryButton').find(node => node.props.label === 'この話から候補を作る')!.props.onPress());
+    await act(async () => root!.root.findByProps({ accessibilityLabel: '澪の候補を選択' }).props.onPress());
+    await act(async () => root!.root.findAllByType('button').find(node => node.props.accessibilityLabel === '髪')!.props.onPress());
+
+    expect(getEpisodes).toHaveBeenCalledWith('chapter', null);
+    expect(suggestEpisodeCharacters).toHaveBeenCalledWith('episode', { version: 3 }, null);
+    expect(field('名前').props.value).toBe('澪');
+    expect(choice('髪の色').props.value).toBe('黒');
+    expect(choice('性別表現').props.value).toBe('');
+    expect(field('自由入力欄').props.value).toBe('赤いスカーフ');
   });
 
   it('初期値を消す操作もdirtyとなり、明示保存時だけ編集後の表示値を送る', async () => {

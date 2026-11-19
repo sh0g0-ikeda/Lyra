@@ -60,4 +60,49 @@ describe('OpenAIEntityReferencePromptCompiler', () => {
     expect(userPrompt).toContain('Character visual anchor: compact rounded bob');
     expect(userPrompt).toContain('Write the final GPT Image 2 prompt now.');
   });
+
+  it('人外の brief では人間の手足を要求せず実在する部位と輪郭を保持する', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: { output_text: 'A floating asymmetric creature reference.' },
+          requestId: 'req-nonhuman',
+        };
+      },
+    } as unknown as OpenAIClient;
+    const compiler = new OpenAIEntityReferencePromptCompiler(client);
+
+    await compiler.compilePrompt({
+      context: {
+        entityId: 'entity-nonhuman-1',
+        workId: 'work-1',
+        userId: 'user-1',
+        entityType: 'nonhuman',
+        name: 'Luca',
+        freeDescription: 'A limbless floating creature with an asymmetric left-side marking.',
+        structuredFields: {},
+        promptSupplement: null,
+        status: 'draft',
+        referenceSet: {
+          entityId: 'entity-nonhuman-1',
+          images: [],
+          primaryRefId: null,
+          status: 'empty',
+          updatedAt: new Date('2026-05-25T00:00:00.000Z'),
+        },
+      },
+      draftPrompt: 'draft prompt',
+      compilerBrief: 'Target image: manga creature reference',
+    });
+
+    const request = requests[0];
+    const input = request.input as Array<{ content: Array<{ text: string }> }>;
+    const systemPrompt = input[0].content[0].text;
+
+    expect(systemPrompt).toContain('preserve its overall silhouette, anatomy, part count, connections, proportions, and markings');
+    expect(systemPrompt).toContain('Do not invent a human head, hands, feet, limbs, clothing, hair, or humanoid pose');
+    expect(systemPrompt).not.toContain('with both hands and both feet visible');
+  });
 });

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   PAGE_SKELETON_MAX_TOKENS,
   PAGE_SKELETON_MODEL,
@@ -21,9 +22,41 @@ import type {
 } from '../../services/story/StoryAiClientPort.js';
 import { OpenAIClient } from './OpenAIClient.js';
 import { requestOpenAIText, requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
+import { extractedCharactersSchema, type ExtractedCharacter } from '../../../packages/api-contract/src/characterSuggestions.js';
 
 export class OpenAIStoryAiClient implements StoryAiClientPort {
   public constructor(private readonly client: OpenAIClient) {}
+
+  public async suggestEpisodeProductionNotes(request: StoryAiModelRequest): Promise<string[]> {
+    const schema = z.object({ notes: z.array(z.string().trim().min(1).max(600)).max(8) }).strict();
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(schema);
+    const result = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
+      maxOutputTokens: 3_000,
+      schemaName: 'episode_production_note_suggestions',
+      jsonSchema,
+      responseSchema: schema,
+      errorLabel: 'OpenAI episode production suggestions',
+      input: buildInput(request),
+    });
+    return result.notes;
+  }
+
+  public async extractEpisodeCharacters(request: StoryAiModelRequest): Promise<ExtractedCharacter[]> {
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(extractedCharactersSchema);
+    const result = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
+      maxOutputTokens: 8_000,
+      schemaName: 'episode_character_suggestions',
+      jsonSchema,
+      responseSchema: extractedCharactersSchema,
+      errorLabel: 'OpenAI episode character extractor',
+      input: buildInput(request),
+    });
+    return result.characters;
+  }
 
   public streamCollaboration(request: StoryAiModelRequest): AsyncIterable<string> {
     return this.streamSingleResponse(request);

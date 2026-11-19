@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { editableEpisodePageLimit } from '@/domain/episodePageLimits';
 
@@ -28,8 +28,7 @@ import {
 } from '@/domain/storyEditorSavePolicy';
 import type {
   EpisodeRecord,
-  SceneRecord,
-  StoryEpisodeImprovementRecord
+  SceneRecord
 } from '@/domain/types';
 import { confirmStaleDraftReload } from '@/lib/confirmStaleDraftReload';
 import { confirmAction, confirmDestructiveAction } from '@/lib/confirm';
@@ -49,7 +48,7 @@ import {
 } from '@/lib/queryKeys';
 import { t } from '@/lib/i18n';
 import { editorMessage } from '@/lib/editorUiMessages';
-import { ApiError } from '@/lib/api';
+import { ApiError, type StoryEpisodeImprovementWithProductionNotes } from '@/lib/api';
 import { userErrorMessage } from '@/lib/userMessages';
 import { collectOperationFailures, operationFailure } from '@/lib/operationErrorContext';
 import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
@@ -82,6 +81,28 @@ const isResourceStaleError = (error: unknown): boolean =>
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && error.name === 'AbortError';
 
+const normalizedProductionNote = (value: string): string =>
+  value.replace(/^\s*#\s*/u, '').trim();
+
+const appendSelectedProductionNotes = (
+  improvedStory: string,
+  existingStory: string,
+  selectedNotes: readonly string[],
+): string => {
+  const existingNotes = existingStory
+    .split('\n')
+    .filter((line) => /^\s*#/u.test(line))
+    .map(normalizedProductionNote)
+    .filter((note) => note.length > 0);
+  const notes = [...existingNotes, ...selectedNotes.map(normalizedProductionNote)]
+    .filter((note, index, values) => note.length > 0 && values.indexOf(note) === index);
+  const body = improvedStory.trimEnd();
+  const missingNotes = notes.filter((note) => !new RegExp(`^\\s*#\\s*${note.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}\\s*$`, 'mu').test(body));
+  return missingNotes.length === 0
+    ? body
+    : [body, ...missingNotes.map((note) => `# ${note}`)].filter((line) => line.length > 0).join('\n');
+};
+
 export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => void } = {}): React.JSX.Element {
   const queryClient = useQueryClient();
   const { api, hasCapability, language, logout, selection, sessionKey } = useAppState();
@@ -90,6 +111,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   const canEdit = hasCapability('edit_work');
   const [episodeTitle, setEpisodeTitle] = useState('');
   const [episodeDraft, setEpisodeDraft] = useState('');
+  const [productionNotesEnabled, setProductionNotesEnabled] = useState(false);
   const [estimatedPages, setEstimatedPages] = useState('4');
   const [sceneId, setSceneId] = useState<string | null>(null);
   const [sceneOrder, setSceneOrder] = useState('1');
@@ -98,7 +120,8 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   const [sceneAtmosphere, setSceneAtmosphere] = useState('');
   const [sceneEntityIds, setSceneEntityIds] = useState<string[]>([]);
   const [storyInstruction, setStoryInstruction] = useState('');
-  const [improvement, setImprovement] = useState<StoryEpisodeImprovementRecord | null>(null);
+  const [improvement, setImprovement] = useState<StoryEpisodeImprovementWithProductionNotes | null>(null);
+  const [selectedProductionNotes, setSelectedProductionNotes] = useState<string[]>([]);
   const [collaborationInstruction, setCollaborationInstruction] = useState('');
   const [collaborationProposal, setCollaborationProposal] = useState('');
   const [collaborationError, setCollaborationError] = useState<string | null>(null);
@@ -168,6 +191,12 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     queryKey: scenesQueryKey(sessionKey, selectedEpisode?.id ?? null, organizationId),
     queryFn: () => api.getScenes(selectedEpisode?.id ?? '', organizationId)
   });
+  const productionNotesCapabilitiesQuery = useQuery({
+    enabled: selectedEpisode !== null,
+    queryKey: ['production-notes-capabilities', sessionKey],
+    queryFn: () => api.getProductionNotesCapabilities(),
+    retry: false,
+  });
 
   const selectedScene = useMemo(
     () => scenesQuery.data?.scenes.find((scene) => scene.id === sceneId) ?? null,
@@ -175,12 +204,15 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   );
 
   const episodeScopeKey = JSON.stringify([sessionKey, organizationId, selectedEpisode?.id ?? null]);
+  const productionNotesOptedIn =
+    productionNotesEnabled && /(^|\n)\s*#/u.test(episodeDraft);
   const episodeDirty =
     selectedEpisode === null
-      ? [episodeTitle, episodeDraft, estimatedPages].some((value) => value.trim().length > 0 && value !== '4')
+      ? [episodeTitle, episodeDraft, estimatedPages].some((value) => value.trim().length > 0 && value !== '4') || productionNotesOptedIn
       : episodeTitle !== (selectedEpisode.title ?? '') ||
         episodeDraft !== episodeMobileDraft(selectedEpisode) ||
-        estimatedPages !== String(selectedEpisode.estimated_pages ?? 4);
+        estimatedPages !== String(selectedEpisode.estimated_pages ?? 4) ||
+        productionNotesOptedIn;
 
   const sceneDirty =
     selectedScene === null
@@ -202,6 +234,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       draft: episodeDraft,
       estimatedPages,
       id: selectedEpisode?.id ?? null,
+      productionNotesOptedIn,
       title: episodeTitle,
     },
     scene: {
@@ -234,8 +267,10 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     lastSyncedEpisodeId.current = nextId;
     setEpisodeTitle(selectedEpisode?.title ?? '');
     setEpisodeDraft(selectedEpisode === null ? '' : episodeMobileDraft(selectedEpisode));
+    setProductionNotesEnabled(false);
     setEstimatedPages(String(selectedEpisode?.estimated_pages ?? 4));
     setImprovement(null);
+    setSelectedProductionNotes([]);
     collaborationAbortRef.current?.abort();
     collaborationRequestIdRef.current += 1;
     setCollaborationProposal('');
@@ -290,14 +325,15 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       if (parsedEstimatedPages === null) {
         throw new Error(t(language, 'screen.story.estimatedPagesOutOfRange', { maximum: maxEstimatedPages }));
       }
+      const payload = buildEpisodeMobileUpdatePayload({
+        draft: episodeDraft,
+        episode: selectedEpisode,
+        estimatedPages: parsedEstimatedPages,
+        title: episodeTitle,
+      });
       return api.updateEpisode(
         selectedEpisode.id,
-        buildEpisodeMobileUpdatePayload({
-          draft: episodeDraft,
-          episode: selectedEpisode,
-          estimatedPages: parsedEstimatedPages,
-          title: episodeTitle,
-        }),
+        productionNotesOptedIn ? { ...payload, production_notes_enabled: true } : payload,
         organizationId
       );
     },
@@ -379,6 +415,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   const discardStoryDrafts = useCallback((): void => {
     setEpisodeTitle(selectedEpisode?.title ?? '');
     setEpisodeDraft(selectedEpisode === null ? '' : episodeMobileDraft(selectedEpisode));
+    setProductionNotesEnabled(false);
     setEstimatedPages(String(selectedEpisode?.estimated_pages ?? 4));
     setSceneOrder(String(selectedScene?.order ?? (scenesQuery.data?.scenes.length ?? 0) + 1));
     setSceneLocation(selectedScene?.location ?? '');
@@ -530,6 +567,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       title: episodeTitle,
       draft: episodeDraft,
       estimatedPages: parseIntInRange(estimatedPages, 1, maxEstimatedPages),
+      productionNotesOptedIn,
       scope: episodeScopeKey,
       revision: storyEditorRevision,
       episodeId: selectedEpisode.id,
@@ -556,12 +594,17 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       const latest = response.episodes.find((episode) => episode.id === submitted.episodeId &&
         episode.chapter_id === submitted.chapterId);
       if (latest === undefined) throw new Error(t(language, 'screen.story.latestEpisodeMissing'));
-      const updatedEpisode = await api.updateEpisode(latest.id, buildEpisodeMobileUpdatePayload({
+      const payload = buildEpisodeMobileUpdatePayload({
         draft: submitted.draft,
         episode: latest,
         estimatedPages: submitted.estimatedPages,
         title: submitted.title,
-      }), organizationId);
+      });
+      const updatedEpisode = await api.updateEpisode(
+        latest.id,
+        submitted.productionNotesOptedIn ? { ...payload, production_notes_enabled: true } : payload,
+        organizationId,
+      );
       queryClient.setQueryData<{ episodes: EpisodeRecord[] }>(
         episodesQueryKey(sessionKey, submitted.chapterId, organizationId),
         (current) => replaceEpisodeInResponse(current, updatedEpisode),
@@ -592,6 +635,9 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
             episode_id: selectedEpisode.id,
             instruction: storyInstruction.trim(),
             language,
+            ...(productionNotesCapabilitiesQuery.data?.enabled === true
+              ? { include_production_notes: true as const }
+              : {}),
             base_draft: {
               title: nullable(episodeTitle),
               purpose: selectedEpisode.purpose ?? null,
@@ -609,7 +655,10 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
         selectedEpisodeId: selectedEpisode.id
       });
     },
-    onSuccess: setImprovement
+    onSuccess: (result) => {
+      setImprovement(result);
+      setSelectedProductionNotes([]);
+    }
   });
 
   const applyImprovementToDraft = (): void => {
@@ -618,7 +667,14 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     }
     const improvedStory = extractImprovedFullStory(improvement);
     if (improvedStory.trim().length > 0) {
-      setEpisodeDraft(improvedStory);
+      setEpisodeDraft(appendSelectedProductionNotes(
+        improvedStory,
+        episodeDraft,
+        selectedProductionNotes,
+      ));
+      if (selectedProductionNotes.length > 0) {
+        setProductionNotesEnabled(true);
+      }
     }
   };
 
@@ -872,6 +928,30 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
           <>
             <FormField editable={canEdit} label={t(language, 'title')} placeholder={editorMessage(language, 'titleExample')} help={editorMessage(language, 'titleHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} maxLength={200} onChangeText={setEpisodeTitle} value={episodeTitle} />
             <FormField editable={canEdit} label={t(language, 'fullDraft')} placeholder={editorMessage(language, 'storyExample')} help={editorMessage(language, 'storyInputHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} maxLength={8000} multiline multilineMaxHeight={260} onChangeText={setEpisodeDraft} value={episodeDraft} />
+            {productionNotesCapabilitiesQuery.data?.enabled === true ? (
+              <View style={styles.productionNotes}>
+                <Pressable
+                  accessibilityLabel={t(language, 'screen.story.productionNotes.enable')}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: productionNotesEnabled, disabled: !canEdit }}
+                  disabled={!canEdit}
+                  onPress={() => setProductionNotesEnabled((current) => !current)}
+                  style={styles.productionNotesToggle}
+                >
+                  <Text style={styles.productionNotesToggleText}>
+                    {t(
+                      language,
+                      productionNotesEnabled
+                        ? 'screen.story.productionNotes.saveEnabled'
+                        : 'screen.story.productionNotes.saveDisabled',
+                    )}
+                  </Text>
+                </Pressable>
+                <Text style={styles.productionNotesHint}>
+                  {t(language, 'screen.story.productionNotes.hint')}
+                </Text>
+              </View>
+            ) : null}
             <FormField editable={canEdit} keyboardType="numeric" label={t(language, 'estimatedPages')} placeholder={editorMessage(language, 'pagesExample')} help={editorMessage(language, 'pagesHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} onChangeText={setEstimatedPages} value={estimatedPages} />
             {estimatedPagesInvalid ? <Notice message={t(language, 'screen.story.estimatedPagesOutOfRange', { maximum: maxEstimatedPages })} tone="warning" /> : null}
             <View style={styles.buttonRow}>
@@ -909,7 +989,16 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
             )
           }
           onInstructionChange={setStoryInstruction}
+          onToggleProductionNote={(note) => {
+            setSelectedProductionNotes((current) =>
+              current.includes(note)
+                ? current.filter((selected) => selected !== note)
+                : [...current, note],
+            );
+          }}
+          productionNotes={improvement?.production_notes ?? []}
           selectedEpisode={selectedEpisode !== null}
+          selectedProductionNotes={selectedProductionNotes}
         />
         <StoryCollaborationPanel
           canEdit={canEdit}
@@ -1006,6 +1095,27 @@ const styles = StyleSheet.create({
   label: {
     ...textStyles.caption,
     color: colors.ink,
+    fontWeight: '700'
+  },
+  productionNotes: {
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: spacing.xs,
+    padding: spacing.sm
+  },
+  productionNotesHint: {
+    ...textStyles.caption,
+    color: colors.muted
+  },
+  productionNotesToggle: {
+    justifyContent: 'center',
+    minHeight: 44
+  },
+  productionNotesToggleText: {
+    ...textStyles.body,
+    color: colors.primary,
     fontWeight: '700'
   },
   result: {

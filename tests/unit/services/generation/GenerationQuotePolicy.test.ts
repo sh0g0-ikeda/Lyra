@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { calculateQuotePrice, fingerprintQuoteInput, validateQuoteSelection } from '../../../../src/domain/generation/GenerationQuotePolicy.js';
 
 describe('generation quote policy', () => {
+  it('2.5を有効にしても旧リクエストを2のまま受け付け、明示選択だけスナップショットへ固定する', () => {
+    const legacy = { operation: 'page_generate' } as const;
+    const explicit = { ...legacy, imageModel: 'gpt-image-2.5-sunburst' };
+    expect(validateQuoteSelection(legacy, 'gpt-image-2', true).providerModelId).toBe('gpt-image-2');
+    expect(validateQuoteSelection(explicit, 'gpt-image-2', true)).toMatchObject({
+      imageModel: 'gpt-image-2.5-sunburst', providerModelId: 'gpt-image-2.5-sunburst-2026-09-08',
+    });
+    expect(() => validateQuoteSelection(explicit, 'gpt-image-2', false)).toThrow();
+  });
   it.each([0, 1, 3, 4, 12])('ページ参照%d枚の生成と再生成は既存料金を保持する', (count) => {
     for (const operation of ['page_generate', 'page_regenerate'] as const) {
       expect(calculateQuotePrice(operation, count)).toBe(3 + Math.max(0, count - 3));

@@ -1,5 +1,9 @@
 # Lyra Story AI Sub-Specification
 
+Episode character suggestions and author production notes are described in
+the corresponding sections of the Unified Specification. Legacy story-
+improvement clients keep the existing response shape.
+
 ## 1. Scope
 
 Story AI improves an episode draft and prepares story information for page planning.

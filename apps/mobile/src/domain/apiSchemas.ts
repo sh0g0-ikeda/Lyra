@@ -781,6 +781,7 @@ export const storyEpisodeImprovementSchema = z.object({
   compiler_model: nullableStringSchema,
   compiler_prompt_version: nullableStringSchema,
   compiler_error: nullableStringSchema,
+  production_notes: z.array(z.string().min(1).max(600)).max(8).optional(),
 });
 
 export const pageSkeletonResponseSchema = z.union([
@@ -1502,7 +1503,7 @@ export const generationQuoteResponseSchema = z.object({
   operation: generationQuoteOperationSchema,
   target_id: z.string().uuid(),
   billing_scope: z.object({ kind: z.enum(['personal', 'organization']), organization_id: z.string().uuid().nullable() }).strict(),
-  image_model: z.literal('gpt-image-2').nullable(),
+  image_model: z.enum(['gpt-image-2', 'gpt-image-2.5-sunburst']).nullable(),
   quality: z.literal('medium').nullable(),
   render_style: z.enum(['color', 'monochrome']).nullable(),
   reference_count: z.number().int().min(0).max(12),

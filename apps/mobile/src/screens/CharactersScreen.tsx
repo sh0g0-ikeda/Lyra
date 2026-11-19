@@ -13,6 +13,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
 import { CharacterChoiceField as ChoiceField } from '@/components/CharacterChoiceField';
+import { CharacterThumbnailPicker } from '@/components/CharacterThumbnailPicker';
 import { editorMessage } from '@/lib/editorUiMessages';
 import { CharacterOutfitField } from '@/components/CharacterOutfitField';
 import { AssetGenerationQuoteDialog } from '@/components/AssetGenerationQuoteDialog';
@@ -79,7 +80,7 @@ import {
 import { t } from '@/lib/i18n';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
 import { appendOrganizationQuery, downloadAuthenticatedFile } from '@/lib/download';
-import { ApiError } from '@/lib/api';
+import { ApiError, type CharacterSuggestion } from '@/lib/api';
 import {
   flattenUniqueRecords,
   MOBILE_LIST_PAGE_SIZE,
@@ -109,6 +110,38 @@ interface EntityStateSceneOption {
   sceneId: string | null;
   label: string;
 }
+
+interface SuggestedCharacterDraft {
+  entityType: EntityType;
+  name: string;
+  description: string;
+  structuredFields: DraftRecord;
+}
+
+const draftFromCharacterSuggestion = (
+  suggestion: CharacterSuggestion,
+): SuggestedCharacterDraft => {
+  const structuredFields: DraftRecord = {};
+  const featureValues: string[] = [];
+  for (const appearance of suggestion.appearance) {
+    switch (appearance.field) {
+      case 'clothing':
+        structuredFields.clothing_description = appearance.value;
+        break;
+      case 'features':
+        featureValues.push(appearance.value);
+        break;
+      default:
+        structuredFields[appearance.field] = appearance.value;
+    }
+  }
+  return {
+    entityType: suggestion.entity_type ?? 'character',
+    name: suggestion.name,
+    description: featureValues.join('\n'),
+    structuredFields,
+  };
+};
 
 const NEW_ENTITY_PICKER_ID = 'new-entity';
 const isResourceStaleError = (error: unknown): boolean =>
@@ -1660,12 +1693,20 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   const [entityStale, setEntityStale] = useState(false);
   const [stateEditorResetVersion, setStateEditorResetVersion] = useState(0);
   const [discardedStateCandidate, setDiscardedStateCandidate] = useState<InitialStateCandidate | undefined>(undefined);
+  const [characterSuggestions, setCharacterSuggestions] = useState<readonly CharacterSuggestion[]>([]);
+  const [selectedCharacterSuggestion, setSelectedCharacterSuggestion] = useState<CharacterSuggestion | null>(null);
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
   const [reloadError, setReloadError] = useState<Error | null>(null);
   const screenScrollRef = useRef<ScrollView | null>(null);
   const [sectionOffsets, setSectionOffsets] = useState({ editor: 0, import: 0 });
   const workspaceContext = useWorkspaceContextSelection();
   const activeWorkId = workspaceContext.selectedWorkId;
+  const characterSuggestionScope = JSON.stringify([
+    sessionKey,
+    organizationId,
+    workspaceContext.selectedChapterId,
+    workspaceContext.selectedEpisodeId,
+  ]);
   const draftScope = JSON.stringify([sessionKey, organizationId, activeWorkId, selection.entityId]);
   const imageImportWorkspaceScope = JSON.stringify([sessionKey, organizationId, activeWorkId]);
   const imageImportWorkspaceScopeRef = useRef(imageImportWorkspaceScope);
@@ -1691,6 +1732,31 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   const generationAvailabilityQuery = useQuery({
     queryKey: ['entity-reference-generation-availability', sessionKey],
     queryFn: () => api.getEntityReferenceGenerationAvailability()
+  });
+  const characterSuggestionCapabilitiesQuery = useQuery({
+    enabled: workspaceContext.selectedEpisodeId !== null,
+    queryKey: ['character-suggestion-capabilities', sessionKey],
+    queryFn: () => api.getCharacterSuggestionCapabilities(),
+    retry: false,
+  });
+  const characterSuggestionsMutation = useMutation({
+    mutationFn: async () => {
+      const chapterId = workspaceContext.selectedChapterId;
+      const episodeId = workspaceContext.selectedEpisodeId;
+      if (chapterId === null || episodeId === null) {
+        throw new Error('Select an episode before requesting character suggestions');
+      }
+      const latestEpisodes = await api.getEpisodes(chapterId, organizationId);
+      const latestEpisode = latestEpisodes.episodes.find((episode) => episode.id === episodeId);
+      if (latestEpisode === undefined) {
+        throw new Error('The selected episode is no longer available');
+      }
+      return api.suggestEpisodeCharacters(episodeId, { version: latestEpisode.version }, organizationId);
+    },
+    onSuccess: (result) => {
+      setCharacterSuggestions(result.characters);
+      setSelectedCharacterSuggestion(null);
+    },
   });
 
   const selectedEntityFromList = useMemo(
@@ -1957,6 +2023,58 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
       queryKey: entityStatesQueryKey(sessionKey, selectedEntity?.id ?? null, organizationId),
     });
   };
+
+  const applyCharacterSuggestionAsNewDraft = async (
+    suggestion: CharacterSuggestion,
+  ): Promise<void> => {
+    if (!await resolveDirtyEditors(language)) return;
+    if (!await updateSelection({ entityId: null }, { skipDirtyCheck: true })) return;
+    const suggestedDraft = draftFromCharacterSuggestion(suggestion);
+    setDraftResetVersion((version) => version + 1);
+    setEntityEditorMode('create');
+    setEntityType(suggestedDraft.entityType);
+    setName(suggestedDraft.name);
+    setDescription(suggestedDraft.description);
+    setPromptSupplement('');
+    setStructuredDraft(suggestedDraft.structuredFields);
+    setStructuredExtras('');
+    setSelectedCharacterSuggestion(suggestion);
+  };
+
+  const selectExistingSuggestedCharacter = async (
+    entityId: string,
+    suggestion: CharacterSuggestion,
+  ): Promise<void> => {
+    if (!await resolveDirtyEditors(language)) return;
+    if (!await updateSelection({ entityId }, { skipDirtyCheck: true })) return;
+    setSelectedCharacterSuggestion(suggestion);
+  };
+
+  const suggestedExistingCharacters = useMemo(
+    () => entities.filter((entity) => characterSuggestions.some(
+      (suggestion) => suggestion.status === 'existing' &&
+        suggestion.entity_ids.length === 1 &&
+        suggestion.entity_ids[0] === entity.id,
+    )),
+    [characterSuggestions, entities],
+  );
+
+  const suggestedStateCandidate = useMemo<InitialStateCandidate | undefined>(() => {
+    if (
+      selectedEntity === null ||
+      selectedCharacterSuggestion?.status !== 'existing' ||
+      selectedCharacterSuggestion.entity_ids.length !== 1 ||
+      selectedCharacterSuggestion.entity_ids[0] !== selectedEntity.id ||
+      selectedCharacterSuggestion.changes.length === 0
+    ) return undefined;
+    return {
+      entityId: selectedEntity.id,
+      name: selectedCharacterSuggestion.name,
+      description: selectedCharacterSuggestion.changes
+        .map((change) => `${change.label}: ${change.description}`)
+        .join('\n'),
+    };
+  }, [selectedCharacterSuggestion, selectedEntity]);
 
   const toEntityStatePayload = () => ({
     scene_id: entityStateDraft.sceneId,
@@ -2395,6 +2513,11 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     () => setDirtySaveError(null),
     () => setReloadError(null)
   ]);
+  useResetOnScopeChange(characterSuggestionScope, [
+    characterSuggestionsMutation.reset,
+    () => setCharacterSuggestions([]),
+    () => setSelectedCharacterSuggestion(null),
+  ]);
   const entityStateDirty = JSON.stringify(entityStateDraft) !== JSON.stringify(entityStateDraftFromRecord(selectedEntityState));
   const characterErrors = collectOperationFailures([
     ...(entities.length === 0
@@ -2514,6 +2637,73 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
             variant="secondary"
           />
         </View>
+      ) : null}
+      {characterSuggestionCapabilitiesQuery.data?.enabled === true ? (
+        <Section
+          collapsible
+          persistKey="characters:episode-suggestions"
+          subtitle={t(language, 'screen.characters.suggestions.subtitle')}
+          title={t(language, 'screen.characters.suggestions.title')}
+        >
+          <PrimaryButton
+            disabled={!canEdit || workspaceContext.selectedChapterId === null || workspaceContext.selectedEpisodeId === null}
+            disabledReason={!canEdit ? t(language, 'screen.characters.suggestions.editPermissionRequired') : t(language, 'screen.characters.suggestions.selectEpisodeFirst')}
+            label={t(language, 'screen.characters.suggestions.request')}
+            loading={characterSuggestionsMutation.isPending}
+            onPress={() => characterSuggestionsMutation.mutate()}
+            variant="secondary"
+          />
+          {characterSuggestionsMutation.error === null ? null : (
+            <Notice
+              message={t(language, 'screen.characters.suggestions.failed')}
+              tone="warning"
+            />
+          )}
+          {characterSuggestions.map((suggestion) => {
+            const existingId = suggestion.status === 'existing' && suggestion.entity_ids.length === 1
+              ? suggestion.entity_ids[0]
+              : null;
+            return (
+              <Pressable
+                accessibilityLabel={t(language, 'screen.characters.suggestions.select', { name: suggestion.name })}
+                accessibilityRole="button"
+                key={`${suggestion.name}:${suggestion.status}:${suggestion.entity_ids.join(',')}`}
+                onPress={() => {
+                  if (existingId !== null) {
+                    void selectExistingSuggestedCharacter(existingId, suggestion);
+                    return;
+                  }
+                  void applyCharacterSuggestionAsNewDraft(suggestion);
+                }}
+                style={styles.suggestionCard}
+              >
+                <Text style={styles.groupTitle}>{suggestion.name}</Text>
+                <Text style={styles.caption}>{suggestion.name_quote}</Text>
+                {suggestion.appearance.map((appearance) => (
+                  <Text key={`${appearance.field}:${appearance.value}`} style={styles.caption}>
+                    {appearance.value} — {appearance.quote}
+                  </Text>
+                ))}
+              </Pressable>
+            );
+          })}
+          {suggestedExistingCharacters.length === 0 ? null : (
+            <CharacterThumbnailPicker
+              characters={suggestedExistingCharacters}
+              language={language}
+              onPreview={(_entityId, sources) => openImagePreview(sources)}
+              onSelect={(entityId) => {
+                const suggestion = characterSuggestions.find((candidate) =>
+                  candidate.status === 'existing' &&
+                  candidate.entity_ids.length === 1 &&
+                  candidate.entity_ids[0] === entityId,
+                );
+                if (suggestion !== undefined) void selectExistingSuggestedCharacter(entityId, suggestion);
+              }}
+              selectedId={selection.entityId}
+            />
+          )}
+        </Section>
       ) : null}
       <Section collapsible persistKey="characters:list" title={editorMessage(language, 'characterList')}>
         <RecordPicker
@@ -2775,7 +2965,11 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
           parentDirty={entityDirty}
           parentBusy={previewBusy || importBusy || confirmReferenceMutation.isPending || hasActivePreviewJob}
           availableCredits={availableCredits}
-          initialCandidate={initialStateCandidate === discardedStateCandidate ? undefined : initialStateCandidate}
+          initialCandidate={
+            initialStateCandidate === discardedStateCandidate
+              ? suggestedStateCandidate
+              : (initialStateCandidate ?? suggestedStateCandidate)
+          }
           onReturnToPages={onReturnToPages}
         />
       )}
@@ -2926,6 +3120,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.sm,
     width: '100%'
+  },
+  suggestionCard: {
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 4,
+    padding: spacing.sm
   },
   group: {
     borderTopColor: colors.border,

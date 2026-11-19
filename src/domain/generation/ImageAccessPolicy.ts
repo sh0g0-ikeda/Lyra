@@ -1,4 +1,5 @@
 import { AppError, ForbiddenError } from '../errors/index.js';
+import { GPT_IMAGE_25_SUNBURST, GPT_IMAGE_25_SUNBURST_SNAPSHOT } from '../constants/openAIImageModel.js';
 
 /** Server-owned output metadata, independent from model/quality selection. */
 export interface ImageProvenance {
@@ -16,6 +17,9 @@ export function imageMobileAccess(image: ImageProvenance): ImageMobileAccess {
   }
   if ((model === 'gpt-image-2' || model === 'gpt-image-1') && (image.provider == null || image.provider === 'openai')
     && (image.providerModelId == null || image.providerModelId === model)) return 'available';
+  if (model === GPT_IMAGE_25_SUNBURST
+    && image.provider === 'openai'
+    && image.providerModelId === GPT_IMAGE_25_SUNBURST_SNAPSHOT) return 'available';
   if (model === 'hy4-preview' && (image.provider == null || image.provider === 'tencent')
     && (image.providerModelId == null || image.providerModelId === model)) return 'web_only';
   return 'unavailable';
@@ -57,6 +61,11 @@ export function toImageProvenanceRecord(image: ImageProvenance): Record<string, 
 }
 
 export function publicImageProvenance(image: ImageProvenance): Record<string, string | null> {
+  // Legacy clients understand provenance-free OpenAI PNGs. Keep the pinned
+  // model in storage and validate it before projecting the old response shape.
+  if (image.imageModel === GPT_IMAGE_25_SUNBURST && imageMobileAccess(image) === 'available') {
+    return { mobile_access: 'available' };
+  }
   const record = toImageProvenanceRecord(image);
   return Object.keys(record).length === 0 ? {} : { ...record, mobile_access: imageMobileAccess(image) };
 }

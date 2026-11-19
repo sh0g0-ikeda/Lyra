@@ -32,7 +32,7 @@ export class OpenAIEntityReferencePromptCompiler implements EntityReferencePromp
           content: [
             {
               type: 'input_text',
-              text: buildSystemPrompt(),
+              text: buildSystemPrompt(input.context.entityType),
             },
           ],
         },
@@ -62,7 +62,11 @@ export class OpenAIEntityReferencePromptCompiler implements EntityReferencePromp
   }
 }
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(entityType: CompileEntityReferencePromptInput['context']['entityType']): string {
+  if (entityType === 'nonhuman') {
+    return buildNonhumanSystemPrompt();
+  }
+
   return [
     'Rewrite the provided manga character design brief into one optimized GPT Image 2 prompt for a full-body character reference.',
     'Return only the final prompt text.',
@@ -73,6 +77,23 @@ function buildSystemPrompt(): string {
     'Convert abstract personality traits into visible design cues, but do not add action, props, weapons, dramatic background, camera effects, text, or extra characters unless explicitly requested.',
     'Preserve all hard constraints exactly.',
     'The subject must be centered, single, fully visible from head to toe, with both hands and both feet visible, on a plain neutral background.',
+    'Use clear concrete visual language. Avoid vague praise words like beautiful, cool, high-quality, masterpiece, cinematic, or stunning.',
+    'Keep the final prompt between 150 and 220 words unless the brief is very simple.',
+  ].join(' ');
+}
+
+function buildNonhumanSystemPrompt(): string {
+  return [
+    'Rewrite the provided manga non-human entity design brief into one optimized GPT Image 2 prompt for a full-form reference.',
+    'Return only the final prompt text.',
+    'Write a compact natural-language art direction brief, not JSON and not a field-by-field list.',
+    'If the brief contains a named style reference title, preserve that title explicitly in the final prompt and honor the accompanying generalized style interpretation and style anchors as hard rendering constraints.',
+    'Treat the style reference as rendering treatment only. Do not let it override the authored non-human form.',
+    'Prioritize: 1. named style constraint and style anchors, 2. the authored non-human identity, 3. stable overall silhouette, 4. anatomy, part count, connections, proportions, and markings, 5. neutral full-form reference framing.',
+    'Preserve all hard constraints exactly. For a non-human subject, preserve its overall silhouette, anatomy, part count, connections, proportions, and markings.',
+    'Do not invent a human head, hands, feet, limbs, clothing, hair, or humanoid pose unless the brief explicitly requires that feature.',
+    'Do not add action, props, weapons, dramatic background, camera effects, text, or extra characters unless explicitly requested.',
+    'The subject must be centered, single, fully visible in its complete authored form, on a plain neutral background.',
     'Use clear concrete visual language. Avoid vague praise words like beautiful, cool, high-quality, masterpiece, cinematic, or stunning.',
     'Keep the final prompt between 150 and 220 words unless the brief is very simple.',
   ].join(' ');

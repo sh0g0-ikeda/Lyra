@@ -9,6 +9,9 @@ export function assetQuoteMatchesTarget(quote: GenerationQuote, target: AssetQuo
   // Import target IDs identify the server-verified upload, not an entity. The
   // opaque upload token is bound by the authenticated quote-creation request.
   if (target.request.operation === 'entity_import_analysis') return quote.image_model === null && quote.quality === null && quote.render_style === null;
-  return quote.target_id === target.request.target_id && quote.image_model === 'gpt-image-2' && quote.quality === 'medium' &&
+  const imageModelMatches = target.request.image_model === undefined
+    ? quote.image_model === 'gpt-image-2' || quote.image_model === 'gpt-image-2.5-sunburst'
+    : quote.image_model === target.request.image_model;
+  return quote.target_id === target.request.target_id && imageModelMatches && quote.quality === 'medium' &&
     (target.request.render_style === undefined || quote.render_style === target.request.render_style);
 }

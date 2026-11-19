@@ -64,6 +64,7 @@ const episodeDraftFieldsSchema = z
 
 export const improveEpisodeDraftBodySchema = z
   .object({
+    include_production_notes: z.boolean().optional(),
     episode_id: z.string().uuid(),
     instruction: z.string().trim().min(1).max(STORY_AI_LIMITS.instructionMaxLength),
     language: z.enum(APP_LANGUAGES).optional().default('ja'),

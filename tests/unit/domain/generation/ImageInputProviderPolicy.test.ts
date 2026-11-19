@@ -13,6 +13,7 @@ describe('OpenAI画像入力のprovider境界', () => {
     { imageModel: null },
     { imageModel: 'gpt-image-1' },
     { imageModel: 'gpt-image-2', provider: 'openai', providerModelId: 'gpt-image-2' },
+    { imageModel: 'gpt-image-2.5-sunburst', provider: 'openai', providerModelId: 'gpt-image-2.5-sunburst-2026-09-08' },
   ])('legacyまたは整合するGPT画像だけ許可する (%j)', (provenance) => {
     expect(isOpenAIImageInputCompatible(provenance)).toBe(true);
     expect(() => requireOpenAIImageInputCompatible(provenance)).not.toThrow();
@@ -59,6 +60,28 @@ describe('OpenAI画像入力のprovider境界', () => {
       code: 'ENTITY_REFERENCE_MODEL_INCOMPATIBLE',
       statusCode: 409,
     }));
+  });
+
+  it('2.5の既知表示名と固定実行IDのjobは実行ID設定でのみ許可する', () => {
+    const job = {
+      image_model: 'gpt-image-2.5-sunburst',
+      provider_model_id: 'gpt-image-2.5-sunburst-2026-09-08',
+      provider: 'openai',
+    };
+
+    expect(() => requireOpenAIPageJobCompatible(job, 'gpt-image-2.5-sunburst-2026-09-08')).not.toThrow();
+    expect(() => requireOpenAIEntityJobCompatible(job, 'gpt-image-2.5-sunburst')).toThrowError(
+      expect.objectContaining({ code: 'ENTITY_REFERENCE_MODEL_INCOMPATIBLE', statusCode: 409 }),
+    );
+  });
+
+  it.each([
+    { image_model: 'gpt-image-2.5-sunburst', provider_model_id: 'gpt-image-2.5-sunburst', provider: 'openai' },
+    { image_model: 'gpt-image-2.5-sunburst', provider_model_id: 'gpt-image-2.5-sunburst-2026-09-09', provider: 'openai' },
+  ])('2.5の不正な固定組は旧GPTとして実行しない (%j)', (job) => {
+    expect(() => requireOpenAIPageJobCompatible(job, 'gpt-image-2.5-sunburst-2026-09-08')).toThrowError(
+      expect.objectContaining({ code: 'PAGE_REFERENCE_MODEL_INCOMPATIBLE', statusCode: 409 }),
+    );
   });
 
   it('job metadataが明示nullまたは欠損組合せならlegacy扱いにせずfail closedにする', () => {

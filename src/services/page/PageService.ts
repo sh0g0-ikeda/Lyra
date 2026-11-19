@@ -20,7 +20,10 @@ import {
   packEpisodeBeatPlanLedgerPages,
   packEpisodePlanPages,
 } from '../../domain/episodePlanPacking.js';
-import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
+import {
+  PANEL_FRAME_TEMPLATES,
+  resolveDefaultPanelFrameTemplateId,
+} from '../../domain/constants/panelFrameTemplates.js';
 import type {
   EpisodePagePlanApplyResult,
   EpisodePagePlanContext,
@@ -302,6 +305,9 @@ export class PageService implements PageServicePort {
     }
 
     ensurePageEditable(context.status, 'scene autofill');
+    if (context.productionNotesEnabled === true) {
+      throw new ValidationError('Use episode story autofill to apply production notes across pages');
+    }
     if (context.frameCount === 0) {
       throw new ValidationError('Page must have frames before scene autofill can run');
     }
@@ -506,8 +512,17 @@ export class PageService implements PageServicePort {
       this.episodePlanContinuityV3Enabled || shouldUseAtomicPersistence
       ? initialContextFingerprint ?? fingerprintEpisodePlanningContext(context)
       : null;
+    const production = context.episode.productionNotesEnabled === true ? readEpisodeProductionNotes(context.episode) : null;
+    const compilationContext = production === null ? context : {
+      ...context,
+      episode: { ...context.episode, ...production.prose },
+      productionDirectives: production.directives,
+    };
+    if (stateOptions === undefined && production?.directives.some((directive) => directive.kind === 'state')) {
+      throw new ValidationError('Turn on episode character-state autofill to apply production state notes');
+    }
     const compiled = await this.compileEpisodePlanForContextSafely(
-      context,
+      compilationContext,
       language,
       controlledProgressReporter,
       stateOptions,
@@ -521,8 +536,27 @@ export class PageService implements PageServicePort {
       return buildSkippedEpisodePlanApplyResult(compiled.compilerError);
     }
 
-    const stateTransitions = compiled.stateTransitions ?? null;
-    const stateVisualFallbacks = compiled.stateVisualFallbacks ?? [];
+    const authorStates = production === null ? null : validateAndPlaceProductionDirectives(
+      compilationContext, compiled.suggestion, production.directives,
+    );
+    const directedEntities = new Set([
+      ...authorStates?.transitions.map((transition) => transition.entityId) ?? [],
+      ...authorStates?.unresolved.map((transition) => transition.entityId) ?? [],
+    ]);
+    const orderedPanels = new Map([...context.pages]
+      .sort((a, b) => a.pageNumber - b.pageNumber)
+      .flatMap((page) => [...page.panels].sort((a, b) => a.order - b.order))
+      .map((panel, index) => [panel.id, index] as const));
+    const byReadingOrder = (a: { startsAtPanelId: string }, b: { startsAtPanelId: string }): number =>
+      (orderedPanels.get(a.startsAtPanelId) ?? 0) - (orderedPanels.get(b.startsAtPanelId) ?? 0);
+    const stateTransitions = compiled.stateTransitions === undefined ? null : [
+      ...compiled.stateTransitions.filter((transition) => !directedEntities.has(transition.entityId)),
+      ...authorStates?.transitions ?? [],
+    ].sort(byReadingOrder);
+    const stateVisualFallbacks = [
+      ...(compiled.stateVisualFallbacks ?? []).filter((transition) => !directedEntities.has(transition.entityId)),
+      ...authorStates?.unresolved ?? [],
+    ].sort(byReadingOrder);
     if (stateOptions !== undefined && stateTransitions !== null) {
       const normalized = normalizeEpisodePlanToContext(context, compiled.suggestion, language);
       validateEpisodePlanAgainstContext(context, normalized);
@@ -1522,7 +1556,8 @@ export class PageService implements PageServicePort {
     sourceRequirements?: EpisodeSourceRequirements,
     characterReferences?: readonly EpisodeAutofillCharacterReference[],
   ): Promise<EpisodePlanExecutionResult> {
-    const baseCompilerBrief = buildEpisodePlanCompilerBrief(context, language);
+    const baseCompilerBrief = [buildEpisodePlanCompilerBrief(context, language),
+      productionNotesPrompt(context.productionDirectives ?? [])].filter(Boolean).join('\n\n');
     const compilerBrief = continuitySupplement === undefined
       ? baseCompilerBrief
       : `${baseCompilerBrief}\n${continuitySupplement}`;
@@ -2089,8 +2124,15 @@ function isEpisodePageLayoutMetadataConsistent(
     return false;
   }
 
-  const expectedTemplateId = resolveDefaultPanelFrameTemplateId(panelCount);
-  return expectedTemplateId === null || templateId === expectedTemplateId;
+  const selectedTemplate = Object.values(PANEL_FRAME_TEMPLATES).find(
+    (template) => template.id === templateId,
+  );
+  if (selectedTemplate?.panelCount === panelCount) {
+    return true;
+  }
+
+  const defaultTemplateId = resolveDefaultPanelFrameTemplateId(panelCount);
+  return defaultTemplateId === null || templateId === defaultTemplateId;
 }
 
 function buildPageScopedAutofillContext(
@@ -5257,3 +5299,5 @@ function isMeaningfulText(value: string | null | undefined): value is string {
 function isBlank(value: string | null | undefined): boolean {
   return !isMeaningfulText(value);
 }
+import { productionNotesPrompt, readEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
+import { validateAndPlaceProductionDirectives } from './EpisodeProductionPlan.js';

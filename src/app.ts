@@ -944,6 +944,7 @@ function resolveDependencies(
     resolver: new PostgresGenerationQuotePlanResolver({
       persistenceProfile,
       imageModel: env.OPENAI_IMAGE_MODEL,
+      sunburstEnabled: env.OPENAI_IMAGE_SUNBURST_ENABLED,
       generationEnabled: env.GENERATION_ENABLED,
       pageGenerationEnabled: env.PAGE_GENERATION_ENABLED,
       entityGenerationEnabled: env.ENTITY_GENERATION_ENABLED,
@@ -1196,6 +1197,7 @@ function resolveDependencies(
     resolver: new PostgresGenerationQuotePlanResolver({
       persistenceProfile,
       imageModel: env.OPENAI_IMAGE_MODEL,
+      sunburstEnabled: env.OPENAI_IMAGE_SUNBURST_ENABLED,
       generationEnabled: env.GENERATION_ENABLED,
       pageGenerationEnabled: env.PAGE_GENERATION_ENABLED,
       stateGenerationEnabled: env.ENTITY_STATE_REFERENCE_GENERATION_ENABLED,

@@ -33,6 +33,7 @@ export interface StoryEpisodeDraftFields {
 }
 
 export interface StoryEpisodeImprovementInput {
+  includeProductionNotes?: boolean;
   episodeId: string;
   instruction: string;
   language: AppLanguage;
@@ -67,6 +68,7 @@ export interface StoryEpisodeImprovementContext {
 }
 
 export interface StoryEpisodeImprovementResult {
+  productionNotes?: string[];
   draft: StoryEpisodeDraftFields;
   compilerProvider: 'openai' | 'fallback';
   compilerModel: string | null;
@@ -141,6 +143,8 @@ export interface PageSkeletonPageDraft {
 }
 
 export interface EpisodePageSkeletonContext {
+  productionNotesEnabled?: boolean;
+  storyFullDraft?: string | null;
   /** Opaque digest of legacy persisted graph; concurrency control, not prompt data. */
   graphFingerprint?: string;
   episodeId: string;

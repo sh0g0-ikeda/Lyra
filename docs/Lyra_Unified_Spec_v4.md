@@ -1268,3 +1268,40 @@ is either wholly absent (existing fail-closed adapter) or complete test mode onl
 Only staging may omit the OpenAI key when all five generation gates are explicitly
 false in the input environment and generation quotes remain disabled. Provider
 operations then fail closed; production still requires a real provider key.
+
+### Episode character suggestions and production notes
+
+The authenticated character suggestion endpoint reads a saved episode version
+in the actor's work scope. It returns editable suggestions with literal source
+quotations. An existing name or registered alias never causes an update to a
+base character. The user saves a character or state draft explicitly before
+requesting an image preview. The existing generation and credit admission
+contracts apply after the save.
+
+Migration 053 adds an opt-in Boolean to episodes with false as the default.
+Existing episode response shapes remain stable. Supporting clients discover
+the capability before opting in. Story improvement accepts the optional
+`include_production_notes` flag and returns the separate suggestion list only
+when requested. Authored notes survive improvement when their anchors still
+resolve, otherwise the input draft is returned for review.
+
+An opted-in episode accepts `# ` and `＃ ` lines with quoted source fragments.
+Supported commands group two events in a panel, separate two events, or set a
+registered character state or base-state return at a quoted event. The episode
+planner separates these directions from prose and validates their placement
+before applying the plan. Registered state references and the existing visual
+fallback rules apply. Missing, ambiguous, or conflicting anchors stop plan
+application. Valid AI-selected layout templates survive skeleton repair and
+subsequent autofill when the template, frame and panel counts agree.
+
+### Image generation model rollout
+
+Enable `OPENAI_IMAGE_SUNBURST_ENABLED` after deploying a Worker that executes
+frozen legacy and Sunburst quotes side by side. Keep the legacy
+`OPENAI_IMAGE_MODEL=gpt-image-2` setting. Compatible clients discover the
+preferred model through the quote capability endpoint and explicitly request
+Sunburst. Unspecified requests continue to quote GPT Image 2. Sunburst quotes
+pin `gpt-image-2.5-sunburst-2026-09-08`. Legacy delivery projects verified
+Sunburst output into the compatible image response while retaining true model
+provenance in storage and enforcing scoped access. Disabling the flag stops new
+Sunburst quotes. Accepted jobs use their frozen model.

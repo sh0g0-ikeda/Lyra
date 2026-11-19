@@ -112,6 +112,7 @@ export interface PageAutofillPanelContext {
 }
 
 export interface PageAutofillContext {
+  productionNotesEnabled?: boolean;
   layoutConfig?: Record<string, unknown>;
   pageId: string;
   workId: string;
@@ -140,6 +141,7 @@ export interface PageAutofillContext {
 }
 
 export interface EpisodePagePlanContext {
+  productionDirectives?: EpisodeProductionDirective[];
   episodeId: string;
   workId: string;
   chapter: {
@@ -152,6 +154,7 @@ export interface EpisodePagePlanContext {
     keyBeats: string[];
   };
   episode: {
+    productionNotesEnabled?: boolean;
     title: string | null;
     purpose: string | null;
     storyFullDraft?: string | null;
@@ -298,3 +301,4 @@ export interface EpisodePagePlanApplyResult {
   statePlanVersion?: 'episode_state_plan_v1';
   stateAssignmentPolicy?: StateAssignmentPolicy;
 }
+import type { EpisodeProductionDirective } from '../episodeProductionNotes.js';

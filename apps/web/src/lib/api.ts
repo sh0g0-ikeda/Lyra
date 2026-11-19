@@ -1,4 +1,5 @@
 import { googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStatus } from './googleIdentityLink';
+import type { EpisodeCharacterSuggestion } from '../../../../packages/api-contract/src/characterSuggestions.ts';
 import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
 import { pageImageDeliveryPath, entityReferenceImageDeliveryPath, entityReferenceCandidateDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
 import type {
@@ -102,6 +103,26 @@ interface SseHandlers {
 export interface BlobResponse {
   blob: Blob;
   contentType: string | null;
+}
+
+export interface CharacterSuggestionResponse {
+  version: number;
+  characters: EpisodeCharacterSuggestion[];
+}
+
+export interface EntityStateEditorRecord {
+  id: string;
+  entity_id: string;
+  name: string | null;
+  description: string | null;
+  scene_id: string | null;
+  costume_note: string | null;
+  condition_note: string | null;
+  hair_note: string | null;
+  expression_default: string;
+  extra_note: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export class LyraApiClient {
@@ -400,6 +421,7 @@ export class LyraApiClient {
   }
 
   public improveEpisodeDraft(body: {
+    include_production_notes?: true;
     episode_id: string;
     instruction: string;
     language: 'ja' | 'en';
@@ -415,6 +437,25 @@ export class LyraApiClient {
     };
   }, organizationId?: string | null): Promise<StoryEpisodeImprovementRecord> {
     return this.request(`/api/story/improve-episode-draft${organizationQuery(organizationId)}`, { method: 'POST', body });
+  }
+
+  public getCharacterSuggestionCapabilities(): Promise<{ enabled: boolean }> {
+    return this.request('/api/story/character-suggestion-capabilities');
+  }
+
+  public getStoryProductionNoteCapabilities(): Promise<{ enabled: boolean }> {
+    return this.request('/api/story/production-notes-capabilities');
+  }
+
+  public getEpisodeCharacterSuggestions(
+    episodeId: string,
+    body: { version: number; production_notes_enabled?: boolean },
+    organizationId?: string | null,
+  ): Promise<CharacterSuggestionResponse> {
+    return this.request(`/api/episodes/${episodeId}/character-suggestions${organizationQuery(organizationId)}`, {
+      method: 'POST',
+      body,
+    });
   }
 
   public getEntities(workId: string, organizationId?: string | null): Promise<{ entities: EntityRecord[] }> {
@@ -454,6 +495,18 @@ export class LyraApiClient {
     });
   }
 
+  public async generatePreferredEntityReference(
+    entityId: string,
+    sourceCandidateToken: string | undefined,
+    organizationId?: string | null,
+  ): Promise<{ job_id: string }> {
+    const quoted = await this.generateSunburstIfAvailable('entity_preview', entityId, organizationId,
+      sourceCandidateToken === undefined ? {} : { source_candidate_token: sourceCandidateToken });
+    return quoted ?? this.generateEntityReference(
+      entityId, sourceCandidateToken === undefined ? undefined : { source_candidate_token: sourceCandidateToken }, organizationId,
+    );
+  }
+
   public getEntityReferenceSet(entityId: string, organizationId?: string | null): Promise<EntityReferenceSetRecord> {
     return this.request(`/api/entities/${entityId}/reference-set${organizationQuery(organizationId)}`);
   }
@@ -468,6 +521,22 @@ export class LyraApiClient {
 
   public deleteEntityReference(entityId: string, refId: string, organizationId?: string | null): Promise<EntityReferenceSetRecord> {
     return this.request(`/api/entities/${entityId}/reference/${refId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
+  }
+
+  public getEntityStates(entityId: string, organizationId?: string | null): Promise<{ entity_states: EntityStateEditorRecord[] }> {
+    return this.request(`/api/entities/${entityId}/states${organizationQuery(organizationId)}`);
+  }
+
+  public saveNamedEntityState(
+    entityId: string,
+    stateId: string | null,
+    body: { name: string; description: string },
+    organizationId?: string | null,
+  ): Promise<EntityStateEditorRecord> {
+    return this.request(
+      `/api/entities/${entityId}/states${stateId === null ? '' : `/${stateId}`}${organizationQuery(organizationId)}`,
+      { method: stateId === null ? 'POST' : 'PUT', body },
+    );
   }
 
   public getScenes(episodeId: string, organizationId?: string | null): Promise<{ scenes: SceneRecord[] }> {
@@ -536,6 +605,53 @@ export class LyraApiClient {
       method: 'POST',
       body: renderStyle === 'monochrome' ? { render_style: 'monochrome' } : undefined,
     });
+  }
+
+  public async generatePreferredPage(
+    pageId: string,
+    regenerate: boolean,
+    organizationId?: string | null,
+    renderStyle?: 'monochrome',
+  ): Promise<{ job_id: string }> {
+    const quoted = await this.generateSunburstIfAvailable(
+      regenerate ? 'page_regenerate' : 'page_generate', pageId, organizationId, { render_style: renderStyle ?? 'color' },
+    );
+    return quoted ?? this.generatePage(pageId, organizationId, renderStyle);
+  }
+
+  private async generateSunburstIfAvailable(
+    operation: 'page_generate' | 'page_regenerate' | 'entity_preview',
+    targetId: string,
+    organizationId: string | null | undefined,
+    options: { source_candidate_token?: string; render_style?: 'color' | 'monochrome' },
+  ): Promise<{ job_id: string } | null> {
+    const scope = organizationQuery(organizationId);
+    let capability: { image_model: string };
+    try {
+      capability = await this.request(`/api/generation-quote-capabilities${scope}`);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw error;
+    }
+    if (capability.image_model !== 'gpt-image-2.5-sunburst') return null;
+
+    const quote = await this.request<{
+      quote_id: string; quote_token: string; operation: string; target_id: string; image_model: string;
+      billing_scope: { organization_id: string | null };
+    }>(`/api/generation-quotes${scope}`, {
+      method: 'POST',
+      body: { operation, target_id: targetId, image_model: capability.image_model, ...options },
+    });
+    if (quote.image_model !== capability.image_model || quote.operation !== operation || quote.target_id !== targetId ||
+      quote.billing_scope.organization_id !== (organizationId ?? null)) {
+      throw new ApiError('The image quote changed before generation.', 409, 'QUOTE_CHANGED');
+    }
+    const receipt = await this.request<{ job_id: string | null }>(
+      `/api/generation-quotes/${encodeURIComponent(quote.quote_id)}/accept${scope}`,
+      { method: 'POST', body: { quote_token: quote.quote_token, request_key: crypto.randomUUID() } },
+    );
+    if (receipt.job_id === null) throw new ApiError('The image generation was not queued.', 409, 'QUOTE_NOT_ACCEPTED');
+    return { job_id: receipt.job_id };
   }
 
   public confirmPage(pageId: string, organizationId?: string | null): Promise<void> {

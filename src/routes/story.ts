@@ -1,4 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { z } from 'zod';
+import { characterSuggestionsSchema } from '../../packages/api-contract/src/characterSuggestions.js';
 import {
   chapterSchema,
   chaptersResponseSchema,
@@ -64,12 +66,35 @@ export interface StoryRouteDependencies {
 }
 
 const MAX_WORK_LIST_PAGE_LIMIT = 100;
+const episodeCharacterSuggestionsBodySchema = z.object({
+  version: z.number().int().min(0),
+  production_notes_enabled: z.boolean().default(false),
+}).strict();
 
 export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
   app.use('*', dependencies.rateLimitMiddleware);
+
+  app.get('/story/character-suggestion-capabilities', (c) =>
+    c.json({ enabled: dependencies.storyCollaborationService.suggestEpisodeCharacters !== undefined }));
+  app.get('/story/production-notes-capabilities', (c) => c.json({ enabled: true }));
+
+  app.post('/episodes/:episodeId/character-suggestions', async (c) => {
+    const episodeId = storyUuidParamSchema.safeParse(c.req.param('episodeId'));
+    const body = episodeCharacterSuggestionsBodySchema.safeParse(await readStoryJsonBody(c));
+    if (!episodeId.success) throw new ValidationError(formatZodValidationError(episodeId.error));
+    if (!body.success) throw new ValidationError(formatZodValidationError(body.error));
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const service = dependencies.storyCollaborationService;
+    if (service.suggestEpisodeCharacters === undefined) throw new ConfigurationError('Character suggestions are unavailable');
+    const result = await service.suggestEpisodeCharacters(
+      c.get('user').id, episodeId.data, body.data.version, body.data.production_notes_enabled, organizationId,
+    );
+    return c.json(assertMobileResponseContract(characterSuggestionsSchema, result));
+  });
 
   app.post('/story/collaborate', async (c) => {
     const user = c.get('user');
@@ -111,6 +136,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
 
     const result = await dependencies.storyCollaborationService.improveEpisodeDraft(user.id, {
+      ...(body.data.include_production_notes === true ? { includeProductionNotes: true } : {}),
       episodeId: body.data.episode_id,
       instruction: body.data.instruction,
       language: body.data.language,
@@ -141,6 +167,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       compiler_model: result.compilerModel,
       compiler_prompt_version: result.compilerPromptVersion,
       compiler_error: result.compilerError,
+      ...(body.data.include_production_notes === true ? { production_notes: result.productionNotes ?? [] } : {}),
     };
     return c.json(assertMobileResponseContract(storyEpisodeImprovementSchema, payload));
   });
@@ -397,6 +424,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }
 
     const episode = await dependencies.storyService.updateEpisode(user.id, episodeId, {
+      ...(body.data.production_notes_enabled === undefined ? {} : { productionNotesEnabled: body.data.production_notes_enabled }),
       expectedUpdatedAt: body.data.expected_updated_at,
       order: body.data.order,
       title: body.data.title,

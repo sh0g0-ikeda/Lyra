@@ -1,5 +1,10 @@
 import { workDeletionSchema, workDeletionsSchema, type WorkDeletionRecord, type WorkDeletionsRecord } from '@/domain/workDeletion';
 import { pageSkeletonCapabilitiesSchema, type PageSkeletonCapabilities } from '@/domain/pageSkeletonCapabilities';
+import {
+  type EpisodeCharacterSuggestion,
+} from '../../../../packages/api-contract/src/characterSuggestions';
+
+export type CharacterSuggestion = EpisodeCharacterSuggestion;
 import type { GenerationQuote, GenerationQuoteReceipt, GenerationQuoteAcceptance, GenerationQuoteRequest } from '@/domain/pageGenerationQuote';
 import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStartBody, type GoogleLinkStatus } from '@/domain/googleAuth';
 import { z, type ZodType } from 'zod';
@@ -301,6 +306,48 @@ const organizationQuery = (organizationId?: string | null): string => {
     return '';
   }
   return `?organization_id=${encodeURIComponent(organizationId)}`;
+};
+
+const characterSuggestionCapabilitiesSchema = z.object({
+  enabled: z.boolean(),
+}).strict();
+
+const mobileCharacterSuggestionsSchema = z.object({
+  version: z.number().int().min(0),
+  characters: z.array(z.object({
+    name: z.string().trim().min(1).max(100),
+    name_quote: z.string().trim().min(1).max(500),
+    entity_type: z.enum(['character', 'nonhuman']).nullable(),
+    status: z.enum(['new', 'existing', 'ambiguous']),
+    entity_ids: z.array(z.string().uuid()),
+    appearance: z.array(z.object({
+      field: z.enum(['hair_color', 'hair_length', 'hair_style', 'eye_color', 'clothing', 'features']),
+      value: z.string().trim().min(1).max(200),
+      quote: z.string().trim().min(1).max(500),
+    }).strict()).max(6),
+    changes: z.array(z.object({
+      label: z.string().trim().min(1).max(100),
+      description: z.string().trim().min(1).max(300),
+      quote: z.string().trim().min(1).max(500),
+    }).strict()).max(4),
+  }).strict()).max(30),
+}).strict();
+
+const characterSuggestionRequestSchema = z.object({
+  version: z.number().int().min(0),
+  production_notes_enabled: z.boolean().optional(),
+}).strict();
+
+export interface CharacterSuggestionCapabilities {
+  enabled: boolean;
+}
+
+export interface ProductionNotesCapabilities {
+  enabled: boolean;
+}
+
+export type StoryEpisodeImprovementWithProductionNotes = StoryEpisodeImprovementRecord & {
+  production_notes?: string[];
 };
 
 export interface ListPageInput {
@@ -847,7 +894,7 @@ export class LyraMobileApiClient {
 
   public updateEpisode(
     episodeId: string,
-    body: UpdateEpisodePayload,
+    body: UpdateEpisodePayload & { production_notes_enabled?: boolean },
     organizationId?: string | null
   ): Promise<EpisodeRecord> {
     return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
@@ -874,6 +921,33 @@ export class LyraMobileApiClient {
 
   public getPageSkeletonCapabilities(): Promise<PageSkeletonCapabilities> {
     return this.request('/api/story/page-skeleton-capabilities', pageSkeletonCapabilitiesSchema);
+  }
+
+  public getCharacterSuggestionCapabilities(): Promise<CharacterSuggestionCapabilities> {
+    return this.request(
+      '/api/story/character-suggestion-capabilities',
+      characterSuggestionCapabilitiesSchema,
+    );
+  }
+
+  public getProductionNotesCapabilities(): Promise<ProductionNotesCapabilities> {
+    return this.request(
+      '/api/story/production-notes-capabilities',
+      characterSuggestionCapabilitiesSchema,
+    );
+  }
+
+  public suggestEpisodeCharacters(
+    episodeId: string,
+    body: { version: number; production_notes_enabled?: boolean },
+    organizationId?: string | null,
+  ): Promise<{ version: number; characters: EpisodeCharacterSuggestion[] }> {
+    const requestBody = characterSuggestionRequestSchema.parse(body);
+    return this.request(
+      `/api/episodes/${encodeURIComponent(episodeId)}/character-suggestions${organizationQuery(organizationId)}`,
+      mobileCharacterSuggestionsSchema,
+      { method: 'POST', body: requestBody },
+    );
   }
 
   public deleteWork(workId: string, organizationId?: string | null): Promise<WorkDeletionRecord> {
@@ -904,6 +978,7 @@ export class LyraMobileApiClient {
       episode_id: string;
       instruction: string;
       language: 'ja' | 'en';
+      include_production_notes?: true;
       base_draft: {
         title: string | null;
         purpose: string | null;
@@ -916,7 +991,7 @@ export class LyraMobileApiClient {
       };
     },
     organizationId?: string | null
-  ): Promise<StoryEpisodeImprovementRecord> {
+  ): Promise<StoryEpisodeImprovementWithProductionNotes> {
     return this.request(
       `/api/story/improve-episode-draft${organizationQuery(organizationId)}`,
       storyEpisodeImprovementSchema,
@@ -1276,6 +1351,33 @@ export class LyraMobileApiClient {
     return this.request(`/api/generation-quotes${organizationQuery(organizationId)}`, generationQuoteResponseSchema, {
       method: 'POST', body: generationQuoteRequestSchema.parse(input)
     });
+  }
+
+  public async createPreferredGenerationQuote(
+    input: GenerationQuoteRequest,
+    organizationId?: string | null,
+  ): Promise<GenerationQuote> {
+    if (input.operation === 'entity_import_analysis' || input.image_model !== undefined) {
+      return this.createGenerationQuote(input, organizationId);
+    }
+    let preferred: 'gpt-image-2' | 'gpt-image-2.5-sunburst' = 'gpt-image-2';
+    try {
+      const capability = await this.request(
+        `/api/generation-quote-capabilities${organizationQuery(organizationId)}`,
+        z.object({ image_model: z.enum(['gpt-image-2', 'gpt-image-2.5-sunburst']) }).strict(),
+      );
+      preferred = capability.image_model;
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) throw error;
+    }
+    const quote = await this.createGenerationQuote(
+      preferred === 'gpt-image-2.5-sunburst' ? { ...input, image_model: preferred } : input,
+      organizationId,
+    );
+    if (quote.image_model !== preferred) {
+      throw new ApiError('API response did not match the requested image model.', 502, 'INVALID_API_RESPONSE');
+    }
+    return quote;
   }
 
   public acceptGenerationQuote(quoteId: string, input: GenerationQuoteAcceptance, organizationId?: string | null): Promise<GenerationQuoteReceipt> {

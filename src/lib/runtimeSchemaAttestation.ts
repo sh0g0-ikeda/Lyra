@@ -61,6 +61,7 @@ export const SECURITY_RUNTIME_MIGRATIONS = [...CANONICAL_RUNTIME_MIGRATIONS, '04
 export const WORK_DELETION_RUNTIME_MIGRATIONS = [...SECURITY_RUNTIME_MIGRATIONS, '050_add_work_deletion.sql'] as const;
 export const GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS = [...WORK_DELETION_RUNTIME_MIGRATIONS, '051_add_google_link_recovery.sql'] as const;
 export const GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS = [...GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, '052_add_generation_worker_warm_control.sql'] as const;
+export const EPISODE_PRODUCTION_NOTES_RUNTIME_MIGRATIONS = [...GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS, '053_add_episode_production_notes.sql'] as const;
 
 export interface RuntimeSchemaCatalog {
   // Additive-table evidence only; removed after exact 052 validation so existing
@@ -242,7 +243,8 @@ export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSch
     return { kind: 'empty_fresh', failures: [] };
   }
 
-  const hasWorkDeletionGuard = sameStrings(catalog.migrationFilenames, WORK_DELETION_RUNTIME_MIGRATIONS);
+  const hasWorkDeletionGuard = sameStrings(catalog.migrationFilenames, WORK_DELETION_RUNTIME_MIGRATIONS)
+    || sameStrings(catalog.migrationFilenames, EPISODE_PRODUCTION_NOTES_RUNTIME_MIGRATIONS);
   const hasRecoveryGuard = hasWorkDeletionGuard || sameStrings(catalog.migrationFilenames, SECURITY_RUNTIME_MIGRATIONS);
   const hasRevisionGuard = hasRecoveryGuard || sameStrings(catalog.migrationFilenames, CANONICAL_RUNTIME_MIGRATIONS);
   const historyKind = hasRevisionGuard || sameStrings(catalog.migrationFilenames, CANONICAL_047_MIGRATIONS)

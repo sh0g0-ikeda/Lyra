@@ -6,6 +6,7 @@ import { EpisodeImprovementPanel } from '@/components/EpisodeImprovementPanel';
 import type { StoryEpisodeImprovementRecord } from '@/domain/types';
 
 vi.mock('react-native', () => ({
+  Pressable: ({ children, onPress, ...props }: { children: React.ReactNode; onPress: () => void }) => React.createElement('note-toggle', { ...props, onClick: onPress }, children),
   StyleSheet: { create: <T,>(styles: T): T => styles },
   Text: 'text',
   View: 'view'
@@ -95,5 +96,33 @@ describe('EpisodeImprovementPanel', () => {
     expect(onApply).toHaveBeenCalledOnce();
     expect(onImprove).toHaveBeenCalledOnce();
     expect(JSON.stringify(renderer!.toJSON())).toContain('改善後の本文');
+  });
+
+  it('演出指示は提案ごとに本人が選ぶまで本文へ反映しない', () => {
+    const onToggleProductionNote = vi.fn();
+    let renderer: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <EpisodeImprovementPanel
+          canEdit
+          improvement={improvement}
+          instruction="テンポを改善"
+          language="ja"
+          onApply={vi.fn()}
+          onImprove={vi.fn()}
+          onImprovementChange={vi.fn()}
+          onInstructionChange={vi.fn()}
+          onToggleProductionNote={onToggleProductionNote}
+          productionNotes={['扉を押すとのぞくは同じコマにする']}
+          selectedEpisode
+          selectedProductionNotes={[]}
+        />,
+      );
+    });
+
+    const toggle = renderer!.root.findByProps({ accessibilityLabel: '演出指示「扉を押すとのぞくは同じコマにする」を追加' });
+    expect(toggle.props.accessibilityState.checked).toBe(false);
+    act(() => toggle.props.onPress());
+    expect(onToggleProductionNote).toHaveBeenCalledWith('扉を押すとのぞくは同じコマにする');
   });
 });

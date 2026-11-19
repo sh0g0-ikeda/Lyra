@@ -82,6 +82,7 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
 
 class FakeEntityReferenceRepository implements EntityReferenceRepository {
   public lookups: Array<{ entityId: string; userId: string; organizationId: string | null }> = [];
+  public entityType: EntityReferenceContext['entityType'] = 'character';
 
   public async findReferenceContextByIdAndUserId(
     entityId: string,
@@ -93,7 +94,7 @@ class FakeEntityReferenceRepository implements EntityReferenceRepository {
       entityId: 'entity-1',
       workId: 'work-1',
       userId: 'user-1',
-      entityType: 'character',
+      entityType: this.entityType,
       name: 'Mizuki',
       freeDescription: 'Black long hair swordswoman',
       structuredFields: {
@@ -561,6 +562,32 @@ describe('EntityGenerationWorkerService', () => {
       'Use the uploaded source image only as a user-supplied visual anchor',
     );
     expect(referenceGenerator.input?.prompt).toContain('obey the current saved text');
+  });
+
+  it('人外の添付画像プレビューでは人間向け variation を避けて既存の輪郭と部位を保つ', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({
+      params: {
+        entity_id: 'entity-1',
+        entity_type: 'nonhuman',
+        previous_entity_status: 'draft',
+        source_s3_key: 'tmp/user-1/entities/imports/source.png',
+      },
+    });
+    const entityRepository = new FakeEntityReferenceRepository();
+    entityRepository.entityType = 'nonhuman';
+    const referenceGenerator = new FakeReferenceGenerator();
+    const service = buildService({ executionRepository, entityRepository, referenceGenerator });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(referenceGenerator.input?.prompt).toContain(
+      'Keep the uploaded source image\'s established overall silhouette, anatomy, part count, connections, proportions, and markings',
+    );
+    expect(referenceGenerator.input?.prompt).toContain('Nonhuman presentation profile');
+    expect(referenceGenerator.input?.prompt).not.toContain('Slightly shift the body weight onto one leg');
+    expect(referenceGenerator.input?.prompt).not.toContain('both hands and both feet');
   });
 
   it('source_s3_key が別ユーザー範囲なら読み込まず failed と refund にする', async () => {

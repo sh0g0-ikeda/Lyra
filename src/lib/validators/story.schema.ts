@@ -116,6 +116,7 @@ export const createEpisodeBodySchema = z
 
 export const updateEpisodeBodySchema = z
   .object({
+    production_notes_enabled: z.boolean().optional(),
     expected_updated_at: expectedUpdatedAtSchema.optional(),
     order: z.number().int().min(1).max(1000).optional(),
     title: nullableText200.optional(),

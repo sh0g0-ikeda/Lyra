@@ -495,6 +495,7 @@ export interface StoryCollaborationInput {
 }
 
 export interface StoryEpisodeImprovementRecord {
+  production_notes?: string[];
   draft: {
     title: string | null;
     purpose: string | null;

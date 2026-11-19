@@ -1514,6 +1514,57 @@ describe('PageService', () => {
     expect(pageRepository.episodePlanningContext.pages[0]?.layoutConfig).toEqual(originalLayoutConfig);
   });
 
+  it('episode story plan は保存済みの同数 template 定義を次回 autofill でも保持する', async () => {
+    const pageRepository = new FakePageRepository();
+    const savedLayoutConfig = {
+      type: 'template',
+      template_id: 'stacked_wide_4',
+      panel_count: 4,
+      frame_definitions: [
+        { reading_order: 1, x: 0, y: 0, width: 1, height: 0.25 },
+        { reading_order: 2, x: 0, y: 0.25, width: 1, height: 0.25 },
+        { reading_order: 3, x: 0, y: 0.5, width: 1, height: 0.25 },
+        { reading_order: 4, x: 0, y: 0.75, width: 1, height: 0.25 },
+      ],
+    };
+    pageRepository.page = {
+      ...buildPageSummary(),
+      panelCount: 4,
+      frameCount: 4,
+      layoutConfig: savedLayoutConfig,
+    };
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      pages: [{
+        ...buildEpisodePlanningContext().pages[0]!,
+        frameCount: 4,
+        layoutConfig: savedLayoutConfig,
+        panels: Array.from({ length: 4 }, (_value, index) => ({
+          ...buildAutofillPanelContext(),
+          id: `panel-${index + 1}`,
+          order: index + 1,
+        })),
+      }],
+    };
+    const episodeCompiler = new FakeEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository,
+      new FakePanelRepository(),
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+    );
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(pageRepository.episodePlanningContext.pages[0]?.layoutConfig).toEqual(savedLayoutConfig);
+    expect(pageRepository.updatedInputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ layoutConfig: expect.objectContaining(savedLayoutConfig) }),
+    ]));
+    expect(episodeCompiler.lastInput?.compilerBrief).toContain('height=0.250');
+  });
+
   it('episode story plan は不整合な page layout metadata を変更せず compiler 実行前に拒否する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = {

@@ -15,7 +15,7 @@ interface Input {
 function dependencies(input: Input): ConstructorParameters<typeof PageGenerationQuoteController>[0] {
   return {
     prepare: input.prepare,
-    createQuote: (target, organizationId) => input.api.createPageGenerationQuote({ operation: target.operation, target_id: target.pageId, render_style: target.renderStyle }, organizationId),
+    createQuote: (target, organizationId) => input.api.createPreferredGenerationQuote({ operation: target.operation, target_id: target.pageId, render_style: target.renderStyle }, organizationId),
     acceptQuote: (quoteId, body, organizationId) => input.api.acceptGenerationQuote(quoteId, body, organizationId),
     getReceipt: (quoteId, organizationId) => input.api.getGenerationQuote(quoteId, organizationId),
     requestKey: () => Crypto.randomUUID(),

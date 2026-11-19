@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { CREDIT_COSTS } from '../constants/credits.js';
 import { calculatePageGenerationCreditCost, PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../constants/generation.js';
 import { ENTITY_IMPORT_ANALYSIS_MODEL, ENTITY_REFERENCE_GENERATION } from '../constants/entityReference.js';
+import { GPT_IMAGE_25_SUNBURST, GPT_IMAGE_25_SUNBURST_SNAPSHOT } from '../constants/openAIImageModel.js';
 import { ConflictError, ValidationError } from '../errors/index.js';
 import type { GenerationQuoteOperation, GenerationQuotePlan, GenerationQuoteRequest } from '../types/generationQuote.js';
 
@@ -23,6 +24,7 @@ export function calculateQuotePrice(operation: GenerationQuoteOperation, referen
 export function validateQuoteSelection(
   request: GenerationQuoteRequest,
   configuredImageModel: string,
+  sunburstEnabled = false,
 ): Pick<GenerationQuotePlan, 'imageModel' | 'providerModelId' | 'quality' | 'renderStyle'> {
   if (request.operation === 'entity_import_analysis') {
     if (request.imageModel !== undefined || request.quality !== undefined || request.renderStyle !== undefined) {
@@ -30,7 +32,8 @@ export function validateQuoteSelection(
     }
     return { imageModel: null, providerModelId: ENTITY_IMPORT_ANALYSIS_MODEL, quality: null, renderStyle: null };
   }
-  if ((request.imageModel ?? ENTITY_REFERENCE_GENERATION.MODEL) !== ENTITY_REFERENCE_GENERATION.MODEL) {
+  const imageModel = request.imageModel ?? ENTITY_REFERENCE_GENERATION.MODEL;
+  if (imageModel !== ENTITY_REFERENCE_GENERATION.MODEL && (!sunburstEnabled || imageModel !== GPT_IMAGE_25_SUNBURST)) {
     throw new ValidationError('Selected image model is not available');
   }
   if (configuredImageModel !== ENTITY_REFERENCE_GENERATION.MODEL) {
@@ -44,8 +47,8 @@ export function validateQuoteSelection(
     throw new ValidationError('Selected rendering style is not available for this operation');
   }
   return {
-    imageModel: ENTITY_REFERENCE_GENERATION.MODEL,
-    providerModelId: configuredImageModel,
+    imageModel,
+    providerModelId: imageModel === GPT_IMAGE_25_SUNBURST ? GPT_IMAGE_25_SUNBURST_SNAPSHOT : configuredImageModel,
     quality: 'medium',
     renderStyle: isPage ? request.renderStyle ?? 'color' : 'color',
   };

@@ -432,6 +432,23 @@ describe('PageSkeletonService', () => {
     expect(repository.createdPages[0]?.panels).toHaveLength(4);
   });
 
+  it('preserves a model-selected template when its panel count matches the repaired panels', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    client.generatedPages[0] = {
+      ...client.generatedPages[0],
+      suggestedLayout: 'stacked_wide_4',
+    };
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages[0]).toMatchObject({
+      suggestedPanelCount: 4,
+      suggestedLayout: 'stacked_wide_4',
+    });
+  });
+
   it('repairs page numbers, panel orders, and invalid entity ids before saving', async () => {
     const repository = new FakeStoryRepository();
     const client = new FakeStoryAiClient();

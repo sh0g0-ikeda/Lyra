@@ -1,5 +1,6 @@
 ﻿import { PANEL_FRAME_TEMPLATES, listPanelFrameTemplateDefinitions } from '../../domain/constants/panelFrameTemplates.js';
 import { fingerprintPageSkeletonContext } from '../../domain/pageSkeletonFingerprint.js';
+import { assertProductionPanelConstraints, productionNotesPrompt, readEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
 import { STORY_AI_LIMITS } from '../../domain/constants/storyAi.js';
 import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
 import { inferEntityIdsFromTexts } from '../../domain/entityAliases.js';
@@ -138,11 +139,14 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       );
     }
 
+    const production = context.productionNotesEnabled === true ? readEpisodeProductionNotes(context) : null;
+    const promptContext = { ...context, ...production?.prose, estimatedPages: plannedPageCount };
+    const productionPrompt = productionNotesPrompt(production?.directives ?? []);
     let pages: PageSkeletonPageDraft[];
     try {
       pages = await this.storyAiClient.generatePageSkeleton({
         systemPrompt: buildPageSkeletonSystemPrompt(plannedPageCount, language),
-        userPrompt: buildPageSkeletonUserPrompt({ ...context, estimatedPages: plannedPageCount }),
+        userPrompt: [buildPageSkeletonUserPrompt(promptContext), productionPrompt].filter(Boolean).join('\n\n'),
       });
     } catch (error) {
       if (error instanceof AppError) {
@@ -153,12 +157,12 @@ export class PageSkeletonService implements PageSkeletonServicePort {
         episodeId,
         reason: fallbackReason,
       });
-      if (!allowCompilerFallback) {
+      if (!allowCompilerFallback || productionPrompt.length > 0) {
         throw new ValidationError(
           'AI page skeleton generation did not complete. Please retry after a few minutes.',
         );
       }
-      pages = buildFallbackPageSkeleton({ ...context, estimatedPages: plannedPageCount, language });
+      pages = buildFallbackPageSkeleton({ ...promptContext, language });
     }
 
     const allowedEntityIds = context.entities.map((entity) => entity.id);
@@ -175,16 +179,23 @@ export class PageSkeletonService implements PageSkeletonServicePort {
         episodeId,
         reason: sanitizePersistedErrorMessage(error, 'Page skeleton validation failed'),
       });
-      if (!allowCompilerFallback) {
+      if (!allowCompilerFallback || productionPrompt.length > 0) {
         throw new ValidationError(
           'AI page skeleton result was incomplete. Please retry after a few minutes.',
         );
       }
       pages = repairGeneratedPageSkeleton(
-        buildFallbackPageSkeleton({ ...context, estimatedPages: plannedPageCount, language }),
+        buildFallbackPageSkeleton({ ...promptContext, language }),
         allowedEntityIds,
       );
       validatePageSkeleton(plannedPageCount, allowedEntityIds, pages);
+    }
+
+    if (production !== null) {
+      assertProductionPanelConstraints(
+        pages.flatMap((page) => page.panels.map((panel) => ({ text: [panel.situationHint, panel.suggestedDialogueHint] }))),
+        production.directives,
+      );
     }
 
     return {
@@ -244,6 +255,7 @@ function buildPageSkeletonSystemPrompt(estimatedPages: number, language: AppLang
     `Return exactly ${estimatedPages} pages.`,
     `Allowed layout ids: ${Object.keys(PANEL_FRAME_TEMPLATES).join(', ')}.`,
     'Choose a template by its actual geometry, focal beat, dialogue room, and saved reading order:',
+    'Across the episode, vary the geometry when the focal beat, action direction, dialogue room or pacing changes. Use equal grids when they support the scene rhythm.',
     ...listPanelFrameTemplateDefinitions().map(template => `${template.id}: panels=${template.panelCount}; geometry=${template.editorialGuide.geometry}; focal=${template.editorialGuide.focalPlacement}; dialogue_room=${template.editorialGuide.dialogueRoom}; action_pacing=${template.editorialGuide.actionPacing}; ${template.editorialGuide.rtlFlow}`),
     'Allowed panel_role values: establish, action, reaction, emphasis, transition, pause, impact.',
     'Allowed suggested_size values: standard, large, wide, narrow, splash.',
@@ -703,8 +715,11 @@ function repairGeneratedPageSkeleton(
       ),
     }));
     const actualPanelCount = repairedPanels.length;
+    const selectedTemplate = PANEL_FRAME_TEMPLATES[page.suggestedLayout];
     const repairedLayout =
-      resolveDefaultPanelFrameTemplateId(actualPanelCount) ?? page.suggestedLayout;
+      selectedTemplate.panelCount === actualPanelCount
+        ? page.suggestedLayout
+        : (resolveDefaultPanelFrameTemplateId(actualPanelCount) ?? page.suggestedLayout);
 
     return {
       ...page,
