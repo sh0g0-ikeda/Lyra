@@ -12,6 +12,7 @@ import { EntityService } from '../../src/services/entity/EntityService.js';
 import { PostgresPageRepository } from '../../src/repositories/PageRepository.js';
 import { decodeWorkListCursor, encodeWorkListCursor, decodeEntityListCursor, decodePageListCursor } from '../../src/domain/pagination.js';
 import { StoryService } from '../../src/services/story/StoryService.js';
+import { StoryCollaborationService } from '../../src/services/story/StoryCollaborationService.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
 import { rejectionOf } from './asyncPostgresAssertions.js';
 
@@ -76,6 +77,28 @@ describePostgres('story shipped revision compatibility', () => {
     expect((await update('?version=2', { production_notes_enabled: false })).status).toBe(200);
     const stored = await repository.findEpisodeByIdAndUserId(ids.episode, ids.user);
     expect(stored).toMatchObject({ storyFullDraft: edited, productionNotes: notes, productionNotesEnabled: false });
+  });
+
+  it('別の話で登録したキャラは今回の話に未選択でも既存扱いになり状態変化だけが候補になる', async () => {
+    const ids = await fixture();
+    const entities = new PostgresEntityRepository(new TestDatabase(pool));
+    const prior = await entities.create({ workId: ids.work, userId: ids.user, entityType: 'character', name: 'ミオ',
+      freeDescription: '第1話の登録済み設定', promptSupplement: null, structuredFields: {}, speechProfile: {} });
+    const quote = 'ミオの左腕に赤い模様が現れた。';
+    const episode = await service.updateEpisode(ids.user, ids.episode, { storyInputMode: 'full', storyFullDraft: quote });
+    const suggestions = new StoryCollaborationService(repository, {
+      streamCollaboration: () => { throw Error('unexpected collaboration'); },
+      generatePageSkeleton: () => { throw Error('unexpected page planning'); },
+      improveEpisodeDraft: () => { throw Error('unexpected improvement'); },
+      extractEpisodeCharacters: async () => [{
+        name: 'ミオ', name_quote: quote, entity_type: 'character', appearance: [{ field: 'features', value: '赤い模様', quote }],
+        changes: [{ label: '模様', description: '赤い模様が現れた', quote }],
+      }],
+    });
+    const result = await suggestions.suggestEpisodeCharacters(ids.user, ids.episode, episode.version, false);
+    expect(result.characters).toMatchObject([{ status: 'existing', entity_ids: [prior.id], appearance: [],
+      changes: [{ description: '赤い模様が現れた' }] }]);
+    expect((await entities.findByIdAndUserId(prior.id, ids.user))?.freeDescription).toBe('第1話の登録済み設定');
   });
 
   it.each(['work','chapter','episode'] as const)('%s 同一revisionの競合保存は一件だけ成功し履歴を増やす', async (kind) => {

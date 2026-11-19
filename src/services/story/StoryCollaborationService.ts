@@ -77,8 +77,6 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
     if (episode.version !== version) throw new ResourceStaleError();
     const prose = episodeCharacterSource(episode, productionNotesEnabled || episode.productionNotesEnabled === true);
     if (prose.length === 0) return { version, characters: [] };
-    const context = await this.storyRepository.findEpisodeImprovementContextByIdAndUserId(episodeId, userId, organizationId);
-    if (context === null) throw new NotFoundError('Episode not found');
     if (this.storyAiClient.extractEpisodeCharacters === undefined) {
       throw new ConfigurationError('Character suggestions are unavailable');
     }
@@ -97,6 +95,10 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
     const current = await this.storyRepository.findEpisodeByIdAndUserId(episodeId, userId, organizationId);
     if (current === null) throw new NotFoundError('Episode not found');
     if (current.version !== version) throw new ResourceStaleError();
+    // The planning context contains the whole work's cast, including characters
+    // from earlier episodes. Resolve aliases against the roster after extraction.
+    const context = await this.storyRepository.findEpisodePageSkeletonContextByIdAndUserId(episodeId, userId, organizationId);
+    if (context === null) throw new NotFoundError('Episode not found');
     return { version, characters: groundCharacterSuggestions(prose, context.entities, extracted) };
   }
 
