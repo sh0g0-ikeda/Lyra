@@ -430,7 +430,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     setCollaborationError(null);
     setDirtySaveError(null);
   }, [
-    episodeScopeKey,
     scenesQuery.data?.scenes.length,
     selectedEpisode,
     selectedScene,
@@ -454,9 +453,10 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
           throw new Error(t(language, "generated.screens.StoryScreen.select.an.episode.to.save.134a75d1"));
         }
         if (estimatedPagesInvalid) {
+          const maximum = editableEpisodePageLimit(selectedEpisode.estimated_pages);
           throw new Error(
             t(language, 'screen.story.estimatedPagesOutOfRange', {
-              maximum: maxEstimatedPages
+              maximum
             })
           );
         }
@@ -491,7 +491,6 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     episodeDirty,
     storyErrorScope,
     estimatedPagesInvalid,
-    maxEstimatedPages,
     language,
     sceneDirty,
     sceneOrderInvalid,

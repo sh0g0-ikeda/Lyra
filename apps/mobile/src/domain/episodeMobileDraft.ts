@@ -27,7 +27,7 @@ export function separateProductionNoteLines(
       || (!enabled && preserved.has(note)))) notes.push(note);
     else body.push(line);
   }
-  return { body: body.join('\n'), notes: enabled ? [...new Set(notes)] : [...preservedNotes] };
+  return { body: body.join('\n'), notes: [...new Set(notes)] };
 }
 
 export const episodeMobileDraft = (

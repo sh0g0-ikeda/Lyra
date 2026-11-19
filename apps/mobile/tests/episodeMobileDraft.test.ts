@@ -129,6 +129,10 @@ describe('episode Mobile full-draft compatibility', () => {
       notes: [saved],
     });
     expect(separateProductionNoteLines(`#${saved}`, true)).toEqual({ body: '', notes: [saved] });
+    expect(separateProductionNoteLines('本文A。本文B。', false, [saved])).toEqual({
+      body: '本文A。本文B。',
+      notes: [],
+    });
   });
 
 });
