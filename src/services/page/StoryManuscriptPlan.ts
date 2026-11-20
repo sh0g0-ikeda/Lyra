@@ -11,6 +11,53 @@ const allocationSchema = z.object({
 }).strict();
 const slotKey = (slot: ManuscriptPanelSlot): string => `${slot.pageId}:${slot.order}`;
 
+export type ManuscriptPlanConstraintReason =
+  | 'missing_block_anchor'
+  | 'block_anchor_outside_allowed_slots'
+  | 'fixed_panel_split'
+  | 'direction_in_dialogue'
+  | 'direction_target_ambiguous';
+
+export interface ManuscriptPlanViolation {
+  constraintId: string;
+  reason: ManuscriptPlanConstraintReason;
+  allowedSlots: string[];
+  actualSlots: string[];
+  directionIndex?: number;
+}
+
+/** Identifies generated-output failures without reclassifying stale source or
+ * layout metadata, which must remain hard input failures. */
+export class ManuscriptPlanConstraintError extends ValidationError {
+  public constructor(
+    public readonly constraintId: string,
+    public readonly reason: ManuscriptPlanConstraintReason,
+    message: string,
+    public readonly directionIndex?: number,
+  ) {
+    super(message);
+  }
+}
+
+function rejectManuscriptPlanConstraint(
+  violation: ManuscriptPlanViolation,
+  message: string,
+): never {
+  console.warn('story_manuscript_plan_constraint_rejected', {
+    constraintId: violation.constraintId,
+    reason: violation.reason,
+    allowedSlots: violation.allowedSlots,
+    actualSlots: violation.actualSlots,
+    ...(violation.directionIndex === undefined ? {} : { directionIndex: violation.directionIndex }),
+  });
+  throw new ManuscriptPlanConstraintError(
+    violation.constraintId,
+    violation.reason,
+    message,
+    violation.directionIndex,
+  );
+}
+
 /** Raw source remains the fingerprint authority. Commands only constrain
  * allocation/composition and never become character or state evidence. */
 export function prepareEpisodeManuscriptPlan(context: EpisodePagePlanContext): EpisodeManuscriptPlan | undefined {
@@ -107,41 +154,93 @@ export function manuscriptPlanPrompt(plan: EpisodeManuscriptPlan | undefined): s
   ].join('\n');
 }
 
-export function validateManuscriptPlan(plan: EpisodeManuscriptPlan | undefined,
-  suggestion: EpisodePagePlanSuggestion): void {
-  if (plan === undefined) return;
+export function collectManuscriptPlanViolations(
+  plan: EpisodeManuscriptPlan | undefined,
+  suggestion: EpisodePagePlanSuggestion,
+): ManuscriptPlanViolation[] {
+  if (plan === undefined) return [];
   const panels = suggestion.pages.flatMap(page => page.panels.map(panel => ({
     pageId: page.pageId, order: panel.order,
     text: [panel.situationText ?? '', ...panel.dialogue?.map(line => line.text) ?? []].join('\n'),
+    dialogue: panel.dialogue ?? [],
   })));
+  const violations: ManuscriptPlanViolation[] = [];
   for (const block of plan.blocks) {
     const allowed = new Set(block.slots.map(slotKey));
     const matches = panels.filter(panel => panel.text.includes(block.anchor));
-    if (!matches.some(panel => allowed.has(slotKey(panel))) || matches.some(panel => !allowed.has(slotKey(panel))
+    const outsideAllowed = matches.filter(panel => !allowed.has(slotKey(panel))
       && !plan.blocks.some(other => other.id !== block.id && other.text.includes(block.anchor)
-        && other.slots.some(slot => slotKey(slot) === slotKey(panel))))) {
-      throw new ValidationError('自動入力が指定したコマ・ページの境界を守れていません。再試行してください。');
+        && other.slots.some(slot => slotKey(slot) === slotKey(panel))));
+    const allowedMatches = matches.filter(panel => allowed.has(slotKey(panel)));
+    if (outsideAllowed.length > 0 || allowedMatches.length === 0) {
+      violations.push({
+        constraintId: block.id,
+        reason: outsideAllowed.length > 0
+          ? 'block_anchor_outside_allowed_slots'
+          : 'missing_block_anchor',
+        allowedSlots: [...allowed],
+        actualSlots: outsideAllowed.map(slotKey),
+      });
     }
     if (block.fixedPanel) {
       const sentences = block.text.split(/(?<=[。！？!?\n])/u).map(sentence => sentence.trim())
         .filter(sentence => sentence.length > 0 && plan.blocks.filter(other => other.text.includes(sentence)).length === 1);
-      if (panels.some(panel => !allowed.has(slotKey(panel)) && sentences.some(sentence => panel.text.includes(sentence)))) {
-        throw new ValidationError('1コマに指定したシーンが別のコマへ分割されています。再試行してください。');
+      const splitPanels = panels.filter(panel => !allowed.has(slotKey(panel))
+        && sentences.some(sentence => panel.text.includes(sentence)));
+      if (splitPanels.length > 0) {
+        violations.push({
+          constraintId: block.id,
+          reason: 'fixed_panel_split',
+          allowedSlots: [...allowed],
+          actualSlots: splitPanels.map(slotKey),
+        });
       }
     }
   }
-  for (const direction of plan.directions) {
-    if (suggestion.pages.some(page => page.panels.some(panel =>
-      panel.dialogue?.some(line => line.text.includes(direction.instruction))))) {
-      throw new ValidationError('作画指示がセリフに混入しました。再試行してください。');
-    }
+  const allPanelSlots = new Set(panels.map(slotKey));
+  for (const [directionIndex, direction] of plan.directions.entries()) {
     const block = plan.blocks.find(candidate => candidate.id === direction.blockId);
+    const allowed = block === undefined
+      ? allPanelSlots
+      : new Set(block.slots.map(slotKey));
+    const dialogueMatches = panels.filter(panel =>
+      panel.dialogue.some(line => line.text.includes(direction.instruction)));
+    if (dialogueMatches.length > 0) {
+      violations.push({
+        constraintId: direction.blockId,
+        reason: 'direction_in_dialogue',
+        allowedSlots: [...allowed],
+        actualSlots: dialogueMatches.map(slotKey),
+        directionIndex,
+      });
+    }
     const matches = panels.filter(panel => panel.text.includes(direction.anchor)
       && (block === undefined || block.slots.some(slot => slotKey(slot) === slotKey(panel))));
     if (matches.length !== 1) {
-      throw new ValidationError('作画指示の対象を1つのコマに特定できません。対象の場面を区切ってください。');
+      violations.push({
+        constraintId: direction.blockId,
+        reason: 'direction_target_ambiguous',
+        allowedSlots: [...allowed],
+        actualSlots: matches.map(slotKey),
+        directionIndex,
+      });
     }
   }
+  return violations;
+}
+
+export function validateManuscriptPlan(plan: EpisodeManuscriptPlan | undefined,
+  suggestion: EpisodePagePlanSuggestion): void {
+  const violation = collectManuscriptPlanViolations(plan, suggestion)[0];
+  if (violation === undefined) return;
+  const message = violation.reason === 'fixed_panel_split'
+    ? '1コマに指定したシーンが別のコマへ分割されています。再試行してください。'
+    : violation.reason === 'direction_in_dialogue'
+      ? '作画指示がセリフに混入しました。再試行してください。'
+      : violation.reason === 'direction_target_ambiguous'
+        ? '作画指示の対象を1つのコマに特定できません。対象の場面を区切ってください。'
+        : '自動入力が指定したコマ・ページの境界を守れていません。再試行してください。';
+  rejectManuscriptPlanConstraint(violation, message);
 }
 
 /** Preserve the user's direction in editable composition notes, never speech. */

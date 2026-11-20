@@ -3155,6 +3155,168 @@ describe('PageService', () => {
     expect(panelRepository.updatedPanels.every((panel) => panel.input.situationText !== 'This invalid repair must never be applied.')).toBe(true);
   });
 
+  it.each([
+    {
+      label: 'anchorを消す',
+      issuePageIds: ['page-2'],
+      repairs: [
+        { pageId: 'page-2', panelOrder: 1, changedFields: ['situationText'] as const,
+          patch: { situationText: 'The audit paraphrases the event and adds the lasting injury.' } },
+      ],
+    },
+    {
+      label: 'anchorを別の割当ページへ移す',
+      issuePageIds: ['page-2', 'page-3'],
+      repairs: [
+        { pageId: 'page-2', panelOrder: 1, changedFields: ['situationText'] as const,
+          patch: { situationText: 'The original event is no longer present here.' } },
+        { pageId: 'page-3', panelOrder: 1, changedFields: ['situationText'] as const,
+          patch: { situationText: 'Minerva advances the beat on page 2.' } },
+      ],
+    },
+  ])('監査修復が原稿境界を壊す場合は本文を足さず修復全体を捨てる: $label', async ({ issuePageIds, repairs }) => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildManuscriptAuditContext();
+    const panelRepository = new FakePanelRepository();
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    auditCompiler.audits = [{
+      accepted: false,
+      issues: [{
+        code: 'timeline_discontinuity',
+        severity: 'error',
+        pageIds: issuePageIds,
+        message: 'Carry the injury forward without moving its onset.',
+        repairInstruction: 'Repair the continuity while preserving manuscript ownership.',
+      }],
+      panelRepairs: repairs.map((repair) => ({
+        pageId: repair.pageId,
+        panelOrder: repair.panelOrder,
+        changedFields: [...repair.changedFields],
+        patch: repair.patch,
+      })),
+    }];
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      undefined,
+      new ChunkAwareEpisodePagePlanCompiler(),
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+    );
+
+    const result = await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null, undefined, undefined,
+      { applyProductionNotes: true },
+    );
+
+    expect(result.compilerUsed).toBe(true);
+    expect(auditCompiler.inputs).toHaveLength(1);
+    expect(panelRepository.updatedPanels.find((update) => update.panelId === 'panel-2')?.input.situationText)
+      .toBe('Minerva advances the beat on page 2.');
+    expect(panelRepository.updatedPanels.find((update) => update.panelId === 'panel-3')?.input.situationText)
+      .toBe('Minerva advances the beat on page 3.');
+  });
+
+  it('監査修復を捨てた後の元案も原稿anchorを欠く場合は保存しない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildManuscriptAuditContext();
+    const panelRepository = new FakePanelRepository();
+    const baseCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const invalidOriginalCompiler: EpisodePagePlanCompilerPort = {
+      compilePlan: async (input) => {
+        const compiled = await baseCompiler.compilePlan(input);
+        const pageTwo = compiled.suggestion.pages.find((page) => page.pageId === 'page-2');
+        if (pageTwo?.panels[0] !== undefined) {
+          pageTwo.panels[0].situationText = 'The original compiler also omitted the source event.';
+        }
+        return compiled;
+      },
+    };
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    auditCompiler.audits = [{
+      accepted: false,
+      issues: [{ code: 'source_omission', severity: 'error', pageIds: ['page-2'],
+        message: 'The source event is absent.', repairInstruction: 'Restore the source event.' }],
+      panelRepairs: [{ pageId: 'page-2', panelOrder: 1, changedFields: ['situationText'],
+        patch: { situationText: 'This repair still omits the source event.' } }],
+    }];
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      undefined,
+      invalidOriginalCompiler,
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+    );
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null, undefined, undefined,
+      { applyProductionNotes: true },
+    )).rejects.toMatchObject({ reason: 'missing_block_anchor' });
+    expect(pageRepository.updatedInputs).toHaveLength(0);
+    expect(panelRepository.updatedPanels).toHaveLength(0);
+  });
+
+  it('元案が原稿anchorを言い換えても監査修復が正しく戻した場合は保存する', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = buildManuscriptAuditContext();
+    const panelRepository = new FakePanelRepository();
+    const baseCompiler = new ChunkAwareEpisodePagePlanCompiler();
+    const paraphrasingCompiler: EpisodePagePlanCompilerPort = {
+      compilePlan: async (input) => {
+        const compiled = await baseCompiler.compilePlan(input);
+        const pageTwo = compiled.suggestion.pages.find((page) => page.pageId === 'page-2');
+        if (pageTwo?.panels[0] !== undefined) {
+          pageTwo.panels[0].situationText = 'Minerva continues the second beat in paraphrase.';
+        }
+        return compiled;
+      },
+    };
+    const auditCompiler = new FakeEpisodePlanAuditCompiler();
+    auditCompiler.audits = [{
+      accepted: false,
+      issues: [{ code: 'source_omission', severity: 'error', pageIds: ['page-2'],
+        message: 'The source anchor is absent.', repairInstruction: 'Restore it to its assigned panel.' }],
+      panelRepairs: [{ pageId: 'page-2', panelOrder: 1, changedFields: ['situationText'],
+        patch: { situationText: 'Minerva advances the beat on page 2.' } }],
+    }];
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      undefined,
+      paraphrasingCompiler,
+      undefined,
+      new FakeEpisodeBeatPlanCompiler(),
+      auditCompiler,
+      true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+    );
+
+    const result = await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null, undefined, undefined,
+      { applyProductionNotes: true },
+    );
+
+    expect(result.compilerUsed).toBe(true);
+    expect(auditCompiler.inputs[0]?.compilerBrief).toContain(
+      'AUTHOR MANUSCRIPT CONSTRAINT VIOLATIONS IN THE CURRENT DRAFT',
+    );
+    expect(auditCompiler.inputs[0]?.compilerBrief).toContain('"constraintId":"segment-2"');
+    expect(auditCompiler.inputs[0]?.compilerBrief).toContain('"reason":"missing_block_anchor"');
+    expect(auditCompiler.inputs[0]?.compilerBrief).toContain('"allowedSlots":["page-2:1"]');
+    expect(panelRepository.updatedPanels.find((update) => update.panelId === 'panel-2')?.input.situationText)
+      .toBe('Minerva advances the beat on page 2.');
+  });
+
   it.each(['unknown', 'unready', 'foreign'] as const)(
     'inline repair 有効時は%s状態を入れる監査修復を捨て元の状態を保存する',
     async (mode) => {
@@ -6572,6 +6734,32 @@ function buildMultiPageEpisodePlanningContext(pageCount: number): EpisodePagePla
         ],
       };
     }),
+  };
+}
+
+function buildManuscriptAuditContext(): EpisodePagePlanContext {
+  const context = buildMultiPageEpisodePlanningContext(4);
+  const source = context.pages
+    .map((page) => `Minerva advances the beat on page ${page.pageNumber}.`)
+    .join('\n===\n');
+  return {
+    ...context,
+    episode: {
+      ...context.episode,
+      productionNotesEnabled: true,
+      storyFullDraft: source,
+    },
+    pages: context.pages.map((page) => ({
+      ...page,
+      layoutConfig: {
+        ...page.layoutConfig,
+        story_manuscript: {
+          version: 1,
+          source,
+          panels: [{ order: 1, blockId: `segment-${page.pageNumber}` }],
+        },
+      },
+    })),
   };
 }
 

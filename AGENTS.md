@@ -1621,3 +1621,5 @@ Story manuscript commands and page estimation follow Unified Spec §6: keep spar
 authored page/panel boundaries and paired directions in the raw manuscript,
 exclude them from automatic character/state evidence, preserve source-to-slot
 ownership through generation and audit, and retain the opt-in/legacy job split.
+Discard an invalid audit repair as a whole; only a fully revalidated unchanged
+draft may survive. Never restore source anchors to bypass manuscript checks.

@@ -1441,6 +1441,13 @@ are required. Old jobs and clients retain their previous skeleton path.
 Generated layout metadata records the raw manuscript and each source block's
 assigned panel slots. Detail, audit and final validation use the same ownership;
 editing the source or losing the mapping requires rebuilding the structure.
+An audit patch that violates output ownership or direction placement is rejected
+as a whole under the existing optional-repair policy. The unchanged original
+draft may be saved only after every context, manuscript and deterministic gate
+passes again. Never insert source anchors merely to make a repaired draft pass;
+invalid originals and stale source mappings remain hard failures.
+Pass deterministic manuscript violations to the existing single audit as source
+data so it can repair an invalid detail draft without adding another audit pass.
 Directions are editable composition notes, never dialogue, character base
 attributes, or evidence for automatically created states. Wrapped existing
 quoted state-timing commands use the established registered-state rules.

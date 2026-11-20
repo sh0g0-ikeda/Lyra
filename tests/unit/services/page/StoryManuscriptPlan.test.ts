@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { applyManuscriptDirections, prepareEpisodeManuscriptPlan, validateManuscriptPlan } from '../../../../src/services/page/StoryManuscriptPlan.js';
+import {
+  applyManuscriptDirections,
+  collectManuscriptPlanViolations,
+  ManuscriptPlanConstraintError,
+  prepareEpisodeManuscriptPlan,
+  validateManuscriptPlan,
+} from '../../../../src/services/page/StoryManuscriptPlan.js';
 import type { EpisodePagePlanContext, EpisodePagePlanSuggestion } from '../../../../src/domain/types/page.js';
 
 const source = 'ミオは港へ向かう。\n---\nミオとカイが握手をする。二人は一緒に船を見上げる。\n---\n船が出港していく。';
@@ -50,7 +56,36 @@ describe('manuscript allocation through final autofill', () => {
     const output = suggestion();
     [output.pages[0]!.panels[2]!.situationText, output.pages[0]!.panels[3]!.situationText]
       = [output.pages[0]!.panels[3]!.situationText, output.pages[0]!.panels[2]!.situationText];
-    expect(() => validateManuscriptPlan(prepareEpisodeManuscriptPlan(context()), output)).toThrow('境界');
+    try {
+      validateManuscriptPlan(prepareEpisodeManuscriptPlan(context()), output);
+      throw new Error('原稿の割当外移動が受理されました');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ManuscriptPlanConstraintError);
+      expect(error).toMatchObject({ constraintId: 'segment-2', reason: 'block_anchor_outside_allowed_slots' });
+    }
+  });
+  it('監査修復が原稿anchorを消した場合は本文を補完せず専用エラーにする', () => {
+    const output = suggestion();
+    output.pages[0]!.panels[2]!.situationText = '二人は合流し、次の展開へ進む。';
+    try {
+      validateManuscriptPlan(prepareEpisodeManuscriptPlan(context()), output);
+      throw new Error('原稿anchorの欠落が受理されました');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ManuscriptPlanConstraintError);
+      expect(error).toMatchObject({ constraintId: 'segment-2', reason: 'missing_block_anchor' });
+    }
+    expect(output.pages[0]!.panels[2]!.situationText).toBe('二人は合流し、次の展開へ進む。');
+  });
+  it('監査修復が固定コマの一部を外へ分割した場合も専用エラーにする', () => {
+    const output = suggestion();
+    output.pages[0]!.panels[4]!.situationText = '二人は一緒に船を見上げる。';
+    try {
+      validateManuscriptPlan(prepareEpisodeManuscriptPlan(context()), output);
+      throw new Error('固定コマの分割が受理されました');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ManuscriptPlanConstraintError);
+      expect(error).toMatchObject({ constraintId: 'segment-2', reason: 'fixed_panel_split' });
+    }
   });
   it('原稿変更後の古い構成・配置先欠落・固定コマ分裂を拒否する', () => {
     const changed = context();
@@ -74,6 +109,41 @@ describe('manuscript allocation through final autofill', () => {
     const plan = prepareEpisodeManuscriptPlan(context('ミオは港へ向かう。船が出港していく。＃引きで＃'));
     expect(plan?.directions[0]?.anchor).toBe('船が出港していく。');
   });
+  it('境界のない作画指示は全出力コマを候補にして欠落を監査に渡す', () => {
+    const plan = prepareEpisodeManuscriptPlan(context('ミオは港へ向かう。＃引きで＃船が出港していく。'));
+    const output = suggestion();
+    output.pages[0]!.panels[3]!.situationText = '船が動き出す。';
+
+    expect(collectManuscriptPlanViolations(plan, output)).toContainEqual({
+      constraintId: 'segment-1',
+      reason: 'direction_target_ambiguous',
+      allowedSlots: ['page:1', 'page:2', 'page:3', 'page:4', 'page:5'],
+      actualSlots: [],
+      directionIndex: 0,
+    });
+  });
+  it('同じblockの複数指示はdirectionIndexで違反anchorを区別する', () => {
+    const raw = 'ミオが歩く。＃引きで＃カイが頷く。＃寄りで＃船が出港する。';
+    const plan = prepareEpisodeManuscriptPlan(context(raw));
+    const output = suggestion();
+    output.pages[0]!.panels[0]!.situationText = 'ミオが歩く。';
+    output.pages[0]!.panels[1]!.situationText = 'カイが頷く。';
+    output.pages[0]!.panels[2]!.situationText = '船が動く。';
+    output.pages[0]!.panels[3]!.situationText = '港を見送る。';
+    output.pages[0]!.panels[4]!.situationText = '二人が立ち尽くす。';
+
+    const violations = collectManuscriptPlanViolations(plan, output)
+      .filter(violation => violation.reason === 'direction_target_ambiguous');
+    expect(plan?.directions.map(direction => direction.anchor)).toEqual([
+      'カイが頷く。',
+      '船が出港する。',
+    ]);
+    expect(violations).toEqual([expect.objectContaining({
+      constraintId: 'segment-1',
+      directionIndex: 1,
+      actualSlots: [],
+    })]);
+  });
   it('同じ文が別の指定コマに再登場しても保存済みの配置先で区別する', () => {
     const raw = '---\nカイが頷く。\n---\nカイが頷く。\n---';
     const input = context(raw);
@@ -82,8 +152,18 @@ describe('manuscript allocation through final autofill', () => {
     input.pages[0]!.layoutConfig = { story_manuscript: { version: 1, source: raw,
       panels: [{ order: 1, blockId: 'segment-2' }, { order: 2, blockId: 'segment-3' }] } };
     const plan = prepareEpisodeManuscriptPlan(input);
-    expect(() => validateManuscriptPlan(plan, { pages: [{ pageId: 'page', pageNumber: 1,
-      panels: [1, 2].map(order => ({ order, situationText: 'カイが頷く。', entities: [] })) }] })).not.toThrow();
+    const bothOwned = { pages: [{ pageId: 'page', pageNumber: 1,
+      panels: [1, 2].map(order => ({ order, situationText: 'カイが頷く。', entities: [] })) }] };
+    expect(() => validateManuscriptPlan(plan, bothOwned)).not.toThrow();
+
+    const firstMissing = structuredClone(bothOwned);
+    firstMissing.pages[0]!.panels[0]!.situationText = 'カイが動きで応える。';
+    expect(collectManuscriptPlanViolations(plan, firstMissing)).toContainEqual({
+      constraintId: 'segment-2',
+      reason: 'missing_block_anchor',
+      allowedSlots: ['page:1'],
+      actualSlots: [],
+    });
   });
   it('片側しか囲っていないページ境界も同じページへ混ぜない', () => {
     const raw = '前の話\n===\n後の話';

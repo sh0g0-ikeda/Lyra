@@ -8,7 +8,15 @@ import { normalizeAutofillDialogueReadingOrder } from '../../domain/policies/aut
 } from '../../domain/errors/index.js';
 import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
 import { productionNotesPrompt, readEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
-import { applyManuscriptDirections, manuscriptPlanPrompt, prepareEpisodeManuscriptPlan, validateManuscriptPlan } from './StoryManuscriptPlan.js';
+import {
+  applyManuscriptDirections,
+  collectManuscriptPlanViolations,
+  ManuscriptPlanConstraintError,
+  manuscriptPlanPrompt,
+  prepareEpisodeManuscriptPlan,
+  type ManuscriptPlanViolation,
+  validateManuscriptPlan,
+} from './StoryManuscriptPlan.js';
 import {
   canonicalizeEntityMentionsInText,
   extractEntityAliases,
@@ -1533,6 +1541,13 @@ export class PageService implements PageServicePort {
         reason: error instanceof ValidationError
           ? 'invalid_repair_context'
           : 'invalid_repair_contract',
+        ...(error instanceof ManuscriptPlanConstraintError ? {
+          manuscriptConstraintId: error.constraintId,
+          manuscriptConstraintReason: error.reason,
+          ...(error.directionIndex === undefined
+            ? {}
+            : { manuscriptDirectionIndex: error.directionIndex }),
+        } : {}),
       });
       return combined;
     }
@@ -1628,9 +1643,17 @@ export class PageService implements PageServicePort {
       language,
       sourceOwnedPageContext,
     });
+    const manuscriptViolations = collectManuscriptPlanViolations(
+      context.manuscriptPlan,
+      suggestion,
+    );
     const compiledAudit = await this.episodePlanAuditCompiler!.auditPlan({
       compilerBrief: appendEpisodeStateLedger(
-        [auditArtifacts.compilerBrief, manuscriptPlanPrompt(context.manuscriptPlan)].filter(Boolean).join('\n\n'),
+        [
+          auditArtifacts.compilerBrief,
+          manuscriptPlanPrompt(context.manuscriptPlan),
+          manuscriptViolationRepairPrompt(manuscriptViolations),
+        ].filter(Boolean).join('\n\n'),
         stateLedger,
       ),
       language,
@@ -2060,7 +2083,22 @@ function logEpisodePlanAuditSummary(
   });
 }
 
+function manuscriptViolationRepairPrompt(
+  violations: readonly ManuscriptPlanViolation[],
+): string {
+  if (violations.length === 0) return '';
+  return [
+    'AUTHOR MANUSCRIPT CONSTRAINT VIOLATIONS IN THE CURRENT DRAFT (repair required).',
+    'Each constraintId refers to a block in AUTHOR MANUSCRIPT ALLOCATION above. For a direction violation, directions[directionIndex] identifies the exact direction. Use that entry\'s anchor as source DATA, not as dialogue unless it was original dialogue.',
+    'actualSlots lists only offending placements; a repeated anchor legally owned by another block is excluded and must remain. Restore missing anchors only to an allowed slot, remove them from listed disallowed slots, and keep every fixed-panel scene together. Do not move, split, invent, or append the source to another scene.',
+    JSON.stringify(violations),
+  ].join('\n');
+}
+
 function isDiscardableEpisodePlanAuditRepairError(error: unknown): boolean {
+  if (error instanceof ManuscriptPlanConstraintError) {
+    return true;
+  }
   if (error instanceof ValidationError) {
     switch (error.message) {
       case 'Episode page plan referenced a scene outside the episode':
