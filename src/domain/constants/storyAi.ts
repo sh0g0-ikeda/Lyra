@@ -6,6 +6,15 @@ export const STORY_EPISODE_IMPROVEMENT_WRITER_MODEL = STORY_AI_LOW_COST_MODEL;
 export const STORY_EPISODE_IMPROVEMENT_PLANNER_OPENAI_MODEL = STORY_AI_LOW_COST_MODEL;
 export const STORY_EPISODE_IMPROVEMENT_AUDITOR_OPENAI_MODEL = STORY_AI_LOW_COST_MODEL;
 
+// Episode character appearance extraction and its independent whole-manuscript
+// reconciliation intentionally share one isolated provider policy. Keeping this
+// separate prevents a quality rollout from changing collaboration, planning or
+// any image-generation path.
+export const CHARACTER_AUTOFILL_OPENAI_MODEL = 'gpt-6-luna';
+export const CHARACTER_AUTOFILL_REASONING_EFFORT = 'low' as const;
+export const CHARACTER_AUTOFILL_EXTRACTION_MAX_TOKENS = 16_000;
+export const CHARACTER_AUTOFILL_COVERAGE_MAX_TOKENS = 8_000;
+
 export const STORY_AI_LIMITS = {
   instructionMaxLength: 2000,
   currentDraftMaxLength: 20000,

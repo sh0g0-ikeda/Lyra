@@ -5,7 +5,14 @@ import { ConfigurationError, NotFoundError, ResourceStaleError, ValidationError 
 import type { EntityType } from '../domain/types/entity.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
 import { parseStructuredFields } from '../lib/validators/entity.schema.js';
-import type { CharacterAutofillCandidate } from '../services/story/CharacterAutofillFields.js';
+import {
+  mergeCharacterAutofillCandidates,
+  type CharacterAutofillCandidate,
+} from '../services/story/CharacterAutofillFields.js';
+import {
+  isCharacterAppearanceChoice,
+  readCharacterAppearanceChoice,
+} from '../services/entity/CharacterAppearanceReview.js';
 import {
   CANONICAL_REPOSITORY_SCHEMA_PROFILE,
   hasPreVariantEntitySchema,
@@ -18,6 +25,9 @@ export interface SaveCharacterAutofillCandidatesInput {
   version: number;
   organizationId: string | null;
   candidates: readonly CharacterAutofillCandidate[];
+  review?: {
+    unresolved: NonNullable<CharacterAutofillResult['appearance_review']>['unresolved'];
+  };
 }
 
 export interface CharacterAutofillRepository {
@@ -34,6 +44,7 @@ interface RosterRow extends QueryResultRow {
   name: string;
   entity_type: EntityType;
   structured_fields: unknown;
+  updated_at: Date;
 }
 
 interface StateRow extends QueryResultRow {
@@ -45,6 +56,7 @@ interface StateRow extends QueryResultRow {
 
 interface InsertedEntityRow extends QueryResultRow {
   id: string;
+  updated_at: Date;
 }
 
 interface RosterEntry {
@@ -52,7 +64,11 @@ interface RosterEntry {
   name: string;
   entityType: EntityType;
   aliases: string[];
+  structuredFields: Record<string, unknown>;
+  updatedAt: string;
 }
+
+const MAX_REVIEW_ITEMS = 1_920;
 
 /**
  * Persists one extraction result atomically. The work and its current roster are
@@ -70,6 +86,7 @@ export class PostgresCharacterAutofillRepository implements CharacterAutofillRep
       throw new ConfigurationError('Character autofill requires entity state variants');
     }
     const candidates = normalizeCandidates(input.candidates);
+    if (input.review !== undefined) assertReview(input.review.unresolved);
     return this.transactionRunner.transaction(async (transactionClient) => {
       await this.lockOrganizationEditor(transactionClient, input);
       const episode = await this.lockAuthorizedEpisode(transactionClient, input);
@@ -80,6 +97,8 @@ export class PostgresCharacterAutofillRepository implements CharacterAutofillRep
       const characters: CharacterAutofillResult['characters'] = [];
       const skippedNames: string[] = [];
       const resultByEntityId = new Map<string, CharacterAutofillResult['characters'][number]>();
+      const appearanceSuggestions: NonNullable<CharacterAutofillResult['appearance_review']>['suggestions'] = [];
+      const appearanceSuggestionKeys = new Set<string>();
 
       for (const candidate of candidates) {
         const matches = findRosterMatches(roster, candidate.name);
@@ -102,6 +121,25 @@ export class PostgresCharacterAutofillRepository implements CharacterAutofillRep
           roster.push(entry);
           statesByEntity.set(entry.id, []);
           created = true;
+        }
+
+        if (input.review !== undefined && !created && entry.entityType === 'character') {
+          for (const evidence of candidate.choiceEvidence ?? []) {
+            if (appearanceSuggestions.length >= MAX_REVIEW_ITEMS) break;
+            if (!isCharacterAppearanceChoice(evidence.field, evidence.value)
+              || readCharacterAppearanceChoice(entry.structuredFields, evidence.field) !== undefined) continue;
+            const key = `${entry.id}\u0000${evidence.field}\u0000${evidence.value}\u0000${normalizeText(evidence.quote)}`;
+            if (appearanceSuggestionKeys.has(key)) continue;
+            appearanceSuggestionKeys.add(key);
+            appearanceSuggestions.push({
+              entity_id: entry.id,
+              name: entry.name,
+              field: evidence.field,
+              value: evidence.value,
+              quote: evidence.quote.trim(),
+              expected_updated_at: entry.updatedAt,
+            });
+          }
         }
 
         const states = statesByEntity.get(entry.id) ?? [];
@@ -143,6 +181,12 @@ export class PostgresCharacterAutofillRepository implements CharacterAutofillRep
         version: input.version,
         characters,
         skipped_names: Array.from(new Set(skippedNames)),
+        ...(input.review === undefined ? {} : {
+          appearance_review: {
+            unresolved: input.review.unresolved,
+            suggestions: appearanceSuggestions,
+          },
+        }),
       };
     });
   }
@@ -207,7 +251,7 @@ export class PostgresCharacterAutofillRepository implements CharacterAutofillRep
 
   private async lockRoster(client: DatabaseClient, workId: string): Promise<RosterEntry[]> {
     const result = await client.query<RosterRow>(
-      `SELECT id, name, entity_type, structured_fields
+      `SELECT id, name, entity_type, structured_fields, updated_at
        FROM entities
        WHERE work_id = $1::uuid
        ORDER BY id ASC
@@ -219,6 +263,8 @@ export class PostgresCharacterAutofillRepository implements CharacterAutofillRep
       name: row.name,
       entityType: row.entity_type,
       aliases: extractEntityAliases(readRecord(row.structured_fields)),
+      structuredFields: readRecord(row.structured_fields),
+      updatedAt: serializeTimestamp(row.updated_at),
     }));
   }
 
@@ -257,12 +303,12 @@ export class PostgresCharacterAutofillRepository implements CharacterAutofillRep
            (work_id, user_id, entity_type, name, free_description, prompt_supplement,
             structured_fields, speech_profile, status)
          VALUES ($1::uuid, $2::uuid, $3, $4, $5, NULL, $6::jsonb, '{}'::jsonb, 'draft')
-         RETURNING id
+         RETURNING id, updated_at
        ), inserted_reference_set AS (
          INSERT INTO reference_sets (entity_id, status)
          SELECT id, 'empty' FROM inserted_entity
        )
-       SELECT id FROM inserted_entity`,
+       SELECT id, updated_at FROM inserted_entity`,
       [
         workId,
         userId,
@@ -273,36 +319,27 @@ export class PostgresCharacterAutofillRepository implements CharacterAutofillRep
       ],
     );
     const id = result.rows[0]?.id;
-    if (id === undefined) throw new ConfigurationError('Character autofill failed to create an entity');
+    const updatedAt = result.rows[0]?.updated_at;
+    if (id === undefined || updatedAt === undefined) throw new ConfigurationError('Character autofill failed to create an entity');
     return {
       id,
       name: candidate.name.trim(),
       entityType: candidate.entityType,
       aliases: extractEntityAliases(structuredFields),
+      structuredFields,
+      updatedAt: serializeTimestamp(updatedAt),
     };
   }
 }
 
 function normalizeCandidates(candidates: readonly CharacterAutofillCandidate[]): CharacterAutofillCandidate[] {
   if (candidates.length > 30) throw new ValidationError('Character autofill has too many characters');
-  const byName = new Map<string, CharacterAutofillCandidate>();
-  for (const candidate of candidates) {
-    assertCandidate(candidate);
-    const key = normalizeText(candidate.name);
-    const prior = byName.get(key);
-    if (prior === undefined) {
-      byName.set(key, { ...candidate, name: candidate.name.trim(), changes: [...candidate.changes] });
-      continue;
-    }
-    const conflictingType = prior.entityType !== null && candidate.entityType !== null
-      && prior.entityType !== candidate.entityType;
-    byName.set(key, {
-      ...prior,
-      entityType: conflictingType ? null : prior.entityType ?? candidate.entityType,
-      changes: deduplicateChanges([...prior.changes, ...candidate.changes]),
-    });
+  for (const candidate of candidates) assertCandidate(candidate);
+  const merged = mergeCharacterAutofillCandidates(candidates);
+  for (const candidate of merged) {
+    if (candidate.changes.length > 30) throw new ValidationError('Character autofill has too many states');
   }
-  return [...byName.values()];
+  return merged;
 }
 
 function assertCandidate(candidate: CharacterAutofillCandidate): void {
@@ -312,6 +349,16 @@ function assertCandidate(candidate: CharacterAutofillCandidate): void {
     throw new ValidationError('Character autofill description is too long');
   }
   if (candidate.changes.length > 30) throw new ValidationError('Character autofill has too many states');
+  if ((candidate.choiceEvidence?.length ?? 0) > 64) {
+    throw new ValidationError('Character autofill has too much appearance evidence');
+  }
+  for (const evidence of candidate.choiceEvidence ?? []) {
+    if (evidence.field.trim().length < 1 || evidence.field.length > 100
+      || evidence.value.trim().length < 1 || evidence.value.length > 150
+      || evidence.quote.trim().length < 1 || evidence.quote.length > 500) {
+      throw new ValidationError('Character autofill appearance evidence is invalid');
+    }
+  }
   for (const change of candidate.changes) {
     if (change.name.trim().length < 1 || change.name.trim().length > 100
       || change.description.trim().length < 1 || change.description.trim().length > 2000
@@ -321,11 +368,22 @@ function assertCandidate(candidate: CharacterAutofillCandidate): void {
   }
 }
 
-function deduplicateChanges(changes: CharacterAutofillCandidate['changes']): CharacterAutofillCandidate['changes'] {
-  return [...new Map(changes.map((change) => [
-    `${normalizeText(change.quote)}\u0000${normalizeText(change.description)}`,
-    change,
-  ])).values()];
+function assertReview(
+  unresolved: NonNullable<CharacterAutofillResult['appearance_review']>['unresolved'],
+): void {
+  if (unresolved.length > MAX_REVIEW_ITEMS) throw new ValidationError('Character autofill has too many review issues');
+  for (const issue of unresolved) {
+    if (issue.quote.trim().length < 1 || issue.quote.length > 500
+      || !['ambiguous_character', 'conflicting_traits', 'unverified_trait'].includes(issue.reason)) {
+      throw new ValidationError('Character autofill review issue is invalid');
+    }
+  }
+}
+
+function serializeTimestamp(value: Date | string): string {
+  const timestamp = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(timestamp.getTime())) throw new ConfigurationError('Character autofill entity timestamp is invalid');
+  return timestamp.toISOString();
 }
 
 function findRosterMatches(roster: readonly RosterEntry[], name: string): RosterEntry[] {

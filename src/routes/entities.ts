@@ -15,6 +15,7 @@ import {
   entitySchema,
 } from '../../packages/api-contract/src/mobileApiSchemas.js';
 import { ConfigurationError, ValidationError } from '../domain/errors/index.js';
+import { isCharacterAppearanceChoice } from '../services/entity/CharacterAppearanceReview.js';
 import {
   decodeEntityListCursor,
   encodeEntityListCursor,
@@ -96,6 +97,12 @@ export interface EntityRouteDependencies {
   entityStateReferenceService?: EntityStateReferenceServicePort;
   organizationService?: OrganizationServicePort;
 }
+
+const approveAppearanceChoice = z.object({
+  field: z.string().min(1).max(100),
+  value: z.string().min(1).max(150),
+  expected_updated_at: z.string().datetime({ offset: true }),
+}).strict().refine(({ field, value }) => isCharacterAppearanceChoice(field, value), 'Unknown character appearance choice');
 
 export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -252,6 +259,21 @@ export function createEntityRoutes(dependencies: EntityRouteDependencies): Hono<
       'Content-Type': exportedImage.mimeType,
       'Cache-Control': 'private, no-store',
     });
+  });
+
+  app.post('/entities/:id/appearance-review', async (c) => {
+    const user = c.get('user');
+    const entityId = parseUuidParam(c, 'id');
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const body = approveAppearanceChoice.safeParse(await readJsonBody(c));
+    if (!body.success) throw new ValidationError(formatZodValidationError(body.error));
+    const { field, value, expected_updated_at } = body.data;
+    const entity = await dependencies.entityService.updateEntity(user.id, entityId, {
+      expectedUpdatedAt: expected_updated_at, appearanceReview: { field, value },
+    }, organizationId);
+    await recordOrganizationAudit(dependencies, organizationId, user.id, 'entity.updated', 'entity', entity.id, { fields: [field] });
+    return c.json(assertMobileResponseContract(entitySchema, toEntityResponse(entity)));
   });
 
   app.put('/entities/:id', async (c) => {

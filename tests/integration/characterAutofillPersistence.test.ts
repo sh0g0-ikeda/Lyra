@@ -114,6 +114,62 @@ describePostgres('character autofill persistence', () => {
     ]));
   });
 
+  it('同名で分割された新規候補は非競合の基本欄と残余を一人に統合して保存する', async () => {
+    const ids = await fixture();
+    const result = await repository.saveCandidates({
+      userId: ids.user, episodeId: ids.episode, version: 1, organizationId: null,
+      candidates: [
+        { name: 'ミオ', entityType: 'character', freeDescription: '左頜に星形の傷', structuredFields: { hair: { color: 'black' } }, changes: [] },
+        { name: 'ミオ', entityType: 'character', freeDescription: '右耳に金のピアス', structuredFields: { eyes: { color: 'green' }, clothing: { category: 'school' } }, changes: [] },
+      ],
+    });
+    expect(result.characters).toHaveLength(1);
+    const saved = await pool.query<{ free_description: string | null; structured_fields: unknown }>(
+      'SELECT free_description,structured_fields FROM entities WHERE work_id=$1', [ids.work],
+    );
+    expect(saved.rows).toEqual([{
+      free_description: '左頜に星形の傷 / 右耳に金のピアス',
+      structured_fields: { hair: { color: 'black' }, eyes: { color: 'green' }, clothing: { category: 'school' } },
+    }]);
+  });
+
+  it('レビュー指定時だけ既存人物の空の選択欄を引用付きで提案し、保存済み欄は上書きしない', async () => {
+    const ids = await fixture();
+    const existingId = randomUUID();
+    await pool.query(
+      `INSERT INTO entities (id,work_id,user_id,entity_type,name,structured_fields)
+       VALUES ($1,$2,$3,'character','ミオ','{"hair":{"color":"black"}}')`,
+      [existingId, ids.work, ids.user],
+    );
+    await pool.query("INSERT INTO reference_sets (entity_id,status) VALUES ($1,'empty')", [existingId]);
+    const before = await pool.query<{ updated_at: Date }>('SELECT updated_at FROM entities WHERE id=$1', [existingId]);
+    const unresolved = [{ quote: '彼女の髪は明るい。', reason: 'ambiguous_character' as const }];
+
+    const result = await repository.saveCandidates({
+      userId: ids.user, episodeId: ids.episode, version: 1, organizationId: null,
+      review: { unresolved },
+      candidates: [{
+        name: 'ミオ', entityType: 'character', freeDescription: null, structuredFields: {}, changes: [],
+        choiceEvidence: [
+          { field: 'hair.color', value: 'blonde', quote: 'ミオは金髪' },
+          { field: 'eyes.color', value: 'green', quote: '目は緑色' },
+          { field: 'clothing.category', value: 'school', quote: '服は制服' },
+        ],
+      }],
+    });
+
+    expect(result.appearance_review).toEqual({
+      unresolved,
+      suggestions: [
+        { entity_id: existingId, name: 'ミオ', field: 'eyes.color', value: 'green', quote: '目は緑色', expected_updated_at: before.rows[0]?.updated_at.toISOString() },
+        { entity_id: existingId, name: 'ミオ', field: 'clothing.category', value: 'school', quote: '服は制服', expected_updated_at: before.rows[0]?.updated_at.toISOString() },
+      ],
+    });
+    expect((await pool.query<{ structured_fields: unknown; updated_at: Date }>(
+      'SELECT structured_fields,updated_at FROM entities WHERE id=$1', [existingId],
+    )).rows).toEqual([{ structured_fields: { hair: { color: 'black' } }, updated_at: before.rows[0]?.updated_at }]);
+  });
+
   it('同名が複数ある曖昧候補と種別不明の新規候補は書き込まず名前を報告する', async () => {
     const ids = await fixture();
     const ambiguousIds = [randomUUID(), randomUUID()];

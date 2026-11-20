@@ -1,6 +1,7 @@
 import { isOlderEditorRevision, reconcileSavedEditorDraft } from './domain/editorDraftSave';
 import { MAX_NEW_EPISODE_PAGES, editableEpisodePageLimit } from '../../../packages/api-contract/src/episodePageLimits.js';
-import type { CharacterAutofillResult } from '../../../packages/api-contract/src/characterAutofill.ts';
+import type { CharacterAppearanceSuggestion, CharacterAutofillResult } from '../../../packages/api-contract/src/characterAutofill.ts';
+import { humanAppearanceChoices } from '../../../packages/api-contract/src/characterAppearanceCatalog.ts';
 import type { EpisodeCharacterSuggestion } from '../../../packages/api-contract/src/characterSuggestions.ts';
 import { useRetainedSelection } from './hooks/useRetainedSelection';
 import { reconcileSavedStoryDraft, sameStoryDraft } from './domain/storyDraftSave';
@@ -1446,6 +1447,45 @@ function pickUiText(language: UiLanguage, english: string, japanese: string): st
   return language === 'en' ? english : japanese;
 }
 
+const APPEARANCE_REVIEW_FIELD_LABELS: Record<string, string> = {
+  gender_expression: 'Gender', age_range: 'Age range', skin_tone: 'Skin tone', first_impression: 'First impression',
+  standing_style: 'Standing style', default_expression: 'Default expression', height: 'Height', build: 'Body type',
+  art_style: 'Art style', face_shape: 'Face shape', eyebrow_shape: 'Eyebrow shape', nose_shape: 'Nose shape',
+  mouth_shape: 'Mouth shape', 'eyes.color': 'Eye color', 'eyes.shape': 'Eye shape', 'eyes.eyelid_type': 'Eyelid type',
+  'face_detail.eye_size': 'Eye size', 'face_detail.eye_angle': 'Eye angle', 'face_detail.pupil_style': 'Pupil style',
+  'face_detail.under_eye_detail': 'Under-eye detail', 'face_detail.mouth_default': 'Mouth default',
+  'hair.color': 'Hair color', 'hair.length': 'Hair length', 'hair.style': 'Hair style', 'hair.arrangement': 'Hair arrangement',
+  'hair.bangs': 'Bangs', 'hair_detail.front_shape': 'Front shape', 'hair_detail.side_hair': 'Side hair',
+  'hair_detail.back_shape': 'Back shape',
+  'clothing.category': 'Category', 'clothing.main_color': 'Main color', 'clothing.impression': 'Impression',
+  'outfit_detail.collar_shape': 'Collar shape', 'outfit_detail.sleeve_length': 'Sleeve length',
+  'outfit_detail.skirt_or_pants_shape': 'Skirt or pants', 'outfit_detail.shoes': 'Shoes',
+  'outfit_detail.socks_or_legwear': 'Legwear',
+};
+
+function appearanceReviewFieldLabel(language: UiLanguage, field: string): string {
+  return translateUiString(language, APPEARANCE_REVIEW_FIELD_LABELS[field] ?? field.replace(/[._]/g, ' '));
+}
+
+function appearanceReviewValueLabel(language: UiLanguage, field: string, value: string): string {
+  const choices = (humanAppearanceChoices as Record<string, readonly { value: string; labelJa: string; labelEn: string }[]>)[field];
+  const choice = choices?.find((item) => item.value === value);
+  return choice === undefined ? value.replace(/_/g, ' ') : language === 'ja' ? choice.labelJa : choice.labelEn;
+}
+
+function appearanceReviewReasonLabel(language: UiLanguage, reason: 'ambiguous_character' | 'conflicting_traits' | 'unverified_trait'): string {
+  const labels = {
+    ambiguous_character: ['The character could not be identified.', '人物を特定できない記述です。'],
+    conflicting_traits: ['The source contains conflicting traits.', '特徴が矛盾している記述です。'],
+    unverified_trait: ['This could not be verified as a character trait.', '人物の特徴と確認できない記述です。'],
+  } as const;
+  return pickUiText(language, labels[reason][0], labels[reason][1]);
+}
+
+function isResourceStaleApiError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'RESOURCE_STALE';
+}
+
 function formatJpy(value: number): string {
   return new Intl.NumberFormat('ja-JP', {
     style: 'currency',
@@ -2390,6 +2430,8 @@ function StudioShell(props: {
   const [pageDesignJobId, setPageDesignJobId] = useState<string | null>(null);
   const [readerLayout, setReaderLayout] = useState<'rtl' | 'vertical'>('rtl');
   const readerScope = JSON.stringify([activeOrganizationId, selectedEpisodeId]);
+  const readerScopeRef = useRef(readerScope);
+  useLayoutEffect(() => { readerScopeRef.current = readerScope; }, [readerScope]);
   const [productionNoteScope, setProductionNoteScope] = useState<string | null>(null);
   const [storyProductionNoteSuggestions, setStoryProductionNoteSuggestions] = useState<{
     scope: string;
@@ -4188,6 +4230,47 @@ function StudioShell(props: {
       `${savedCount} named character${savedCount === 1 ? '' : 's'} saved. No image preview was generated.`,
       `${savedCount}人の名前付きキャラクターを保存しました。画像プレビューは生成していません。`,
     );
+  };
+
+  const approveCharacterAppearance = async (suggestion: CharacterAppearanceSuggestion): Promise<string> => {
+    const originScope = readerScope;
+    const updateRemainingRevisions = (updatedAt: string, removeAccepted: boolean): void => {
+      setCharacterAutofillResult((current) => current?.scope !== originScope || current.result.appearance_review === undefined
+        ? current
+        : {
+            ...current,
+            result: {
+              ...current.result,
+              appearance_review: {
+                ...current.result.appearance_review,
+                suggestions: current.result.appearance_review.suggestions
+                  .filter((item) => !removeAccepted || item.entity_id !== suggestion.entity_id || item.field !== suggestion.field)
+                  .map((item) => item.entity_id === suggestion.entity_id
+                    ? { ...item, expected_updated_at: updatedAt }
+                    : item),
+              },
+            },
+          });
+    };
+
+    try {
+      const saved = await api.approveCharacterAppearance(suggestion, activeOrganizationId);
+      if (readerScopeRef.current !== originScope) return '';
+      cacheEntityRecord(saved);
+      updateRemainingRevisions(saved.updated_at, true);
+      await invalidateScopedQuery(['entities', saved.work_id]);
+    } catch (error) {
+      if (!isResourceStaleApiError(error)) throw error;
+      const fresh = await api.getEntity(suggestion.entity_id, activeOrganizationId);
+      if (readerScopeRef.current !== originScope) throw error;
+      cacheEntityRecord(fresh);
+      updateRemainingRevisions(fresh.updated_at, false);
+      await invalidateScopedQuery(['entities', fresh.work_id]);
+      throw new Error(pickUiText(uiLanguage,
+        'This character changed elsewhere. The latest character was loaded; review and apply again.',
+        '別の変更があったため、最新のキャラ情報を読み込みました。内容を確認してもう一度反映してください。'), { cause: error });
+    }
+    return pickUiText(uiLanguage, 'The selected field was applied.', '選んだ項目を反映しました。');
   };
 
   const saveSuggestedState = async (): Promise<void> => {
@@ -6631,6 +6714,22 @@ function StudioShell(props: {
                         {pickUiText(uiLanguage, 'Skipped because the name was ambiguous or did not match:', '名前が曖昧、または一致しなかったため保存しなかった項目:')}
                         <ul>{characterAutofillResult.result.skipped_names.map((name) => <li key={name}>{name}</li>)}</ul>
                       </div> : null}
+                      {characterAutofillResult.result.appearance_review?.suggestions.map((suggestion, index) => (
+                        <div className="mini-card" key={`${suggestion.entity_id}:${suggestion.field}:${suggestion.value}:${suggestion.quote}:${index}`}>
+                          <strong>{suggestion.name}</strong>
+                          <p><strong>{appearanceReviewFieldLabel(uiLanguage, suggestion.field)}</strong>: {appearanceReviewValueLabel(uiLanguage, suggestion.field, suggestion.value)}</p>
+                          <p className="muted small">{pickUiText(uiLanguage, 'Source', '本文')}: 「{suggestion.quote}」</p>
+                          <button className="secondary-button" disabled={busyAction !== null} onClick={() => void runAction('Apply character appearance', () => approveCharacterAppearance(suggestion))} type="button">
+                            <Check size={16} />{pickUiText(uiLanguage, 'Apply this field', 'この項目を反映')}
+                          </button>
+                        </div>
+                      ))}
+                      {characterAutofillResult.result.appearance_review?.unresolved.map((issue, index) => (
+                        <div className="notice notice-info" key={`${issue.reason}:${index}`}>
+                          <strong>{appearanceReviewReasonLabel(uiLanguage, issue.reason)}</strong>
+                          <p className="muted small">{pickUiText(uiLanguage, 'Source', '本文')}: 「{issue.quote}」</p>
+                        </div>
+                      ))}
                     </div> : null}
                   </PanelSection> : null}
 

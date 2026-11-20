@@ -1,7 +1,7 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { characterSuggestionsSchema } from '../../packages/api-contract/src/characterSuggestions.js';
-import { characterAutofillResultSchema } from '../../packages/api-contract/src/characterAutofill.js';
+import { characterAutofillResultSchema, characterAutofillWithReviewResultSchema } from '../../packages/api-contract/src/characterAutofill.js';
 import {
   chapterSchema,
   chaptersResponseSchema,
@@ -102,11 +102,15 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
     const service = dependencies.characterAutofillService;
     if (service === undefined) throw new ConfigurationError('Character autofill is unavailable');
+    const reviewParam = c.req.queries('appearance_review') ?? [];
+    if (reviewParam.length && (reviewParam.length !== 1 || reviewParam[0] !== '1')) throw new ValidationError('Unsupported appearance review version');
+    const includeReview = reviewParam[0] === '1';
     const result = await service.autofillEpisodeCharacters(
       c.get('user').id,
       episodeId.data,
       body.data.version,
       organizationId,
+      includeReview,
     );
     await recordOrganizationAudit(
       dependencies,
@@ -122,7 +126,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         skipped: result.skipped_names.length,
       },
     );
-    return c.json(assertMobileResponseContract(characterAutofillResultSchema, result));
+    if (includeReview) return c.json(assertMobileResponseContract(characterAutofillWithReviewResultSchema, result));
+    const { version, characters, skipped_names } = result;
+    return c.json(assertMobileResponseContract(characterAutofillResultSchema, { version, characters, skipped_names }));
   });
 
   app.post('/episodes/:episodeId/character-suggestions', async (c) => {

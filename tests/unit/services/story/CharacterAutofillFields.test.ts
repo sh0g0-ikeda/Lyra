@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildCharacterAutofillCandidates } from '../../../../src/services/story/CharacterAutofillFields.js';
+import {
+  buildCharacterAutofillCandidates,
+  mergeCharacterAutofillCandidates,
+} from '../../../../src/services/story/CharacterAutofillFields.js';
 
 describe('ストーリーからキャラクター編集欄へ自動入力', () => {
   it('複数人が同じ文にいる場合も根拠ごとに選択肢を振り分ける', () => {
@@ -257,5 +260,94 @@ describe('ストーリーからキャラクター編集欄へ自動入力', () =
     const faithful = '青いしずく形の生き物 / 赤い角が二本 / 金色の目が三つ';
     expect(row?.structuredFields).toEqual({ base_form: 'custom', distinctive_features: faithful });
     expect(row?.freeDescription).toBe(faithful);
+  });
+
+  it('直前の一人だけが主語のときは後置された髪・目・服の明記を同じ人物に戻す', () => {
+    const story = 'ミオは黒髪。目は緑色。ミオが立つ。服は白い制服。';
+    const [row] = buildCharacterAutofillCandidates([story], [{
+      name: 'ミオ', entity_type: 'character', name_quote: 'ミオは黒髪', changes: [],
+      appearance: [
+        { field: 'hair.color', value: '黒髪', quote: 'ミオは黒髪' },
+        { field: 'eyes.color', value: '緑色', quote: '目は緑色' },
+        { field: 'clothing.category', value: '制服', quote: '服は白い制服' },
+        { field: 'clothing.main_color', value: '白い', quote: '服は白い制服' },
+      ],
+    }]);
+
+    expect(row?.structuredFields).toEqual({
+      hair: { color: 'black' },
+      eyes: { color: 'green' },
+      clothing: { category: 'school', main_color: 'white' },
+    });
+    expect(row?.choiceEvidence).toEqual([
+      { field: 'hair.color', value: 'black', quote: 'ミオは黒髪' },
+      { field: 'eyes.color', value: 'green', quote: '目は緑色' },
+      { field: 'clothing.category', value: 'school', quote: '服は白い制服' },
+      { field: 'clothing.main_color', value: 'white', quote: '服は白い制服' },
+    ]);
+  });
+
+  it('複数人が主語の直後や別人物を挟んだ後置特徴は誤って割り当てない', () => {
+    const story = 'ミオとノアが並ぶ。目は緑色。ミオは黒髪。ノアが振り返る。服は白い制服。';
+    const rows = buildCharacterAutofillCandidates([story], ['ミオ', 'ノア'].map(name => ({
+      name, entity_type: 'character' as const, name_quote: name, changes: [],
+      appearance: [
+        { field: 'eyes.color' as const, value: '緑色', quote: '目は緑色' },
+        { field: 'clothing.category' as const, value: '制服', quote: '服は白い制服' },
+      ],
+    })));
+
+    expect(rows.map(row => row.structuredFields)).toEqual([{}, { clothing: { category: 'school' } }]);
+  });
+
+  it('同名候補の非競合欄と残余・根拠を統合し、競合欄は採用しない', () => {
+    const [merged] = mergeCharacterAutofillCandidates([
+      {
+        name: 'ミオ', entityType: 'character', freeDescription: '左頜に星形の傷',
+        structuredFields: { hair: { color: 'black' }, clothing: { category: 'school' } },
+        choiceEvidence: [
+          { field: 'hair.color', value: 'black', quote: 'ミオは黒髪' },
+          { field: 'clothing.category', value: 'school', quote: 'ミオは制服' },
+        ],
+        changes: [],
+      },
+      {
+        name: 'ミオ', entityType: 'character', freeDescription: '右耳に金のピアス',
+        structuredFields: { hair: { color: 'blonde' }, eyes: { color: 'green' } },
+        choiceEvidence: [
+          { field: 'hair.color', value: 'blonde', quote: 'ミオは金髪' },
+          { field: 'eyes.color', value: 'green', quote: '目は緑色' },
+        ],
+        changes: [],
+      },
+    ]);
+
+    expect(merged?.structuredFields).toEqual({
+      clothing: { category: 'school' },
+      eyes: { color: 'green' },
+    });
+    expect(merged?.freeDescription).toBe('左頜に星形の傷 / 右耳に金のピアス');
+    expect(merged?.choiceEvidence).toEqual([
+      { field: 'clothing.category', value: 'school', quote: 'ミオは制服' },
+      { field: 'eyes.color', value: 'green', quote: '目は緑色' },
+    ]);
+  });
+
+  it('否定された外見は空欄を埋めず、後から起きる変化は基本外見に混ぜない', () => {
+    const story = 'ミオは黒髪ではない。ミオの髪が白く変わる。';
+    const [row] = buildCharacterAutofillCandidates([story], [{
+      name: 'ミオ', entity_type: 'character', name_quote: 'ミオ',
+      appearance: [
+        { field: 'hair.color', value: '黒髪', quote: 'ミオは黒髪ではない' },
+        { field: 'hair.color', value: '白', quote: 'ミオの髪が白く変わる' },
+      ],
+      changes: [{ name: '白髪', description: '髪が白く変わる', quote: 'ミオの髪が白く変わる' }],
+    }]);
+
+    expect(row?.structuredFields).toEqual({});
+    expect(row?.freeDescription).toBeNull();
+    expect(row?.changes).toEqual([{
+      name: '髪が白く変わる', description: '髪が白く変わる', quote: 'ミオの髪が白く変わる',
+    }]);
   });
 });

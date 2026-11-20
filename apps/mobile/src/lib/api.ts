@@ -5,7 +5,8 @@ import {
   type EpisodeCharacterSuggestion,
 } from '@/domain/characterSuggestionsContract';
 import {
-  characterAutofillResultSchema,
+  characterAutofillWithReviewResultSchema,
+  type CharacterAppearanceSuggestion,
   type CharacterAutofillResult,
 } from '@/domain/characterAutofillContract';
 
@@ -950,10 +951,24 @@ export class LyraMobileApiClient {
     organizationId?: string | null,
   ): Promise<CharacterAutofillResult> {
     const requestBody = z.object({ version: z.number().int().min(0) }).strict().parse(body);
+    const params = new URLSearchParams(organizationQuery(organizationId));
+    params.set('appearance_review', '1');
     return this.request(
-      `/api/episodes/${encodeURIComponent(episodeId)}/character-autofill${organizationQuery(organizationId)}`,
-      characterAutofillResultSchema,
-      { method: 'POST', body: requestBody },
+      `/api/episodes/${encodeURIComponent(episodeId)}/character-autofill?${params.toString()}`,
+      characterAutofillWithReviewResultSchema,
+      { method: 'POST', body: requestBody, timeoutMs: STORY_AI_WRITE_TIMEOUT_MS },
+    );
+  }
+
+  public approveCharacterAppearance(
+    suggestion: Pick<CharacterAppearanceSuggestion, 'entity_id' | 'field' | 'value' | 'expected_updated_at'>,
+    organizationId?: string | null,
+  ): Promise<EntityRecord> {
+    const { entity_id: entityId, field, value, expected_updated_at } = suggestion;
+    return this.request(
+      `/api/entities/${encodeURIComponent(entityId)}/appearance-review${organizationQuery(organizationId)}`,
+      entitySchema,
+      { method: 'POST', body: { field, value, expected_updated_at } },
     );
   }
 

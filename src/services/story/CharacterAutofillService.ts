@@ -1,12 +1,10 @@
-import type { CharacterAutofillResult } from '../../../packages/api-contract/src/characterAutofill.js';
+import type { CharacterAppearanceIssue, CharacterAutofillResult } from '../../../packages/api-contract/src/characterAutofill.js';
 import { NotFoundError, ResourceStaleError } from '../../domain/errors/index.js';
 import type { Episode } from '../../domain/types/story.js';
 import type { CharacterAutofillRepository } from '../../repositories/CharacterAutofillRepository.js';
 import type { StoryRepository } from '../../repositories/StoryRepository.js';
-import {
-  extractCharacterAutofillCandidates,
-  type CharacterAutofillCandidate,
-} from './CharacterAutofillFields.js';
+import type { CharacterAutofillCandidate } from './CharacterAutofillFields.js';
+import { extractCharacterAutofillWithCoverage } from './CharacterAppearanceCoverage.js';
 import type { StoryAiClientPort } from './StoryAiClientPort.js';
 
 export interface CharacterAutofillServicePort {
@@ -15,13 +13,14 @@ export interface CharacterAutofillServicePort {
     episodeId: string,
     version: number,
     organizationId?: string | null,
+    includeAppearanceReview?: boolean,
   ): Promise<CharacterAutofillResult>;
 }
 
 export type CharacterAutofillExtractor = (
   client: StoryAiClientPort,
   episode: Episode,
-) => Promise<CharacterAutofillCandidate[]>;
+) => Promise<{ candidates: CharacterAutofillCandidate[]; unresolved: CharacterAppearanceIssue[] }>;
 
 /**
  * Keeps provider work outside the database transaction, then checks the episode
@@ -32,7 +31,7 @@ export class CharacterAutofillService implements CharacterAutofillServicePort {
     private readonly storyRepository: StoryRepository,
     private readonly storyAiClient: StoryAiClientPort,
     private readonly characterAutofillRepository: CharacterAutofillRepository,
-    private readonly extractor: CharacterAutofillExtractor = extractCharacterAutofillCandidates,
+    private readonly extractor: CharacterAutofillExtractor = extractCharacterAutofillWithCoverage,
   ) {}
 
   public async autofillEpisodeCharacters(
@@ -40,11 +39,12 @@ export class CharacterAutofillService implements CharacterAutofillServicePort {
     episodeId: string,
     version: number,
     organizationId: string | null = null,
+    includeAppearanceReview = false,
   ): Promise<CharacterAutofillResult> {
     const episode = await this.readCurrentEpisode(userId, episodeId, organizationId);
     if (episode.version !== version) throw new ResourceStaleError();
 
-    const candidates = await this.extractor(this.storyAiClient, episode);
+    const { candidates, unresolved } = await this.extractor(this.storyAiClient, episode);
 
     const current = await this.readCurrentEpisode(userId, episodeId, organizationId);
     if (current.version !== version) throw new ResourceStaleError();
@@ -55,6 +55,7 @@ export class CharacterAutofillService implements CharacterAutofillServicePort {
       version,
       organizationId,
       candidates,
+      ...(includeAppearanceReview ? { review: { unresolved } } : {}),
     });
   }
 

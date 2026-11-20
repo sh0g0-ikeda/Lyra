@@ -1,5 +1,5 @@
 import { googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStatus } from './googleIdentityLink';
-import type { CharacterAutofillResult } from '../../../../packages/api-contract/src/characterAutofill.ts';
+import type { CharacterAppearanceSuggestion, CharacterAutofillResult } from '../../../../packages/api-contract/src/characterAutofill.ts';
 import type { EpisodeCharacterSuggestion } from '../../../../packages/api-contract/src/characterSuggestions.ts';
 import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
 import { pageImageDeliveryPath, entityReferenceImageDeliveryPath, entityReferenceCandidateDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
@@ -468,10 +468,27 @@ export class LyraApiClient {
     body: { version: number },
     organizationId?: string | null,
   ): Promise<CharacterAutofillResult> {
-    return this.request(`/api/episodes/${episodeId}/character-autofill${organizationQuery(organizationId)}`, {
+    const params = new URLSearchParams(organizationQuery(organizationId));
+    params.set('appearance_review', '1');
+    return this.request(`/api/episodes/${episodeId}/character-autofill?${params.toString()}`, {
       method: 'POST',
       body,
     });
+  }
+
+  public approveCharacterAppearance(
+    suggestion: Pick<CharacterAppearanceSuggestion, 'entity_id' | 'field' | 'value' | 'expected_updated_at'>,
+    organizationId?: string | null,
+  ): Promise<EntityRecord> {
+    const { entity_id: entityId, field, value, expected_updated_at } = suggestion;
+    return this.request(`/api/entities/${entityId}/appearance-review${organizationQuery(organizationId)}`, {
+      method: 'POST',
+      body: { field, value, expected_updated_at },
+    });
+  }
+
+  public getEntity(entityId: string, organizationId?: string | null): Promise<EntityRecord> {
+    return this.request(`/api/entities/${entityId}${organizationQuery(organizationId)}`);
   }
 
   public getEntities(workId: string, organizationId?: string | null): Promise<{ entities: EntityRecord[] }> {

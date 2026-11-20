@@ -59,6 +59,7 @@ import {
   hairSideOptions,
   hairStyleOptions,
   heightOptions,
+  humanAppearanceChoices,
   mouthDefaultOptions,
   mouthShapeOptions,
   noseShapeOptions,
@@ -115,7 +116,7 @@ import { t } from '@/lib/i18n';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
 import { appendOrganizationQuery, downloadAuthenticatedFile } from '@/lib/download';
 import { ApiError, type CharacterSuggestion } from '@/lib/api';
-import type { CharacterAutofillResult } from '@/domain/characterAutofillContract';
+import type { CharacterAppearanceSuggestion, CharacterAutofillResult } from '@/domain/characterAutofillContract';
 import {
   flattenUniqueRecords,
   MOBILE_LIST_PAGE_SIZE,
@@ -544,6 +545,55 @@ const characterFieldKeys = [
   'shoes',
   'socks_or_legwear'
 ];
+
+const appearanceReviewFieldLabels: Record<string, { ja: string; en: string }> = {
+  gender_expression: { ja: '性別表現', en: 'Gender' },
+  age_range: { ja: '年齢帯', en: 'Age range' },
+  skin_tone: { ja: '肌の色', en: 'Skin tone' },
+  first_impression: { ja: '第一印象', en: 'First impression' },
+  standing_style: { ja: '立ち姿', en: 'Standing style' },
+  default_expression: { ja: '標準表情', en: 'Default expression' },
+  height: { ja: '身長', en: 'Height' },
+  build: { ja: '体格', en: 'Body type' },
+  art_style: { ja: '絵柄', en: 'Art style' },
+  face_shape: { ja: '顔の形', en: 'Face shape' },
+  eyebrow_shape: { ja: '眉の形', en: 'Eyebrow shape' },
+  nose_shape: { ja: '鼻の形', en: 'Nose shape' },
+  mouth_shape: { ja: '口の形', en: 'Mouth shape' },
+  'eyes.color': { ja: '目の色', en: 'Eye color' },
+  'eyes.shape': { ja: '目の形', en: 'Eye shape' },
+  'eyes.eyelid_type': { ja: 'まぶた', en: 'Eyelid type' },
+  'face_detail.eye_size': { ja: '目の大きさ', en: 'Eye size' },
+  'face_detail.eye_angle': { ja: '目の角度', en: 'Eye angle' },
+  'face_detail.pupil_style': { ja: '瞳の表現', en: 'Pupil style' },
+  'face_detail.under_eye_detail': { ja: '目の下の特徴', en: 'Under-eye detail' },
+  'face_detail.mouth_default': { ja: '標準の口元', en: 'Default mouth' },
+  'hair.color': { ja: '髪の色', en: 'Hair color' },
+  'hair.length': { ja: '髪の長さ', en: 'Hair length' },
+  'hair.style': { ja: '髪型', en: 'Hair style' },
+  'hair.arrangement': { ja: '髪のアレンジ', en: 'Hair arrangement' },
+  'hair.bangs': { ja: '前髪', en: 'Bangs' },
+  'hair_detail.front_shape': { ja: '前髪の形', en: 'Front hair shape' },
+  'hair_detail.side_hair': { ja: '横髪', en: 'Side hair' },
+  'hair_detail.back_shape': { ja: '後ろ髪の形', en: 'Back hair shape' },
+  'clothing.category': { ja: '服装の種類', en: 'Clothing category' },
+  'clothing.main_color': { ja: '服装のメイン色', en: 'Clothing main color' },
+  'clothing.impression': { ja: '服装の印象', en: 'Clothing impression' },
+  'outfit_detail.collar_shape': { ja: '襟の形', en: 'Collar shape' },
+  'outfit_detail.sleeve_length': { ja: '袖の長さ', en: 'Sleeve length' },
+  'outfit_detail.skirt_or_pants_shape': { ja: 'ボトムスの形', en: 'Skirt or pants' },
+  'outfit_detail.shoes': { ja: '靴', en: 'Shoes' },
+  'outfit_detail.socks_or_legwear': { ja: '靴下・レッグウェア', en: 'Legwear' },
+};
+
+const appearanceReviewFieldLabel = (field: string, language: 'ja' | 'en'): string =>
+  appearanceReviewFieldLabels[field]?.[language] ?? field.replace(/[._]/g, ' ');
+
+const appearanceReviewValueLabel = (field: string, value: string, language: 'ja' | 'en'): string => {
+  const choices = (humanAppearanceChoices as Record<string, readonly { value: string; labelJa: string; labelEn: string }[]>)[field];
+  const choice = choices?.find((item) => item.value === value);
+  return choice === undefined ? value.replace(/_/g, ' ') : language === 'ja' ? choice.labelJa : choice.labelEn;
+};
 
 const faceDetailFieldKeys = [
   'face_shape', 'eyebrow_shape', 'nose_shape', 'mouth_shape', 'eye_color', 'eye_shape',
@@ -1019,6 +1069,8 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     workspaceContext.selectedChapterId,
     workspaceContext.selectedEpisodeId,
   ]);
+  const characterSuggestionScopeRef = useRef(characterSuggestionScope);
+  useLayoutEffect(() => { characterSuggestionScopeRef.current = characterSuggestionScope; }, [characterSuggestionScope]);
   const draftScope = JSON.stringify([sessionKey, organizationId, activeWorkId, selection.entityId]);
   const imageImportWorkspaceScope = JSON.stringify([sessionKey, organizationId, activeWorkId]);
   const imageImportWorkspaceScopeRef = useRef(imageImportWorkspaceScope);
@@ -1063,27 +1115,74 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   });
   const characterAutofillMutation = useMutation({
     mutationFn: async () => {
+      const scope = characterSuggestionScope;
       const chapterId = workspaceContext.selectedChapterId;
       const episodeId = workspaceContext.selectedEpisodeId;
       if (chapterId === null || episodeId === null) {
         throw new Error('Select an episode before saving characters');
       }
       if (!await saveDirtyEditors()) {
-        return null;
+        return { result: null, scope };
       }
       const latestEpisodes = await api.getEpisodes(chapterId, organizationId);
       const latestEpisode = latestEpisodes.episodes.find((episode) => episode.id === episodeId);
       if (latestEpisode === undefined) {
         throw new Error('The selected episode is no longer available');
       }
-      return api.autofillEpisodeCharacters(episodeId, { version: latestEpisode.version }, organizationId);
+      const result = await api.autofillEpisodeCharacters(episodeId, { version: latestEpisode.version }, organizationId);
+      return { result, scope };
     },
-    onSuccess: async (result) => {
-      if (result === null) return;
+    onSuccess: async ({ result, scope }) => {
+      if (result === null || characterSuggestionScopeRef.current !== scope) return;
       setCharacterAutofillResult(result);
       await invalidateEntities();
     },
   });
+  const appearanceReviewMutation = useMutation({
+    mutationFn: async (input: { suggestion: CharacterAppearanceSuggestion; scope: string; organizationId: string | null }) => {
+      const { suggestion } = input;
+      try {
+        const saved = await api.approveCharacterAppearance(suggestion, input.organizationId);
+        return { saved, input };
+      } catch (error) {
+        if (isResourceStaleError(error)) {
+          const fresh = await api.getEntity(suggestion.entity_id, input.organizationId);
+          if (characterSuggestionScopeRef.current !== input.scope) throw error;
+          setCharacterAutofillResult((current) => current?.appearance_review === undefined ? current : ({
+            ...current,
+            appearance_review: {
+              ...current.appearance_review,
+              suggestions: current.appearance_review.suggestions.map((item) => item.entity_id === fresh.id
+                ? { ...item, expected_updated_at: fresh.updated_at }
+                : item),
+            },
+          }));
+          await invalidateEntities();
+        }
+        throw error;
+      }
+    },
+    onSuccess: async ({ saved, input }) => {
+      if (characterSuggestionScopeRef.current !== input.scope) return;
+      const { suggestion } = input;
+      // Updating the query cache must never hydrate over a locally dirty editor;
+      // the existing entity hydration guard retains that draft.
+      setCharacterAutofillResult((current) => current?.appearance_review === undefined ? current : ({
+        ...current,
+        appearance_review: {
+          ...current.appearance_review,
+          suggestions: current.appearance_review.suggestions
+            .filter((item) => item.entity_id !== suggestion.entity_id || item.field !== suggestion.field)
+            .map((item) => item.entity_id === saved.id
+              ? { ...item, expected_updated_at: saved.updated_at }
+              : item),
+        },
+      }));
+      await invalidateEntities();
+    },
+  });
+  const appearanceReviewPendingForCurrentScope = appearanceReviewMutation.isPending &&
+    appearanceReviewMutation.variables?.scope === characterSuggestionScope;
   const characterSuggestionsMutation = useMutation({
     mutationFn: async () => {
       const chapterId = workspaceContext.selectedChapterId;
@@ -1868,6 +1967,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   useResetOnScopeChange(characterSuggestionScope, [
     characterSuggestionsMutation.reset,
     characterAutofillMutation.reset,
+    appearanceReviewMutation.reset,
     () => setCharacterSuggestions([]),
     () => setSelectedCharacterSuggestion(null),
     () => setCharacterAutofillResult(null),
@@ -2034,6 +2134,35 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
                 <Text style={styles.caption}>{t(language, 'screen.characters.autofill.skipped', {
                   names: characterAutofillResult.skipped_names.join(language === 'ja' ? '、' : ', '),
                 })}</Text>
+              )}
+              {characterAutofillResult.appearance_review?.suggestions.map((suggestion, index) => (
+                <View key={`${suggestion.entity_id}:${suggestion.field}:${suggestion.value}:${suggestion.quote}:${index}`} style={styles.suggestionCard} testID={`appearance-review-${suggestion.entity_id}-${suggestion.field}`}>
+                  <Text style={styles.groupTitle}>{suggestion.name}</Text>
+                  <Text style={styles.label}>{appearanceReviewFieldLabel(suggestion.field, language)}</Text>
+                  <Text style={styles.caption}>{t(language, 'screen.characters.autofill.reviewProposed', {
+                    value: appearanceReviewValueLabel(suggestion.field, suggestion.value, language),
+                  })}</Text>
+                  <Text style={styles.caption}>{t(language, 'screen.characters.autofill.reviewQuote', { quote: suggestion.quote })}</Text>
+                  <PrimaryButton
+                    disabled={!canEdit || appearanceReviewPendingForCurrentScope}
+                    label={t(language, 'screen.characters.autofill.reviewApply')}
+                    loading={appearanceReviewPendingForCurrentScope && appearanceReviewMutation.variables?.suggestion === suggestion}
+                    onPress={() => appearanceReviewMutation.mutate({ suggestion, scope: characterSuggestionScope, organizationId })}
+                    testID={`appearance-review-apply-${suggestion.entity_id}-${suggestion.field}`}
+                    variant="secondary"
+                  />
+                </View>
+              ))}
+              {characterAutofillResult.appearance_review?.unresolved.map((issue, index) => (
+                <View key={`${issue.reason}:${index}`} style={styles.suggestionCard} testID="appearance-review-unresolved">
+                  <Text style={styles.label}>{t(language, `screen.characters.autofill.reviewReason.${issue.reason}`)}</Text>
+                  <Text style={styles.caption}>{t(language, 'screen.characters.autofill.reviewQuote', { quote: issue.quote })}</Text>
+                </View>
+              ))}
+              {appearanceReviewMutation.error === null || appearanceReviewMutation.variables?.scope !== characterSuggestionScope ? null : (
+                <Notice message={t(language, isResourceStaleError(appearanceReviewMutation.error)
+                  ? 'screen.characters.autofill.reviewConflict'
+                  : 'screen.characters.autofill.reviewFailed')} tone="warning" />
               )}
             </View>
           )}

@@ -16,7 +16,7 @@ let characterAutofillEnabled = false;
 const refetchEntity = vi.fn();
 let pages: { entities: EntityRecord[] }[];
 let registration: {dirty:boolean;save:()=>Promise<void>;discard:()=>void};
-const updateEntity=vi.fn(); const createEntity=vi.fn(); const getEpisodes=vi.fn(); const suggestEpisodeCharacters=vi.fn(); const getCharacterSuggestionCapabilities=vi.fn(); const getCharacterAutofillCapabilities=vi.fn(); const autofillEpisodeCharacters=vi.fn(); const navigate=vi.fn(); const trackJob=vi.fn();
+const updateEntity=vi.fn(); const createEntity=vi.fn(); const getEntity=vi.fn(); const getEpisodes=vi.fn(); const suggestEpisodeCharacters=vi.fn(); const getCharacterSuggestionCapabilities=vi.fn(); const getCharacterAutofillCapabilities=vi.fn(); const autofillEpisodeCharacters=vi.fn(); const approveCharacterAppearance=vi.fn(); const navigate=vi.fn(); const trackJob=vi.fn();
 const resolveDirtyEditors = vi.fn();
 const saveDirtyEditors = vi.fn();
 const assetQuoteCapture = vi.hoisted(() => ({ options: null as Record<string, unknown> | null }));
@@ -38,7 +38,7 @@ vi.mock('@tanstack/react-query',()=>({useQueryClient:()=>queryClient,
  const run=async(variables?:unknown):Promise<unknown>=>{try{const value=await options.mutationFn(variables);await options.onSuccess?.(value,variables);return value;}catch(error){options.onError?.(error);throw error;}};
  return {mutateAsync:run,mutate:(variables?:unknown)=>{void run(variables);},isPending:false,error:null,reset:vi.fn()};}
 }));
-vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity,getEpisodes,suggestEpisodeCharacters,getCharacterSuggestionCapabilities,getCharacterAutofillCapabilities,autofillEpisodeCharacters},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob,updateSelection})}));
+vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity,getEntity,getEpisodes,suggestEpisodeCharacters,getCharacterSuggestionCapabilities,getCharacterAutofillCapabilities,autofillEpisodeCharacters,approveCharacterAppearance},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob,updateSelection})}));
 vi.mock('@/state/dirtyState',()=>({useDirtyState:()=>({resolveDirtyEditors, saveDirtyEditors}),useDirtyEditorRegistration:(input:typeof registration)=>{registration=input;}}));
 vi.mock('@/hooks/useActiveResourceJobId',()=>({useActiveResourceJobId:()=>null}));
 vi.mock('@/hooks/useAssetGenerationQuote',()=>({useAssetGenerationQuote:(options: Record<string, unknown>)=>{assetQuoteCapture.options=options;return {state:{phase:'closed',visible:false},controller:{open:vi.fn(),close:vi.fn(),accept:vi.fn(),reconcile:vi.fn(),canAccept:()=>false}};}}));
@@ -100,6 +100,8 @@ beforeEach(() => {
   getCharacterSuggestionCapabilities.mockReset().mockResolvedValue({ enabled: true });
   getCharacterAutofillCapabilities.mockReset().mockResolvedValue({ enabled: false });
   autofillEpisodeCharacters.mockReset().mockResolvedValue({ version: 3, characters: [], skipped_names: [] });
+  approveCharacterAppearance.mockReset();
+  getEntity.mockReset().mockResolvedValue(entity);
   updateSelection.mockClear();
   resolveDirtyEditors.mockReset().mockResolvedValue(true);
   saveDirtyEditors.mockReset().mockResolvedValue(true);
@@ -522,5 +524,46 @@ describe('新規人物だけの編集可能な初期値', () => {
 
     expect(autofillEpisodeCharacters).not.toHaveBeenCalled();
     expect(resolveDirtyEditors).not.toHaveBeenCalled();
+  });
+
+  it('空欄候補は根拠を表示し、明示的に選んだ項目だけを順に反映する', async () => {
+    characterAutofillEnabled = true;
+    const initialRevision = '2026-11-20T00:00:00.000Z';
+    const firstRevision = '2026-11-20T00:01:00.000Z';
+    const secondRevision = '2026-11-20T00:02:00.000Z';
+    autofillEpisodeCharacters.mockResolvedValueOnce({
+      version: 3, characters: [], skipped_names: [], appearance_review: {
+        suggestions: [
+          { entity_id: entity.id, name: entity.name, field: 'hair.color', value: 'black', quote: '黒髪が風になびいた。', expected_updated_at: initialRevision },
+          { entity_id: entity.id, name: entity.name, field: 'hair.color', value: 'black', quote: '漆黒の髪が光った。', expected_updated_at: initialRevision },
+          { entity_id: entity.id, name: entity.name, field: 'eyes.color', value: 'blue', quote: '青い目が光った。', expected_updated_at: initialRevision },
+        ],
+        unresolved: [{ quote: '影の中に赤い光があった。', reason: 'unverified_trait' }],
+      },
+    });
+    approveCharacterAppearance
+      .mockResolvedValueOnce({ ...entity, updated_at: firstRevision })
+      .mockResolvedValueOnce({ ...entity, updated_at: secondRevision });
+    await render();
+    await act(async () => root!.root.findByProps({ testID: 'character-autofill-save-all' }).props.onPress());
+
+    expect(JSON.stringify(root!.toJSON())).toContain('髪の色');
+    expect(JSON.stringify(root!.toJSON())).toContain('候補: 黒');
+    expect(JSON.stringify(root!.toJSON())).toContain('本文: 「黒髪が風になびいた。」');
+    expect(root!.root.findAllByProps({ testID: 'appearance-review-unresolved' })).toHaveLength(1);
+
+    const hairActions = root!.root.findAllByType('PrimaryButton').filter((node) =>
+      node.props.testID === `appearance-review-apply-${entity.id}-hair.color`);
+    expect(hairActions).toHaveLength(2);
+    await act(async () => hairActions[0]!.props.onPress());
+    expect(approveCharacterAppearance).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      field: 'hair.color', expected_updated_at: initialRevision,
+    }), null);
+    expect(root!.root.findAllByProps({ testID: `appearance-review-apply-${entity.id}-hair.color` })).toHaveLength(0);
+
+    await act(async () => root!.root.findByProps({ testID: `appearance-review-apply-${entity.id}-eyes.color` }).props.onPress());
+    expect(approveCharacterAppearance).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      field: 'eyes.color', expected_updated_at: firstRevision,
+    }), null);
   });
 });

@@ -15,10 +15,10 @@ import type { StoryAiClientPort } from '../../../../src/services/story/StoryAiCl
 describe('CharacterAutofillService', () => {
   it('抽出の前後と保存境界で同じ話versionを引き渡す', async () => {
     const repository = new FakeCharacterAutofillRepository();
-    const extractor: CharacterAutofillExtractor = async (_client, episode) => [{
+    const extractor: CharacterAutofillExtractor = async (_client, episode) => ({ candidates: [{
       name: 'ミオ', entityType: 'character', freeDescription: episode.storyFullDraft,
       structuredFields: {}, changes: [],
-    }];
+    }], unresolved: [{quote:'目は緑色。',reason:'ambiguous_character'}] });
     const service = new CharacterAutofillService(
       storyRepository([episode(4), episode(4)]),
       {} as StoryAiClientPort,
@@ -35,6 +35,7 @@ describe('CharacterAutofillService', () => {
       userId: 'user', episodeId: 'episode', version: 4, organizationId: null,
       candidates: [{ name: 'ミオ', freeDescription: 'ミオが立つ。' }],
     });
+    expect(repository.input).not.toHaveProperty('review');
   });
 
   it('抽出中に話が更新された場合は保存を一度も呼ばない', async () => {
@@ -46,7 +47,7 @@ describe('CharacterAutofillService', () => {
       repository,
       async () => {
         extracted += 1;
-        return [];
+        return { candidates: [], unresolved: [] };
       },
     );
 
@@ -54,6 +55,14 @@ describe('CharacterAutofillService', () => {
       .rejects.toBeInstanceOf(ResourceStaleError);
     expect(extracted).toBe(1);
     expect(repository.input).toBeNull();
+  });
+  it('対応クライアントだけに同じ版の未確定の原文を引き渡す', async () => {
+    const repository = new FakeCharacterAutofillRepository();
+    const unresolved = [{quote:'その目は緑色。',reason:'ambiguous_character' as const}];
+    const service = new CharacterAutofillService(storyRepository([episode(2),episode(2)]),
+      {} as StoryAiClientPort, repository, async () => ({candidates:[],unresolved}));
+    await service.autofillEpisodeCharacters('user','episode',2,null,true);
+    expect(repository.input?.review).toEqual({unresolved});
   });
 });
 

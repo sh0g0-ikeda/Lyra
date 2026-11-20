@@ -7,6 +7,10 @@ import {
   STORY_COLLABORATION_MODEL,
   STORY_EPISODE_IMPROVEMENT_WRITER_MAX_TOKENS,
   STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
+  CHARACTER_AUTOFILL_COVERAGE_MAX_TOKENS,
+  CHARACTER_AUTOFILL_EXTRACTION_MAX_TOKENS,
+  CHARACTER_AUTOFILL_OPENAI_MODEL,
+  CHARACTER_AUTOFILL_REASONING_EFFORT,
 } from '../../domain/constants/storyAi.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { PageSkeletonPageDraft } from '../../domain/types/storyAi.js';
@@ -24,6 +28,10 @@ import { OpenAIClient } from './OpenAIClient.js';
 import { requestOpenAIText, requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
 import { extractedCharactersSchema, type ExtractedCharacter } from '../../../packages/api-contract/src/characterSuggestions.js';
 import { characterAutofillExtractionSchema, type CharacterAutofillExtraction } from '../../services/story/CharacterAutofillFields.js';
+import {
+  characterAppearanceCoverageResponseSchema,
+  type CharacterAppearanceCoverageResponse,
+} from '../../services/story/CharacterAppearanceCoverage.js';
 
 export class OpenAIStoryAiClient implements StoryAiClientPort {
   public constructor(private readonly client: OpenAIClient) {}
@@ -63,8 +71,9 @@ export class OpenAIStoryAiClient implements StoryAiClientPort {
     const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(characterAutofillExtractionSchema);
     const result = await requestStructuredOpenAIResponse({
       client: this.client,
-      model: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
-      maxOutputTokens: 16_000,
+      model: CHARACTER_AUTOFILL_OPENAI_MODEL,
+      reasoningEffort: CHARACTER_AUTOFILL_REASONING_EFFORT,
+      maxOutputTokens: CHARACTER_AUTOFILL_EXTRACTION_MAX_TOKENS,
       schemaName: 'episode_character_autofill',
       jsonSchema,
       responseSchema: characterAutofillExtractionSchema,
@@ -72,6 +81,25 @@ export class OpenAIStoryAiClient implements StoryAiClientPort {
       input: buildInput(request),
     });
     return result.characters;
+  }
+
+  public async reconcileCharacterAutofillCoverage(
+    request: StoryAiModelRequest,
+  ): Promise<CharacterAppearanceCoverageResponse> {
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(
+      characterAppearanceCoverageResponseSchema,
+    );
+    return requestStructuredOpenAIResponse({
+      client: this.client,
+      model: CHARACTER_AUTOFILL_OPENAI_MODEL,
+      reasoningEffort: CHARACTER_AUTOFILL_REASONING_EFFORT,
+      maxOutputTokens: CHARACTER_AUTOFILL_COVERAGE_MAX_TOKENS,
+      schemaName: 'episode_character_appearance_coverage',
+      jsonSchema,
+      responseSchema: characterAppearanceCoverageResponseSchema,
+      errorLabel: 'OpenAI episode character appearance coverage',
+      input: buildInput(request),
+    });
   }
 
   public streamCollaboration(request: StoryAiModelRequest): AsyncIterable<string> {

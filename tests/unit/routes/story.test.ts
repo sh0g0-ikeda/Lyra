@@ -311,6 +311,7 @@ class FakeCharacterAutofillService implements CharacterAutofillServicePort {
       version,
       characters: [{ entity_id: workId, name: 'ミオ', created: true, states_added: 1 }],
       skipped_names: ['正体不明'],
+      appearance_review: { unresolved: [], suggestions: [] },
     };
   }
 }
@@ -899,6 +900,13 @@ describe('story routes', () => {
     const capabilities = await app.request('/api/story/character-autofill-capabilities', { headers });
     expect(capabilities.status).toBe(200);
     await expect(capabilities.json()).resolves.toEqual({ enabled: true });
+
+    const enhanced = await app.request(`/api/episodes/${episodeId}/character-autofill?appearance_review=1`, {
+      method: 'POST', headers, body: JSON.stringify({ version: 2 }),
+    });
+    expect(enhanced.status).toBe(200);
+    await expect(enhanced.json()).resolves.toMatchObject({ appearance_review: { unresolved: [], suggestions: [] } });
+    characterAutofillService.calls.length = 0;
 
     const response = await app.request(`/api/episodes/${episodeId}/character-autofill`, {
       method: 'POST', headers, body: JSON.stringify({ version: 7 }),

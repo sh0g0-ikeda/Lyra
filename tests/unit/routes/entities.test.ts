@@ -1189,6 +1189,18 @@ describe('entity routes', () => {
 });
 
 describe('entity shipped timestamp contract', () => {
+  it('選んだ外見候補だけを版指定付きで渡し、未定義の選択値を拒否する', async () => {
+    const service = new FakeEntityService();
+    const app = createTestApp(undefined, undefined, service);
+    const token = await createToken();
+    const request = (value: string) => app.request(`/api/entities/${entityId}/appearance-review`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field: 'eyes.color', value, expected_updated_at: now.toISOString() }),
+    });
+    expect((await request('not_an_eye_color')).status).toBe(422);
+    expect((await request('green')).status).toBe(200);
+    expect(service.lastUpdate).toMatchObject({ expectedUpdatedAt: now.toISOString(), appearanceReview: {field: 'eyes.color', value: 'green'} });
+  });
   it('PUTはtimestampをServiceへ渡しstaleを409のまま返す', async () => {
     const service = new FakeEntityService();
     const app = createTestApp(undefined,undefined,service);

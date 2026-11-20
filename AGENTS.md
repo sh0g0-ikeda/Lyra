@@ -1591,3 +1591,9 @@ Persist source-backed editor selections for all new named characters together,
 preserve existing base settings and keep the released suggestion endpoint read-only.
 Reserve free description for unmatched traits. The regular cast picker shows
 portraits, selectable empty frames and an independent image zoom control.
+
+Cast autofill uses GPT-6 Luna for extraction and full-manuscript reconciliation.
+Validate literal evidence and canonical selections before saving. Existing human
+characters receive opt-in empty-field suggestions requiring explicit acceptance
+with a matching entity revision. Preserve the released autofill response shape
+unless the client requests appearance review, as specified in Unified Spec §6.

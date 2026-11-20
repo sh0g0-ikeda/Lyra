@@ -160,6 +160,21 @@ class FakeStyleReferenceCompiler implements StyleReferenceCompilerPort {
 }
 
 describe('EntityService', () => {
+  it('本人が承認した空欄だけを反映し、古い版や他の人のキャラは更新しない', async () => {
+    const repository = new FakeEntityRepository();
+    const service = new EntityService(repository, new FakeWorkReader());
+    const created = await repository.create({ userId: 'author', workId: 'work', name: 'ミオ',
+      entityType: 'character', freeDescription: '左頬に星形の傷', promptSupplement: null,
+      structuredFields: { hair_color: 'black', legacy_memo: '保管する' }, speechProfile: {} });
+    const approval = { appearanceReview: { field: 'eyes.color', value: 'green' }, expectedUpdatedAt: created.updatedAt.toISOString() };
+    await expect(service.updateEntity('other', created.id, approval)).rejects.toMatchObject({code:'NOT_FOUND'});
+    await expect(service.updateEntity('author', created.id, { ...approval, expectedUpdatedAt: '2020-01-01T00:00:00Z' })).rejects.toMatchObject({code:'RESOURCE_STALE'});
+    const saved = await service.updateEntity('author', created.id, approval);
+    expect(saved.structuredFields).toEqual({ hair_color: 'black', legacy_memo: '保管する', eyes: { color: 'green' } });
+    expect(saved.freeDescription).toBe('左頬に星形の傷');
+    await expect(service.updateEntity('author', created.id, approval)).resolves.toEqual(saved);
+    await expect(service.updateEntity('author', created.id, { ...approval, appearanceReview: { field:'eyes.color', value:'blue' } })).rejects.toMatchObject({code:'RESOURCE_STALE'});
+  });
   it('アクセス可能な作品のEntity pageをscope・cursor付きで委譲する', async () => {
     const workReader = new FakeWorkReader();
     const repository = new FakeEntityRepository();

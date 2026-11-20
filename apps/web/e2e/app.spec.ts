@@ -137,16 +137,21 @@ test('話の名前付きキャラを一括保存し、保存済み選択肢を�
     structured_fields: { hair: { color: 'silver' } },
     updated_at: '2026-04-27T00:00:00.000Z',
   };
+  let currentRin = rin;
   let savedEntities = [entity];
   let autofillRequests = 0;
+  const appearanceReviewRequests: Array<Record<string, unknown>> = [];
+  let appearanceReviewConflict = true;
   const imageGenerationRequests: string[] = [];
   await page.route('**/api/**', async route => {
-    const path = new URL(route.request().url()).pathname;
+    const requestUrl = new URL(route.request().url());
+    const path = requestUrl.pathname;
     if (path === '/api/story/character-autofill-capabilities') return route.fulfill({ json: { enabled: true } });
     if (path === `/api/episodes/${episode.id}/character-autofill`) {
       autofillRequests += 1;
+      expect(requestUrl.searchParams.get('appearance_review')).toBe('1');
       expect(route.request().postDataJSON()).toEqual({ version: episode.version });
-      savedEntities = [entity, rin];
+      savedEntities = [entity, currentRin];
       return route.fulfill({ json: {
         version: episode.version,
         characters: [
@@ -154,8 +159,36 @@ test('話の名前付きキャラを一括保存し、保存済み選択肢を�
           { entity_id: entity.id, name: entity.name, created: false, states_added: 1 },
         ],
         skipped_names: ['Unknown twin'],
+        appearance_review: {
+          suggestions: [
+            { entity_id: rin.id, name: rin.name, field: 'hair.color', value: 'black', quote: 'Rin had black hair.', expected_updated_at: rin.updated_at },
+            { entity_id: rin.id, name: rin.name, field: 'hair.color', value: 'black', quote: 'Her raven hair shone.', expected_updated_at: rin.updated_at },
+            { entity_id: rin.id, name: rin.name, field: 'eyes.color', value: 'blue', quote: 'Her eyes were blue.', expected_updated_at: rin.updated_at },
+          ],
+          unresolved: [{ quote: 'A red light moved in the shadows.', reason: 'unverified_trait' }],
+        },
       } });
     }
+    if (path === `/api/entities/${rin.id}/appearance-review` && route.request().method() === 'POST') {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      appearanceReviewRequests.push(body);
+      if (appearanceReviewConflict) {
+        appearanceReviewConflict = false;
+        currentRin = { ...currentRin, updated_at: '2026-04-27T00:01:00.000Z' };
+        savedEntities = [entity, currentRin];
+        return route.fulfill({ status: 409, json: { error: { code: 'RESOURCE_STALE', message: 'Reload the character.' } } });
+      }
+      currentRin = {
+        ...currentRin,
+        structured_fields: body.field === 'hair.color'
+          ? { ...currentRin.structured_fields, hair: { color: body.value } }
+          : { ...currentRin.structured_fields, eyes: { color: body.value } },
+        updated_at: body.field === 'hair.color' ? '2026-04-27T00:02:00.000Z' : '2026-04-27T00:03:00.000Z',
+      };
+      savedEntities = [entity, currentRin];
+      return route.fulfill({ json: currentRin });
+    }
+    if (path === `/api/entities/${rin.id}` && route.request().method() === 'GET') return route.fulfill({ json: currentRin });
     if (path.includes('/reference/generate') || path.includes('/preview')) imageGenerationRequests.push(path);
     if (path === `/api/works/${work.id}/entities` && route.request().method() === 'GET') {
       return route.fulfill({ json: { entities: savedEntities } });
@@ -181,21 +214,38 @@ test('話の名前付きキャラを一括保存し、保存済み選択肢を�
   await page.getByRole('button', { name: 'Autofill and save character details', exact: true }).click();
   await expect.poll(() => autofillRequests).toBe(1);
   await expect(page.getByText('Unknown twin', { exact: true })).toBeVisible();
+  await expect(page.getByText('Hair color', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Rin had black hair.', { exact: false })).toBeVisible();
+  await expect(page.getByText('This could not be verified as a character trait.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply this field', exact: true })).toHaveCount(3);
   await expect(page.getByRole('button', { name: 'Open saved character', exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Open saved character', exact: true }).first().click();
   await expect(page.getByLabel('Name', { exact: true }).first()).toHaveValue('Rin');
   await expect(page.getByRole('combobox', { name: 'Gender', exact: true })).toHaveValue('');
   await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('silver');
+  await page.getByLabel('Free description', { exact: true }).first().fill('Keep this pending review edit');
+  await page.getByRole('button', { name: 'Apply this field', exact: true }).first().click();
+  await expect(page.getByText('This character changed elsewhere. The latest character was loaded; review and apply again.', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Free description', { exact: true }).first()).toHaveValue('Keep this pending review edit');
+  await page.getByRole('button', { name: 'Apply this field', exact: true }).first().click();
+  await expect.poll(() => appearanceReviewRequests).toHaveLength(2);
+  expect(appearanceReviewRequests[0]).toEqual({ field: 'hair.color', value: 'black', expected_updated_at: rin.updated_at });
+  expect(appearanceReviewRequests[1]).toEqual({ field: 'hair.color', value: 'black', expected_updated_at: '2026-04-27T00:01:00.000Z' });
+  await expect(page.getByRole('button', { name: 'Apply this field', exact: true })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Apply this field', exact: true }).click();
+  await expect.poll(() => appearanceReviewRequests).toHaveLength(3);
+  expect(appearanceReviewRequests[2]).toEqual({ field: 'eyes.color', value: 'blue', expected_updated_at: '2026-04-27T00:02:00.000Z' });
+  await expect(page.getByLabel('Free description', { exact: true }).first()).toHaveValue('Keep this pending review edit');
   expect(imageGenerationRequests).toEqual([]);
 
   await page.reload();
   await openMangaStep(page, '2. Characters');
   await page.getByRole('button', { name: 'Rin Character', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Gender', exact: true })).toHaveValue('');
-  await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('silver');
+  await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('black');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toBeVisible();
-  await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('silver');
+  await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('black');
 });
 
 test('話から抽出した外見をキャラ欄で確認でき、既存キャラには編集した状態だけを保存する', async ({ page }) => {

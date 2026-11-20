@@ -8,6 +8,10 @@ import type { StoryAiClientPort } from './StoryAiClientPort.js';
 
 // Each trait has a literal source span. Only this server-side mapping selects stored editor options.
 const humanChoiceKeys = Object.keys(humanAppearanceChoices) as (keyof typeof humanAppearanceChoices)[];
+const allowedHumanCatalog = Object.fromEntries(humanChoiceKeys.map(field => [
+  field,
+  humanAppearanceChoices[field].map(choice => choice.value).filter(value => value.length > 0),
+]));
 const textFieldLimits = {
   'clothing.description': 500, distinguishing_features: 500, 'character_identity.visual_anchor': 300,
   'character_identity.signature_feature': 300, 'proportions.head_to_body_ratio': 100,
@@ -21,6 +25,10 @@ const nonhumanOptions = {
   threat_level: { harmless: ['無害'], low: ['危険度が低い'], medium: ['危険度は中程度'], high: ['危険度が高い'], catastrophic: ['壊滅的'] },
 } as const;
 const nonhumanKeys = Object.keys(nonhumanOptions) as (keyof typeof nonhumanOptions)[];
+export const characterAutofillHumanFieldIds: readonly string[] = [...humanChoiceKeys, ...humanTextKeys];
+export const characterAutofillNonhumanFieldIds: readonly string[] = [
+  ...nonhumanKeys, 'art_style', 'distinctive_features',
+];
 const humanFields = z.enum([...humanChoiceKeys, ...humanTextKeys]);
 const nonhumanFields = z.enum([...nonhumanKeys, 'art_style', 'distinctive_features'] as const);
 type Field = z.infer<typeof humanFields> | z.infer<typeof nonhumanFields>;
@@ -48,6 +56,13 @@ export interface CharacterAutofillCandidate {
   freeDescription: string | null;
   structuredFields: Record<string, unknown>;
   changes: CharacterAutofillExtraction[number]['changes'];
+  choiceEvidence?: CharacterAutofillChoiceEvidence[];
+}
+
+export interface CharacterAutofillChoiceEvidence {
+  field: string;
+  value: string;
+  quote: string;
 }
 
 const keyOf = (text: string): string => text.normalize('NFKC').trim().toLowerCase().replace(/[_\s-]+/gu, ' ');
@@ -227,6 +242,23 @@ function normalizeHumanTrait(field: Field, value: string): NormalizedTrait {
   return { assignments, unmatched: remaining };
 }
 
+/**
+ * Converts one literal, source-backed human trait into canonical editor choices.
+ * Coverage scans use this same function as the primary extraction path so a
+ * second pass cannot invent a different option mapping.
+ */
+export function normalizeHumanAppearanceChoiceEvidence(
+  field: string,
+  value: string,
+  quote: string,
+): CharacterAutofillChoiceEvidence[] {
+  if (!characterAutofillHumanFieldIds.includes(field)) return [];
+  const normalized = normalizeHumanTrait(field as Field, value);
+  return deduplicateChoiceEvidence(normalized.assignments
+    .filter((assignment) => isHumanChoice(assignment.field))
+    .map((assignment) => ({ field: assignment.field, value: assignment.value, quote })));
+}
+
 function literalOccurrences(text: string, literal: string): number[] {
   const occurrences: number[] = [];
   const asciiWord = /^[a-z0-9_]+$/iu.test(literal);
@@ -339,7 +371,8 @@ function fieldValue(
 }
 
 const unnamedRole = /^(?:通行人|群衆|誰か|兵士|店員|少年|少女|先生|男の子|女の子|男性|女性|主人公|ナレーター|(?:a |the )?(?:passerby|stranger|narrator|guard|shopkeeper|boy|girl|crowd))$/iu;
-const uncertain = /(?:かもしれ|もしも?|だったら|ならば|ではな(?:い|く)|じゃない|わけでは|\b(?:if|might|not|never)\b)/iu;
+const uncertain = /(?:かもしれ|もしも?|だったら|ならば|ではな(?:い|く)|じゃない|わけでは|ない|なく|ません|\b(?:if|might|not|never)\b)/iu;
+const appearanceStateChange = /(?:変わ|変化|変身|染め|生え|現れ|発光|着替え)/u;
 
 function quoteContexts(source: readonly string[], quote: string): string[] {
   if (!quote) return [];
@@ -355,26 +388,96 @@ function quoteContexts(source: readonly string[], quote: string): string[] {
   return contexts;
 }
 
+interface QuoteOccurrenceContext {
+  current: string;
+  previous: string | null;
+}
+
+function quoteOccurrenceContexts(source: readonly string[], quote: string): QuoteOccurrenceContext[] {
+  if (!quote) return [];
+  const isBoundary = (value: string): boolean => /[。！？!?.\n]/u.test(value);
+  const contexts: QuoteOccurrenceContext[] = [];
+  for (const text of source) {
+    for (let at = text.indexOf(quote); at >= 0; at = text.indexOf(quote, at + quote.length)) {
+      let currentStart = at;
+      while (currentStart > 0 && !isBoundary(text[currentStart - 1] ?? '')) currentStart -= 1;
+      let currentEnd = at + quote.length;
+      if (!isBoundary(text[currentEnd - 1] ?? '')) {
+        while (currentEnd < text.length && !isBoundary(text[currentEnd] ?? '')) currentEnd += 1;
+        if (currentEnd < text.length) currentEnd += 1;
+      }
+
+      let previousEnd = currentStart;
+      while (previousEnd > 0 && /[。！？!?.\n\s]/u.test(text[previousEnd - 1] ?? '')) previousEnd -= 1;
+      let previousStart = previousEnd;
+      while (previousStart > 0 && !isBoundary(text[previousStart - 1] ?? '')) previousStart -= 1;
+      const previous = text.slice(previousStart, previousEnd).trim();
+      contexts.push({
+        current: text.slice(currentStart, currentEnd).trim(),
+        previous: previous || null,
+      });
+    }
+  }
+  return contexts;
+}
+
+const postpositiveAppearanceSubject = /(?:^|[、,\s])(?:髪|前髪|後ろ髪|目|瞳|眼|服|服装|衣装|制服|軍服|白衣|上着|コート|パーカー)(?:の(?:色|長さ|形|様子))?[はが]/u;
+
+/**
+ * Grounds a literal trait to one character only. Besides an explicit name, it
+ * accepts a bounded Japanese ellipsis: an immediately preceding sentence names
+ * exactly one character and the current sentence starts a hair/eyes/clothes
+ * subject. Multi-character or intervening-character contexts fail closed.
+ */
+export function isCharacterAppearanceEvidenceGrounded(input: {
+  source: readonly string[];
+  characterName: string;
+  otherCharacterNames: readonly string[];
+  quote: string;
+  value: string;
+}): boolean {
+  const { source, characterName, otherCharacterNames, quote, value } = input;
+  if (!value || !quote.includes(value)) return false;
+  const occurrences = quoteOccurrenceContexts(source, quote);
+  if (occurrences.length === 0) return false;
+  const otherNamed = (span: string): boolean => otherCharacterNames.some(name => mentionsName(span, name));
+
+  if (mentionsName(quote, characterName)) {
+    if (!occurrences.some(({ current }) => !uncertain.test(current))) return false;
+    if (!otherNamed(quote)) return true;
+    return quote.split(/[、,。！？!?;\n]|\bbut\b/iu).some(clause => {
+      if (!clause.includes(value) || !mentionsName(clause, characterName)) return false;
+      if (!otherNamed(clause)) return true;
+      const shared = /^(.+?)(?:は(?:二人とも|ふたりとも|両方とも|全員)|\s+(?:both|all)\s+)(.+)$/iu.exec(clause);
+      return !!shared && mentionsName(shared[1], characterName) && otherNamed(shared[1])
+        && shared[2].includes(value)
+        && ![characterName, ...otherCharacterNames].some(name => mentionsName(shared[2], name));
+    });
+  }
+
+  return occurrences.every(({ current, previous }) => {
+    if (uncertain.test(current) || otherNamed(current)) return false;
+    if (mentionsName(current, characterName)) return true;
+    if (!postpositiveAppearanceSubject.test(current) || previous === null || uncertain.test(previous)) return false;
+    return mentionsName(previous, characterName) && !otherNamed(previous);
+  });
+}
+
 export function buildCharacterAutofillCandidates(source: readonly string[], cast: CharacterAutofillExtraction): CharacterAutofillCandidate[] {
   const named = cast.filter(c => mentionsName(c.name_quote, c.name) && !unnamedRole.test(c.name)
     && quoteContexts(source, c.name_quote).some(sentence => !uncertain.test(sentence)));
-  return named.map(person => {
-    const belongs = (quote: string, value: string): boolean => {
-      if (!value || !quote.includes(value)) return false;
-      const contexts = quoteContexts(source, quote);
-      const otherNamed = (span: string): boolean => named.some(other => keyOf(other.name) !== keyOf(person.name) && mentionsName(span, other.name));
-      if (mentionsName(quote, person.name)) {
-        if (!contexts.some(context => !uncertain.test(context))) return false;
-        if (!otherNamed(quote)) return true;
-        return quote.split(/[、,。！？!?;\n]|\bbut\b/iu).some(clause => {
-          if (!clause.includes(value) || !mentionsName(clause, person.name)) return false;
-          if (!otherNamed(clause)) return true;
-          const shared = /^(.+?)(?:は(?:二人とも|ふたりとも|両方とも|全員)|\s+(?:both|all)\s+)(.+)$/iu.exec(clause);
-          return !!shared && mentionsName(shared[1], person.name) && otherNamed(shared[1])
-            && shared[2].includes(value) && !named.some(c => mentionsName(shared[2], c.name));
-        });
+  const candidates = named.map(person => {
+    const belongs = (quote: string, value: string, allowStateChange = false): boolean => {
+      if (!allowStateChange && quoteOccurrenceContexts(source, quote).some(({ current }) => appearanceStateChange.test(current))) {
+        return false;
       }
-      return contexts.length > 0 && contexts.every(context => mentionsName(context, person.name) && !otherNamed(context) && !uncertain.test(context));
+      return isCharacterAppearanceEvidenceGrounded({
+        source,
+        characterName: person.name,
+        otherCharacterNames: named.filter(other => keyOf(other.name) !== keyOf(person.name)).map(other => other.name),
+        quote,
+        value,
+      });
     };
     const groundedEvidence = person.appearance.filter(trait => belongs(trait.quote, trait.value));
     const evidence = person.entity_type === 'nonhuman'
@@ -384,7 +487,8 @@ export function buildCharacterAutofillCandidates(source: readonly string[], cast
     const grouped = new Map<Field, string[]>();
     const groupedSources = new Map<Field, string[]>();
     const unmatched: string[] = [];
-    for (const { field, value } of evidence) {
+    const choiceEvidence: CharacterAutofillChoiceEvidence[] = [];
+    for (const { field, value, quote } of evidence) {
       const normalized = person.entity_type === 'character'
         ? normalizeHumanTrait(field, value)
         : person.entity_type === 'nonhuman'
@@ -392,6 +496,9 @@ export function buildCharacterAutofillCandidates(source: readonly string[], cast
           : { assignments: [], unmatched: [value] };
       unmatched.push(...normalized.unmatched);
       for (const assignment of normalized.assignments) {
+        if (person.entity_type === 'character' && isHumanChoice(assignment.field)) {
+          choiceEvidence.push({ field: assignment.field, value: assignment.value, quote });
+        }
         const values = grouped.get(assignment.field) ?? [];
         values.push(assignment.value);
         grouped.set(assignment.field, values);
@@ -413,21 +520,156 @@ export function buildCharacterAutofillCandidates(source: readonly string[], cast
       else fields[group] = value;
     }
     if (person.entity_type === 'nonhuman' && nonhumanDetails.length) fields.distinctive_features = pack(nonhumanDetails, 500, ' / ');
+    const acceptedChoiceEvidence = deduplicateChoiceEvidence(choiceEvidence.filter(evidenceItem =>
+      readStructuredField(fields, evidenceItem.field) === evidenceItem.value));
     return {
       name: person.name, entityType: person.entity_type,
       freeDescription: pack(unmatched, 2000, ' / ') || null,
       structuredFields: person.entity_type ? parseStructuredFields(person.entity_type, fields) : {},
-      changes: person.changes.filter(c => belongs(c.quote, c.description)).map(change => ({
+      changes: person.changes.filter(c => belongs(c.quote, c.description, true)).map(change => ({
         ...change, name: change.name !== person.name && change.description.includes(change.name)
           ? change.name : change.description.slice(0, 100),
       })),
+      ...(acceptedChoiceEvidence.length > 0 ? { choiceEvidence: acceptedChoiceEvidence } : {}),
+    };
+  });
+  return mergeCharacterAutofillCandidates(candidates);
+}
+
+/**
+ * Provider output may split one named character across rows. Merge those rows
+ * before persistence, retain every non-conflicting leaf and residual phrase,
+ * and omit a field entirely when two explicit canonical values conflict.
+ */
+export function mergeCharacterAutofillCandidates(
+  candidates: readonly CharacterAutofillCandidate[],
+): CharacterAutofillCandidate[] {
+  const grouped = new Map<string, CharacterAutofillCandidate[]>();
+  for (const candidate of candidates) {
+    const key = keyOf(candidate.name);
+    const rows = grouped.get(key) ?? [];
+    rows.push(candidate);
+    grouped.set(key, rows);
+  }
+  return [...grouped.values()].map((rows) => {
+    const first = rows[0];
+    if (first === undefined) throw new ConfigurationError('Character autofill candidate merge failed');
+    const knownTypes = [...new Set(rows.map(row => row.entityType).filter((type): type is Exclude<CharacterAutofillCandidate['entityType'], null> => type !== null))];
+    const entityType = knownTypes.length === 1 ? knownTypes[0] : null;
+    const structuredFields = entityType === null ? {} : mergeStructuredFields(rows.map(row => row.structuredFields));
+    const choiceEvidence = entityType === 'character'
+      ? mergeChoiceEvidence(rows.flatMap(row => row.choiceEvidence ?? []), structuredFields)
+      : [];
+    return {
+      name: first.name.trim(),
+      entityType,
+      freeDescription: pack(rows.flatMap(row => row.freeDescription ? [row.freeDescription] : []), 2000, ' / ') || null,
+      structuredFields,
+      changes: deduplicateCandidateChanges(rows.flatMap(row => row.changes)),
+      ...(choiceEvidence.length > 0 ? { choiceEvidence } : {}),
     };
   });
 }
 
-export async function extractCharacterAutofillCandidates(client: StoryAiClientPort, episode: Episode): Promise<CharacterAutofillCandidate[]> {
+function mergeChoiceEvidence(
+  evidence: readonly CharacterAutofillChoiceEvidence[],
+  structuredFields: Record<string, unknown>,
+): CharacterAutofillChoiceEvidence[] {
+  const byField = new Map<string, CharacterAutofillChoiceEvidence[]>();
+  for (const item of evidence) {
+    const values = byField.get(item.field) ?? [];
+    values.push(item);
+    byField.set(item.field, values);
+  }
+  return [...byField.values()].flatMap(items => {
+    const distinctValues = new Set(items.map(item => item.value));
+    if (distinctValues.size !== 1) return [];
+    const value = items[0]?.value;
+    const savedValue = readStructuredField(structuredFields, items[0]?.field ?? '');
+    if (value === undefined || (savedValue !== undefined && savedValue !== value)) return [];
+    return deduplicateChoiceEvidence(items);
+  });
+}
+
+function mergeStructuredFields(values: readonly Record<string, unknown>[]): Record<string, unknown> {
+  const leaves = new Map<string, unknown[]>();
+  for (const value of values) collectStructuredLeaves(value, '', leaves);
+  const result: Record<string, unknown> = {};
+  for (const [path, candidates] of leaves) {
+    const distinct = [...new Map(candidates.map(value => [JSON.stringify(value), value])).values()];
+    if (distinct.length !== 1) continue;
+    writeStructuredField(result, path, distinct[0]);
+  }
+  return result;
+}
+
+function collectStructuredLeaves(
+  value: Record<string, unknown>,
+  prefix: string,
+  target: Map<string, unknown[]>,
+): void {
+  for (const [key, child] of Object.entries(value)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (typeof child === 'object' && child !== null && !Array.isArray(child)) {
+      collectStructuredLeaves(child as Record<string, unknown>, path, target);
+      continue;
+    }
+    const candidates = target.get(path) ?? [];
+    candidates.push(child);
+    target.set(path, candidates);
+  }
+}
+
+function readStructuredField(fields: Record<string, unknown>, path: string): unknown {
+  let current: unknown = fields;
+  for (const part of path.split('.')) {
+    if (typeof current !== 'object' || current === null || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function writeStructuredField(fields: Record<string, unknown>, path: string, value: unknown): void {
+  const parts = path.split('.');
+  let current = fields;
+  for (const part of parts.slice(0, -1)) {
+    const child = current[part];
+    if (typeof child === 'object' && child !== null && !Array.isArray(child)) {
+      current = child as Record<string, unknown>;
+    } else {
+      const next: Record<string, unknown> = {};
+      current[part] = next;
+      current = next;
+    }
+  }
+  const leaf = parts.at(-1);
+  if (leaf !== undefined) current[leaf] = value;
+}
+
+function deduplicateChoiceEvidence(
+  evidence: readonly CharacterAutofillChoiceEvidence[],
+): CharacterAutofillChoiceEvidence[] {
+  return [...new Map(evidence.map(item => [
+    `${item.field}\u0000${item.value}\u0000${item.quote.normalize('NFKC').trim()}`,
+    { ...item, quote: item.quote.trim() },
+  ])).values()];
+}
+
+function deduplicateCandidateChanges(
+  changes: CharacterAutofillCandidate['changes'],
+): CharacterAutofillCandidate['changes'] {
+  return [...new Map(changes.map(change => [
+    `${keyOf(change.quote)}\u0000${keyOf(change.description)}`,
+    change,
+  ])).values()];
+}
+
+export async function extractCharacterAutofillEvidence(
+  client: StoryAiClientPort,
+  episode: Episode,
+): Promise<{ source: string[]; extraction: CharacterAutofillExtraction }> {
   const prose = episodeCharacterSource(episode, episode.productionNotesEnabled === true);
-  if (!prose.length) return [];
+  if (!prose.length) return { source: [], extraction: [] };
   if (!client.extractCharacterAutofill) throw new ConfigurationError('Character autofill is unavailable');
   const result = await client.extractCharacterAutofill({
     systemPrompt: [
@@ -438,7 +680,12 @@ export async function extractCharacterAutofillCandidates(client: StoryAiClientPo
       'For other visible attributes use distinguishing_features for humans, distinctive_features for nonhumans. Keep each body part with its color and count in ONE verbatim value (e.g. 赤い角が二本 and 金色の目が三つ), including for nonhumans. A nonhuman silhouette belongs in base_form, and its modifying color must stay in that same verbatim value (e.g. 青いしずく形の生き物), not a separate feature.',
       'Do not repeat traits from a specific field in general features. If appearance changes, put it ONLY in changes; name is a brief label for the new condition (e.g. 赤い模様), never a character name. Use exact source substrings for name and description. Ordinary actions are not states. Do not assign a later appearance to the base character.',
     ].join(' '),
-    userPrompt: JSON.stringify({ episode: prose }),
+    userPrompt: JSON.stringify({ episode: prose, allowed_human_catalog: allowedHumanCatalog }),
   });
-  return buildCharacterAutofillCandidates(prose, result);
+  return { source: prose, extraction: result };
+}
+
+export async function extractCharacterAutofillCandidates(client: StoryAiClientPort, episode: Episode): Promise<CharacterAutofillCandidate[]> {
+  const { source, extraction } = await extractCharacterAutofillEvidence(client, episode);
+  return buildCharacterAutofillCandidates(source, extraction);
 }

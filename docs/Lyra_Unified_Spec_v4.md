@@ -1292,6 +1292,24 @@ Unmentioned fields stay empty. The returned character IDs open their ordinary
 editors, including after reloading the work. The user can review each character
 and separately request an image preview under the existing credit contract.
 
+Saved episode cast autofill uses `gpt-6-luna` with low reasoning for extraction
+and a second reconciliation against the full original manuscript. Keep literal
+evidence separate from editor option IDs and validate both before persistence.
+Resolve omitted subjects only when the surrounding text identifies one character.
+Merge grounded appearance details from repeated mentions of the same character.
+Report ambiguous ownership or conflicting descriptions for review.
+
+Clients opt into appearance review with `?appearance_review=1`. The response
+adds source-backed empty-field suggestions for existing human characters and
+unresolved source quotations. Each accepted suggestion uses
+`POST /api/entities/:id/appearance-review` with a known field, option value and
+`expected_updated_at`. Recheck scope, the empty field and the entity revision
+when saving. Preserve populated fields, historical custom values and siblings.
+Replaying an already accepted value succeeds without another edit. Requests
+without the query parameter retain the original autofill response contract.
+Mobile uses its existing 55-second StoryAI write timeout for this action.
+The staging CloudFront origin waits up to 60 seconds for the API response.
+
 The normal character selection screen also shows a portrait grid beside the
 name selector. A saved reference supplies the portrait. Characters without a
 photo keep a selectable blank frame with the name underneath. Selecting a card
