@@ -65,9 +65,17 @@ const aliases: Partial<Record<Field, Record<string, string[]>>> = {
 
 function matchOption(field: keyof typeof humanAppearanceChoices, value: string): string | undefined {
   const forms = [keyOf(value)];
-  if (field === 'hair.color' || field === 'eyes.color' || field === 'clothing.main_color') {
-    forms.push(keyOf(value.replace(/の?(?:髪|目|瞳)$/u, '').replace(/(?:色|い)$/u, '')));
-    forms.push(keyOf(value.replace(/\s+(?:hair|eyes?|colou?r)$/iu, '')));
+  if (field === 'hair.color') {
+    forms.push(keyOf(value.replace(/の?髪$/u, '').replace(/(?:色|い)$/u, '')));
+    forms.push(keyOf(value.replace(/\s+hair$/iu, '')));
+  }
+  if (field === 'eyes.color') {
+    forms.push(keyOf(value.replace(/の?(?:目|瞳)$/u, '').replace(/(?:色|い)$/u, '')));
+    forms.push(keyOf(value.replace(/\s+eyes?$/iu, '')));
+  }
+  if (field === 'clothing.main_color') {
+    forms.push(keyOf(value.replace(/の?(?:服|衣装|制服|軍服)$/u, '').replace(/(?:色|い)$/u, '')));
+    forms.push(keyOf(value.replace(/\s+(?:clothes?|clothing|outfit|colou?r)$/iu, '')));
   }
   if (field === 'hair.length') forms.push(keyOf(value.replace(/(?:髪|ヘア|\s+hair)$/iu, '')));
   if (field === 'age_range') {
@@ -91,13 +99,206 @@ const isHumanChoice = (f: Field): f is keyof typeof humanAppearanceChoices => Ob
 const isHumanText = (f: Field): f is keyof typeof textFieldLimits => Object.hasOwn(textFieldLimits, f);
 const isNonhumanChoice = (f: Field): f is keyof typeof nonhumanOptions => Object.hasOwn(nonhumanOptions, f);
 
-// A hairstyle can be classified as length, texture or arrangement by the model.
-// A unique editor match in this group determines which dropdown owns the value.
-const hairFields = humanChoiceKeys.filter(field => field.startsWith('hair.') || field.startsWith('hair_detail.'));
-function editorField(field: Field, value: string): Field {
-  if (!isHumanChoice(field) || !hairFields.includes(field) || matchOption(field, value)) return field;
-  const matches = hairFields.filter(key => matchOption(key, value) !== undefined);
-  return matches.length === 1 ? matches[0] : field;
+interface ChoiceSpan {
+  field: Field;
+  value: string;
+  start: number;
+  end: number;
+}
+
+interface NormalizedTrait {
+  assignments: { field: Field; value: string; source: string }[];
+  unmatched: string[];
+}
+
+// Provider field classification is advisory. This bounded, literal-only pass
+// recovers editor options from common Japanese compounds without adding any
+// value that was not present in the source-backed trait.
+const embeddedHumanChoiceRules: readonly {
+  field: keyof typeof humanAppearanceChoices;
+  value: string;
+  pattern: RegExp;
+}[] = [
+  { field: 'hair.color', value: 'black', pattern: /黒髪|黒(?:い|色の?)髪|黒い(?=(?:短髪|長髪))/gu },
+  { field: 'hair.color', value: 'brown', pattern: /茶髪|茶(?:色の?)髪/gu },
+  { field: 'hair.color', value: 'dark_brown', pattern: /(?:焦げ茶|こげ茶|濃い茶色)(?:色)?(?:の)?髪/gu },
+  { field: 'hair.color', value: 'blonde', pattern: /金髪|金色の髪|ブロンド/gu },
+  { field: 'hair.color', value: 'ash_blonde', pattern: /アッシュブロンド/gu },
+  { field: 'hair.color', value: 'silver', pattern: /銀髪|銀色の髪/gu },
+  { field: 'hair.color', value: 'gray', pattern: /灰色の髪|グレーの髪/gu },
+  { field: 'hair.color', value: 'white', pattern: /白髪|白い髪|白色の髪/gu },
+  { field: 'hair.color', value: 'blue', pattern: /青髪|青い髪|青色の髪/gu },
+  { field: 'hair.color', value: 'green', pattern: /緑髪|緑色の髪/gu },
+  { field: 'hair.color', value: 'red', pattern: /赤髪|赤い髪|赤色の髪/gu },
+  { field: 'hair.color', value: 'pink', pattern: /ピンク髪|ピンク色の髪/gu },
+  { field: 'hair.color', value: 'purple', pattern: /紫髪|紫色の髪/gu },
+  { field: 'hair.length', value: 'very_short', pattern: /ベリーショート/gu },
+  { field: 'hair.length', value: 'very_long', pattern: /(?:胸|腰|背中)まで届く(?=(?:黒|茶|金|銀|白|青|緑|赤|紫|ピンク)?髪)/gu },
+  { field: 'hair.length', value: 'short', pattern: /短髪|ショート(?:ヘア|(?=$|[のはがをにでと、。！？,;；\s]))/gu },
+  { field: 'hair.length', value: 'medium', pattern: /ミディアム(?:ヘア|(?=$|[のはがをにでと、。！？,;；\s]))/gu },
+  { field: 'hair.length', value: 'long', pattern: /長髪|長い(?=(?:黒|茶|金|銀|白|青|緑|赤|紫|ピンク)?髪)|ロング(?:ヘア|(?=$|[のはがをにでと、。！？,;；\s]))/gu },
+  { field: 'hair.arrangement', value: 'ponytail', pattern: /ポニーテール/gu },
+  { field: 'hair.arrangement', value: 'side_ponytail', pattern: /サイドポニーテール/gu },
+  { field: 'hair.arrangement', value: 'twin_tails', pattern: /ツインテール/gu },
+  { field: 'hair.arrangement', value: 'braid', pattern: /三つ編み/gu },
+  { field: 'hair.arrangement', value: 'bun', pattern: /お団子(?:ヘア)?/gu },
+  { field: 'eyes.color', value: 'black', pattern: /黒(?:い|色の?)(?:目|瞳)/gu },
+  { field: 'eyes.color', value: 'brown', pattern: /茶(?:色の?)(?:目|瞳)/gu },
+  { field: 'eyes.color', value: 'blue', pattern: /青(?:い|色の?)(?:目|瞳)/gu },
+  { field: 'eyes.color', value: 'green', pattern: /緑(?:色の?)(?:目|瞳)/gu },
+  { field: 'eyes.color', value: 'red', pattern: /赤(?:い|色の?)(?:目|瞳)/gu },
+  { field: 'eyes.color', value: 'gold', pattern: /金(?:色の?)(?:目|瞳)/gu },
+  { field: 'eyes.color', value: 'silver', pattern: /銀(?:色の?)(?:目|瞳)/gu },
+  { field: 'eyes.color', value: 'purple', pattern: /紫(?:色の?)(?:目|瞳)/gu },
+  { field: 'clothing.category', value: 'school', pattern: /(?:学校の)?制服|学生服/gu },
+  { field: 'clothing.category', value: 'military', pattern: /軍服/gu },
+  { field: 'clothing.category', value: 'lab_coat', pattern: /白衣/gu },
+  { field: 'clothing.category', value: 'hoodie', pattern: /パーカー/gu },
+  { field: 'clothing.category', value: 'armor', pattern: /鎧/gu },
+  ...([
+    ['black', '黒(?:い|色の?)'], ['white', '白(?:い|色の?)'], ['navy', '紺(?:色の?)'],
+    ['gray', '(?:灰色|グレー)(?:の)?'], ['brown', '茶色の?'], ['red', '赤(?:い|色の?)'],
+    ['blue', '青(?:い|色の?)'], ['green', '緑(?:色の?)'],
+  ] as const).map(([value, color]) => ({
+    field: 'clothing.main_color' as const,
+    value,
+    pattern: new RegExp(`${color}(?=(?:服|制服|学生服|軍服|衣装|コート|パーカー|鎧))`, 'gu'),
+  })),
+];
+
+function collectPatternSpans(text: string): ChoiceSpan[] {
+  const spans: ChoiceSpan[] = [];
+  for (const rule of embeddedHumanChoiceRules) {
+    rule.pattern.lastIndex = 0;
+    for (let match = rule.pattern.exec(text); match !== null; match = rule.pattern.exec(text)) {
+      spans.push({ field: rule.field, value: rule.value, start: match.index, end: match.index + match[0].length });
+      if (match[0].length === 0) rule.pattern.lastIndex += 1;
+    }
+  }
+  return compactChoiceSpans(spans);
+}
+
+function compactChoiceSpans(spans: readonly ChoiceSpan[]): ChoiceSpan[] {
+  const selected: ChoiceSpan[] = [];
+  for (const span of [...spans].sort((left, right) => (right.end - right.start) - (left.end - left.start))) {
+    const overlapsSameField = selected.some(existing => existing.field === span.field
+      && span.start < existing.end && existing.start < span.end);
+    if (!overlapsSameField) selected.push(span);
+  }
+  return selected;
+}
+
+function removeChoiceSpans(text: string, spans: readonly ChoiceSpan[]): string[] {
+  if (!spans.length) return [text];
+  const characters = text.split('');
+  for (const span of spans) {
+    for (let index = span.start; index < span.end; index += 1) characters[index] = '\0';
+  }
+  return characters.join('')
+    .split(/\0+|[、,;；\n／/]+/u)
+    .map(part => part.trim().replace(/^(?:で|の|と|が|は|に|を)+|(?:で|の|と|が|は|に|を)+$/gu, '').trim())
+    .filter(Boolean);
+}
+
+function normalizeHumanTrait(field: Field, value: string): NormalizedTrait {
+  if (isHumanChoice(field)) {
+    const selected = matchOption(field, value);
+    if (selected !== undefined) return { assignments: [{ field, value: selected, source: value }], unmatched: [] };
+  }
+  const exact = humanChoiceKeys.flatMap(candidate => {
+    const selected = matchOption(candidate, value);
+    return selected === undefined ? [] : [{ field: candidate as Field, value: selected, source: value }];
+  });
+  const spans = collectPatternSpans(value);
+  if (exact.length === 1 && spans.length === 0) return { assignments: exact, unmatched: [] };
+  const compacted = compactChoiceSpans(spans);
+  const assignments = compacted.map(span => ({
+    field: span.field, value: span.value, source: value.slice(span.start, span.end),
+  }));
+  const remaining = removeChoiceSpans(value, compacted);
+  if (isHumanText(field) && field !== 'distinguishing_features') {
+    return {
+      assignments: [...assignments, ...remaining.map(item => ({ field, value: item, source: item }))],
+      unmatched: remaining,
+    };
+  }
+  return { assignments, unmatched: remaining };
+}
+
+function literalOccurrences(text: string, literal: string): number[] {
+  const occurrences: number[] = [];
+  const asciiWord = /^[a-z0-9_]+$/iu.test(literal);
+  const japaneseBoundary = /[、。，．!?！？;:；：\sのはがをにでとな]/u;
+  for (let at = text.indexOf(literal); at >= 0; at = text.indexOf(literal, at + literal.length)) {
+    const before = at === 0 ? '' : text[at - 1] ?? '';
+    const afterAt = at + literal.length;
+    const after = afterAt >= text.length ? '' : text[afterAt] ?? '';
+    if (asciiWord) {
+      if ((before && /[a-z0-9_]/iu.test(before)) || (after && /[a-z0-9_]/iu.test(after))) continue;
+    } else if (after && !japaneseBoundary.test(after)) {
+      continue;
+    }
+    occurrences.push(at);
+  }
+  return occurrences;
+}
+
+function normalizeNonhumanTrait(field: Field, value: string): NormalizedTrait {
+  const spans: ChoiceSpan[] = [];
+  for (const candidate of nonhumanKeys) {
+    const options: Record<string, readonly string[]> = nonhumanOptions[candidate];
+    for (const [selected, labels] of Object.entries(options)) {
+      for (const label of [selected, ...labels].sort((left, right) => right.length - left.length)) {
+        for (const at of literalOccurrences(value, label)) {
+          spans.push({ field: candidate, value: selected, start: at, end: at + label.length });
+        }
+      }
+    }
+  }
+  if (field === 'art_style') {
+    const selected = matchOption(field, value);
+    if (selected !== undefined) return { assignments: [{ field, value: selected, source: value }], unmatched: [] };
+  }
+  const compacted = compactChoiceSpans(spans);
+  const assignments = compacted.map(span => ({
+    field: span.field, value: span.value, source: value.slice(span.start, span.end),
+  }));
+  const remaining = removeChoiceSpans(value, compacted);
+  if (field === 'distinctive_features') {
+    return {
+      assignments: [...assignments, ...remaining.map(item => ({ field, value: item, source: item }))],
+      unmatched: remaining,
+    };
+  }
+  if (!assignments.length && isNonhumanChoice(field) && (field === 'base_form' || field === 'movement')) {
+    return { assignments: [
+      { field, value: 'custom', source: value },
+      { field: 'distinctive_features', value, source: value },
+    ], unmatched: [value] };
+  }
+  return { assignments, unmatched: remaining };
+}
+
+function mergeNonhumanBaseModifiers(
+  traits: readonly { field: Field; value: string; quote: string }[],
+): { field: Field; value: string; quote: string }[] {
+  const consumed = new Set<number>();
+  return traits.map((trait) => {
+    if (trait.field !== 'base_form') return trait;
+    let value = trait.value;
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [modifierIndex, modifier] of traits.entries()) {
+        if (consumed.has(modifierIndex) || modifier.field !== 'distinctive_features'
+          || modifier.quote !== trait.quote || !trait.quote.includes(modifier.value + value)) continue;
+        value = modifier.value + value;
+        consumed.add(modifierIndex);
+        changed = true;
+      }
+    }
+    return { ...trait, value };
+  }).filter((_trait, index) => !consumed.has(index));
 }
 
 function pack(values: readonly string[], max: number, delimiter: string): string {
@@ -129,8 +330,8 @@ function fieldValue(
   if (type !== 'character') return undefined;
   if (isHumanText(field)) return pack(values, textFieldLimits[field], ' / ');
   if (isHumanChoice(field)) {
-    const selected = [...new Set(values.map(value => matchOption(field, value) ?? value))];
-    return selected.length === 1 && selected[0].length <= 100 ? selected[0] : pack(values, 100, ' / ');
+    const selected = [...new Set(values.map(value => matchOption(field, value)).filter((value): value is string => value !== undefined))];
+    return selected.length === 1 ? selected[0] : undefined;
   }
   return undefined;
 }
@@ -173,20 +374,37 @@ export function buildCharacterAutofillCandidates(source: readonly string[], cast
       }
       return contexts.length > 0 && contexts.every(context => mentionsName(context, person.name) && !otherNamed(context) && !uncertain.test(context));
     };
-    const evidence = person.appearance.filter(trait => belongs(trait.quote, trait.value));
+    const groundedEvidence = person.appearance.filter(trait => belongs(trait.quote, trait.value));
+    const evidence = person.entity_type === 'nonhuman'
+      ? mergeNonhumanBaseModifiers(groundedEvidence)
+      : groundedEvidence;
     const fields: Record<string, unknown> = {};
     const grouped = new Map<Field, string[]>();
+    const groupedSources = new Map<Field, string[]>();
+    const unmatched: string[] = [];
     for (const { field, value } of evidence) {
-      const key = person.entity_type === 'character' ? editorField(field, value) : field;
-      const values = grouped.get(key) ?? [];
-      values.push(value);
-      grouped.set(key, values);
+      const normalized = person.entity_type === 'character'
+        ? normalizeHumanTrait(field, value)
+        : person.entity_type === 'nonhuman'
+          ? normalizeNonhumanTrait(field, value)
+          : { assignments: [], unmatched: [value] };
+      unmatched.push(...normalized.unmatched);
+      for (const assignment of normalized.assignments) {
+        const values = grouped.get(assignment.field) ?? [];
+        values.push(assignment.value);
+        grouped.set(assignment.field, values);
+        const sources = groupedSources.get(assignment.field) ?? [];
+        sources.push(assignment.source);
+        groupedSources.set(assignment.field, sources);
+      }
     }
     const nonhumanDetails = [...(grouped.get('distinctive_features') ?? [])];
     for (const [field, values] of grouped) {
       if (field === 'distinctive_features') continue;
       const value = fieldValue(person.entity_type, field, values);
-      if (person.entity_type === 'nonhuman' && (!value || value === 'custom')) nonhumanDetails.push(...values);
+      const sources = groupedSources.get(field) ?? values;
+      if (person.entity_type === 'nonhuman' && !value) nonhumanDetails.push(...sources);
+      if (person.entity_type === 'character' && !value) unmatched.push(...sources);
       if (!value) continue;
       const [group, member] = field.split('.');
       if (member) fields[group] = { ...(fields[group] as Record<string, unknown> | undefined), [member]: value };
@@ -195,7 +413,7 @@ export function buildCharacterAutofillCandidates(source: readonly string[], cast
     if (person.entity_type === 'nonhuman' && nonhumanDetails.length) fields.distinctive_features = pack(nonhumanDetails, 500, ' / ');
     return {
       name: person.name, entityType: person.entity_type,
-      freeDescription: pack(evidence.map(item => item.value), 2000, ' / ') || null,
+      freeDescription: pack(unmatched, 2000, ' / ') || null,
       structuredFields: person.entity_type ? parseStructuredFields(person.entity_type, fields) : {},
       changes: person.changes.filter(c => belongs(c.quote, c.description)).map(change => ({
         ...change, name: change.name !== person.name && change.description.includes(change.name)
@@ -215,7 +433,7 @@ export async function extractCharacterAutofillCandidates(client: StoryAiClientPo
       'Use the literal name as printed, with a literal name_quote. Exclude unnamed roles, objects, locations and hypothetical characters. Use null if type is genuinely unknown.',
       'Split explicit appearance into all matching editor fields, including colors, length, styling, clothing category and color, and every stated size, shape and count. Ponytail, braids, buns and other tied hairstyles are hair.arrangement. Use only visible explicitly stated traits, never supply defaults or infer missing traits.',
       'For each value copy a short exact substring in the source language. Use the shortest verbatim quote that contains both the character name and the value and ties the trait to that character, without other cast names. Preserve qualifiers, colors and counts.',
-      'For other visible attributes use distinguishing_features for humans, distinctive_features for nonhumans. Keep each body part with its color and count in ONE verbatim value (e.g. 赤い角が二本 and 金色の目が三つ), including for nonhumans. A nonhuman silhouette such as しずく形 belongs in base_form.',
+      'For other visible attributes use distinguishing_features for humans, distinctive_features for nonhumans. Keep each body part with its color and count in ONE verbatim value (e.g. 赤い角が二本 and 金色の目が三つ), including for nonhumans. A nonhuman silhouette belongs in base_form, and its modifying color must stay in that same verbatim value (e.g. 青いしずく形の生き物), not a separate feature.',
       'Do not repeat traits from a specific field in general features. If appearance changes, put it ONLY in changes; name is a brief label for the new condition (e.g. 赤い模様), never a character name. Use exact source substrings for name and description. Ordinary actions are not states. Do not assign a later appearance to the base character.',
     ].join(' '),
     userPrompt: JSON.stringify({ episode: prose }),
