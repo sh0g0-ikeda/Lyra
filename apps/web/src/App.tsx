@@ -7077,7 +7077,7 @@ function StudioShell(props: {
                             <div className="muted small">{translateUiString(uiLanguage, 'Delete with the button only. Clicking the image will not delete it.')}</div>
                           </div>
                         </div>
-                        {entityReferenceSetQuery.data !== undefined && entityReferenceSetQuery.data.reference_images.length > 0 ? (
+                        {entityReferenceSetQuery.data?.reference_images?.length ? (
                           <div className="reference-grid reference-grid-portrait">
                             {entityReferenceSetQuery.data.reference_images.map((image) => (
                               <div key={image.ref_id} className="reference-card reference-card-portrait">
@@ -8067,7 +8067,7 @@ function CharacterThumbnailCard(props: CharacterPhotoSource & {
     queryFn: () => props.api.getEntityReferenceSet(id, props.organizationId),
     staleTime: 30_000,
   });
-  const available = reference.data?.reference_images.filter(image => canReadWebImage(image, props.webImageDeliveryEnabled));
+  const available = reference.data?.reference_images?.filter(image => canReadWebImage(image, props.webImageDeliveryEnabled));
   const photo = available?.find(image => image.ref_id === reference.data?.primary_ref_id) ?? available?.[0];
   const { objectUrl } = useAuthenticatedImage({
     enabled: photo !== undefined,

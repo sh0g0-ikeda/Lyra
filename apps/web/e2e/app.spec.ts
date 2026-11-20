@@ -92,6 +92,7 @@ test('キャラ画面を開くと写真と空枠が並び、拡大と人物選�
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === `/api/works/${work.id}/entities`) return route.fulfill({ json: { entities: cast } });
+    if (path === `/api/entities/${cast[0].id}/reference-set`) return route.fulfill({ json: {} });
     if (path.endsWith('/reference-set')) {
       const hasPhoto = path === '/api/entities/cast-2/reference-set';
       return route.fulfill({ json: { entity_id: path.split('/')[3], status: hasPhoto ? 'ready' : 'empty',
@@ -875,7 +876,7 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await expect(mangaCreationSteps(page).getByRole('button', { name: '3. Pages', exact: true })).toBeVisible();
 
   await openMangaStep(page, '2. Characters');
-  await expect(page.getByText('Mizuki')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Mizuki Character', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Generate full-body preview' })).toBeVisible();
 
   await openMangaStep(page, '3. Pages');
@@ -1411,7 +1412,7 @@ test('未保存キャラを破棄して別キャラへ移動し戻る場合は�
   await page.getByRole('button', { name: /Rin/u }).click();
   await expect(description).toHaveValue(secondEntity.free_description);
   expect(warnings).toBe(1);
-  await page.getByRole('button', { name: /Mizuki/u }).click();
+  await page.getByRole('button', { name: 'Mizuki Character', exact: true }).click();
   await expect(description).toHaveValue(entity.free_description);
   expect(entityPutCount).toBe(0);
 });
@@ -1869,7 +1870,8 @@ test('初心者向け案内とページ編集の情報境界を明確にする',
       exact: true,
     }),
   ).toBeVisible();
-  const localizedEntityCard = page.locator('.list-grid .mini-card').filter({ hasText: 'Mizuki' });
+  const localizedEntityCard = page.getByRole('group', { name: 'キャラの写真一覧' })
+    .getByRole('button', { name: 'Mizuki キャラクター', exact: true });
   await expect(localizedEntityCard).toContainText('キャラクター');
   await expect(localizedEntityCard.getByText('character', { exact: true })).toHaveCount(0);
   for (const localizedCharacterLabel of [
