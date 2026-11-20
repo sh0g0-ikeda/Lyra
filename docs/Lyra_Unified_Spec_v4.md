@@ -1310,6 +1310,16 @@ manuscript with grounded first-pass evidence; rejected details are not complete.
 If later passes cannot resolve a source-backed trait, report it for review.
 Map synonymous garment names such as 甲冑 and 鎧 to the armor choice, and retain
 unsupported garment colors/materials with their garment in literal free text.
+An explicit named profile heading and its immediately nested 容姿 property also
+provide source ownership for appearance details. Keep the property's original
+boundaries and literal evidence. A supported assertive classification note such
+as 人型ではない存在 belongs to the heading, so it does not negate positive body
+descriptions. Do not relax negation, uncertainty or state-change checks on the
+appearance claim itself, or accept quotations crossing another profile/property.
+An explicit different subject inside that property stops inherited ownership;
+body-part descriptions alone do not switch the subject. State-scoped headings
+must not turn a changed appearance into a base trait. Source-grounded changes
+remain eligible for the separate state-change list.
 
 Clients opt into appearance review with `?appearance_review=1`. The response
 adds source-backed empty-field suggestions for existing human characters and

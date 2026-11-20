@@ -232,6 +232,54 @@ describe('CharacterAppearanceCoverage', () => {
     expect(result.candidates[0]?.structuredFields).toMatchObject({ distinctive_features: '赤い角が二本' });
   });
 
+  it('人物紹介の非人型という注記で肯定された人外の容姿を捨てない', async () => {
+    const header = '* 黒影の魔物（人型ではない存在）\n   * 容姿： ';
+    const body = '漆黒のタールと煙が混ざり合ったような不定形の怪物。'
+      + '体中に無数の時計の針が突き刺さっており、顔の位置に割れた文字盤のような白い仮面がある。';
+    const client = new FakeStoryAiClient([{
+      name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman', changes: [],
+      appearance: [
+        { field: 'base_form', value: '漆黒のタールと煙が混ざり合ったような不定形の怪物', quote: header + body },
+        { field: 'distinctive_features', value: '体中に無数の時計の針が突き刺さっており', quote: header + body },
+        { field: 'distinctive_features', value: '顔の位置に割れた文字盤のような白い仮面がある', quote: header + body },
+      ],
+    }], emptyCoverage());
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(header + body));
+
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.entityType).toBe('nonhuman');
+    expect(result.candidates[0]?.structuredFields.base_form).toBe('custom');
+    for (const literal of ['漆黒', 'タール', '煙', '不定形', '無数の時計の針', '白い仮面']) {
+      expect(result.candidates[0]?.structuredFields.distinctive_features).toContain(literal);
+      expect(result.candidates[0]?.freeDescription).toContain(literal);
+    }
+    const payload = JSON.parse(client.coverageRequest?.userPrompt ?? '{}') as {
+      first_extraction: Array<{ appearance: unknown[] }>;
+    };
+    expect(payload.first_extraction[0]?.appearance).toHaveLength(3);
+    expect(result.unresolved).toEqual([]);
+  });
+
+  it('人外の分類注記を許しても仮定の仮面を基本外見に追加しない', async () => {
+    const manuscript = '* 黒影の魔物（人型ではない存在）\n   * 容姿： 漆黒の不定形の怪物。もし白い仮面があれば目立つ。';
+    const client = new FakeStoryAiClient([{
+      name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman', changes: [],
+      appearance: [{ field: 'base_form', value: '漆黒の不定形の怪物', quote: '漆黒の不定形の怪物' }],
+    }], {
+      additions: [{ name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman', changes: [],
+        appearance: [{ field: 'distinctive_features', option_id: null, value: '白い仮面', quote: 'もし白い仮面があれば目立つ' }] }],
+      unresolved: [],
+    });
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.structuredFields.base_form).toBe('custom');
+    expect(result.candidates[0]?.freeDescription).toContain('漆黒の不定形の怪物');
+    expect(result.candidates[0]?.freeDescription).not.toContain('白い仮面');
+  });
+
   it('照合が誤った選択肢IDを返しても原文から導ける値だけを保存候補にする', async () => {
     const firstSentence = 'ミオは黒い短髪で、白と青のしましまの上着を着ている。';
     const secondSentence = '目は一重で緑色である。';
@@ -264,6 +312,29 @@ describe('CharacterAppearanceCoverage', () => {
     });
     expect(result.candidates[0]?.structuredFields).not.toMatchObject({ eyes: { color: 'red' } });
     expect(result.candidates[0]?.freeDescription).toContain('白と青のしましまの上着');
+  });
+
+  it('人外プロフィール内の変化を照合後も状態変化として保持し基本外見には混ぜない', async () => {
+    const change = '黒影の魔物の顔に白い仮面が現れる';
+    const manuscript = ` * 黒影の魔物（人型ではない存在）\n   * 容姿： 不定形の怪物。${change}。`;
+    const client = new FakeStoryAiClient([{
+      name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman', changes: [],
+      appearance: [{ field: 'base_form', value: '不定形の怪物', quote: '不定形の怪物' }],
+    }], {
+      additions: [{
+        name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman',
+        appearance: [{ field: 'distinctive_features', option_id: null, value: '白い仮面', quote: change }],
+        changes: [{ name: '仮面の出現', description: '白い仮面が現れる', quote: change }],
+      }], unresolved: [],
+    });
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+
+    expect(result.candidates[0]?.structuredFields).toMatchObject({ base_form: 'custom' });
+    expect(result.candidates[0]?.freeDescription).not.toContain('白い仮面');
+    expect(result.candidates[0]?.changes).toEqual([
+      { name: '白い仮面が現れる', description: '白い仮面が現れる', quote: change },
+    ]);
   });
 
   it('仮定文の一重と目色を直前の人物の外見として回収しない', async () => {

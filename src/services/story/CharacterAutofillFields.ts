@@ -399,6 +399,228 @@ const unnamedRole = /^(?:通行人|群衆|誰か|兵士|店員|少年|少女|先
 const uncertain = /(?:かもしれ|もしも?|だったら|ならば|ではな(?:い|く)|じゃない|わけでは|ない|なく|ません|\b(?:if|might|not|never)\b)/iu;
 const appearanceStateChange = /(?:変わ|変化|変身|染め|生え|現れ|発光|着替え)/u;
 
+type ProfileEvidenceDecision = 'not_profile' | 'accept' | 'reject';
+
+interface SourceLine {
+  start: number;
+  end: number;
+  text: string;
+}
+
+interface AppearanceProfile {
+  name: string;
+  qualifierAllowed: boolean;
+  headerStart: number;
+  headerEnd: number;
+  appearanceStart: number;
+  appearanceEnd: number;
+}
+
+interface QuoteOccurrence {
+  start: number;
+  end: number;
+}
+
+const assertiveNonhumanClassifications = new Set([
+  '人型ではない存在',
+  '人間ではない存在',
+]);
+const stateLimitedProfileQualifier = /(?:仮の姿|変身|変化|覚醒|暴走|戦闘時|通常時|一時的|後(?:の)?姿|時(?:の)?姿|状態|形態|フォーム)/u;
+const listItemPrefix = /^([ \t]*)(?:[-+*]|・)\s+/u;
+const appearancePropertyPrefix = /^([ \t]*)(?:[-+*]|・)\s*容姿\s*[：:]\s*/u;
+const appearanceSubjectPart = /(?:体中|全身|身体|体|顔|頭|髪|前髪|後ろ髪|目|瞳|眼|眉|鼻|口|耳|首|肩|腕|手|指|胸|背中|腰|脚|足|肌|角|翼|尾|牙|爪|仮面|針|表情|姿|輪郭|シルエット|服|衣装|装備)/u;
+const explicitOtherSubject = /^(?:母|父|兄|姉|弟|妹|祖父|祖母|少女|少年|男性|女性|男|女|兵士|店員|師匠|先生|彼|彼女|誰か|別人|人間|魔物|怪物|精霊|ロボット)$/u;
+
+function sourceLines(text: string): SourceLine[] {
+  const lines: SourceLine[] = [];
+  const pattern = /[^\r\n]*(?:\r\n|\r|\n|$)/gu;
+  for (const match of text.matchAll(pattern)) {
+    const raw = match[0];
+    if (!raw) continue;
+    const lineBreakLength = raw.endsWith('\r\n') ? 2 : /[\r\n]$/u.test(raw) ? 1 : 0;
+    const start = match.index;
+    lines.push({ start, end: start + raw.length - lineBreakLength, text: raw.slice(0, raw.length - lineBreakLength) });
+  }
+  return lines;
+}
+
+function indentationWidth(line: string): number {
+  return /^[ \t]*/u.exec(line)?.[0].length ?? 0;
+}
+
+function parseProfileHeading(line: string): { name: string; qualifier: string | null; indent: number } | null {
+  const prefix = listItemPrefix.exec(line);
+  if (prefix === null) return null;
+  const body = line.slice(prefix[0].length).trim();
+  if (!body || /[：:]\s*/u.test(body)) return null;
+  const qualified = /^(.*)[（(]([^（）()]*)[）)]$/u.exec(body);
+  return {
+    name: (qualified?.[1] ?? body).trim(),
+    qualifier: qualified?.[2]?.trim() ?? null,
+    indent: (prefix[1] ?? '').length,
+  };
+}
+
+function profileQualifierAllowed(qualifier: string | null): boolean {
+  if (qualifier === null) return true;
+  const normalized = qualifier.normalize('NFKC').trim();
+  if (assertiveNonhumanClassifications.has(normalized)) return true;
+  return !uncertain.test(normalized) && !stateLimitedProfileQualifier.test(normalized);
+}
+
+function appearanceProfiles(text: string): AppearanceProfile[] {
+  const lines = sourceLines(text);
+  const profiles: AppearanceProfile[] = [];
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const headerLine = lines[index];
+    const appearanceLine = lines[index + 1];
+    if (headerLine === undefined || appearanceLine === undefined) continue;
+    const heading = parseProfileHeading(headerLine.text);
+    const appearancePrefix = appearancePropertyPrefix.exec(appearanceLine.text);
+    if (heading === null || appearancePrefix === null
+      || (appearancePrefix[1] ?? '').length <= heading.indent) continue;
+
+    let appearanceEnd = appearanceLine.end;
+    for (let continuationIndex = index + 2; continuationIndex < lines.length; continuationIndex += 1) {
+      const continuation = lines[continuationIndex];
+      if (continuation === undefined || continuation.text.trim().length === 0) break;
+      const continuationIndent = indentationWidth(continuation.text);
+      const isSiblingProperty = listItemPrefix.test(continuation.text)
+        && continuationIndent <= (appearancePrefix[1] ?? '').length;
+      if (continuationIndent <= heading.indent || isSiblingProperty) break;
+      appearanceEnd = continuation.end;
+    }
+    profiles.push({
+      name: heading.name,
+      qualifierAllowed: profileQualifierAllowed(heading.qualifier),
+      headerStart: headerLine.start,
+      headerEnd: headerLine.end,
+      appearanceStart: appearanceLine.start + appearancePrefix[0].length,
+      appearanceEnd,
+    });
+  }
+  return profiles;
+}
+
+function quoteOccurrences(text: string, quote: string): QuoteOccurrence[] {
+  if (!quote) return [];
+  const occurrences: QuoteOccurrence[] = [];
+  for (let start = text.indexOf(quote); start >= 0; start = text.indexOf(quote, start + quote.length)) {
+    occurrences.push({ start, end: start + quote.length });
+  }
+  return occurrences;
+}
+
+function containsRange(profile: AppearanceProfile, occurrence: QuoteOccurrence): boolean {
+  const insideAppearance = occurrence.start >= profile.appearanceStart && occurrence.end <= profile.appearanceEnd;
+  const startsInHeader = occurrence.start >= profile.headerStart && occurrence.start < profile.headerEnd;
+  return insideAppearance || (startsInHeader && occurrence.end <= profile.appearanceEnd);
+}
+
+function sentenceRangeContaining(
+  text: string,
+  start: number,
+  end: number,
+  lowerBound: number,
+  upperBound: number,
+): QuoteOccurrence {
+  const boundary = /[。！？!?\r\n]/u;
+  let sentenceStart = start;
+  while (sentenceStart > lowerBound && !boundary.test(text[sentenceStart - 1] ?? '')) sentenceStart -= 1;
+  let sentenceEnd = end;
+  while (sentenceEnd < upperBound && !boundary.test(text[sentenceEnd] ?? '')) sentenceEnd += 1;
+  if (sentenceEnd < upperBound) sentenceEnd += 1;
+  return { start: sentenceStart, end: sentenceEnd };
+}
+
+function isAppearanceSubject(subject: string, characterName: string): boolean {
+  const normalized = subject.normalize('NFKC').trim().replace(/[,、\s]+$/gu, '');
+  if (mentionsName(normalized, characterName)) return true;
+  const possessor = normalized.split('の', 1)[0] ?? normalized;
+  if (normalized.includes('の') && !appearanceSubjectPart.test(possessor)) return false;
+  return appearanceSubjectPart.test(normalized);
+}
+
+function profileContextOwnedByCharacter(input: {
+  text: string;
+  profile: AppearanceProfile;
+  through: number;
+  characterName: string;
+  otherCharacterNames: readonly string[];
+}): boolean {
+  const { text, profile, through, characterName, otherCharacterNames } = input;
+  const context = text.slice(profile.appearanceStart, through);
+  const sentenceParts = context.split(/(?<=[。！？!?])|[\r\n]+/u).filter(Boolean);
+  return sentenceParts.every((rawSentence) => {
+    const sentence = rawSentence.trim();
+    if (!sentence || uncertain.test(sentence)) return !sentence;
+    if (otherCharacterNames.some(name => mentionsName(sentence, name))) return false;
+    if (mentionsName(sentence, characterName)) return true;
+
+    const topic = /^([^,、。！？!?\s]{1,40})は/u.exec(sentence)?.[1];
+    if (topic !== undefined) return isAppearanceSubject(topic, characterName);
+    const nominative = /^([^,、。！？!?\s]{1,40})が/u.exec(sentence)?.[1];
+    if (nominative === undefined || isAppearanceSubject(nominative, characterName)) return true;
+    return !explicitOtherSubject.test(nominative.normalize('NFKC').trim());
+  });
+}
+
+function profileAppearanceEvidence(input: {
+  source: readonly string[];
+  characterName: string;
+  otherCharacterNames: readonly string[];
+  quote: string;
+  value: string;
+}): ProfileEvidenceDecision {
+  const { source, characterName, otherCharacterNames, quote, value } = input;
+  let recognizedProfileQuote = false;
+  const occurrences: Array<{ text: string; occurrence: QuoteOccurrence; profiles: AppearanceProfile[] }> = [];
+  for (const text of source) {
+    const profiles = appearanceProfiles(text);
+    for (const occurrence of quoteOccurrences(text, quote)) {
+      const containers = profiles.filter(profile => containsRange(profile, occurrence));
+      const overlapsProfile = profiles.some(profile =>
+        occurrence.start < profile.appearanceEnd && occurrence.end > profile.headerStart);
+      if (containers.length > 0 || overlapsProfile) recognizedProfileQuote = true;
+      occurrences.push({ text, occurrence, profiles: containers });
+    }
+  }
+  if (!recognizedProfileQuote) return 'not_profile';
+  if (occurrences.length === 0 || otherCharacterNames.some(name => mentionsName(quote, name))) return 'reject';
+
+  for (const { text, occurrence, profiles } of occurrences) {
+    if (profiles.length !== 1) return 'reject';
+    const profile = profiles[0];
+    if (profile === undefined || keyOf(profile.name) !== keyOf(characterName) || !profile.qualifierAllowed) return 'reject';
+    const valueRanges = quoteOccurrences(quote, value).map(relativeRange => ({
+      start: occurrence.start + relativeRange.start,
+      end: occurrence.start + relativeRange.end,
+    })).filter(range => range.start >= profile.appearanceStart && range.end <= profile.appearanceEnd);
+    if (valueRanges.length === 0 || valueRanges.some(range => {
+      const sentenceRange = sentenceRangeContaining(
+        text, range.start, range.end, profile.appearanceStart, profile.appearanceEnd,
+      );
+      return !profileContextOwnedByCharacter({
+        text,
+        profile,
+        through: sentenceRange.end,
+        characterName,
+        otherCharacterNames,
+      });
+    })) return 'reject';
+  }
+  return 'accept';
+}
+
+function profileNameGrounded(source: readonly string[], quote: string, characterName: string): boolean {
+  return source.some(text => {
+    const profiles = appearanceProfiles(text).filter(profile =>
+      keyOf(profile.name) === keyOf(characterName) && profile.qualifierAllowed);
+    return quoteOccurrences(text, quote).some(occurrence => profiles.some(profile =>
+      occurrence.start >= profile.headerStart && occurrence.end <= profile.headerEnd));
+  });
+}
+
 function quoteContexts(source: readonly string[], quote: string): string[] {
   if (!quote) return [];
   const boundary = /[。！？!?\n.]/u;
@@ -525,6 +747,8 @@ export function isCharacterAppearanceEvidenceGrounded(input: {
 }): boolean {
   const { source, characterName, otherCharacterNames, quote, value } = input;
   if (!value || !quote.includes(value)) return false;
+  const profileDecision = profileAppearanceEvidence(input);
+  if (profileDecision !== 'not_profile') return profileDecision === 'accept';
   const occurrences = quoteOccurrenceContexts(source, quote);
   if (occurrences.length === 0) return false;
   const otherNamed = (span: string): boolean => otherCharacterNames.some(name => mentionsName(span, name));
@@ -554,7 +778,8 @@ export function isCharacterAppearanceEvidenceGrounded(input: {
 
 export function buildCharacterAutofillCandidates(source: readonly string[], cast: CharacterAutofillExtraction): CharacterAutofillCandidate[] {
   const named = cast.filter(c => mentionsName(c.name_quote, c.name) && !unnamedRole.test(c.name)
-    && quoteContexts(source, c.name_quote).some(sentence => !uncertain.test(sentence)));
+    && (profileNameGrounded(source, c.name_quote, c.name)
+      || quoteContexts(source, c.name_quote).some(sentence => !uncertain.test(sentence))));
   const candidates = named.map(person => {
     const belongs = (quote: string, value: string, allowStateChange = false): boolean => {
       if (!allowStateChange && quoteOccurrenceContexts(source, quote).some(({ current }) => appearanceStateChange.test(current))) {

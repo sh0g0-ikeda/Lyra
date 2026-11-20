@@ -1602,3 +1602,6 @@ source text and retain unmappable literal details without failing the whole cast
 Ground omitted subjects only through bounded, continuous appearance descriptions.
 Keep unsupported clothing details attached to their garment, and expose unresolved
 source-backed losses for review after reconciliation (Unified Spec §6).
+Named profile headings may ground their nested 容姿 properties. Treat supported
+nonhuman classification notes as metadata; keep actual appearance negations,
+uncertainty and cross-profile ownership checks strict (Unified Spec §6).

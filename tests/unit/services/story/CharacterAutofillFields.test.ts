@@ -1,10 +1,138 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCharacterAutofillCandidates,
+  isCharacterAppearanceEvidenceGrounded,
   mergeCharacterAutofillCandidates,
 } from '../../../../src/services/story/CharacterAutofillFields.js';
 
 describe('ストーリーからキャラクター編集欄へ自動入力', () => {
+  it('人外分類の否定表現を含む独立プロフィールでも肯定的な容姿を保持する', () => {
+    const profile = [
+      ' * 黒影の魔物（人型ではない存在）',
+      '   * 容姿： 漆黒のタールと煙が混ざり合ったような不定形の怪物。体中に無数の時計の針が突き刺さっており、顔の位置に割れた文字盤のような白い仮面がある。',
+    ].join('\n');
+    const values = [
+      '漆黒のタールと煙が混ざり合ったような不定形の怪物',
+      '体中に無数の時計の針が突き刺さっており',
+      '顔の位置に割れた文字盤のような白い仮面',
+    ];
+
+    const [row] = buildCharacterAutofillCandidates([profile], [{
+      name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman',
+      appearance: values.map(value => ({ field: 'distinctive_features' as const, value, quote: profile })),
+      changes: [],
+    }]);
+
+    expect(row?.structuredFields).toEqual({ distinctive_features: values.join(' / ') });
+    expect(row?.freeDescription).toBe(values.join(' / '));
+  });
+
+  it('人外プロフィール内に一意に対応する短い容姿引用を保持する', () => {
+    const profile = [
+      ' * 黒影の魔物（人間ではない存在）',
+      '   * 容姿： 不定形の怪物。白い仮面がある。',
+    ].join('\n');
+    const [row] = buildCharacterAutofillCandidates([profile], [{
+      name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman',
+      appearance: [
+        { field: 'base_form', value: '不定形の怪物', quote: '不定形の怪物' },
+        { field: 'distinctive_features', value: '白い仮面', quote: '白い仮面がある' },
+      ], changes: [],
+    }]);
+
+    expect(row?.structuredFields).toEqual({
+      base_form: 'custom', distinctive_features: '不定形の怪物 / 白い仮面',
+    });
+  });
+
+  it.each([
+    ['否定', '白い仮面はない。', '白い仮面'],
+    ['仮定', 'もし白い仮面があれば目立つ。', '白い仮面'],
+    ['状態変化', '顔が白い仮面に変わる。', '白い仮面'],
+  ])('人外プロフィールの%s容姿を基本設定に保存しない', (_caseName, appearance, value) => {
+    const profile = ` * 黒影の魔物（人型ではない存在）\n   * 容姿： ${appearance}`;
+    const [row] = buildCharacterAutofillCandidates([profile], [{
+      name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman',
+      appearance: [{ field: 'distinctive_features', value, quote: appearance }], changes: [],
+    }]);
+
+    expect(row?.structuredFields).toEqual({});
+    expect(row?.freeDescription).toBeNull();
+  });
+
+  it('仮定的な人外分類見出しだけではキャラクターを作らない', () => {
+    const profile = ' * 黒影の魔物（人型ではない存在かもしれない）\n   * 容姿： 白い仮面がある。';
+    const rows = buildCharacterAutofillCandidates([profile], [{
+      name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman',
+      appearance: [{ field: 'distinctive_features', value: '白い仮面', quote: '白い仮面がある' }], changes: [],
+    }]);
+
+    expect(rows).toEqual([]);
+  });
+
+  it('別プロフィールにもある短い引用やプロフィール越界引用を当人に帰属しない', () => {
+    const first = ' * 黒影の魔物（人型ではない存在）\n   * 容姿： 白い仮面がある。';
+    const second = ' * 白影の魔物（人型ではない存在）\n   * 容姿： 白い仮面がある。';
+    const story = `${first}\n${second}`;
+    const [row] = buildCharacterAutofillCandidates([story], [{
+      name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman',
+      appearance: [
+        { field: 'distinctive_features', value: '白い仮面', quote: '白い仮面がある' },
+        { field: 'distinctive_features', value: '白影の魔物', quote: story },
+      ], changes: [],
+    }]);
+
+    expect(row?.structuredFields).toEqual({});
+    expect(row?.freeDescription).toBeNull();
+  });
+
+  it.each([
+    ['既知の別人物が容姿文の主体', 'ミオは白い仮面をつけている。', ['ミオ']],
+    ['未登録の別人物が容姿文の主体', '母は白い仮面をつけている。', []],
+    ['既知の別人物が間に現れた後の部位文', '不定形の怪物。ミオが現れた。顔には白い仮面がある。', ['ミオ']],
+  ])('%sの短い引用を黒影の魔物に帰属しない', (_caseName, body, otherCharacterNames) => {
+    const source = `* 黒影の魔物（人型ではない存在）\n   * 容姿： ${body}`;
+
+    expect(isCharacterAppearanceEvidenceGrounded({
+      source: [source],
+      characterName: '黒影の魔物',
+      otherCharacterNames,
+      quote: '白い仮面',
+      value: '白い仮面',
+    })).toBe(false);
+  });
+
+  it.each([
+    ['短い引用', '黒影の魔物の顔に白い仮面が現れる'],
+    ['見出しからの引用', '黒影の魔物（人型ではない存在）\n   * 容姿： 不定形の怪物。黒影の魔物の顔に白い仮面が現れる'],
+  ])('プロフィール内の状態変化を%sで基本外見から除き状態に保持する', (_caseName, quote) => {
+    const source = '* 黒影の魔物（人型ではない存在）\n'
+      + '   * 容姿： 不定形の怪物。黒影の魔物の顔に白い仮面が現れる。';
+    const [row] = buildCharacterAutofillCandidates([source], [{
+      name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman',
+      appearance: [{ field: 'distinctive_features', value: '白い仮面', quote }],
+      changes: [{ name: '白い仮面', description: '白い仮面が現れる', quote }],
+    }]);
+
+    expect(row?.structuredFields).toEqual({});
+    expect(row?.freeDescription).toBeNull();
+    expect(row?.changes).toEqual([{
+      name: '白い仮面', description: '白い仮面が現れる', quote,
+    }]);
+  });
+
+  it.each(['変身後', '仮の姿'])('状態限定の注記「%s」の容姿を基本外見に保存しない', qualifier => {
+    const source = `* 黒影の魔物（${qualifier}）\n   * 容姿： 白い仮面がある。`;
+    for (const quote of ['白い仮面がある', source]) {
+      const [row] = buildCharacterAutofillCandidates([source], [{
+        name: '黒影の魔物', name_quote: '黒影の魔物', entity_type: 'nonhuman',
+        appearance: [{ field: 'distinctive_features', value: '白い仮面', quote }], changes: [],
+      }]);
+      expect(row?.structuredFields).toEqual({});
+      expect(row?.freeDescription).toBeNull();
+    }
+  });
+
   it('複数人が同じ文にいる場合も根拠ごとに選択肢を振り分ける', () => {
     const story = '黒髪のアキと金髪のユイが出会う。アキは制服姿でポニーテール。ユイの目は青紫色。';
     const result = buildCharacterAutofillCandidates([story], [
