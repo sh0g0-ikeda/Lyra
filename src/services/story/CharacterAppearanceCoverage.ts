@@ -19,6 +19,9 @@ export const characterAppearanceCoverageReasons = [
   'ambiguous_character', 'conflicting_traits', 'unverified_trait',
 ] as const;
 type CoverageReason = (typeof characterAppearanceCoverageReasons)[number];
+// Keep the released review contract's maximum (30 characters × 64 traits),
+// including issues contributed by both provider passes and server validation.
+const MAX_APPEARANCE_REVIEW_ITEMS = 1_920;
 
 export interface CharacterAppearanceCoverageResult {
   candidates: CharacterAutofillCandidate[];
@@ -71,19 +74,23 @@ export async function extractCharacterAutofillWithCoverage(
   }
   const { source, extraction: first } = await extractCharacterAutofillEvidence(client, episode);
   if (source.length === 0) return { candidates: [], unresolved: [] };
-  const coverage = await client.reconcileCharacterAutofillCoverage({
-    systemPrompt: COVERAGE_SYSTEM_PROMPT,
-    userPrompt: JSON.stringify({ original_manuscript: source, first_extraction: first, allowed_human_catalog: characterAppearanceCatalogForModel }),
-  });
-  const unresolved: CharacterAppearanceCoverageResult['unresolved'] = coverage.unresolved
-    .filter(item => source.some(part => part.includes(item.quote)));
+  // Reconciliation must compare the manuscript with usable evidence. Passing
+  // rejected first-pass quotes as completed extraction hides missing details.
+  const unresolved: CharacterAppearanceCoverageResult['unresolved'] = [];
   const conflictedFields = new Set<string>();
   const normalizedFirst = mergeExtractions(source, [], first, unresolved, conflictedFields);
+  const coverage = await client.reconcileCharacterAutofillCoverage({
+    systemPrompt: COVERAGE_SYSTEM_PROMPT,
+    userPrompt: JSON.stringify({ original_manuscript: source, first_extraction: normalizedFirst, allowed_human_catalog: characterAppearanceCatalogForModel }),
+  });
+  unresolved.push(...coverage.unresolved.filter(item => source.some(part => part.includes(item.quote))));
+  const additions = toExtraction(coverage.additions);
   const providerMerged = mergeExtractions(
-    source, normalizedFirst, toExtraction(coverage.additions), unresolved, conflictedFields,
+    source, normalizedFirst, additions, unresolved, conflictedFields,
   );
   const scanned = scanDeterministicOmissions(source, providerMerged, unresolved);
   const combined = mergeExtractions(source, providerMerged, scanned, unresolved, conflictedFields);
+  unresolved.push(...rejectedAppearanceWarnings(source, [...first, ...additions], combined));
   return { candidates: buildCharacterAutofillCandidates(source, combined), unresolved: deduplicateUnresolved(unresolved) };
 }
 
@@ -96,10 +103,13 @@ export const characterAppearanceCatalogForModel: Readonly<Record<string, readonl
 const COVERAGE_SYSTEM_PROMPT = [
   'Independently reconcile character appearance coverage against the entire ORIGINAL manuscript.',
   'Compare the first extraction with the manuscript. Return only omitted literal source-grounded traits or omitted individually named characters in additions.',
+  'first_extraction contains only evidence accepted by source checks. Re-extract missing details from the original manuscript, including clothes and equipment described after several appearance sentences.',
   'Recheck every first-extraction name_quote and appearance value/quote for verbatim containment and single-character ownership. A trait is still omitted when its first-pass quote is invented, paraphrased or joins noncontiguous source text; return corrected literal evidence in additions.',
+  'For an omitted subject, quote the continuous original span from the character name through the appearance detail, including intervening appearance sentences. Never prepend the name to a shorter quotation or cross another subject, action or paragraph.',
   'Also correct first-pass general-field misclassification when the same literal belongs to a specific catalog field.',
   'Never invent a character, trait, quotation or option. Exclude unnamed, hypothetical, negated and changed-only base appearances.',
   'Keep value and quote as literal source text. field and option_id are separate canonical identifiers. Catalog fields require an exact allowed option_id; otherwise report unverified_trait. Nonhuman and free-text fields use null option_id.',
+  'A detail without an exact editor choice still belongs in a free-text appearance field. Preserve the whole source phrase linking a garment to its unsupported color, material or decoration (for example 銀色の甲冑), instead of omitting it or guessing a different color.',
   'Preserve exact colors, shapes and part counts. Keep each nonhuman body part with its color and count in one literal value. Put later appearance changes only in changes.',
   'Report ambiguous ownership, conflicting traits and unverifiable evidence in unresolved.',
 ].join(' ');
@@ -193,6 +203,33 @@ function toMutable(character: CharacterAutofillExtraction[number]): MutableChara
 }
 function sameTrait(a: MutableTrait, b: MutableTrait): boolean {
   return a.field === b.field && a.value === b.value && a.quote === b.quote;
+}
+
+/** Keep source-backed losses reviewable after all repair passes have finished. */
+function rejectedAppearanceWarnings(
+  source: readonly string[], proposed: CharacterAutofillExtraction, accepted: CharacterAutofillExtraction,
+): CharacterAppearanceCoverageResult['unresolved'] {
+  const warnings: CharacterAppearanceCoverageResult['unresolved'] = [];
+  const names = [...new Set(proposed.map(character => character.name))];
+  for (const character of proposed) {
+    const final = accepted.find(candidate => normalizeName(candidate.name) === normalizeName(character.name)
+      && candidate.entity_type === character.entity_type);
+    if (final === undefined) continue;
+    for (const trait of character.appearance) {
+      if (final.appearance.some(candidate => candidate.field === trait.field && candidate.value === trait.value)) continue;
+      if (isCharacterAppearanceEvidenceGrounded({
+        source, characterName: character.name,
+        otherCharacterNames: names.filter(name => normalizeName(name) !== normalizeName(character.name)),
+        quote: trait.quote, value: trait.value,
+      })) continue;
+      if (trait.quote.includes(trait.value) && source.some(part => part.includes(trait.quote))) {
+        warnings.push({ quote: trait.quote, reason: 'ambiguous_character' });
+      } else if (source.some(part => part.includes(trait.value))) {
+        warnings.push({ quote: trait.value, reason: 'unverified_trait' });
+      }
+    }
+  }
+  return warnings;
 }
 
 const scanners: ReadonlyArray<{
@@ -313,7 +350,8 @@ function detectUnknownLeadingSubject(
 function normalizeName(value: string): string { return value.normalize('NFKC').trim().toLowerCase(); }
 function deduplicateUnresolved(items: CharacterAppearanceCoverageResult['unresolved']): CharacterAppearanceCoverageResult['unresolved'] {
   const seen = new Set<string>();
-  return items.filter(item => { const key = `${item.reason}\u0000${item.quote}`; if (seen.has(key)) return false; seen.add(key); return true; });
+  return items.filter(item => { const key = `${item.reason}\u0000${item.quote}`; if (seen.has(key)) return false; seen.add(key); return true; })
+    .slice(0, MAX_APPEARANCE_REVIEW_ITEMS);
 }
 function asNonEmptyTuple(values: readonly string[]): [string, ...string[]] {
   const [first, ...rest] = values;

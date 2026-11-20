@@ -287,6 +287,91 @@ describe('ストーリーからキャラクター編集欄へ自動入力', () =
     ]);
   });
 
+  it('同じ段落の外見文が続く場合は甲冑をカイに戻し、未対応の銀色も甲冑と一緒に残す', () => {
+    const story = 'ミオは黒髪。\nカイは白髪の少女。髪型はおかっぱで、目は左が赤、右が青。銀色の甲冑を装着している。';
+    const [row] = buildCharacterAutofillCandidates([story], [{
+      name: 'カイ', entity_type: 'character', name_quote: 'カイは', changes: [],
+      appearance: [
+        { field: 'clothing.category', value: '甲冑', quote: '銀色の甲冑' },
+        { field: 'clothing.main_color', value: '銀色', quote: '銀色の甲冑' },
+      ],
+    }]);
+
+    expect(row?.structuredFields).toEqual({ clothing: { category: 'armor' } });
+    expect(row?.freeDescription).toBe('銀色の甲冑');
+    expect(row?.choiceEvidence).toEqual([
+      { field: 'clothing.category', value: 'armor', quote: '銀色の甲冑' },
+    ]);
+
+    const [descriptionOnly] = buildCharacterAutofillCandidates([story], [{
+      name: 'カイ', entity_type: 'character', name_quote: 'カイは', changes: [],
+      appearance: [{ field: 'clothing.description', value: '銀色の甲冑', quote: '銀色の甲冑' }],
+    }]);
+    expect(descriptionOnly?.structuredFields).toEqual({
+      clothing: { category: 'armor', description: '銀色の甲冑' },
+    });
+    expect(descriptionOnly?.freeDescription).toBe('銀色の甲冑');
+
+    const [categoryOnly] = buildCharacterAutofillCandidates([story], [{
+      name: 'カイ', entity_type: 'character', name_quote: 'カイは', changes: [],
+      appearance: [{ field: 'clothing.category', value: '銀色の甲冑', quote: '銀色の甲冑' }],
+    }]);
+    expect(categoryOnly?.structuredFields).toEqual({ clothing: { category: 'armor' } });
+    expect(categoryOnly?.freeDescription).toBe('銀色の甲冑');
+  });
+
+  it('甲冑の未対応修飾を関連付けても他の残余特徴を消さない', () => {
+    const story = 'カイは銀色の甲冑、胸に星形の紋章がある。';
+    const [row] = buildCharacterAutofillCandidates([story], [{
+      name: 'カイ', entity_type: 'character', name_quote: 'カイは', changes: [], appearance: [{
+        field: 'clothing.category', value: '銀色の甲冑、胸に星形の紋章がある', quote: story,
+      }],
+    }]);
+
+    expect(row?.structuredFields).toEqual({ clothing: { category: 'armor' } });
+    expect(row?.freeDescription).toBe('銀色の甲冑 / 胸に星形の紋章がある');
+  });
+
+  it.each([
+    ['原文にない人物アンカー', 'カイは白髪の少女。髪型はおかっぱ。銀色の甲冑を装着している。', 'カイ。銀色の甲冑'],
+    ['4文を超えた外見の連鎖', 'カイは白髪の少女。髪型はおかっぱ。目は青い。肌は白い。銀色の甲冑を装着している。', '銀色の甲冑'],
+    ['500字を超えた外見の連鎖', `カイは白髪の少女。髪型は${'とても'.repeat(170)}短い。銀色の甲冑を装着している。`, '銀色の甲冑'],
+    ['途中の行動', 'カイは白髪の少女。カイが扉を開く。銀色の甲冑を装着している。', '銀色の甲冑'],
+    ['途中の別人物', 'カイは白髪の少女。ミオは黒髪。銀色の甲冑を装着している。', '銀色の甲冑'],
+    ['途中の未登録主語', 'カイは白髪の少女。騎士は長髪である。銀色の甲冑を装着している。', '銀色の甲冑'],
+    ['途中の家族呼称', 'カイは白髪の少女。母は長髪である。銀色の甲冑を装着している。', '銀色の甲冑'],
+    ['着用文の未登録主語', 'カイは白髪の少女。母は銀色の甲冑を装着している。', '銀色の甲冑'],
+    ['外見文の途中の未登録主語', 'カイは白髪の少女。髪型はボブで、母は短髪。銀色の甲冑を装着している。', '銀色の甲冑'],
+    ['複数人物のアンカー', 'カイと母は白髪である。銀色の甲冑を装着している。', '銀色の甲冑'],
+    ['段落の切れ目', 'カイは白髪の少女。\n髪型はおかっぱ。銀色の甲冑を装着している。', '銀色の甲冑'],
+    ['否定された中間の外見', 'カイは白髪の少女。髪型はおかっぱではない。銀色の甲冑を装着している。', '銀色の甲冑'],
+    ['棚の備品', 'カイは白髪の少女。銀色の甲冑が棚に置かれている。', '銀色の甲冑'],
+    ['見ている装備', 'カイは白髪の少女。銀色の甲冑を見ている。', '銀色の甲冑'],
+    ['甲冑を着た像への行動', 'カイは白髪の少女。銀色の甲冑を装着している像を見つめている。', '銀色の甲冑'],
+    ['甲冑を着た別人物の絵', 'カイは白髪の少女。銀色の甲冑を装着している兵士の絵。', '銀色の甲冑'],
+  ])('%sを越えて甲冑を人物に帰属しない', (_caseName, story, quote) => {
+    const [row] = buildCharacterAutofillCandidates([story], [{
+      name: 'カイ', entity_type: 'character', name_quote: 'カイ', changes: [],
+      appearance: [{ field: 'clothing.category', value: '甲冑', quote }],
+    }]);
+
+    expect(row?.structuredFields).toEqual({});
+    expect(row?.freeDescription).toBeNull();
+  });
+
+  it('4文以内の連続外見は受け入れ、別の原稿欄の人物へ装備を結び付けない', () => {
+    const anchor = 'カイは白髪の少女。髪型はおかっぱ。目は青い。';
+    const clothing = '銀色の甲冑を装着している。';
+    const character = {
+      name: 'カイ', entity_type: 'character' as const, name_quote: 'カイは', changes: [],
+      appearance: [{ field: 'clothing.category' as const, value: '甲冑', quote: '銀色の甲冑' }],
+    };
+    expect(buildCharacterAutofillCandidates([anchor + clothing], [character])[0]?.structuredFields)
+      .toEqual({ clothing: { category: 'armor' } });
+    expect(buildCharacterAutofillCandidates([anchor, clothing], [character])[0]?.structuredFields)
+      .toEqual({});
+  });
+
   it('複数人が主語の直後や別人物を挟んだ後置特徴は誤って割り当てない', () => {
     const story = 'ミオとノアが並ぶ。目は緑色。ミオは黒髪。ノアが振り返る。服は白い制服。';
     const rows = buildCharacterAutofillCandidates([story], ['ミオ', 'ノア'].map(name => ({

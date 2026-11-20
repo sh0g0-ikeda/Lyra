@@ -1302,6 +1302,14 @@ The model's proposed option ID is advisory. Validate the response structure,
 then derive stored choices from grounded literal evidence on the server.
 An inconsistent proposed ID must not abort saving the other grounded traits.
 Preserve grounded descriptions that have no matching choice as free text.
+Within a bounded, continuous appearance description in one paragraph, omitted
+subjects may inherit the nearest unambiguous named character. Stop at another
+subject, ordinary actions, uncertainty or an appearance change. Never repair a
+fabricated quotation by inventing source text. Reconciliation compares the
+manuscript with grounded first-pass evidence; rejected details are not complete.
+If later passes cannot resolve a source-backed trait, report it for review.
+Map synonymous garment names such as 甲冑 and 鎧 to the armor choice, and retain
+unsupported garment colors/materials with their garment in literal free text.
 
 Clients opt into appearance review with `?appearance_review=1`. The response
 adds source-backed empty-field suggestions for existing human characters and

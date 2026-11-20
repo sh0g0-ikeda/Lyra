@@ -115,6 +115,91 @@ describe('CharacterAppearanceCoverage', () => {
     expect(payload.first_extraction).toEqual([]);
   });
 
+  it('初回の捏造引用を取得済み扱いせず照合で回収した甲冑と銀色を保持する', async () => {
+    const manuscript = 'カイは白髪の少女。髪型はおかっぱで、目は左が赤、右が青。銀色の甲冑を装着している。';
+    const client = new FakeStoryAiClient([{
+      name: 'カイ', name_quote: 'カイは', entity_type: 'character', changes: [],
+      appearance: [
+        { field: 'hair.color', value: '白髪', quote: 'カイは白髪の少女' },
+        { field: 'clothing.category', value: '甲冑', quote: 'カイ。銀色の甲冑' },
+        { field: 'clothing.main_color', value: '銀色', quote: 'カイ。銀色の甲冑' },
+      ],
+    }], {
+      additions: [{
+        name: 'カイ', name_quote: 'カイは', entity_type: 'character', changes: [],
+        appearance: [
+          { field: 'clothing.category', option_id: 'armor', value: '甲冑', quote: '銀色の甲冑' },
+          { field: 'clothing.main_color', option_id: 'custom', value: '銀色', quote: '銀色の甲冑' },
+        ],
+      }], unresolved: [],
+    });
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+    const payload = JSON.parse(client.coverageRequest?.userPrompt ?? '{}') as {
+      first_extraction: Array<{ appearance: Array<{ field: string }> }>;
+    };
+
+    expect(payload.first_extraction[0]?.appearance.map(trait => trait.field)).toEqual(['hair.color']);
+    expect(result.candidates[0]?.structuredFields).toMatchObject({
+      hair: { color: 'white' }, clothing: { category: 'armor' },
+    });
+    expect(result.candidates[0]?.freeDescription).toContain('銀色の甲冑');
+    expect(result.unresolved).toEqual([]);
+  });
+
+  it('人物への帰属を確認できない原文の装備を消さず確認項目に残す', async () => {
+    const manuscript = 'カイは白髪。レンが入る。銀色の甲冑を装着している。';
+    const client = new FakeStoryAiClient([
+      { name: 'カイ', name_quote: 'カイは白髪', entity_type: 'character', changes: [],
+        appearance: [{ field: 'clothing.category', value: '甲冑', quote: '銀色の甲冑' }] },
+      { name: 'レン', name_quote: 'レンが入る', entity_type: 'character', changes: [], appearance: [] },
+    ], emptyCoverage());
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+
+    expect(result.candidates.find(character => character.name === 'カイ')?.structuredFields).not.toHaveProperty('clothing');
+    expect(result.unresolved).toContainEqual({ quote: '銀色の甲冑', reason: 'ambiguous_character' });
+  });
+
+  it('捏造引用しか返らなくても実在する特徴だけを未確認として残す', async () => {
+    const manuscript = 'カイは白髪。銀色の甲冑を装着している。';
+    const client = new FakeStoryAiClient([{
+      name: 'カイ', name_quote: 'カイは', entity_type: 'character', changes: [],
+      appearance: [
+        { field: 'clothing.category', value: '甲冑', quote: 'カイ。銀色の甲冑' },
+        { field: 'distinguishing_features', value: '赤い翼', quote: 'カイには赤い翼がある' },
+      ],
+    }], emptyCoverage());
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+
+    expect(result.unresolved).toEqual([{ quote: '甲冑', reason: 'unverified_trait' }]);
+    expect(result.candidates[0]?.freeDescription ?? '').not.toContain('赤い翼');
+  });
+
+  it('二段階の棄却が大量でも確認項目を既存APIの上限内に収める', async () => {
+    const first = Array.from({ length: 30 }, (_, index) => ({
+      name: `人物${index}`, name_quote: `人物${index}は立つ。`, entity_type: 'character' as const, changes: [],
+      appearance: Array.from({ length: 64 }, (_, offset) => ({
+        field: 'distinguishing_features' as const, value: `特徴${index * 64 + offset}番`, quote: `存在しない引用${index * 64 + offset}番`,
+      })),
+    }));
+    const omitted = Array.from({ length: 64 }, (_, index) => ({
+      field: 'distinguishing_features' as const, option_id: null, value: `追加特徴${index}番`, quote: `存在しない追加引用${index}番`,
+    }));
+    const manuscript = first.map(character => character.name_quote).join('')
+      + [...first.flatMap(character => character.appearance), ...omitted].map(trait => trait.value).join('、');
+    const client = new FakeStoryAiClient(first, {
+      additions: [{ name: '人物0', name_quote: '人物0は立つ。', entity_type: 'character', changes: [], appearance: omitted }], unresolved: [],
+    });
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+
+    expect(result.candidates).toHaveLength(30);
+    expect(result.unresolved).toHaveLength(1920);
+    expect(result.unresolved.every(issue => manuscript.includes(issue.quote))).toBe(true);
+  });
+
   it('短い主語省略と複数人を混同せず、未分類の傷をreviewに残す', async () => {
     const manuscript = 'ミオは黒髪。目は緑色。左頬に星形の傷がある。ソラは金髪で青い瞳。ユイの目は緑色。';
     const client = new FakeStoryAiClient([

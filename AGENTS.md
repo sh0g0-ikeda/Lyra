@@ -1599,3 +1599,6 @@ with a matching entity revision. Preserve the released autofill response shape
 unless the client requests appearance review, as specified in Unified Spec §6.
 Model-proposed option IDs are advisory. Derive persisted selections from grounded
 source text and retain unmappable literal details without failing the whole cast.
+Ground omitted subjects only through bounded, continuous appearance descriptions.
+Keep unsupported clothing details attached to their garment, and expose unresolved
+source-backed losses for review after reconciliation (Unified Spec §6).
