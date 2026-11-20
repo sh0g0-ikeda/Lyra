@@ -148,6 +148,19 @@ describe('ストーリーからキャラクター編集欄へ自動入力', () =
     expect(row?.freeDescription).toBe('左頬の星形の傷');
   });
 
+  it('制服を着ており、という抽出結果の場合は残った動詞だけを特徴として保存しない', () => {
+    const story = 'アキは制服を着ており、左頬に星形の傷がある。';
+    const [row] = buildCharacterAutofillCandidates([story], [{
+      name: 'アキ', entity_type: 'character', name_quote: 'アキ', changes: [],
+      appearance: [
+        { field: 'clothing.description', value: '制服を着ており', quote: story },
+        { field: 'distinguishing_features', value: '左頬に星形の傷がある', quote: story },
+      ],
+    }]);
+    expect(row?.structuredFields).toEqual({ clothing: { category: 'school' } });
+    expect(row?.freeDescription).toBe('左頬に星形の傷がある');
+  });
+
   it('選択肢にない服の説明は互換用欄と自由記述の両方に残す', () => {
     const story = 'ミオは裾が破れた古いマントを着ている。';
     const [row] = buildCharacterAutofillCandidates([story], [{

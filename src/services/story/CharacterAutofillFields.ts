@@ -197,7 +197,9 @@ function removeChoiceSpans(text: string, spans: readonly ChoiceSpan[]): string[]
   return characters.join('')
     .split(/\0+|[、,;；\n／/]+/u)
     .map(part => part.trim().replace(/^(?:で|の|と|が|は|に|を)+|(?:で|の|と|が|は|に|を)+$/gu, '').trim())
-    .filter(Boolean);
+    // A provider may quote the verb along with a garment (e.g. 制服を着ており).
+    // Keep modifiers such as 着崩している and discard standalone grammatical remnants.
+    .filter(part => part.length > 0 && !/^(?:着て(?:いる|いた|おり|いて)|着用(?:している|した|しており)|して(?:いる|おり)|である|ある|あり)[。．.]?$/u.test(part));
 }
 
 function normalizeHumanTrait(field: Field, value: string): NormalizedTrait {
