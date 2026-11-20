@@ -83,6 +83,48 @@ const workspaceViewStorageKey = 'lyra:web:workspace-view:email:session';
 const mangaTutorialStorageKey = 'lyra:web:manga-tutorial:v1:email:session';
 const legacyTrackedJobsStorageKey = 'lyra:web:tracked-jobs:email:session';
 
+test('キャラ画面を開くと写真と空枠が並び、拡大と人物選択を別々に操作できる', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  const cast = Array.from({ length: 9 }, (_, index) => ({
+    ...entity, id: index === 0 ? entity.id : `cast-${index + 1}`, name: `Actor ${index + 1}`,
+  }));
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === `/api/works/${work.id}/entities`) return route.fulfill({ json: { entities: cast } });
+    if (path.endsWith('/reference-set')) {
+      const hasPhoto = path === '/api/entities/cast-2/reference-set';
+      return route.fulfill({ json: { entity_id: path.split('/')[3], status: hasPhoto ? 'ready' : 'empty',
+        primary_ref_id: hasPhoto ? 'saved-portrait' : null, updated_at: entity.updated_at,
+        reference_images: hasPhoto ? [{ ref_id: 'saved-portrait', source: 'generated', created_at: entity.updated_at }] : [],
+      } });
+    }
+    if (path === '/api/entities/cast-2/reference/saved-portrait/image') return route.fulfill({
+      contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+    });
+    return mockApi(route);
+  });
+  await page.goto('/');
+  await openMangaStep(page, '2. Characters');
+  const roster = page.getByRole('group', { name: 'Character portraits' });
+  await expect(roster.getByRole('button', { name: 'Actor 1 Character', exact: true })).toBeVisible();
+  await expect(roster.getByRole('button', { name: 'Actor 1 Character', exact: true }).locator('img')).toHaveCount(0);
+  await expect(roster.getByRole('button', { name: 'Enlarge image of Actor 1', exact: true })).toHaveCount(0);
+  await expect(roster.getByRole('button', { name: 'Actor 2 Character', exact: true }).locator('img')).toBeVisible();
+  await roster.getByRole('button', { name: 'Enlarge image of Actor 2', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.locator('img')).toBeVisible();
+  await dialog.getByRole('button').click();
+  await expect(page.getByLabel('Name', { exact: true }).first()).toHaveValue('Actor 1');
+  await roster.getByRole('button', { name: 'Actor 2 Character', exact: true }).click();
+  await expect(page.getByLabel('Name', { exact: true }).first()).toHaveValue('Actor 2');
+  await page.getByRole('button', { name: 'Next characters' }).click();
+  await roster.getByRole('button', { name: 'Actor 9 Character', exact: true }).click();
+  await expect(page.getByLabel('Name', { exact: true }).first()).toHaveValue('Actor 9');
+  await page.getByLabel('Select character', { exact: true }).selectOption(cast[0].id);
+  await expect(roster.getByRole('button', { name: 'Actor 1 Character', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('話の名前付きキャラを一括保存し、保存済み選択肢を通常の編集画面で再読込できる', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
@@ -149,6 +191,9 @@ test('話の名前付きキャラを一括保存し、保存済み選択肢を�
   await openMangaStep(page, '2. Characters');
   await page.getByRole('button', { name: 'Rin Character', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Gender', exact: true })).toHaveValue('');
+  await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('silver');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('silver');
 });
 

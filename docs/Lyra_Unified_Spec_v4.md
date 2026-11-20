@@ -1286,10 +1286,17 @@ transaction the server checks scope and version, creates the new cast together,
 and appends distinct source-backed appearance changes to matching characters.
 Ambiguous matches are reported for review. A repeated action preserves edits
 to existing base characters and states. Explicit traits use the editor's stored
-option IDs where they match. Unmentioned fields stay empty and custom details
-retain their source wording. The returned character IDs open their ordinary
+option IDs where they match. A compound description may supply more than one
+selection. Store only the remaining source-backed details in free description.
+Unmentioned fields stay empty. The returned character IDs open their ordinary
 editors, including after reloading the work. The user can review each character
 and separately request an image preview under the existing credit contract.
+
+The normal character selection screen also shows a portrait grid beside the
+name selector. A saved reference supplies the portrait. Characters without a
+photo keep a selectable blank frame with the name underneath. Selecting a card
+opens its editor. Its separate magnifier enlarges the photo without switching
+characters. The list is scoped to the current work and organization.
 
 Migration 053 adds the episode opt-in flag (default false). Migration 054
 stores the directions separately from the manuscript (default empty list).

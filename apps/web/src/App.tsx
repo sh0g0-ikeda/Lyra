@@ -2391,7 +2391,6 @@ function StudioShell(props: {
   const [readerLayout, setReaderLayout] = useState<'rtl' | 'vertical'>('rtl');
   const readerScope = JSON.stringify([activeOrganizationId, selectedEpisodeId]);
   const [productionNoteScope, setProductionNoteScope] = useState<string | null>(null);
-  const [characterImagePage, setCharacterImagePage] = useState<number | null>(null);
   const [storyProductionNoteSuggestions, setStoryProductionNoteSuggestions] = useState<{
     scope: string;
     notes: string[];
@@ -6592,54 +6591,17 @@ function StudioShell(props: {
                       </button>
                     }
                   >
-                    <div className="list-grid">
-                      {entities.map((entity) => (
-                        <button
-                          key={entity.id}
-                          className={`mini-card ${selectedEntity?.id === entity.id ? 'active' : ''}`}
-                          onClick={() => selectEntityForEditing(entity.id)}
-                          type="button"
-                        >
-                          <strong>{entity.name}</strong>
-                          <span>{formatEntityTypeLabel(uiLanguage, entity.entity_type)}</span>
-                        </button>
-                      ))}
-                    </div>
-                    <button className="ghost-button" type="button"
-                      aria-expanded={characterImagePage !== null}
-                      onClick={() => setCharacterImagePage((page) => page === null ? 0 : null)}>
-                      {pickUiText(uiLanguage, 'Choose by image', '画像から選ぶ')}
-                    </button>
-                    {characterImagePage === null ? null : (
-                      <div className="stack">
-                        <div className="list-grid">
-                          {entities.slice(characterImagePage * 8, (characterImagePage + 1) * 8).map((entity) => (
-                            <CharacterThumbnailCard
-                              key={entity.id}
-                              api={api}
-                              name={entity.name}
-                              entityId={entity.id}
-                              selected={selectedEntity?.id === entity.id}
-                              organizationId={activeOrganizationId}
-                              scopeKey={scopedQueryKey(['character-thumbnail', entity.id])}
-                              previewLabel={pickUiText(uiLanguage, `Enlarge image of ${entity.name}`, `${entity.name}の画像を拡大`)}
-                              onSelect={() => selectEntityForEditing(entity.id)}
-                              onPreview={(url) => openImageLightbox(url, entity.name)}
-                            />
-                          ))}
-                        </div>
-                        {entities.length > 8 ? <div className="toolbar">
-                          <button className="ghost-button" type="button" disabled={characterImagePage === 0}
-                            onClick={() => setCharacterImagePage(characterImagePage - 1)}>
-                            {pickUiText(uiLanguage, 'Previous', '前へ')}
-                          </button>
-                          <button className="ghost-button" type="button" disabled={(characterImagePage + 1) * 8 >= entities.length}
-                            onClick={() => setCharacterImagePage(characterImagePage + 1)}>
-                            {pickUiText(uiLanguage, 'Next', '次へ')}
-                          </button>
-                        </div> : null}
-                      </div>
-                    )}
+                    <CharacterPortraitPicker
+                      key={JSON.stringify([props.authSessionKey, activeOrganizationId, selectedWork.id])}
+                      api={api}
+                      entities={entities}
+                      selectedId={entityEditorMode === 'edit' ? selectedEntity?.id ?? '' : ''}
+                      organizationId={activeOrganizationId}
+                      scopedQueryKey={scopedQueryKey}
+                      webImageDeliveryEnabled={webImageDeliveryEnabled}
+                      onSelect={selectEntityForEditing}
+                      onPreview={openImageLightbox}
+                    />
                   </PanelSection>
 
                   {selectedEpisode !== null && characterAutofillCapabilitiesQuery.data?.enabled === true ? <PanelSection title="Autofill character details" collapsible actions={<button className="secondary-button" disabled={busyAction !== null} onClick={() => {
@@ -6825,16 +6787,10 @@ function StudioShell(props: {
                         <span>{importingImage ? translateUiString(uiLanguage, 'Importing image...') : translateUiString(uiLanguage, 'Drop or choose image')}</span>
                       </label>
                     </div>
-                    <TextAreaField
-                      label="Free description"
-                      rows={3}
-                      value={entityDraft.free_description}
-                      onChange={(value) => setEntityDraft({ ...entityDraft, free_description: value })}
-                      helpText="Use this box for details not covered by the choices, or for special instructions you want Lyra to follow."
-                    />
                     {entityDraft.entity_type === 'character' ? (
                       <CharacterStructuredFieldsEditor
                         key={selectedEntity?.id ?? 'new-character'}
+                        savedFields={selectedEntity?.structured_fields}
                         value={characterStructuredFields}
                         onChange={(nextValue) =>
                           setEntityDraft((current) => ({
@@ -6849,6 +6805,13 @@ function StudioShell(props: {
                         onChange={(value) => setEntityDraft({ ...entityDraft, structured_fields: value })}
                       />
                     )}
+                    <TextAreaField
+                      label="Free description"
+                      rows={3}
+                      value={entityDraft.free_description}
+                      onChange={(value) => setEntityDraft({ ...entityDraft, free_description: value })}
+                      helpText="Use this box for details not covered by the choices, or for special instructions you want Lyra to follow."
+                    />
                     <div className="state-pill-row">
                       <span className={`state-pill ${entityEditorMode === 'create' ? 'state-pill-info' : 'state-pill-neutral'}`}>
                         {translateUiString(
@@ -8040,51 +8003,97 @@ function StudioShell(props: {
   );
 }
 
-function CharacterThumbnailCard(props: {
+const CHARACTERS_PER_PAGE = 8;
+
+interface CharacterPhotoSource {
   api: LyraApiClient;
-  name: string;
-  entityId: string;
-  selected: boolean;
   organizationId: string | null;
-  scopeKey: readonly unknown[];
-  previewLabel: string;
+  scopedQueryKey: (key: readonly unknown[]) => readonly unknown[];
+  webImageDeliveryEnabled: boolean;
+}
+
+function CharacterPortraitPicker(props: CharacterPhotoSource & {
+  entities: readonly EntityRecord[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onPreview: (url: string, name: string) => void;
+}): React.JSX.Element | null {
+  const language = useContext(UiLanguageContext);
+  const [browsing, setBrowsing] = useState<{ page: number; selection: string } | null>(null);
+  if (!props.entities.length) return null;
+  const selectedIndex = Math.max(0, props.entities.findIndex(entity => entity.id === props.selectedId));
+  const lastPage = Math.ceil(props.entities.length / CHARACTERS_PER_PAGE) - 1;
+  const page = browsing?.selection === props.selectedId
+    ? Math.min(browsing.page, lastPage) : Math.floor(selectedIndex / CHARACTERS_PER_PAGE);
+  const offset = page * CHARACTERS_PER_PAGE;
+  const label = pickUiText(language, 'Select character', 'キャラを選択');
+  return <div className="stack">
+    <label className="field"><span>{label}</span>
+      <select aria-label={label} value={props.selectedId} onChange={event => props.onSelect(event.target.value)}>
+        {props.selectedId === '' ? <option value="">{label}</option> : null}
+        {props.entities.map(entity => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+      </select>
+    </label>
+    <div className="page-grid character-photo-grid" role="group" aria-label={pickUiText(language, 'Character portraits', 'キャラの写真一覧')}>
+      {props.entities.slice(offset, offset + CHARACTERS_PER_PAGE).map(entity =>
+        <CharacterThumbnailCard key={entity.id} api={props.api} entity={entity}
+          selected={props.selectedId === entity.id} organizationId={props.organizationId}
+          scopedQueryKey={props.scopedQueryKey} webImageDeliveryEnabled={props.webImageDeliveryEnabled}
+          onSelect={() => props.onSelect(entity.id)} onPreview={url => props.onPreview(url, entity.name)} />,
+      )}
+    </div>
+    {lastPage > 0 ? <div className="toolbar">
+      <button type="button" className="ghost-button" disabled={page === 0}
+        aria-label={pickUiText(language, 'Previous characters', '前のキャラ一覧')}
+        onClick={() => setBrowsing({ page: page - 1, selection: props.selectedId })}>{pickUiText(language, 'Previous', '前へ')}</button>
+      <span>{page + 1} / {lastPage + 1}</span>
+      <button type="button" className="ghost-button" disabled={page === lastPage}
+        aria-label={pickUiText(language, 'Next characters', '次のキャラ一覧')}
+        onClick={() => setBrowsing({ page: page + 1, selection: props.selectedId })}>{pickUiText(language, 'Next', '次へ')}</button>
+    </div> : null}
+  </div>;
+}
+
+function CharacterThumbnailCard(props: CharacterPhotoSource & {
+  entity: EntityRecord;
+  selected: boolean;
   onSelect: () => void;
   onPreview: (url: string) => void;
 }) {
+  const language = useContext(UiLanguageContext);
+  const { id, name, entity_type } = props.entity;
   const reference = useQuery({
-    queryKey: props.scopeKey,
-    queryFn: () => props.api.getEntityReferenceSet(props.entityId, props.organizationId),
+    queryKey: props.scopedQueryKey(['entity-reference-set', id]),
+    queryFn: () => props.api.getEntityReferenceSet(id, props.organizationId),
     staleTime: 30_000,
   });
-  const primary = reference.data?.reference_images.find((image) => image.ref_id === reference.data?.primary_ref_id);
-  const url = primary?.cdn_url && canReadWebImage(primary) ? primary.cdn_url : null;
-  return <div className="reference-card reference-card-portrait">
-    <button className={`mini-card ${props.selected ? 'active' : ''}`} type="button"
+  const available = reference.data?.reference_images.filter(image => canReadWebImage(image, props.webImageDeliveryEnabled));
+  const photo = available?.find(image => image.ref_id === reference.data?.primary_ref_id) ?? available?.[0];
+  const { objectUrl } = useAuthenticatedImage({
+    enabled: photo !== undefined,
+    queryKey: props.scopedQueryKey(['entity-reference-image', id, photo?.ref_id, photo?.created_at, photo?.image_model, props.webImageDeliveryEnabled]),
+    loadImage: () => props.api.exportEntityReferenceImage(id, photo?.ref_id ?? '', props.organizationId, photo, props.webImageDeliveryEnabled),
+  });
+  return <div className="character-photo-card">
+    <button className={`page-card ${props.selected ? 'active' : ''}`} type="button"
       aria-pressed={props.selected} onClick={props.onSelect}>
-      <div className="reference-card-media">
-        {url === null ? <div className="thumb-placeholder" /> : <img src={url} alt="" loading="lazy" decoding="async" />}
-      </div>
-      <strong>{props.name}</strong>
+      <span className="character-photo-frame">{objectUrl ? <img src={objectUrl} alt="" decoding="async" /> : null}</span>
+      <strong>{name}</strong>
+      <span className="muted small">{formatEntityTypeLabel(language, entity_type)}</span>
     </button>
-    {url === null ? null : <button className="ghost-button" type="button"
-      aria-label={props.previewLabel} onClick={() => props.onPreview(url)}>
+    {!objectUrl ? null : <button className="icon-button character-photo-zoom" type="button"
+      aria-label={pickUiText(language, `Enlarge image of ${name}`, `${name}の画像を拡大`)} onClick={() => props.onPreview(objectUrl)}>
       <ZoomIn size={16} />
     </button>}
   </div>;
 }
 
-function AuthenticatedImage(props: {
-  alt?: string;
-  className?: string;
+interface AuthenticatedImageSource {
   enabled?: boolean;
-  errorLabel?: string;
   loadImage: () => Promise<BlobResponse>;
-  loading?: 'eager' | 'lazy';
-  onClick?: (url: string) => void;
-  onDoubleClick?: (url: string) => void;
-  placeholderClassName?: string;
   queryKey: readonly unknown[];
-}) {
+}
+function useAuthenticatedImage(props: AuthenticatedImageSource) {
   const imageQuery = useQuery({
     queryKey: props.queryKey,
     queryFn: async () => {
@@ -8110,6 +8119,19 @@ function AuthenticatedImage(props: {
     };
   }, [imageQuery.data]);
 
+  return { imageQuery, objectUrl };
+}
+
+function AuthenticatedImage(props: AuthenticatedImageSource & {
+  alt?: string;
+  className?: string;
+  errorLabel?: string;
+  loading?: 'eager' | 'lazy';
+  onClick?: (url: string) => void;
+  onDoubleClick?: (url: string) => void;
+  placeholderClassName?: string;
+}) {
+  const { imageQuery, objectUrl } = useAuthenticatedImage(props);
   if (objectUrl === null) {
     const placeholderClassName = `${props.placeholderClassName ?? 'thumb-placeholder'} image-loading-placeholder`.trim();
     return (
@@ -8907,6 +8929,7 @@ function CharacterFieldsGroup(props: {
 }
 
 function CharacterStructuredFieldsEditor(props: {
+  savedFields?: Record<string, unknown>;
   value: CharacterStructuredFieldsDraft;
   onChange: (nextValue: CharacterStructuredFieldsDraft) => void;
 }) {
@@ -8916,10 +8939,16 @@ function CharacterStructuredFieldsEditor(props: {
       ...patch,
     });
   };
+  // Base the initial disclosure on the saved record so editing a field cannot collapse its own group.
+  const hasSavedValues = (...keys: string[]): boolean => keys.some(key => {
+    const value = props.savedFields?.[key];
+    if (typeof value === 'string') return value.trim().length > 0;
+    return value !== null && typeof value === 'object' && Object.values(value).some(item => typeof item === 'string' && item.trim().length > 0);
+  });
 
   return (
     <div className="character-fields-stack">
-      <CharacterFieldsGroup title="Identity">
+      <CharacterFieldsGroup title="Identity" mobileDefaultOpen={hasSavedValues('gender_expression', 'age_range', 'skin_tone', 'first_impression', 'standing_style', 'default_expression', 'height', 'build', 'art_style')}>
         <div className="form-grid three compact-grid">
           <SelectOrCustomField label="Gender" value={props.value.gender_expression} onChange={(value) => update({ gender_expression: value })} options={CHARACTER_GENDER_OPTIONS} />
           <SelectOrCustomField label="Age range" value={props.value.age_range} onChange={(value) => update({ age_range: value })} options={CHARACTER_AGE_RANGE_OPTIONS} />
@@ -8941,7 +8970,7 @@ function CharacterStructuredFieldsEditor(props: {
         />
       </CharacterFieldsGroup>
 
-      <CharacterFieldsGroup title="Face">
+      <CharacterFieldsGroup title="Face" mobileDefaultOpen={hasSavedValues('eyes', 'face_detail', 'face_shape', 'eyebrow_shape', 'nose_shape', 'mouth_shape')}>
         <div className="form-grid four compact-grid">
           <SelectOrCustomField label="Face shape" value={props.value.face_shape} onChange={(value) => update({ face_shape: value })} options={CHARACTER_FACE_SHAPE_OPTIONS} />
           <SelectOrCustomField label="Eyebrow shape" value={props.value.eyebrow_shape} onChange={(value) => update({ eyebrow_shape: value })} options={CHARACTER_EYEBROW_SHAPE_OPTIONS} />
@@ -8958,7 +8987,7 @@ function CharacterStructuredFieldsEditor(props: {
         </div>
       </CharacterFieldsGroup>
 
-      <CharacterFieldsGroup title="Hair">
+      <CharacterFieldsGroup title="Hair" mobileDefaultOpen={hasSavedValues('hair', 'hair_detail')}>
         <div className="form-grid five compact-grid">
           <SelectOrCustomField label="Hair color" value={props.value.hair_color} onChange={(value) => update({ hair_color: value })} options={CHARACTER_HAIR_COLOR_OPTIONS} />
           <SelectOrCustomField label="Hair length" value={props.value.hair_length} onChange={(value) => update({ hair_length: value })} options={CHARACTER_HAIR_LENGTH_OPTIONS} />
@@ -8973,7 +9002,7 @@ function CharacterStructuredFieldsEditor(props: {
         </div>
       </CharacterFieldsGroup>
 
-      <CharacterFieldsGroup title="Outfit">
+      <CharacterFieldsGroup title="Outfit" mobileDefaultOpen={hasSavedValues('clothing', 'outfit_detail')}>
         <div className="form-grid three compact-grid">
           <SelectOrCustomField label="Category" value={props.value.clothing_category} onChange={(value) => update({ clothing_category: value })} options={CHARACTER_CLOTHING_CATEGORY_OPTIONS} />
           <SelectOrCustomField label="Main color" value={props.value.clothing_main_color} onChange={(value) => update({ clothing_main_color: value })} options={CHARACTER_CLOTHING_COLOR_OPTIONS} />

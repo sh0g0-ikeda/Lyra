@@ -1589,3 +1589,5 @@ Mobile 1.0.11 update, a drained legacy queue and the same pinned GPT Image
 Episode cast autofill follows the Unified Spec §6 episode character contract.
 Persist source-backed editor selections for all new named characters together,
 preserve existing base settings and keep the released suggestion endpoint read-only.
+Reserve free description for unmatched traits. The regular cast picker shows
+portraits, selectable empty frames and an independent image zoom control.
