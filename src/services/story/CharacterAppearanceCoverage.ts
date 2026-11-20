@@ -215,7 +215,7 @@ const scanners: ReadonlyArray<{ field: 'hair.color' | 'eyes.color'; pattern: Reg
   { field: 'eyes.color', pattern: /(?:黒|茶|青|緑|赤|金|銀|紫)(?:い|色の)?(?:目|瞳)/gu, value: match => match[0] },
   { field: 'eyes.color', pattern: /(?:目|瞳)(?:の色)?[はが](黒い|茶色|青い|緑色|赤い|金色|銀色|紫色)/gu, value: match => match[1] ?? match[0] },
 ];
-const unsafeContext = /(?:もし|ならば|かもしれ|ではない|じゃない|染め|変わ(?:った|る)|変化(?:した|する)|になった|\b(?:if|might|not|dyed?|changed?|turned?)\b)/iu;
+const unsafeContext = /(?:もし|ならば|かもしれ|ではない|じゃない|染め|変わ(?:る|っ)|変化(?:し|す)|にな(?:る|っ)|\b(?:if|might|not|dyed?|changed?|turned?)\b)/iu;
 const unclassifiedAppearance = /(?:傷|痣|ほくろ|刺青|紋様|斑点|角|翼|尾|牙)/u;
 
 function scanDeterministicOmissions(

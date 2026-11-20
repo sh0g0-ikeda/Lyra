@@ -44,6 +44,20 @@ describe('CharacterAppearanceCoverage', () => {
     expect(result.candidates[0]?.structuredFields).toEqual({});
   });
 
+  it.each([
+    'ミオの目は緑色に変わっていた。',
+    'ミオの目が緑色になっている。',
+  ])('状態変化中の目色「%s」を基本設定に補わない', async (manuscript) => {
+    const client = new FakeStoryAiClient(
+      [{ name: 'ミオ', name_quote: manuscript, entity_type: 'character', appearance: [], changes: [] }],
+      emptyCoverage(),
+    );
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+
+    expect(result.candidates[0]?.structuredFields).not.toHaveProperty('eyes.color');
+  });
+
   it('500文字を超える原文ではスキャナーを安全に省略する', async () => {
     const manuscript = `アキは${'とても'.repeat(170)}黒髪。`;
     const client = new FakeStoryAiClient(
