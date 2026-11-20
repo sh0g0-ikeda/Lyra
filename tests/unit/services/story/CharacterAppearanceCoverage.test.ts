@@ -147,6 +147,77 @@ describe('CharacterAppearanceCoverage', () => {
     expect(result.candidates[0]?.structuredFields).toMatchObject({ distinctive_features: '赤い角が二本' });
   });
 
+  it('照合が誤った選択肢IDを返しても原文から導ける値だけを保存候補にする', async () => {
+    const firstSentence = 'ミオは黒い短髪で、白と青のしましまの上着を着ている。';
+    const secondSentence = '目は一重で緑色である。';
+    const manuscript = `${firstSentence}${secondSentence}ミオが扉を開く。窓から光が差し込む。`;
+    const client = new FakeStoryAiClient([{
+      name: 'ミオ', name_quote: firstSentence, entity_type: 'character', changes: [],
+      appearance: [
+        { field: 'eyes.eyelid_type', value: '一重', quote: 'ミオ。目は一重で緑色である。' },
+        { field: 'eyes.color', value: '緑色', quote: 'ミオ。目は一重で緑色である。' },
+      ],
+    }], {
+      additions: [{
+        name: 'ミオ', name_quote: firstSentence, entity_type: 'character', changes: [],
+        appearance: [
+          { field: 'hair.color', option_id: 'gold', value: '黒い短髪', quote: firstSentence },
+          { field: 'clothing.description', option_id: 'blue', value: '白と青のしましまの上着', quote: firstSentence },
+          { field: 'eyes.color', option_id: 'red', value: '赤い瞳', quote: 'ミオの目は赤い。' },
+        ],
+      }],
+      unresolved: [],
+    });
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.structuredFields).toMatchObject({
+      hair: { color: 'black', length: 'short' },
+      eyes: { eyelid_type: 'single', color: 'green' },
+      clothing: { description: '白と青のしましまの上着' },
+    });
+    expect(result.candidates[0]?.structuredFields).not.toMatchObject({ eyes: { color: 'red' } });
+    expect(result.candidates[0]?.freeDescription).toContain('白と青のしましまの上着');
+  });
+
+  it('仮定文の一重と目色を直前の人物の外見として回収しない', async () => {
+    const manuscript = 'ミオは黒髪。もし目が一重で緑色なら、印象が変わる。';
+    const client = new FakeStoryAiClient(
+      [{ name: 'ミオ', name_quote: 'ミオは黒髪。', entity_type: 'character', appearance: [], changes: [] }],
+      emptyCoverage(),
+    );
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+
+    expect(result.candidates[0]?.structuredFields).not.toHaveProperty('eyes');
+  });
+
+  it('目と髪の間に別の説明があるとき髪色を目色にしない', async () => {
+    const manuscript = 'ミオの目は細く髪は緑色である。';
+    const client = new FakeStoryAiClient(
+      [{ name: 'ミオ', name_quote: manuscript, entity_type: 'character', appearance: [], changes: [] }],
+      emptyCoverage(),
+    );
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+
+    expect(result.candidates[0]?.structuredFields).not.toHaveProperty('eyes.color');
+  });
+
+  it('目色の後に上着の二重構造があっても二重まぶたにしない', async () => {
+    const manuscript = 'ミオの目は緑色で上着は二重構造である。';
+    const client = new FakeStoryAiClient(
+      [{ name: 'ミオ', name_quote: manuscript, entity_type: 'character', appearance: [], changes: [] }],
+      emptyCoverage(),
+    );
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(manuscript));
+
+    expect(result.candidates[0]?.structuredFields).toMatchObject({ eyes: { color: 'green' } });
+    expect(result.candidates[0]?.structuredFields).not.toHaveProperty('eyes.eyelid_type');
+  });
+
   it('初回抽出で保持済みの省略外見に重複reviewを出さない', async () => {
     const manuscript = 'ミオは黒髪。左頬に星形の傷がある。';
     const client = new FakeStoryAiClient([{

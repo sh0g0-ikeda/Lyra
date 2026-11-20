@@ -1298,6 +1298,10 @@ evidence separate from editor option IDs and validate both before persistence.
 Resolve omitted subjects only when the surrounding text identifies one character.
 Merge grounded appearance details from repeated mentions of the same character.
 Report ambiguous ownership or conflicting descriptions for review.
+The model's proposed option ID is advisory. Validate the response structure,
+then derive stored choices from grounded literal evidence on the server.
+An inconsistent proposed ID must not abort saving the other grounded traits.
+Preserve grounded descriptions that have no matching choice as free text.
 
 Clients opt into appearance review with `?appearance_review=1`. The response
 adds source-backed empty-field suggestions for existing human characters and

@@ -33,27 +33,12 @@ const optionIdSchema = z.enum(asNonEmptyTuple(optionIds));
 const quoteSchema = z.string().trim().min(1).max(500);
 const valueSchema = z.string().trim().min(1).max(300);
 
+// Validates provider response structure. Every saved choice is derived again
+// from grounded literal evidence in buildCharacterAutofillCandidates because
+// JSON Schema cannot express the field/value/quote correlation.
 const humanTraitSchema = z.object({
   field: humanFieldSchema, option_id: optionIdSchema.nullable(), value: valueSchema, quote: quoteSchema,
-}).strict().superRefine((trait, context) => {
-  if (!Object.hasOwn(humanAppearanceChoices, trait.field)) {
-    if (trait.option_id !== null) context.addIssue({ code: 'custom', path: ['option_id'], message: 'Text fields cannot carry an option ID' });
-    return;
-  }
-  if (trait.option_id === null) {
-    context.addIssue({ code: 'custom', path: ['option_id'], message: 'Catalog fields require an exact option ID' });
-    return;
-  }
-  const field = trait.field as keyof typeof humanAppearanceChoices;
-  if (!humanAppearanceChoices[field].some(choice => choice.value === trait.option_id)) {
-    context.addIssue({ code: 'custom', path: ['option_id'], message: `Option is not valid for ${field}` });
-    return;
-  }
-  if (!normalizeHumanAppearanceChoiceEvidence(field, trait.value, trait.quote)
-    .some(evidence => evidence.value === trait.option_id)) {
-    context.addIssue({ code: 'custom', path: ['option_id'], message: 'Option does not match the literal evidence' });
-  }
-});
+}).strict();
 const nonhumanTraitSchema = z.object({
   field: nonhumanFieldSchema, option_id: z.null(), value: valueSchema, quote: quoteSchema,
 }).strict();
@@ -111,6 +96,7 @@ export const characterAppearanceCatalogForModel: Readonly<Record<string, readonl
 const COVERAGE_SYSTEM_PROMPT = [
   'Independently reconcile character appearance coverage against the entire ORIGINAL manuscript.',
   'Compare the first extraction with the manuscript. Return only omitted literal source-grounded traits or omitted individually named characters in additions.',
+  'Recheck every first-extraction name_quote and appearance value/quote for verbatim containment and single-character ownership. A trait is still omitted when its first-pass quote is invented, paraphrased or joins noncontiguous source text; return corrected literal evidence in additions.',
   'Also correct first-pass general-field misclassification when the same literal belongs to a specific catalog field.',
   'Never invent a character, trait, quotation or option. Exclude unnamed, hypothetical, negated and changed-only base appearances.',
   'Keep value and quote as literal source text. field and option_id are separate canonical identifiers. Catalog fields require an exact allowed option_id; otherwise report unverified_trait. Nonhuman and free-text fields use null option_id.',
@@ -209,11 +195,17 @@ function sameTrait(a: MutableTrait, b: MutableTrait): boolean {
   return a.field === b.field && a.value === b.value && a.quote === b.quote;
 }
 
-const scanners: ReadonlyArray<{ field: 'hair.color' | 'eyes.color'; pattern: RegExp; value: (match: RegExpMatchArray) => string }> = [
+const scanners: ReadonlyArray<{
+  field: 'hair.color' | 'eyes.color' | 'eyes.eyelid_type';
+  pattern: RegExp;
+  value: (match: RegExpMatchArray) => string;
+}> = [
   { field: 'hair.color', pattern: /(?:黒髪|茶髪|金髪|銀髪|白髪|青髪|赤髪|緑髪|ピンク髪|紫髪|灰色の髪|グレーの髪|焦げ茶(?:色)?の髪)/gu, value: match => match[0] },
   { field: 'hair.color', pattern: /(?:髪|前髪|後ろ髪)(?:の色)?[はが](黒い|茶色|金色|銀色|白い|青い|赤い|緑色|ピンク|紫色|灰色|グレー)/gu, value: match => match[1] ?? match[0] },
   { field: 'eyes.color', pattern: /(?:黒|茶|青|緑|赤|金|銀|紫)(?:い|色の)?(?:目|瞳)/gu, value: match => match[0] },
   { field: 'eyes.color', pattern: /(?:目|瞳)(?:の色)?[はが](黒い|茶色|青い|緑色|赤い|金色|銀色|紫色)/gu, value: match => match[1] ?? match[0] },
+  { field: 'eyes.eyelid_type', pattern: /(?:目|瞳)(?:の形|まぶた|瞼)?[はが](一重|二重)(?:まぶた|瞼)?/gu, value: match => match[1] ?? match[0] },
+  { field: 'eyes.color', pattern: /(?:目|瞳)(?:の色)?[はが](?:(?:一重|二重)(?:まぶた|瞼)?(?:で|、|,)\s*)?(黒い|茶色|青い|緑色|赤い|金色|銀色|紫色)/gu, value: match => match[1] ?? match[0] },
 ];
 const unsafeContext = /(?:もし|ならば|かもしれ|ではない|じゃない|染め|変わ(?:る|っ)|変化(?:し|す)|にな(?:る|っ)|\b(?:if|might|not|dyed?|changed?|turned?)\b)/iu;
 const unclassifiedAppearance = /(?:傷|痣|ほくろ|刺青|紋様|斑点|角|翼|尾|牙)/u;

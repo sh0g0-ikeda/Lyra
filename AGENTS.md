@@ -1597,3 +1597,5 @@ Validate literal evidence and canonical selections before saving. Existing human
 characters receive opt-in empty-field suggestions requiring explicit acceptance
 with a matching entity revision. Preserve the released autofill response shape
 unless the client requests appearance review, as specified in Unified Spec §6.
+Model-proposed option IDs are advisory. Derive persisted selections from grounded
+source text and retain unmappable literal details without failing the whole cast.
