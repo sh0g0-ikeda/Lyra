@@ -170,6 +170,21 @@ const completedPlan: EpisodePagePlanApplyResult = {
 };
 
 describe('PostgresEpisodePlanPersistenceRepository', () => {
+  it.each([
+    ['canonical', true],
+    ['production44_expanded_pg18_v1', true],
+    ['legacy_2debe_v1', false],
+    ['production44_pg18_v1', false],
+  ] as const)('%s profile はstate draft hookを%sで公開する', async (profile, expected) => {
+    const client = new ProfileCapturingClient();
+    const repository = new PostgresEpisodePlanPersistenceRepository(client, profile);
+    await repository.withLockedEpisodePlan(
+      { episodeId: 'episode-1', userId: 'user-1', organizationId: null },
+      async (_context, resources) => {
+        expect(resources.persistStateChanges !== undefined).toBe(expected);
+      },
+    );
+  });
   it('対象の話にアクセスできない場合はロックも保存も行わない', async () => {
     const client = new LockCapturingClient(false);
     const repository = new PostgresEpisodePlanPersistenceRepository(client);

@@ -23,7 +23,7 @@ import { ConfigurationError } from '../domain/errors/index.js';
 import type { PageListCursor } from '../domain/pagination.js';
 import { readStyleReferenceMetadata } from '../domain/types/styleReference.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
-import { usesPhysicalPageStoryMetadata, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
+import { hasPreVariantEntitySchema, usesPhysicalPageStoryMetadata, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignment.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
 import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
@@ -1145,6 +1145,7 @@ export class PostgresPageRepository
       scenes: toEpisodePlanScenes(row.scenes),
       entities: toAutofillEntities(row.entities),
       stateLibrary: toEpisodeStateLibrary(row.state_library),
+      stateDraftPersistenceSupported: this.mode === 'legacyPhysical' || !hasPreVariantEntitySchema(this.mode),
       pages: pagesResult.rows.map((pageRow) => ({
         pageId: pageRow.page_id as string,
         pageNumber: pageRow.page_number as number,

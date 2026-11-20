@@ -1609,3 +1609,7 @@ uncertainty and cross-profile ownership checks strict (Unified Spec §6).
 Episode detail and audit compilers use a shared authorized entity/state catalog.
 Preserve legacy scene-state semantics, validate pairs after alias decoding, and
 keep invalid-state correction within existing retry/cancellation limits (§6).
+
+Automatic state drafts on named-variant schemas are resolved from the final
+unannotated panels, then saved with the page plan in the same transaction (§6).
+Never assign an unready draft as an image reference or overwrite an existing state.

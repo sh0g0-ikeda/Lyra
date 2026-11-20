@@ -3,8 +3,53 @@ import { describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from '../../../src/repositories/EpisodeStoryAutofillExecutionRepository.js';
 import type { GenerationJob } from '../../../src/domain/types/job.js';
+import type { EpisodePagePlanApplyResult } from '../../../src/domain/types/page.js';
 
 describe('PostgresEpisodeStoryAutofillExecutionRepository terminal settlement', () => {
+  it('draft状態の保存先と最終コマの根拠をREADY割当とは別の内部結果へ保存する', async () => {
+    const database = new TerminalSettlementDatabase('completed');
+    const repository = new PostgresEpisodeStoryAutofillExecutionRepository(database);
+    const result = resultWithSavedDraft();
+
+    await repository.completeEpisodeStoryAutofill({ jobId: 'job-1', userId: 'user-1', result });
+
+    const persisted = JSON.parse(String(database.updateValues[0]?.[2])) as Record<string, unknown>;
+    expect(persisted.state_transitions).toEqual([]);
+    expect(persisted.saved_state_changes).toEqual([{
+      entity_id: '11111111-1111-4111-8111-111111111111',
+      state_id: '22222222-2222-4222-8222-222222222222',
+      starts_at_panel_id: '33333333-3333-4333-8333-333333333333',
+      source_scene_id: null, source_field: 'middle', source_quote: 'ルカの髪が光る。',
+      description: '髪が光る', created: true,
+      panel_evidence_quote: 'ルカの髪が光り始める',
+      replaces_deltas: [{ source_quote: 'ルカの髪が赤くなる。', description: '髪が赤くなる' }],
+    }]);
+  });
+
+  it.each(['', 'a'.repeat(301)])('保存状態の原文根拠が不正な場合はjob成功を書き込まない', async (sourceQuote) => {
+    const database = new TerminalSettlementDatabase('completed');
+    const repository = new PostgresEpisodeStoryAutofillExecutionRepository(database);
+    const result = resultWithSavedDraft();
+    result.savedStateChanges = result.savedStateChanges!.map((change) => ({ ...change, sourceQuote }));
+
+    await expect(repository.completeEpisodeStoryAutofill({ jobId: 'job-1', userId: 'user-1', result }))
+      .rejects.toThrow('Saved episode state change is invalid');
+    expect(database.updateValues).toHaveLength(0);
+  });
+
+  it('部分復帰の置換対象に不正な根拠がある場合はjob成功を書き込まない', async () => {
+    const database = new TerminalSettlementDatabase('completed');
+    const repository = new PostgresEpisodeStoryAutofillExecutionRepository(database);
+    const result = resultWithSavedDraft();
+    result.savedStateChanges = result.savedStateChanges!.map((change) => ({
+      ...change, replacesDeltas: [{ sourceQuote: 'ルカの髪が赤くなる。', description: '' }],
+    }));
+
+    await expect(repository.completeEpisodeStoryAutofill({ jobId: 'job-1', userId: 'user-1', result }))
+      .rejects.toThrow('Saved episode state change is invalid');
+    expect(database.updateValues).toHaveLength(0);
+  });
+
   it('legacy attempt進捗はretryとmillisecond精度started_atをCAS条件にする', async () => {
     const database = new TerminalSettlementDatabase('completed');
     const repository = new PostgresEpisodeStoryAutofillExecutionRepository(database, 'legacy_2debe_v1');
@@ -109,6 +154,21 @@ describe('PostgresEpisodeStoryAutofillExecutionRepository terminal settlement', 
     },
   );
 });
+
+function resultWithSavedDraft(): EpisodePagePlanApplyResult {
+  return {
+    updatedPageCount: 1, updatedPanelCount: 1, updatedAssignmentCount: 1, filledFieldCount: 1,
+    compilerUsed: true, compilerProvider: 'openai', compilerModel: 'gpt-6-luna', compilerPromptVersion: 'v1', compilerError: null,
+    statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing', stateTransitions: [],
+    savedStateChanges: [{
+      entityId: '11111111-1111-4111-8111-111111111111', stateId: '22222222-2222-4222-8222-222222222222',
+      startsAtPanelId: '33333333-3333-4333-8333-333333333333', sourceSceneId: null,
+      sourceField: 'middle', sourceQuote: 'ルカの髪が光る。', description: '髪が光る', created: true,
+      panelEvidenceQuote: 'ルカの髪が光り始める',
+      replacesDeltas: [{ sourceQuote: 'ルカの髪が赤くなる。', description: '髪が赤くなる' }],
+    }],
+  };
+}
 
 class TerminalSettlementDatabase implements DatabaseClient, TransactionRunner {
   public readonly queries: string[] = [];

@@ -650,12 +650,19 @@ termination rules apply equally with or without a validated state ledger. State
 references are still independently checked before saving and again under the atomic
 planning lock; cancellation, authorization and concurrency errors remain hard.
 
-Automatic state planning with visual fallback requires a bounded, nonblank source
-quote and a source field or scene ID that identifies real non-null saved source.
-Literal containment is provenance metadata in this mode, so a paraphrased or
-translated quote does not reject an otherwise valid plan. Entity, panel and state
-ownership, READY references, and transition ordering remain hard validation. Legacy
-strict state validation continues to require exact source-quote containment.
+On schemas with named entity-state variants, automatic state planning runs once
+after detail generation and the existing single audit/repair have finished. Its
+inputs are the original saved source and the final, unannotated panel draft; the
+input fingerprint still covers the original locked context. Require a bounded,
+nonblank literal source quote, a literal visible-change description within that
+quote, and literal evidence from the final onset panel. Requests or predictions
+of a change do not establish its onset. Persistent appearance changes are states;
+ordinary actions, transient emotion and repeated base profiles are not new states.
+Validation feedback uses the existing bounded structured attempts and cancellation
+checkpoints. Do not move panel events after establishing their final boundaries.
+Older automatic callers on pre-variant physical schemas retain their visual-only
+contract, including auxiliary quote matching. Explicit V1 keeps its strict quote
+and READY-reference contract. Entity, panel and state ownership remain mandatory.
 Generated assignments may use a registered READY state owned by the assigned entity
 even when it is not preassigned to a scene; unknown, foreign-entity and unready states
 remain invalid. The plan uses each existing page's frame count as its story capacity
@@ -687,10 +694,27 @@ disables it. This boolean cannot be combined with the existing V1 version/policy
 options. New default or boolean-enabled requests update state assignments across
 the episode when the user explicitly runs story autofill. Registered, ready states
 continue until another registered state or an explicit return to the base state.
-Source-backed changes without a usable registered state use the current authorized
-character reference and editable visual instructions; they neither create state
-records/images nor require the user to create a missing state. A cosmetic overlay
-does not clear a continuing registered state. Exact source grounding, known entity
+On named-variant schemas, source-backed changes without a usable registered state
+are saved or reused as draft entity-state records, with their literal source quote
+in extra_note, inside the same transaction as pages and job completion. Existing
+base characters and state records are not overwritten. Reuse a draft when its
+normalized appearance delta matches exactly and its source evidence matches or
+substantively contains the same quote, even if its label differs. A broad shared
+quote alone must not merge independent changes. These drafts have
+no reference image, cause no image generation or charge, and never become
+panel.state_id assignments until a usable reference is available. They use the
+current authorized character reference and editable visual instructions instead.
+Record their state IDs, final onset panels and source evidence in internal job
+saved_state_changes metadata; preserve the older strict job response projection.
+This metadata is diagnostic, not the sole persistence of the state or its visual
+application. Existing user-authored state directives retain precedence and reuse
+their already registered states without creating or rewriting them.
+Strip only machine-generated appearance annotations from automatic compiler inputs
+and apply the new final annotations after validation. Preserve unrelated authored
+text. Keep continuing independent appearance deltas, end only the explicitly
+replaced delta, and clear all deltas only at a supported full return to base or
+registered-state boundary. A cosmetic overlay does not clear a continuing
+registered state. Exact source grounding, known entity
 and panel IDs, state ownership, reference readiness and the atomic input fingerprint
 remain mandatory. Invalid or stale references are never written as assignments.
 Older explicit V1 policies and an explicit OFF retain their request contracts;

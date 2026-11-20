@@ -1,6 +1,7 @@
 import type { QueryResultRow } from 'pg';
 import type { CharacterAutofillResult } from '../../packages/api-contract/src/characterAutofill.js';
 import { extractEntityAliases } from '../domain/entityAliases.js';
+import { hasMatchingCharacterState } from '../domain/entity/CharacterStateIdentity.js';
 import { ConfigurationError, NotFoundError, ResourceStaleError, ValidationError } from '../domain/errors/index.js';
 import type { EntityType } from '../domain/types/entity.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
@@ -145,7 +146,15 @@ export class PostgresCharacterAutofillRepository implements CharacterAutofillRep
         const states = statesByEntity.get(entry.id) ?? [];
         let statesAdded = 0;
         for (const change of candidate.changes) {
-          if (hasMatchingState(states, change)) continue;
+          if (hasMatchingCharacterState(states.map((state) => ({
+            name: state.name,
+            description: state.description,
+            sourceQuote: state.extra_note,
+          })), {
+            name: change.name,
+            description: change.description,
+            sourceQuote: change.quote,
+          })) continue;
           await transactionClient.query(
             `INSERT INTO entity_states
                (entity_id, scene_id, name, description, expression_default, extra_note)
@@ -389,47 +398,6 @@ function serializeTimestamp(value: Date | string): string {
 function findRosterMatches(roster: readonly RosterEntry[], name: string): RosterEntry[] {
   const key = normalizeText(name);
   return roster.filter((entry) => [entry.name, ...entry.aliases].some((value) => normalizeText(value) === key));
-}
-
-function hasMatchingState(states: readonly StateRow[], change: CharacterAutofillCandidate['changes'][number]): boolean {
-  const contentKey = `${normalizeText(change.name)}\u0000${normalizeText(change.description)}`;
-  return states.some((state) =>
-    (state.name !== null && state.description !== null
-      && `${normalizeText(state.name)}\u0000${normalizeText(state.description)}` === contentKey)
-    || (state.extra_note !== null && state.description !== null
-      && describesSameSourceChange(
-        state.extra_note,
-        state.description,
-        change.quote,
-        change.description,
-      )));
-}
-
-function describesSameSourceChange(
-  savedQuote: string,
-  savedDescription: string,
-  candidateQuote: string,
-  candidateDescription: string,
-): boolean {
-  const leftQuote = normalizeSourceSpan(savedQuote);
-  const rightQuote = normalizeSourceSpan(candidateQuote);
-  const leftDescription = normalizeSourceSpan(savedDescription);
-  const rightDescription = normalizeSourceSpan(candidateDescription);
-  return substantivelyContainsEither(leftQuote, rightQuote)
-    && substantivelyContainsEither(leftDescription, rightDescription);
-}
-
-function substantivelyContainsEither(left: string, right: string): boolean {
-  if (left === right) return left.length > 0;
-  const shorter = left.length < right.length ? left : right;
-  const longer = left.length < right.length ? right : left;
-  // Short fragments such as a color or body part are not enough to identify a
-  // state when one sentence contains several independent changes.
-  return [...shorter].length >= 4 && longer.includes(shorter);
-}
-
-function normalizeSourceSpan(value: string): string {
-  return normalizeText(value).replace(/[\p{P}\p{S}\s]+/gu, '');
 }
 
 function normalizeText(value: string): string {

@@ -79,6 +79,17 @@ class EpisodeStateContextClient implements DatabaseClient {
 }
 
 describe('PostgresPageRepository episode state context', () => {
+  it.each([
+    ['canonical', true], ['production44_expanded_pg18_v1', true],
+    ['legacy_2debe_v1', false], ['production44_pg18_v1', false],
+  ] as const)('%sでは実際の状態スキーマに応じて新規状態保存可否を渡す', async (profile, supported) => {
+    const repository = new PostgresPageRepository(new EpisodeStateContextClient(), profile);
+    const context = await repository.findEpisodePlanningContextByIdAndUserId(
+      '33333333-3333-4333-8333-333333333333', '66666666-6666-4666-8666-666666666666',
+    );
+    expect(context?.stateDraftPersistenceSupported).toBe(supported);
+  });
+
   it('保存した開始状態と全文草稿を全話planへ渡し変更時にfingerprintが変わる', async () => {
     const client = new EpisodeStateContextClient();
     const repository = new PostgresPageRepository(client);

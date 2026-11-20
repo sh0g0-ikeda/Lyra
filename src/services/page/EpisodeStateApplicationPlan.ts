@@ -83,11 +83,21 @@ export interface ApplyEpisodeStateVisualDirectivesInput {
   transitions: readonly EpisodeStateTransition[];
   visualFallbacks: readonly EpisodeUnresolvedStateTransition[];
   language: AppLanguage;
+  /** Final-draft automatic mode stores literal deltas; legacy plans provide complete overlays. */
+  accumulateVisualFallbacks?: boolean;
+  /** Only model-derived strict deltas accumulate; author directives retain legacy replacement. */
+  accumulatingVisualFallbacks?: readonly EpisodeUnresolvedStateTransition[];
 }
 
 interface ActiveVisualState {
   registered: string | null;
-  overlay: string | null;
+  overlays: ActiveVisualOverlay[];
+}
+
+interface ActiveVisualOverlay {
+  sourceQuote: string;
+  description: string;
+  text: string;
 }
 
 // Keep deterministic augmentation inside the same public panel contract enforced by panel.schema.ts.
@@ -106,11 +116,15 @@ export function applyEpisodeStateVisualDirectives(
   const stateById = new Map((input.context.stateLibrary ?? []).map((state) => [state.stateId, state] as const));
   const transitionsByPanel = groupByPanel(input.transitions);
   const fallbacksByPanel = groupByPanel(input.visualFallbacks);
+  const accumulatingFallbacks = new Set(
+    input.accumulatingVisualFallbacks
+      ?? (input.accumulateVisualFallbacks === true ? input.visualFallbacks : []),
+  );
   const activeByEntity = new Map<string, ActiveVisualState>();
   for (const starting of input.context.episode.startingEntityStates ?? []) {
     activeByEntity.set(starting.entityId, {
       registered: describeRegisteredState(starting.stateId, starting.entityId, stateById),
-      overlay: null,
+      overlays: [],
     });
   }
 
@@ -133,25 +147,34 @@ export function applyEpisodeStateVisualDirectives(
           for (const transition of transitionsByPanel.get(contextPanel.id) ?? []) {
             activeByEntity.set(transition.entityId, {
               registered: describeRegisteredState(transition.stateId, transition.entityId, stateById),
-              overlay: null,
+              overlays: [],
             });
           }
           for (const fallback of fallbacksByPanel.get(contextPanel.id) ?? []) {
-            const current = activeByEntity.get(fallback.entityId) ?? { registered: null, overlay: null };
+            const current = activeByEntity.get(fallback.entityId) ?? { registered: null, overlays: [] };
             activeByEntity.set(fallback.entityId, {
               ...current,
-              overlay: describeVisualFallback(fallback),
+              overlays: accumulatingFallbacks.has(fallback)
+                ? applyVisualDelta(current.overlays, fallback)
+                : [{
+                    sourceQuote: fallback.sourceQuote,
+                    description: fallback.suggestedDescription,
+                    text: describeVisualFallback(fallback),
+                  }],
             });
           }
 
           const assignments = panel.entities ?? contextPanel.entities;
           const directives = assignments.flatMap((assignment) => {
             const active = activeByEntity.get(assignment.entityId);
-            if (active === undefined || (active.registered === null && active.overlay === null)) {
+            if (active === undefined || (active.registered === null && active.overlays.length === 0)) {
               return [];
             }
             const entityName = entityById.get(assignment.entityId)?.name ?? assignment.entityId;
-            const details = [active.registered, active.overlay].filter((value): value is string => value !== null);
+            const details = [
+              active.registered,
+              ...active.overlays.map((overlay) => overlay.text),
+            ].filter((value): value is string => value !== null);
             const prefix = input.language === 'ja' ? '物語上の外見' : 'Story appearance';
             return [`[${prefix}: ${normalizeDirectiveText(entityName)} — ${details.join('; ')}]`];
           });
@@ -181,6 +204,60 @@ export function applyEpisodeStateVisualDirectives(
       return { ...suggestionPage, panels };
     });
   return { pages };
+}
+
+function applyVisualDelta(
+  current: readonly ActiveVisualOverlay[],
+  fallback: EpisodeUnresolvedStateTransition,
+): ActiveVisualOverlay[] {
+  const replacements = new Set((fallback.replacesDeltas ?? []).map((delta) =>
+    visualDeltaKey(delta.sourceQuote, delta.description)));
+  const currentDelta = visualDeltaKey(fallback.sourceQuote, fallback.suggestedDescription);
+  const retained = current.filter((overlay) =>
+    !replacements.has(visualDeltaKey(overlay.sourceQuote, overlay.description))
+    && visualDeltaKey(overlay.sourceQuote, overlay.description) !== currentDelta);
+  return [...retained, {
+    sourceQuote: fallback.sourceQuote,
+    description: fallback.suggestedDescription,
+    text: describeVisualFallback(fallback),
+  }];
+}
+
+function visualDeltaKey(sourceQuote: string, description: string): string {
+  return JSON.stringify([normalizeSourceKey(sourceQuote), normalizeSourceKey(description)]);
+}
+
+function normalizeSourceKey(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+}
+
+const MACHINE_VISUAL_DIRECTIVE_PATTERN =
+  /\s*\[(?:物語上の外見|Story appearance):(?:[^\]]*\]|[^\]]*$)/gu;
+
+/** Removes only server-authored visual directives before a new automatic compilation pass. */
+export function stripEpisodeStateVisualDirectivesFromContext(
+  context: EpisodePagePlanContext,
+): EpisodePagePlanContext {
+  return {
+    ...context,
+    pages: context.pages.map((page) => ({
+      ...page,
+      panels: page.panels.map((panel) => ({
+        ...panel,
+        situationText: stripMachineVisualDirective(panel.situationText),
+        composition: {
+          ...panel.composition,
+          compositionPrompt: stripMachineVisualDirective(panel.composition.compositionPrompt),
+        },
+      })),
+    })),
+  };
+}
+
+function stripMachineVisualDirective(value: string | null): string | null {
+  if (value === null) return null;
+  const stripped = value.replace(MACHINE_VISUAL_DIRECTIVE_PATTERN, '').trim();
+  return stripped.length === 0 ? null : stripped;
 }
 
 function groupByPanel<T extends { startsAtPanelId: string }>(

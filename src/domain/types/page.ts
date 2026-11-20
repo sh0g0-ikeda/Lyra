@@ -16,6 +16,7 @@ import type {
   StateAssignmentPolicy,
 } from './episodeStateTransition.js';
 import type { EntityStateReferenceDescriptor } from './entityStateReference.js';
+import type { PersistedEpisodeStateChange } from './episodeStateChange.js';
 
 export type PageStatus = 'designing' | 'generating' | 'generated' | 'editing' | 'confirmed';
 export type PageDialogueMode = 'image_baked' | 'balloon_only' | 'mixed';
@@ -141,6 +142,8 @@ export interface PageAutofillContext {
 }
 
 export interface EpisodePagePlanContext {
+  /** Internal physical-schema capability; absent in older internal callers. */
+  stateDraftPersistenceSupported?: boolean;
   productionDirectives?: EpisodeProductionDirective[];
   episodeId: string;
   workId: string;
@@ -301,5 +304,7 @@ export interface EpisodePagePlanApplyResult {
   stateTransitions?: EpisodeStateTransition[];
   statePlanVersion?: 'episode_state_plan_v1';
   stateAssignmentPolicy?: StateAssignmentPolicy;
+  /** Internal provenance only; older strict job responses continue using their existing projection. */
+  savedStateChanges?: readonly PersistedEpisodeStateChange[];
 }
 import type { EpisodeProductionDirective } from '../episodeProductionNotes.js';
