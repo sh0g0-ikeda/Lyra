@@ -334,11 +334,9 @@ function findRosterMatches(roster: readonly RosterEntry[], name: string): Roster
 }
 
 function hasMatchingState(states: readonly StateRow[], change: CharacterAutofillCandidate['changes'][number]): boolean {
-  const quoteKey = normalizeText(change.quote);
   const contentKey = `${normalizeText(change.name)}\u0000${normalizeText(change.description)}`;
   return states.some((state) =>
-    (state.extra_note !== null && normalizeText(state.extra_note) === quoteKey)
-    || (state.name !== null && state.description !== null
+    (state.name !== null && state.description !== null
       && `${normalizeText(state.name)}\u0000${normalizeText(state.description)}` === contentKey)
     || (state.extra_note !== null && state.description !== null
       && describesSameSourceChange(

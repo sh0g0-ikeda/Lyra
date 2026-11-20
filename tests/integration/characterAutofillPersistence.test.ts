@@ -61,7 +61,7 @@ describePostgres('character autofill persistence', () => {
     const candidates: CharacterAutofillCandidate[] = [
       {
         name: 'Mio', entityType: 'character', freeDescription: 'AIが作った説明', structuredFields: {},
-        changes: [{ name: '負傷', description: '左頬に赤い傷がある', quote: 'ミオの左頬に赤い傷がある。' }],
+        changes: [{ name: '負傷', description: '左頬に赤い傷', quote: 'ミオの左頬に赤い傷があり、右目が青く光る。' }],
       },
       {
         name: 'ノア', entityType: 'nonhuman', freeDescription: '青い翼を持つ',
@@ -91,14 +91,14 @@ describePostgres('character autofill persistence', () => {
       [savedEntities.rows.map((row) => row.id)],
     );
     expect(states.rows).toHaveLength(2);
-    expect(states.rows.map((row) => row.extra_note).sort()).toEqual(['ノアの翼が光る。', 'ミオの左頬に赤い傷がある。']);
+    expect(states.rows.map((row) => row.extra_note).sort()).toEqual(['ノアの翼が光る。', 'ミオの左頬に赤い傷があり、右目が青く光る。']);
 
     const retry = await repository.saveCandidates({
       userId: ids.user, episodeId: ids.episode, version: 1, organizationId: null,
       candidates: [{
         name: 'ミオ', entityType: 'character', freeDescription: null, structuredFields: {},
         changes: [
-          { name: '頬の異変', description: '赤い傷がある', quote: '左頬に赤い傷がある' },
+          { name: '頬の異変', description: '頬に赤い傷', quote: '左頬に赤い傷' },
           { name: '目の変化', description: '右目が青く光る', quote: 'ミオの左頬に赤い傷があり、右目が青く光る。' },
         ],
       }],
@@ -109,7 +109,7 @@ describePostgres('character autofill persistence', () => {
     );
     expect(retriedStates.rows).toHaveLength(2);
     expect(retriedStates.rows).toEqual(expect.arrayContaining([
-      { name: '負傷', extra_note: 'ミオの左頬に赤い傷がある。' },
+      { name: '負傷', extra_note: 'ミオの左頬に赤い傷があり、右目が青く光る。' },
       { name: '目の変化', extra_note: 'ミオの左頬に赤い傷があり、右目が青く光る。' },
     ]));
   });

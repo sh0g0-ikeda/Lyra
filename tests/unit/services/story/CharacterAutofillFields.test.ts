@@ -42,6 +42,17 @@ describe('ストーリーからキャラクター編集欄へ自動入力', () =
     expect(rows.map(row => row.structuredFields)).toEqual([{}, {}]);
   });
 
+  it('二人ともと明記された服だけ両者に入力し、片方だけの髪色を伝播させない', () => {
+    const story = 'アキとユイは二人とも制服だが、アキだけは黒髪。';
+    const rows = buildCharacterAutofillCandidates([story], ['アキ', 'ユイ'].map(name => ({
+      name, entity_type: 'character', name_quote: name, appearance: [
+        { field: 'clothing.category', value: '制服', quote: story },
+        { field: 'hair.color', value: '黒髪', quote: story },
+      ], changes: [],
+    })));
+    expect(rows.map(row => row.structuredFields)).toEqual([{ clothing: { category: 'school' }, hair: { color: 'black' } }, { clothing: { category: 'school' } }]);
+  });
+
   it('明記された部位数、色、移動方法を人外の欄に残し、仮定と無名の役割を除く', () => {
     const line = 'ルゥは青いしずく形で、赤い角が二本、金色の目が三つある。ルゥは四足歩行。もしルゥが巨大なら目立つ。通行人が来る。';
     const result = buildCharacterAutofillCandidates([line], [

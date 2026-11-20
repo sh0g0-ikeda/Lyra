@@ -160,7 +160,17 @@ export function buildCharacterAutofillCandidates(source: readonly string[], cast
       if (!value || !quote.includes(value)) return false;
       const contexts = quoteContexts(source, quote);
       const otherNamed = (span: string): boolean => named.some(other => keyOf(other.name) !== keyOf(person.name) && mentionsName(span, other.name));
-      if (mentionsName(quote, person.name)) return !otherNamed(quote) && contexts.some(context => !uncertain.test(context));
+      if (mentionsName(quote, person.name)) {
+        if (!contexts.some(context => !uncertain.test(context))) return false;
+        if (!otherNamed(quote)) return true;
+        return quote.split(/[、,。！？!?;\n]|\bbut\b/iu).some(clause => {
+          if (!clause.includes(value) || !mentionsName(clause, person.name)) return false;
+          if (!otherNamed(clause)) return true;
+          const shared = /^(.+?)(?:は(?:二人とも|ふたりとも|両方とも|全員)|\s+(?:both|all)\s+)(.+)$/iu.exec(clause);
+          return !!shared && mentionsName(shared[1], person.name) && otherNamed(shared[1])
+            && shared[2].includes(value) && !named.some(c => mentionsName(shared[2], c.name));
+        });
+      }
       return contexts.length > 0 && contexts.every(context => mentionsName(context, person.name) && !otherNamed(context) && !uncertain.test(context));
     };
     const evidence = person.appearance.filter(trait => belongs(trait.quote, trait.value));
