@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ActivityIndicator, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { ZoomIn } from 'lucide-react-native';
@@ -31,7 +31,8 @@ export function CharacterThumbnailPicker({ characters, hasNextPage = false, isFe
   const { width: windowWidth } = useWindowDimensions();
   const columnCount = windowWidth >= 540 ? 4 : windowWidth >= 380 ? 3 : 2;
   const pageSize = pageSizeForWidth(windowWidth);
-  const [pageIndex, setPageIndex] = useState(0);
+  const initiallySelectedIndex = selectedId === null ? -1 : characters.findIndex((character) => character.id === selectedId);
+  const [pageIndex, setPageIndex] = useState(() => initiallySelectedIndex < 0 ? 0 : Math.floor(initiallySelectedIndex / pageSize));
   const [loadingRemotePage, setLoadingRemotePage] = useState(false);
   const pageCount = Math.ceil(characters.length / pageSize);
   const safePageIndex = Math.min(pageIndex, Math.max(0, pageCount - 1));
@@ -40,12 +41,6 @@ export function CharacterThumbnailPicker({ characters, hasNextPage = false, isFe
   const cardWidth = Math.floor((gridWidth - spacing.sm * (columnCount - 1)) / columnCount);
   const previousLabel = language === 'ja' ? '前のキャラクター' : 'Previous characters';
   const nextLabel = language === 'ja' ? '次のキャラクター' : 'Next characters';
-
-  useEffect(() => { setPageIndex((current) => Math.min(current, Math.max(0, pageCount - 1))); }, [pageCount]);
-  useEffect(() => {
-    const selectedIndex = selectedId === null ? -1 : characters.findIndex((character) => character.id === selectedId);
-    if (selectedIndex >= 0) setPageIndex(Math.floor(selectedIndex / pageSize));
-  }, [characters, pageSize, selectedId]);
 
   if (characters.length === 0) return <Text style={styles.empty}>{t(language, 'component.characterThumbnailPicker.empty')}</Text>;
 

@@ -2119,6 +2119,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
           onPreview={(_entityId, sources) => openImagePreview(sources)}
           onSelect={switchEntity}
           selectedId={entityEditorMode === 'create' ? null : selection.entityId}
+          key={`character-grid:${entityEditorMode}:${selection.entityId ?? 'new'}`}
         />
         <RecordPicker
           emptyLabel={t(language, 'emptyCharacters')}
