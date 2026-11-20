@@ -6,6 +6,7 @@ import type {
 } from '../../domain/types/page.js';
 import type { EpisodePlanAuditCoverageCatalog } from './EpisodePlanAuditCoverage.js';
 import type { EpisodePlanSourceReviewCatalog } from './EpisodePlanSourceReview.js';
+import type { EpisodeAutofillStateReference } from './EpisodeAutofillStateReferences.js';
 
 export type EpisodePlanAuditIssueCode =
   | 'duplicate_dialogue'
@@ -157,6 +158,8 @@ export interface CompileEpisodePlanAuditInput {
   beforeRetry?: () => Promise<void>;
   /** Same complete-context reference table as the detail compilation. */
   characterReferences?: readonly EpisodeAutofillCharacterReference[];
+  /** Same complete-context state catalog as detail compilation. */
+  stateReferences?: readonly EpisodeAutofillStateReference[];
 }
 
 export interface EpisodePlanAuditVisualSnapshotPanel {

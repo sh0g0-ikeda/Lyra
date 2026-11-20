@@ -22,6 +22,7 @@ function runtime(overrides: Partial<ReleaseCompatibilityRuntime> = {}): ReleaseC
     entityReferenceDirectUploadEnabled: true,
     openAiApiKeyConfigured: true,
     openAiImageModel: 'gpt-image-2',
+    openAiImageSunburstEnabled: false,
     generationQueueConfigured: true,
     imageStorageConfigured: true,
     awsRegionConfigured: true,
@@ -47,8 +48,19 @@ describe('release compatibility policy', () => {
     })).toMatchObject({ ok: true, violations: [] });
   });
 
+  it('backend-onlyの段階deployはcutover OFFを許可しONなら固定provider境界を検査する', () => {
+    expect(codes({
+      profile: 'backend-only', journalPresent: false, mobileClientIds: [],
+      runtime: runtime({ openAiImageSunburstEnabled: true, openAiImageModel: 'gpt-image-1', openAiApiKeyConfigured: false, localImageFallbackEnabled: true }),
+    })).toEqual(expect.arrayContaining([
+      'IMAGE_CUTOVER_BASE_MODEL_UNSUPPORTED',
+      'IMAGE_CUTOVER_PROVIDER_REQUIRED',
+      'IMAGE_CUTOVER_LOCAL_FALLBACK_FORBIDDEN',
+    ]));
+  });
+
   it('new-mobileでは既存有料page/entity/importと共通実行基盤を要求する', () => {
-    const base = runtime({ generationQuotesEnabled: true });
+    const base = runtime({ generationQuotesEnabled: true, openAiImageSunburstEnabled: true });
     expect(evaluateReleaseCompatibility({
       profile: 'new-mobile', journalPresent: false, mobileClientIds: [], runtime: base,
     }).ok).toBe(true);
@@ -62,6 +74,7 @@ describe('release compatibility policy', () => {
       [{ entityReferenceDirectUploadEnabled: false }, 'MOBILE_ENTITY_UPLOAD_REQUIRED'],
       [{ openAiApiKeyConfigured: false }, 'MOBILE_PROVIDER_REQUIRED'],
       [{ openAiImageModel: 'hy4-preview' }, 'MOBILE_IMAGE_MODEL_UNSUPPORTED'],
+      [{ openAiImageSunburstEnabled: false }, 'MOBILE_IMAGE_SUNBURST_REQUIRED'],
       [{ generationQueueConfigured: false }, 'MOBILE_DURABLE_QUEUE_REQUIRED'],
       [{ imageStorageConfigured: false }, 'MOBILE_IMAGE_STORAGE_REQUIRED'],
       [{ awsRegionConfigured: false }, 'MOBILE_AWS_REGION_REQUIRED'],
@@ -80,6 +93,7 @@ describe('release compatibility policy', () => {
       profile: 'new-mobile', journalPresent: false, mobileClientIds: [],
       runtime: runtime({
         generationQuotesEnabled: true,
+        openAiImageSunburstEnabled: true,
         stateReferenceCopyV2AdmissionEnabled: false,
       }),
     }).ok).toBe(true);
@@ -145,6 +159,7 @@ describe('release compatibility policy', () => {
       ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED: 'true',
       OPENAI_API_KEY: 'configured',
       OPENAI_IMAGE_MODEL: 'gpt-image-2',
+      OPENAI_IMAGE_SUNBURST_ENABLED: 'true',
       AWS_REGION: 'ap-northeast-1',
       SQS_QUEUE_URL_GENERATION: 'https://sqs.example.invalid/queue',
       S3_BUCKET_IMAGES: 'lyra-images',

@@ -25,6 +25,12 @@ describe('worker dependency policy', () => {
     expect(countOccurrences(source, 'maxRetries: IMAGE_GENERATION_OPENAI_MAX_RETRIES')).toBe(2);
   });
 
+  it('2.5 cutoverは全画像workerを固定snapshotへ切替えlocal fallbackを無効にする', () => {
+    const source = readFileSync(join(process.cwd(), 'worker/dependencies.ts'), 'utf8');
+    expect(source).toContain('resolveOpenAIImageRuntimeModel(env.OPENAI_IMAGE_MODEL, env.OPENAI_IMAGE_SUNBURST_ENABLED)');
+    expect(source).toContain('env.LOCAL_IMAGE_FALLBACK_ENABLED && !env.OPENAI_IMAGE_SUNBURST_ENABLED');
+  });
+
   it('runs production runtime guard before worker polling starts', () => {
     const source = readFileSync(join(process.cwd(), 'scripts', 'runGenerationWorker.ts'), 'utf8');
 

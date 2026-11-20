@@ -1579,3 +1579,49 @@ and active-job/task protection when changing warm control.
 Personal subscription monthly grants follow Unified Spec §7: Standard 100 credits
 for JPY 1,000 and Premium 350 credits for JPY 3,500, with historical grants and
 refund records preserved. Generated-page editing is permitted on Mobile.
+
+Episode updates from released clients preserve separately stored production
+notes. Enable new note writes only after the 053 and 054 schema checks pass.
+The image cutover contract in the Unified Spec requires the compatible
+Mobile 1.0.11 update, a drained legacy queue and the same pinned GPT Image
+2.5 snapshot for all new page and character image generation.
+
+Episode cast autofill follows the Unified Spec §6 episode character contract.
+Persist source-backed editor selections for all new named characters together,
+preserve existing base settings and keep the released suggestion endpoint read-only.
+Reserve free description for unmatched traits. The regular cast picker shows
+portraits, selectable empty frames and an independent image zoom control.
+
+Cast autofill uses GPT-6 Luna for extraction and full-manuscript reconciliation.
+Validate literal evidence and canonical selections before saving. Existing human
+characters receive opt-in empty-field suggestions requiring explicit acceptance
+with a matching entity revision. Preserve the released autofill response shape
+unless the client requests appearance review, as specified in Unified Spec §6.
+Model-proposed option IDs are advisory. Derive persisted selections from grounded
+source text and retain unmappable literal details without failing the whole cast.
+Ground omitted subjects only through bounded, continuous appearance descriptions.
+Keep unsupported clothing details attached to their garment, and expose unresolved
+source-backed losses for review after reconciliation (Unified Spec §6).
+Named profile headings may ground their nested 容姿 properties. Treat supported
+nonhuman classification notes as metadata; keep actual appearance negations,
+uncertainty and cross-profile ownership checks strict (Unified Spec §6).
+
+Episode detail and audit compilers use a shared authorized entity/state catalog.
+Preserve legacy scene-state semantics, validate pairs after alias decoding, and
+keep invalid-state correction within existing retry/cancellation limits (§6).
+
+Automatic state drafts on named-variant schemas are resolved from the final
+unannotated panels, then saved with the page plan in the same transaction (§6).
+Never assign an unready draft as an image reference or overwrite an existing state.
+Cast, coverage and episode-state extraction share the narrative-persistence policy
+in Unified Spec §6: a single mention can establish a lasting injury, loss, form,
+outfit or age change; one-panel lighting and transient effects stay panel-local.
+
+Story manuscript commands and page estimation follow Unified Spec §6: keep sparse
+authored page/panel boundaries and paired directions in the raw manuscript,
+exclude them from automatic character/state evidence, preserve source-to-slot
+ownership through generation and audit, and retain the opt-in/legacy job split.
+Discard an invalid audit repair as a whole; only a fully revalidated unchanged
+draft may survive. Never restore source anchors to bypass manuscript checks.
+Strict state extraction in production-note flows uses the original active source
+fields and separate literal evidence spans, never re-derived story sections (§6).

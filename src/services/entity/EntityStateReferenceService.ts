@@ -86,6 +86,7 @@ export interface EntityStateReferenceServiceDependencies {
   storedImageLoader: StoredImageLoaderPort;
   generationQueue: EntityGenerationQueuePort;
   imageModel: string;
+  providerModelId?: string;
   generationEnabled?: boolean;
   recoveryService?: EntityGenerationRecoveryServicePort;
   capacityLimits?: GenerationCapacityLimits;
@@ -146,6 +147,8 @@ export class EntityStateReferenceService implements EntityStateReferenceServiceP
           state_name: context.stateName,
           state_description: context.stateDescription,
           image_model: this.dependencies.imageModel,
+          provider_model_id: this.dependencies.providerModelId ?? this.dependencies.imageModel,
+          provider: 'openai',
           pricing_version: STATE_REFERENCE_PRICING_VERSION,
         },
       });

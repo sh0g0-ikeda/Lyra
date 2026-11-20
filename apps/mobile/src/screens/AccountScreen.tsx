@@ -802,6 +802,8 @@ async function retryGenerationJob(
     {
       overwrite_existing: readJobBooleanParam(job, 'overwrite_existing') ?? false,
       apply_story_plan: readJobBooleanParam(job, 'apply_story_plan') ?? true,
+      ...(readJobStringParam(job, 'production_notes_version') === 'v1'
+        ? { production_notes_version: 'v1' as const } : {}),
       language: jobLanguage
     },
     organizationId

@@ -8,6 +8,116 @@ const STATE = '22222222-2222-4222-8222-222222222222';
 const PANEL = '33333333-3333-4333-8333-333333333333';
 
 describe('OpenAIEpisodeStateTransitionCompiler', () => {
+  it('final draft modeは音叉を握るだけの一時動作をstateにせず空planを保持する', async () => {
+    let request: Record<string, unknown> | undefined;
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        request = payload;
+        return { body: { output_text: JSON.stringify({
+          plan_version: 'episode_state_plan_v1', state_transitions: [], unresolved_state_transitions: [],
+        }) } };
+      },
+    } as unknown as OpenAIClient;
+    const stateContext = context();
+    stateContext.episode.storyFullDraft = '主人公は音叉を握る。';
+    const finalSuggestion = { pages: [{ pageId: stateContext.pages[0]!.pageId, pageNumber: 1, panels: [{
+      order: 1, situationText: '音叉を握る', entities: [{
+        entityId: ENTITY, role: 'primary' as const, expression: 'determined' as const,
+        customExpression: null, action: 'custom' as const, customAction: '音叉を握る',
+        position: 'center' as const, facingDirection: null, effectNote: null, stateId: null,
+      }],
+    }] }] };
+
+    await expect(new OpenAIEpisodeStateTransitionCompiler(client).compileStateTransitions({
+      context: stateContext, language: 'ja', finalSuggestion, strictEvidence: true,
+    })).resolves.toMatchObject({ plan: { transitions: [], unresolved: [] } });
+    expect(JSON.stringify(request?.input)).toContain('holding an item');
+  });
+
+  it('final draft modeは外見deltaと開始コマのliteral証拠を必須にしてdomain planへ残す', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return { body: { output_text: JSON.stringify({
+          plan_version: 'episode_state_plan_v1', state_transitions: [],
+          unresolved_state_transitions: [{
+            entity_id: ENTITY, candidate_state_id: null, starts_at_panel_id: PANEL,
+            source_scene_id: null, source_field: 'story_full_draft',
+            source_quote: '髪が青白く発光する', suggested_name: '発光',
+            suggested_description: '髪が青白く発光する',
+            panel_evidence_quote: '髪が青白く発光する', replaces_deltas: [],
+            reason: 'missing_reference',
+          }],
+        }) } };
+      },
+    } as unknown as OpenAIClient;
+    const stateContext = context();
+    stateContext.episode.storyFullDraft = '最後に髪が青白く発光する。';
+    const finalSuggestion = {
+      pages: [{ pageId: stateContext.pages[0]!.pageId, pageNumber: 1, panels: [{
+        order: 1, situationText: '髪が青白く発光する', entities: [{
+          entityId: ENTITY, role: 'primary' as const, expression: 'calm' as const,
+          customExpression: null, action: 'standing_firm' as const, customAction: null,
+          position: 'center' as const, facingDirection: null, effectNote: '髪が青白く発光する', stateId: null,
+        }],
+      }] }],
+    };
+
+    const result = await new OpenAIEpisodeStateTransitionCompiler(client).compileStateTransitions({
+      context: stateContext, language: 'ja', finalSuggestion, strictEvidence: true,
+    });
+
+    expect(result.plan.unresolved[0]).toMatchObject({
+      suggestedDescription: '髪が青白く発光する', panelEvidenceQuote: '髪が青白く発光する',
+    });
+    const request = requests[0]!;
+    const schema = (request.text as { format: { schema: { properties: Record<string, unknown> } } }).format.schema;
+    const unresolved = schema.properties.unresolved_state_transitions as { items: { required: string[] } };
+    expect(unresolved.items.required).toContain('panel_evidence_quote');
+    expect(unresolved.items.required).toContain('replaces_deltas');
+    expect(JSON.stringify(request.input)).toContain('FINAL AUDITED PANELS');
+    expect(JSON.stringify(request.input)).toContain('persistent visible appearance delta');
+    expect(JSON.stringify(request.input)).toContain('separate unresolved entries');
+  });
+
+  it('final draft evidence不一致は既存2attempt内でfeedback後に再試行する', async () => {
+    let requestCount = 0;
+    let checkpointCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        const panelEvidenceQuote = requestCount === 1 ? 'まだ光っていない' : '髪が青白く発光する';
+        return { body: { output_text: JSON.stringify({
+          plan_version: 'episode_state_plan_v1', state_transitions: [],
+          unresolved_state_transitions: [{
+            entity_id: ENTITY, candidate_state_id: null, starts_at_panel_id: PANEL,
+            source_scene_id: null, source_field: 'story_full_draft', source_quote: '髪が青白く発光する',
+            suggested_name: '発光', suggested_description: '髪が青白く発光する',
+            panel_evidence_quote: panelEvidenceQuote, replaces_deltas: [],
+            reason: 'missing_reference',
+          }],
+        }) } };
+      },
+    } as unknown as OpenAIClient;
+    const stateContext = context();
+    stateContext.episode.storyFullDraft = '最後に髪が青白く発光する。';
+    const visibleEntity = {
+      entityId: ENTITY, role: 'primary' as const, expression: 'calm' as const,
+      customExpression: null, action: 'standing_firm' as const, customAction: null,
+      position: 'center' as const, facingDirection: null, effectNote: '髪が青白く発光する', stateId: null,
+    };
+    const finalSuggestion = { pages: [{ pageId: stateContext.pages[0]!.pageId, pageNumber: 1, panels: [{
+      order: 1, situationText: '髪が青白く発光する', entities: [visibleEntity],
+    }] }] };
+
+    await expect(new OpenAIEpisodeStateTransitionCompiler(client).compileStateTransitions({
+      context: stateContext, language: 'ja', finalSuggestion, strictEvidence: true,
+      beforeRetry: async () => { checkpointCount += 1; },
+    })).resolves.toMatchObject({ plan: { unresolved: [{ startsAtPanelId: PANEL }] } });
+    expect(requestCount).toBe(2);
+    expect(checkpointCount).toBe(1);
+  });
   it('新しい状態抽出モデルの場合にlow推論と既存schemaを一回の要求で送る', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {
@@ -49,7 +159,7 @@ describe('OpenAIEpisodeStateTransitionCompiler', () => {
     });
 
     expect(result.plan.transitions).toEqual([{ entityId: ENTITY, stateId: STATE, startsAtPanelId: PANEL, sourceSceneId: null, sourceField: 'middle', sourceQuote: '腕を負傷した' }]);
-    expect(result.compilerPromptVersion).toBe('episode_state_transition_v3');
+    expect(result.compilerPromptVersion).toBe('episode_state_transition_v7');
     expect(requests).toHaveLength(1);
     expect(requests[0]!.model).toBe('gpt-5');
     expect(requests[0]!.reasoning).toBeUndefined();

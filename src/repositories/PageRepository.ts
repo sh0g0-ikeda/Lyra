@@ -23,7 +23,7 @@ import { ConfigurationError } from '../domain/errors/index.js';
 import type { PageListCursor } from '../domain/pagination.js';
 import { readStyleReferenceMetadata } from '../domain/types/styleReference.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
-import { usesPhysicalPageStoryMetadata, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
+import { hasPreVariantEntitySchema, usesPhysicalPageStoryMetadata, type RepositorySchemaProfile } from './RepositorySchemaProfile.js';
 import type { PanelEntityAssignment } from '../domain/types/panelEntityAssignment.js';
 import { normalizeNullableText, normalizePossiblyMojibake } from '../lib/textEncoding.js';
 import { computeStateReferenceFingerprint } from '../domain/state/StateReferenceFingerprint.js';
@@ -119,6 +119,7 @@ interface PromptContextRow extends QueryResultRow {
 }
 
 interface AutofillContextRow extends QueryResultRow {
+  production_notes_enabled: boolean | null;
   layout_config: unknown;
   page_id: string;
   work_id: string;
@@ -146,6 +147,8 @@ interface AutofillContextRow extends QueryResultRow {
 }
 
 interface EpisodePlanContextRow extends QueryResultRow {
+  production_notes_enabled: boolean | null;
+  production_notes: unknown;
   episode_id: string;
   work_id: string;
   chapter_id: string;
@@ -787,6 +790,7 @@ export class PostgresPageRepository
              chapters.emotion_curve AS chapter_emotion_curve,
              chapters.key_beats AS chapter_key_beats,
              episodes.purpose AS episode_purpose,
+             (to_jsonb(episodes)->>'production_notes_enabled')::boolean AS production_notes_enabled,
              episodes.introduction,
              episodes.middle,
              episodes.climax,
@@ -917,6 +921,7 @@ export class PostgresPageRepository
       chapterEmotionCurve: normalizeNullableText(row.chapter_emotion_curve),
       chapterKeyBeats: toStringArray(row.chapter_key_beats),
       episodePurpose: normalizeNullableText(row.episode_purpose),
+      ...(row.production_notes_enabled === true ? { productionNotesEnabled: true } : {}),
       introduction: normalizeNullableText(row.introduction),
       middle: normalizeNullableText(row.middle),
       climax: normalizeNullableText(row.climax),
@@ -946,6 +951,8 @@ export class PostgresPageRepository
              episodes.title AS episode_title,
              episodes.purpose AS episode_purpose,
              episodes.story_full_draft,
+             (to_jsonb(episodes)->>'production_notes_enabled')::boolean AS production_notes_enabled,
+             to_jsonb(episodes)->'production_notes' AS production_notes,
              episodes.introduction,
              episodes.middle,
              episodes.climax,
@@ -1126,6 +1133,8 @@ export class PostgresPageRepository
         title: normalizeNullableText(row.episode_title),
         purpose: normalizeNullableText(row.episode_purpose),
         storyFullDraft: normalizeNullableText(row.story_full_draft),
+        ...(row.production_notes_enabled !== null ? { productionNotesEnabled: row.production_notes_enabled === true } : {}),
+        ...(row.production_notes !== null ? { productionNotes: toStringArray(row.production_notes) } : {}),
         introduction: normalizeNullableText(row.introduction),
         middle: normalizeNullableText(row.middle),
         climax: normalizeNullableText(row.climax),
@@ -1136,6 +1145,7 @@ export class PostgresPageRepository
       scenes: toEpisodePlanScenes(row.scenes),
       entities: toAutofillEntities(row.entities),
       stateLibrary: toEpisodeStateLibrary(row.state_library),
+      stateDraftPersistenceSupported: this.mode === 'legacyPhysical' || !hasPreVariantEntitySchema(this.mode),
       pages: pagesResult.rows.map((pageRow) => ({
         pageId: pageRow.page_id as string,
         pageNumber: pageRow.page_number as number,

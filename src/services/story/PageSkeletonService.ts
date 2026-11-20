@@ -22,6 +22,8 @@ import type { StoryRepository } from '../../repositories/StoryRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { StoryAiClientPort } from './StoryAiClientPort.js';
 import { MAX_NEW_EPISODE_PAGES } from '../../../packages/api-contract/src/episodePageLimits.js';
+import { parseStoryManuscript, StoryManuscriptError, type StoryManuscript } from '../../../packages/api-contract/src/storyManuscript.js';
+import { buildStoryManuscriptSkeleton, resolveManuscriptPageGroups } from './StoryManuscriptSkeleton.js';
 
 export type PageSkeletonPageLimitPolicy = 'current' | 'legacy_accepted_job';
 
@@ -50,6 +52,8 @@ export interface PageSkeletonServicePort {
 }
 
 export interface PageSkeletonGenerationOptions {
+  /** New jobs opt in explicitly; released clients retain their existing skeleton behavior. */
+  applyProductionNotes?: boolean;
   overwriteExisting?: boolean;
   preserveGeneratedImages?: boolean;
   language?: AppLanguage;
@@ -124,9 +128,26 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     if (!overwriteExisting && context.existingPageCount > 0) {
       throw new ConflictError('Episode already has pages');
     }
-    const plannedPageCount = preserveGeneratedImages
+    const source = context.storyFullDraft ?? [context.introduction, context.middle, context.climax, context.endingHook]
+      .filter((part): part is string => part !== null).join('\n\n');
+    let manuscript: StoryManuscript;
+    try {
+      manuscript = parseStoryManuscript(source,
+        options?.applyProductionNotes === true && context.productionNotesEnabled === true);
+    } catch (error) {
+      if (error instanceof StoryManuscriptError) throw new ValidationError(error.message);
+      throw error;
+    }
+    const commandedPageCount = manuscript.hasCommands
+      ? resolveManuscriptPageGroups(manuscript, context.estimatedPages)
+        .reduce((count, group) => count + group.pageCount, 0) : null;
+    if (commandedPageCount !== null && preserveGeneratedImages && context.existingMaxPageNumber > 0
+      && commandedPageCount !== context.existingMaxPageNumber) {
+      throw new ValidationError('画像を維持する場合は、手動区切り後のページ数を既存ページ数に合わせてください。');
+    }
+    const plannedPageCount = commandedPageCount ?? (preserveGeneratedImages
       ? Math.max(context.estimatedPages, context.existingMaxPageNumber)
-      : context.estimatedPages;
+      : context.estimatedPages);
     if (plannedPageCount > STORY_AI_LIMITS.maxSkeletonPages) {
       throw new ValidationError(
         `planned page count must be ${STORY_AI_LIMITS.maxSkeletonPages} or less to generate a page skeleton`,
@@ -138,11 +159,48 @@ export class PageSkeletonService implements PageSkeletonServicePort {
       );
     }
 
+    // Compile each independent source block before packing it into its authored
+    // page region. Fixed panels bypass the model; directions never become prose.
+    // Validate this path without the legacy fallback, which could erase a hard
+    // boundary. Source metadata survives repair and is persisted with the layout.
+    if (manuscript.hasCommands) {
+      const allowedEntityIds = context.entities.map(entity => entity.id);
+      const commanded = await buildStoryManuscriptSkeleton({ source, manuscript,
+        estimatedPages: plannedPageCount, entities: context.entities,
+        compileBlock: async ({ block, pageCount, minimumPanels, maximumPanels }) => {
+          const blockContext = { ...context, estimatedPages: pageCount,
+            storyFullDraft: block.text, introduction: null, middle: null, climax: null, endingHook: null,
+            episodePurpose: null, sceneSummaries: [] };
+          const generated = await this.storyAiClient.generatePageSkeleton({
+            systemPrompt: [buildPageSkeletonSystemPrompt(pageCount, language),
+              'This source is one isolated part of a larger manuscript. Include only events from this supplied part.',
+              `Across these pages return between ${minimumPanels} and ${maximumPanels} panels in total.`,
+              'Do not invent connecting events or import events from chapter context.'].join('\n'),
+            userPrompt: buildPageSkeletonUserPrompt(blockContext),
+          });
+          const repaired = repairGeneratedPageSkeleton(generated, allowedEntityIds);
+          validatePageSkeleton(pageCount, allowedEntityIds, repaired);
+          let start = 0;
+          return { panels: repaired.flatMap(page => page.panels), layouts: repaired.map(page => {
+            const layout = { start, count: page.panels.length, template: page.suggestedLayout };
+            start += page.panels.length;
+            return layout;
+          }) };
+        },
+      });
+      const pages = repairGeneratedPageSkeleton(commanded, allowedEntityIds);
+      validatePageSkeleton(plannedPageCount, allowedEntityIds, pages);
+      return { userId, episodeId, organizationId, overwriteExisting, preserveGeneratedImages,
+        maxNewPageCount, pages, sourceFingerprint };
+    }
+
+    // Released jobs keep the original full-story compiler and fallback path.
+    const promptContext = { ...context, estimatedPages: plannedPageCount };
     let pages: PageSkeletonPageDraft[];
     try {
       pages = await this.storyAiClient.generatePageSkeleton({
         systemPrompt: buildPageSkeletonSystemPrompt(plannedPageCount, language),
-        userPrompt: buildPageSkeletonUserPrompt({ ...context, estimatedPages: plannedPageCount }),
+        userPrompt: buildPageSkeletonUserPrompt(promptContext),
       });
     } catch (error) {
       if (error instanceof AppError) {
@@ -158,7 +216,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
           'AI page skeleton generation did not complete. Please retry after a few minutes.',
         );
       }
-      pages = buildFallbackPageSkeleton({ ...context, estimatedPages: plannedPageCount, language });
+      pages = buildFallbackPageSkeleton({ ...promptContext, language });
     }
 
     const allowedEntityIds = context.entities.map((entity) => entity.id);
@@ -181,7 +239,7 @@ export class PageSkeletonService implements PageSkeletonServicePort {
         );
       }
       pages = repairGeneratedPageSkeleton(
-        buildFallbackPageSkeleton({ ...context, estimatedPages: plannedPageCount, language }),
+        buildFallbackPageSkeleton({ ...promptContext, language }),
         allowedEntityIds,
       );
       validatePageSkeleton(plannedPageCount, allowedEntityIds, pages);
@@ -244,6 +302,7 @@ function buildPageSkeletonSystemPrompt(estimatedPages: number, language: AppLang
     `Return exactly ${estimatedPages} pages.`,
     `Allowed layout ids: ${Object.keys(PANEL_FRAME_TEMPLATES).join(', ')}.`,
     'Choose a template by its actual geometry, focal beat, dialogue room, and saved reading order:',
+    'Across the episode, vary the geometry when the focal beat, action direction, dialogue room or pacing changes. Use equal grids when they support the scene rhythm.',
     ...listPanelFrameTemplateDefinitions().map(template => `${template.id}: panels=${template.panelCount}; geometry=${template.editorialGuide.geometry}; focal=${template.editorialGuide.focalPlacement}; dialogue_room=${template.editorialGuide.dialogueRoom}; action_pacing=${template.editorialGuide.actionPacing}; ${template.editorialGuide.rtlFlow}`),
     'Allowed panel_role values: establish, action, reaction, emphasis, transition, pause, impact.',
     'Allowed suggested_size values: standard, large, wide, narrow, splash.',
@@ -267,6 +326,7 @@ function buildPageSkeletonUserPrompt(context: {
   chapterPurpose: string | null;
   episodeTitle: string | null;
   episodePurpose: string | null;
+  storyFullDraft?: string | null;
   introduction: string | null;
   middle: string | null;
   climax: string | null;
@@ -291,6 +351,7 @@ function buildPageSkeletonUserPrompt(context: {
     `Theme: ${canonicalize(context.theme)}`,
     `Episode title: ${canonicalize(context.episodeTitle)}`,
     `Episode purpose: ${canonicalize(context.episodePurpose)}`,
+    `Full story source: ${compactCanonicalStoryPromptText(context.storyFullDraft, context.entities, 8_000) ?? '(none)'}`,
     `Introduction: ${canonicalize(context.introduction)}`,
     `Middle: ${canonicalize(context.middle)}`,
     `Climax: ${canonicalize(context.climax)}`,
@@ -353,17 +414,20 @@ function buildFallbackPageSkeleton(context: {
   climax: string | null;
   endingHook: string | null;
   episodePurpose: string | null;
+  storyFullDraft?: string | null;
   sceneSummaries: string[];
   language: AppLanguage;
 }): PageSkeletonPageDraft[] {
   const distributedBeats = buildDistributedStoryBeats(
-    [
-      context.introduction,
-      context.middle,
-      context.climax,
-      context.endingHook,
-      context.episodePurpose,
-    ],
+    context.storyFullDraft !== null && context.storyFullDraft !== undefined
+      ? [context.storyFullDraft]
+      : [
+          context.introduction,
+          context.middle,
+          context.climax,
+          context.endingHook,
+          context.episodePurpose,
+        ],
     context.estimatedPages,
     context.language,
   );
@@ -703,8 +767,11 @@ function repairGeneratedPageSkeleton(
       ),
     }));
     const actualPanelCount = repairedPanels.length;
+    const selectedTemplate = PANEL_FRAME_TEMPLATES[page.suggestedLayout];
     const repairedLayout =
-      resolveDefaultPanelFrameTemplateId(actualPanelCount) ?? page.suggestedLayout;
+      selectedTemplate.panelCount === actualPanelCount
+        ? page.suggestedLayout
+        : (resolveDefaultPanelFrameTemplateId(actualPanelCount) ?? page.suggestedLayout);
 
     return {
       ...page,

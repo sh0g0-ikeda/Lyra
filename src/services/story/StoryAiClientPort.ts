@@ -1,4 +1,7 @@
 import type { PageSkeletonPageDraft, StoryEpisodeDraftFields } from '../../domain/types/storyAi.js';
+import type { ExtractedCharacter } from '../../../packages/api-contract/src/characterSuggestions.js';
+import type { CharacterAutofillExtraction } from './CharacterAutofillFields.js';
+import type { CharacterAppearanceCoverageResponse } from './CharacterAppearanceCoverage.js';
 
 export interface StoryAiModelRequest {
   systemPrompt: string;
@@ -10,8 +13,26 @@ export type StoryEpisodeDraftWriterOutput = Pick<
   'introduction' | 'middle' | 'climax' | 'endingHook'
 >;
 
+export interface StoryPanelCountEstimate {
+  blockId: string;
+  panelCount: number;
+}
+
+export interface StoryManuscriptFragmentOutput {
+  id: string;
+  text: string;
+}
+
 export interface StoryAiClientPort {
+  estimateEpisodePanelCount?(request: StoryAiModelRequest): Promise<StoryPanelCountEstimate[]>;
   streamCollaboration(request: StoryAiModelRequest): AsyncIterable<string>;
   generatePageSkeleton(request: StoryAiModelRequest): Promise<PageSkeletonPageDraft[]>;
   improveEpisodeDraft(request: StoryAiModelRequest): Promise<StoryEpisodeDraftWriterOutput>;
+  improveEpisodeManuscript?(request: StoryAiModelRequest): Promise<StoryManuscriptFragmentOutput[]>;
+  extractEpisodeCharacters?(request: StoryAiModelRequest): Promise<ExtractedCharacter[]>;
+  extractCharacterAutofill?(request: StoryAiModelRequest): Promise<CharacterAutofillExtraction>;
+  reconcileCharacterAutofillCoverage?(
+    request: StoryAiModelRequest,
+  ): Promise<CharacterAppearanceCoverageResponse>;
+  suggestEpisodeProductionNotes?(request: StoryAiModelRequest): Promise<string[]>;
 }

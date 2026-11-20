@@ -17,6 +17,8 @@ let skeletonCapability: { preserve_generated_images: boolean } | undefined;
 let currentSessionKey = 'user';
 let automaticReopen = true;
 let startingAvailable = false;
+let productionNotesAvailable = false;
+let productionNotesPlanningEnabled = false;
 let startingEpisode: { id: string; chapter_id: string; updated_at: string; starting_entity_states: { entity_id: string; state_id: string | null }[] } | undefined;
 const updateStartingStates = vi.fn();
 const { action, dirtyRegistration, quoteOpen, fetchEntities, openUrl, confirmAction, generatePageSkeleton, autofillStory, replaceFrames, updateSelection, invalidateQueries } = vi.hoisted(() => ({ action: vi.fn(), dirtyRegistration: vi.fn(), quoteOpen: vi.fn(), fetchEntities: vi.fn(), openUrl: vi.fn().mockResolvedValue(undefined), confirmAction: vi.fn(), generatePageSkeleton: vi.fn(), autofillStory: vi.fn(), replaceFrames: vi.fn(), updateSelection: vi.fn(), invalidateQueries: vi.fn().mockResolvedValue(undefined) }));
@@ -28,7 +30,7 @@ vi.mock('expo-image', () => ({ Image: { prefetch: vi.fn().mockResolvedValue(true
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries, setQueryData: vi.fn() }),
   useInfiniteQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'pages' ? queryData.pages : queryData.entities, isSuccess: true, isFetching: false, hasNextPage: queryKey[0] === 'pages' ? false : moreEntities, isFetchingNextPage: false, fetchNextPage: fetchEntities, error: null }),
-  useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'panels' ? queryData.panels : queryKey[0] === 'frames' ? queryData.frames : queryKey[0] === 'scenes' ? queryData.scenes : queryKey[0] === 'page-generation-readiness' ? queryData.readiness : queryKey[0] === 'page-layout-templates' ? queryData.templates : queryKey[0] === 'page-skeleton-capabilities' ? skeletonCapability : undefined, isSuccess: true, isFetching: false, isLoading: false, error: null, refetch: vi.fn() }),
+  useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === 'panels' ? queryData.panels : queryKey[0] === 'frames' ? queryData.frames : queryKey[0] === 'scenes' ? queryData.scenes : queryKey[0] === 'page-generation-readiness' ? queryData.readiness : queryKey[0] === 'page-layout-templates' ? queryData.templates : queryKey[0] === 'page-skeleton-capabilities' ? skeletonCapability : queryKey[0] === 'production-notes-capabilities' ? { enabled: productionNotesAvailable } : queryKey.at(-1) === 'v2-page-planning' ? { episodes: [{ id: 'episode', production_notes_enabled: productionNotesPlanningEnabled }] } : undefined, isSuccess: true, isFetching: false, isLoading: false, error: null, refetch: vi.fn() }),
   useMutation: (options: { mutationFn: (...args: unknown[]) => Promise<unknown>; onSuccess?: (value: unknown, variables?: unknown) => Promise<void>; onError?: (error: unknown, variables?: unknown) => void | Promise<void> }) => {
     const [error, setError] = React.useState<unknown>(null);
     const run = async (...args: unknown[]): Promise<unknown> => {
@@ -87,7 +89,7 @@ vi.mock('@/components/StoryGenerationControls', () => ({ StoryGenerationControls
 vi.mock('@/components/WorkspaceHierarchyNavigator', () => ({ WorkspaceHierarchyNavigator: (props: Record<string, unknown>) => React.createElement('WorkspaceHierarchyNavigator', props) }));
 
 beforeEach(() => {
-  automaticReopen = true; startingAvailable = false; startingEpisode = undefined; page.status = 'designing'; updateStartingStates.mockReset();
+  automaticReopen = true; startingAvailable = false; productionNotesAvailable = false; productionNotesPlanningEnabled = false; startingEpisode = undefined; page.status = 'designing'; updateStartingStates.mockReset();
   action.mockReset(); dirtyRegistration.mockReset(); quoteOpen.mockReset(); confirmAction.mockReset(); generatePageSkeleton.mockReset(); autofillStory.mockReset(); replaceFrames.mockReset(); updateSelection.mockReset(); invalidateQueries.mockReset();
   screenSelection = { organizationId: null, workId: 'work', chapterId: 'chapter', episodeId: 'episode', pageId: 'page', entityId: null };
   workspaceSelection = { selectedWorkId: 'work', selectedEpisodeId: 'episode' };
@@ -320,7 +322,7 @@ describe('実際のPagesScreenの工程構成', () => {
     const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'skeleton-job');
     await act(async () => { await job?.props.onCompleted(); });
     expect(autofillStory).toHaveBeenCalledTimes(1);
-    expect(autofillStory).toHaveBeenCalledWith('episode', 'ja', null, undefined);
+    expect(autofillStory).toHaveBeenCalledWith('episode', 'ja', null, undefined, false);
   });
 
   it('既存ページでも確認後に骨格を再生成してから同じ話へautofillを一度だけqueueする', async () => {
@@ -341,7 +343,24 @@ describe('実際のPagesScreenの工程構成', () => {
     expect(autofillStory).not.toHaveBeenCalled();
     const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'skeleton-job');
     await act(async () => { await job?.props.onCompleted(); });
-    expect(autofillStory).toHaveBeenCalledExactlyOnceWith('episode', 'ja', null, undefined);
+    expect(autofillStory).toHaveBeenCalledExactlyOnceWith('episode', 'ja', null, undefined, false);
+  });
+
+  it('新版で有効な演出指示は骨格後の全話autofillへ明示opt-inする', async () => {
+    productionNotesAvailable = true;
+    productionNotesPlanningEnabled = true;
+    startingEpisode = { id: 'episode', chapter_id: 'chapter', updated_at: 'revision', starting_entity_states: [] };
+    await act(async () => { root = create(<PagesScreen />); });
+    await act(async () => {
+      root!.root.findAllByType('button').find((node) => node.props.testID === 'page-story-autofill-primary')!.props.onPress();
+      await Promise.resolve();
+    });
+    const confirm = confirmAction.mock.lastCall?.[0] as { onConfirm: () => void };
+    await act(async () => { confirm.onConfirm(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    const job = root!.root.findAllByType('JobStatusCard').find((node) => node.props.jobId === 'skeleton-job');
+    await act(async () => { await job?.props.onCompleted(); });
+
+    expect(autofillStory).toHaveBeenCalledExactlyOnceWith('episode', 'ja', null, undefined, true);
   });
 
   it('自動入力後の枠再取得は未保存編集と誤認せず次の自動入力前に再保存しない', async () => {

@@ -2,6 +2,7 @@ import { CANONICAL_REPOSITORY_SCHEMA_PROFILE, type RepositorySchemaProfile } fro
 import { isDeepStrictEqual } from 'node:util';
 import type { QueryResultRow } from 'pg';
 import type { EpisodePagePlanApplyResult } from '../domain/types/page.js';
+import { MAX_EPISODE_STATE_SOURCE_QUOTE_CHARS, MAX_EPISODE_STATE_TRANSITIONS } from '../domain/constants/storyState.js';
 import type { EpisodeUnresolvedStateTransition } from '../domain/types/episodeStateTransition.js';
 import type { GenerationJob } from '../domain/types/job.js';
 import type { DatabaseClient, TransactionRunner } from '../lib/db.js';
@@ -343,6 +344,7 @@ export class PostgresEpisodeStoryAutofillExecutionRepository
             progress_message: 'Story plan applied to pages and panels.',
             progress_updated_at: new Date().toISOString(),
             ...toPersistedStatePlanResult(input.result),
+            ...toPersistedSavedStateChanges(input.result),
           }),
         ],
       );
@@ -425,6 +427,42 @@ const STATE_BLOCKER_CODES = new Set<EpisodeStatePlanErrorCode>([
   'STATE_MAPPING_AMBIGUOUS', 'LIMIT_EXCEEDED',
 ]);
 const STATE_BLOCKER_REASONS = new Set(['missing_reference', 'ambiguous_mapping']);
+
+/** Keep draft provenance in the atomic job receipt, separate from usable image references. */
+function toPersistedSavedStateChanges(result: EpisodePagePlanApplyResult): Record<string, unknown> {
+  if (result.savedStateChanges === undefined) return {};
+  if (result.savedStateChanges.length > MAX_EPISODE_STATE_TRANSITIONS) {
+    throw new ConfigurationError('Saved episode state change is invalid');
+  }
+  return {
+    saved_state_changes: result.savedStateChanges.map((change) => {
+      if (!isUuid(change.entityId) || !isUuid(change.stateId) || !isUuid(change.startsAtPanelId)
+        || (change.sourceSceneId !== null && !isUuid(change.sourceSceneId))
+        || !STATE_SOURCE_FIELDS.has(change.sourceField)
+        || !isBoundedString(change.sourceQuote, MAX_EPISODE_STATE_SOURCE_QUOTE_CHARS)
+        || !isBoundedString(change.description, 2_000)
+        || (change.panelEvidenceQuote !== undefined
+          && !isBoundedString(change.panelEvidenceQuote, 2_000))
+        || (change.replacesDeltas !== undefined
+          && (change.replacesDeltas.length > MAX_EPISODE_STATE_TRANSITIONS
+            || change.replacesDeltas.some((delta) =>
+              !isBoundedString(delta.sourceQuote, MAX_EPISODE_STATE_SOURCE_QUOTE_CHARS)
+              || !isBoundedString(delta.description, 2_000))))
+        || typeof change.created !== 'boolean') {
+        throw new ConfigurationError('Saved episode state change is invalid');
+      }
+      return {
+        entity_id: change.entityId, state_id: change.stateId, starts_at_panel_id: change.startsAtPanelId,
+        source_scene_id: change.sourceSceneId, source_field: change.sourceField,
+        source_quote: change.sourceQuote, description: change.description, created: change.created,
+        ...(change.panelEvidenceQuote === undefined ? {} : { panel_evidence_quote: change.panelEvidenceQuote }),
+        ...(change.replacesDeltas === undefined ? {} : {
+          replaces_deltas: change.replacesDeltas.map((delta) => ({ source_quote: delta.sourceQuote, description: delta.description })),
+        }),
+      };
+    }),
+  };
+}
 
 function toPersistedStatePlanResult(result: EpisodePagePlanApplyResult): Record<string, unknown> {
   if (

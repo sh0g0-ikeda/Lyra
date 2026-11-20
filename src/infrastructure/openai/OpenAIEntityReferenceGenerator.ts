@@ -2,11 +2,13 @@ import {
   ENTITY_REFERENCE_GENERATION,
 } from '../../domain/constants/entityReference.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
+import { displayOpenAIImageModel } from '../../domain/constants/openAIImageModel.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { ImageProvenance } from '../../domain/generation/ImageAccessPolicy.js';
 import { OpenAIClient } from './OpenAIClient.js';
 
 export interface GenerateEntityReferenceCandidatesInput {
+  providerModelId?: string;
   prompt: string;
   inputImages: Array<{
     dataUrl: string;
@@ -41,6 +43,7 @@ export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorP
   ) {}
 
   public async generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<GeneratedEntityReferenceResult> {
+    const providerModel = input.providerModelId ?? this.model;
     const candidates: GeneratedEntityReferenceCandidate[] = [];
     let firstRequestId: string | null = null;
     const prompt = `${input.prompt}\n\nReturn a single PNG character reference image.`;
@@ -51,14 +54,14 @@ export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorP
         : `${prompt}\n\nVariant ${index + 1} of ${ENTITY_REFERENCE_GENERATION.CANDIDATE_COUNT}.`;
       const response = input.inputImages.length === 0
         ? await this.client.postJson<OpenAIImageGenerationResponse>('/images/generations', {
-            model: this.model,
+            model: providerModel,
             prompt: variantPrompt,
             size: ENTITY_REFERENCE_GENERATION.SIZE,
             quality: ENTITY_REFERENCE_GENERATION.QUALITY,
           })
         : await this.client.postFormData<OpenAIImageGenerationResponse>('/images/edits', () =>
             buildImageEditFormData({
-              model: this.model,
+              model: providerModel,
               prompt: variantPrompt,
               size: ENTITY_REFERENCE_GENERATION.SIZE,
               quality: ENTITY_REFERENCE_GENERATION.QUALITY,
@@ -90,8 +93,8 @@ export class OpenAIEntityReferenceGenerator implements EntityReferenceGeneratorP
       candidates,
       openaiRequestId: firstRequestId,
       costUsd: null,
-      imageModel: this.model,
-      providerModelId: this.model,
+      imageModel: displayOpenAIImageModel(providerModel),
+      providerModelId: providerModel,
       provider: 'openai',
     };
   }

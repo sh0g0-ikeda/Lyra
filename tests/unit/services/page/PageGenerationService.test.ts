@@ -429,6 +429,21 @@ describe('PageGenerationService', () => {
     });
   });
 
+  it('2.5 cutover中の旧Web直page jobへ照合3項目を固定する', async () => {
+    const jobRepository = new FakeGenerationJobRepository();
+    const service = new PageGenerationService(
+      new FakePageRepository(), new FakeEntityRepository(), jobRepository, new FakeCreditService(), new FakeQueue(),
+      new ModeSelector(), new FakeRecoveryService(), undefined, true, undefined,
+      { imageModel: 'gpt-image-2.5-sunburst', providerModelId: 'gpt-image-2.5-sunburst-2026-09-08', provider: 'openai' },
+    );
+    await service.enqueuePageGeneration(userId, pageId);
+    expect(jobRepository.created?.params).toMatchObject({
+      image_model: 'gpt-image-2.5-sunburst',
+      provider_model_id: 'gpt-image-2.5-sunburst-2026-09-08',
+      provider: 'openai',
+    });
+  });
+
   it('白黒生成の場合に通常料金を維持してstyleをjobに固定する', async () => {
     const jobRepository = new FakeGenerationJobRepository();
     const creditService = new FakeCreditService();

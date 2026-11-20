@@ -1,10 +1,12 @@
 import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityReference.js';
+import { GPT_IMAGE_25_SUNBURST_SNAPSHOT } from '../../domain/constants/openAIImageModel.js';
 import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import {
   requireOpenAIEntityInputCompatible,
   requireOpenAIEntityJobCompatible,
+  resolveQuotedOpenAIImageModel,
 } from '../../domain/generation/ImageInputProviderPolicy.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type {
@@ -91,7 +93,8 @@ export class EntityGenerationWorkerService {
 
       let workIdForAudit: string | null = null;
       try {
-        requireOpenAIEntityJobCompatible(job.params, this.imageModel);
+        const providerModelId = resolveQuotedOpenAIImageModel(job.params, this.imageModel);
+        requireOpenAIEntityJobCompatible(job.params, providerModelId);
         if (hasGenerationQuote(job) && this.quotedInputs === undefined) {
           throw new ConfigurationError('Quoted entity execution is not configured');
         }
@@ -150,10 +153,21 @@ export class EntityGenerationWorkerService {
             compiled.prompt,
             job.id,
             params.source_s3_key !== undefined,
+            entity.entityType,
           );
         }
-      const generated = await this.generator.generateCandidates({ prompt: generationPrompt, inputImages });
+      const generated = await this.generator.generateCandidates({
+        prompt: generationPrompt,
+        inputImages,
+        ...(quoted !== null && providerModelId !== undefined && providerModelId !== this.imageModel
+          ? { providerModelId } : {}),
+      });
       assertGeneratedCandidates(generated.candidates);
+      if (providerModelId !== undefined
+        && (providerModelId !== this.imageModel || providerModelId === GPT_IMAGE_25_SUNBURST_SNAPSHOT)
+        && generated.providerModelId !== providerModelId) {
+        throw new ConfigurationError('Entity preview did not return the quoted model');
+      }
 
       if (await this.finalizeCancellationIfRequested(job.id)) {
         return { status: 'processed', jobStatus: 'cancelled' };
@@ -253,7 +267,6 @@ export class EntityGenerationWorkerService {
       || state.stateDescription !== params.state_description
       || state.baseReference.refId !== params.base_primary_ref_id
       || currentFingerprint !== params.state_input_fingerprint
-      || params.image_model !== this.imageModel
     ) {
       throw new ConfigurationError('Entity state or base reference changed after the preview was queued');
     }
@@ -354,7 +367,7 @@ export class EntityGenerationWorkerService {
   private async recordGenerationCompleted(
     job: GenerationJob,
     entity: EntityReferenceContext,
-    generated: { openaiRequestId: string | null; costUsd: number | null },
+    generated: { openaiRequestId: string | null; costUsd: number | null; imageModel?: string | null },
   ): Promise<void> {
     const organizationId = job.organizationId ?? null;
     if (organizationId === null || this.organizationService === undefined) {
@@ -371,7 +384,7 @@ export class EntityGenerationWorkerService {
         metadata: {
           entity_id: entity.entityId,
           entity_type: entity.entityType,
-          image_model: this.imageModel,
+          image_model: generated.imageModel ?? this.imageModel,
           cost_usd: generated.costUsd,
           openai_request_id: generated.openaiRequestId,
         },
@@ -518,7 +531,12 @@ function buildPreviewVariationPrompt(
   prompt: string,
   jobId: string,
   isImageConditioned: boolean,
+  entityType: EntityReferenceContext['entityType'],
 ): string {
+  if (entityType === 'nonhuman') {
+    return buildNonhumanPreviewVariationPrompt(prompt, jobId, isImageConditioned);
+  }
+
   const profile = PREVIEW_VARIATION_PROFILES[selectPreviewVariationProfileIndex(jobId)];
   const sourceImageInstruction = isImageConditioned
     ? 'Use the uploaded source image only as a user-supplied visual anchor for this request; if it conflicts with the current saved text, obey the current saved text.'
@@ -533,6 +551,29 @@ function buildPreviewVariationPrompt(
     sourceImageInstruction,
     'Use a clearly new neutral presentation while keeping the authored subject readable.',
     `Variation profile ${profile.code}: ${profile.instruction}`,
+  ].join(' ');
+}
+
+function buildNonhumanPreviewVariationPrompt(
+  prompt: string,
+  jobId: string,
+  isImageConditioned: boolean,
+): string {
+  const profile = NONHUMAN_PREVIEW_PRESENTATION_PROFILES[
+    selectPreviewVariationProfileIndex(jobId) % NONHUMAN_PREVIEW_PRESENTATION_PROFILES.length
+  ];
+  const sourceImageInstruction = isImageConditioned
+    ? 'Keep the uploaded source image\'s established overall silhouette, anatomy, part count, connections, proportions, and markings; apply only explicitly authored differences from the current saved text.'
+    : 'No source image is attached, so the current saved text is the only visual source; do not invent human anatomy or unrequested body parts.';
+
+  return [
+    prompt.trim(),
+    '',
+    'Create this as a new non-human reference preview from the current saved entity inputs only.',
+    'Do not preserve, restore, imitate, or edit any previous generated preview or any previously confirmed reference image unless it is explicitly attached in this request.',
+    sourceImageInstruction,
+    'Keep the authored non-human subject readable without adding a humanoid pose, head, hands, feet, limbs, clothing, or hair unless explicitly authored.',
+    `Nonhuman presentation profile ${profile.code}: ${profile.instruction}`,
   ].join(' ');
 }
 
@@ -576,6 +617,29 @@ const PREVIEW_VARIATION_PROFILES = [
     code: 'D',
     instruction:
       'Use a more open neutral stance, raise the chin slightly, let the ponytail or back hair arc a little wider, and make the skirt or lower-garment folds read in larger simple shapes.',
+  },
+] as const;
+
+const NONHUMAN_PREVIEW_PRESENTATION_PROFILES = [
+  {
+    code: 'A',
+    instruction:
+      'Use a neutral presentation that makes the complete outline and all authored parts easy to inspect without changing their count, connections, or proportions.',
+  },
+  {
+    code: 'B',
+    instruction:
+      'Use a clear centered presentation that keeps asymmetric markings and the authored orientation legible without adding unrequested anatomy.',
+  },
+  {
+    code: 'C',
+    instruction:
+      'Use a simple neutral presentation that keeps the full form, surface pattern placement, and support method visible without humanizing the subject.',
+  },
+  {
+    code: 'D',
+    instruction:
+      'Use a calm reference presentation that keeps the silhouette, appendage placement, and relative scale stable without adding body parts.',
   },
 ] as const;
 

@@ -5,6 +5,7 @@ import type {
   RenderPageImageResult,
 } from '../../services/page/PageGenerationWorkerService.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
+import { displayOpenAIImageModel } from '../../domain/constants/openAIImageModel.js';
 import { PAGE_IMAGE_PROMPT_MAX_CHARACTERS } from '../../domain/constants/generation.js';
 import { ConfigurationError, ValidationError } from '../../domain/errors/index.js';
 import { buildPersistedPromptDiagnostics } from '../../lib/promptDiagnostics.js';
@@ -24,6 +25,7 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
   ) {}
 
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
+    const providerModel = input.providerModelId ?? this.model;
     if (input.layoutControl != null && input.inputImages.at(-1)?.role !== 'layout_reference') {
       throw new ConfigurationError('Resolved layout requires its guide as the last image input');
     }
@@ -34,14 +36,14 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
 
     const response = input.inputImages.length === 0
       ? await this.client.postJson<OpenAIImageGenerationResponse>('/images/generations', {
-          model: this.model,
+          model: providerModel,
           prompt,
           size: '1024x1536',
           quality: input.quality,
         })
       : await this.client.postFormData<OpenAIImageGenerationResponse>('/images/edits', () =>
           buildImageEditFormData({
-            model: this.model,
+            model: providerModel,
             prompt,
             size: '1024x1536',
             quality: input.quality,
@@ -64,8 +66,8 @@ export class OpenAIPageImageRenderer implements PageImageRendererPort {
       mimeType: 'image/png',
       openaiRequestId: response.requestId,
       costUsd: null,
-      imageModel: this.model,
-      providerModelId: this.model,
+      imageModel: displayOpenAIImageModel(providerModel),
+      providerModelId: providerModel,
       provider: 'openai',
       providerPromptSha256: providerPromptDiagnostics.sha256,
       providerPromptBytes: providerPromptDiagnostics.bytes,

@@ -57,6 +57,7 @@ const languageBodySchema = z
   })
   .strict();
 const episodeStoryAutofillBodySchema = languageBodySchema.extend({
+  production_notes_version: z.literal('v1').optional(),
   state_autofill_enabled: z.boolean().optional(),
   state_autofill_version: z.literal('v1').optional(),
   state_assignment_policy: z.enum(['preserve_existing', 'overwrite_existing']).optional(),
@@ -187,19 +188,25 @@ export function createPageRoutes(dependencies: PageRouteDependencies): Hono<AppE
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
+    const stateAutofillOptions = body.data.state_autofill_enabled !== undefined
+      ? { stateAutofillEnabled: body.data.state_autofill_enabled }
+      : body.data.state_autofill_version === undefined
+      ? {}
+      : {
+          stateAutofillVersion: 'v1' as const,
+          stateAssignmentPolicy: body.data.state_assignment_policy ?? 'preserve_existing',
+        };
+    const hasVersionedOptions = body.data.production_notes_version === 'v1'
+      || Object.keys(stateAutofillOptions).length > 0;
     const result = await dependencies.episodeStoryAutofillService.enqueueEpisodeStoryAutofill(
       user.id,
       episodeId,
       body.data.language,
       organizationId,
-      body.data.state_autofill_enabled !== undefined
-        ? { stateAutofillEnabled: body.data.state_autofill_enabled }
-        : body.data.state_autofill_version === undefined
-        ? undefined
-        : {
-            stateAutofillVersion: 'v1',
-            stateAssignmentPolicy: body.data.state_assignment_policy ?? 'preserve_existing',
-          },
+      hasVersionedOptions ? {
+        ...(body.data.production_notes_version === 'v1' ? { productionNotesVersion: 'v1' as const } : {}),
+        ...stateAutofillOptions,
+      } : undefined,
     );
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.story_autofill_queued', 'episode', episodeId, {
       job_id: result.jobId,

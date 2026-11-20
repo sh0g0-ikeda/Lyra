@@ -10,8 +10,10 @@ import { PostgresPageRepository } from './PageRepository.js';
 import { PostgresPanelEntityAssignmentRepository } from './PanelEntityAssignmentRepository.js';
 import { PostgresPanelRepository } from './PanelRepository.js';
 import { PostgresEpisodeStoryAutofillExecutionRepository } from './EpisodeStoryAutofillExecutionRepository.js';
+import { PostgresEpisodeStateChangeRepository } from './EpisodeStateChangeRepository.js';
 import {
   CANONICAL_REPOSITORY_SCHEMA_PROFILE,
+  hasPreVariantEntitySchema,
   type RepositorySchemaProfile,
 } from './RepositorySchemaProfile.js';
 import type {
@@ -88,11 +90,17 @@ export class PostgresEpisodePlanPersistenceRepository implements EpisodePlanPers
       if (context === null) {
         throw new NotFoundError('Episode not found');
       }
+      const stateChangeRepository = hasPreVariantEntitySchema(this.schemaProfile)
+        ? undefined
+        : new PostgresEpisodeStateChangeRepository(transactionClient, context);
 
       return work(context, {
         pageRepository,
         panelRepository,
         panelEntityAssignmentService,
+        ...(stateChangeRepository === undefined ? {} : {
+          persistStateChanges: (changes) => stateChangeRepository.persist(changes),
+        }),
         completeStoryAutofillJob: async (jobId, userId, result) =>
           storyAutofillExecutionRepository.completeEpisodeStoryAutofill({
             jobId,

@@ -4,12 +4,12 @@ import type {DatabaseClient,TransactionRunner} from '../../../src/lib/db.js';
 import type {ReleaseCompatibilityRuntime} from '../../../src/domain/release/ReleaseCompatibilityPolicy.js';
 import {checkReleaseCompatibility} from '../../../scripts/checkReleaseCompatibility.js';
 
-const runtime:ReleaseCompatibilityRuntime={generationQuotesEnabled:true,generationEnabled:true,pageGenerationEnabled:true,entityGenerationEnabled:true,entityImportAnalysisEnabled:true,entityReferenceDirectUploadEnabled:true,openAiApiKeyConfigured:true,openAiImageModel:'gpt-image-2',generationQueueConfigured:true,imageStorageConfigured:true,awsRegionConfigured:true,localImageFallbackEnabled:false,webImageDeliveryClientIds:[],stateReferenceCopyV2AdmissionEnabled:false,stateReferenceCopyV2StorageContractAttested:false};
-function database(historyCount=0):{db:DatabaseClient&TransactionRunner;sql:string[]}{
+const runtime:ReleaseCompatibilityRuntime={generationQuotesEnabled:true,generationEnabled:true,pageGenerationEnabled:true,entityGenerationEnabled:true,entityImportAnalysisEnabled:true,entityReferenceDirectUploadEnabled:true,openAiApiKeyConfigured:true,openAiImageModel:'gpt-image-2',openAiImageSunburstEnabled:true,generationQueueConfigured:true,imageStorageConfigured:true,awsRegionConfigured:true,localImageFallbackEnabled:false,webImageDeliveryClientIds:[],stateReferenceCopyV2AdmissionEnabled:false,stateReferenceCopyV2StorageContractAttested:false};
+function database(historyCount=0,activePreCutoverJobs=0):{db:DatabaseClient&TransactionRunner;sql:string[]}{
   const sql:string[]=[];
   const query=async <T extends QueryResultRow>(text:string):Promise<QueryResult<T>>=>{
     sql.push(text);
-    const rows=text.includes('differences')?[{count:historyCount}]:text.includes('SELECT EXISTS (SELECT 1 FROM state_reference_copy_attempts)')?[{present:false}]:[];
+    const rows=text.includes('differences')?[{count:historyCount}]:text.includes('SELECT EXISTS (SELECT 1 FROM state_reference_copy_attempts)')?[{present:false}]:text.includes("job_type IN ('page_generate','entity_generate')")?[{count:activePreCutoverJobs}]:[];
     return {rows:rows as unknown as T[],rowCount:rows.length,command:'SELECT',fields:[],oid:0};
   };
   const client:DatabaseClient={query};return {sql,db:{query,transaction:async<T>(work:(db:DatabaseClient)=>Promise<T>):Promise<T>=>work(client)}};
@@ -45,5 +45,13 @@ describe('現行release inventoryとexpanded profileのread-only preflight',()=>
   it('現行schemaが通ってもnew-mobileのquote必須条件は維持する',async()=>{
     const d=database();const report=await checkReleaseCompatibility(d.db,{profile:'new-mobile',mobileClientIds:[],runtime:{...runtime,generationQuotesEnabled:false}});
     expect(report.ok).toBe(false);expect(report.violations.map(x=>x.code)).toContain('MOBILE_QUOTES_REQUIRED');
+  });
+  it('cutover直前は未処理の旧画像jobを匿名countで拒否しquote tableを数えない',async()=>{
+    const d=database(0,2);const report=await checkReleaseCompatibility(d.db,{profile:'new-mobile',mobileClientIds:[],runtime});
+    expect(report.violations).toContainEqual({category:'generation',code:'ACTIVE_PRE_CUTOVER_IMAGE_JOBS',count:2});
+    const drainSql=d.sql.find(sql=>sql.includes("job_type IN ('page_generate','entity_generate')"));
+    expect(drainSql).toContain("status IN ('queued','processing')");
+    expect(drainSql).toContain("params->>'image_model'");
+    expect(drainSql).not.toContain('generation_quotes');
   });
 });

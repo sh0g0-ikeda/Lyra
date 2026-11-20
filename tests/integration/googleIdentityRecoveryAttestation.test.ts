@@ -37,8 +37,11 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`Google recovery
             await runPendingMigrations(database, profile === 'canonical' ? undefined : { migrationsDir: join(process.cwd(), 'tests/fixtures/production44-pg18') });
             // This suite rehearses the historical 050 -> 051 boundary.
             if (profile === 'canonical') await database.transaction(async client => {
+                await client.query('ALTER TABLE episodes DROP COLUMN production_notes, DROP COLUMN production_notes_enabled');
                 await client.query('DROP TABLE generation_worker_warm_controls');
-                await client.query("DELETE FROM schema_migrations WHERE filename='052_add_generation_worker_warm_control.sql'");
+                await client.query('DELETE FROM schema_migrations WHERE filename = ANY($1::text[])', [
+                    ['052_add_generation_worker_warm_control.sql', '053_add_episode_production_notes.sql', '054_add_episode_production_note_list.sql'],
+                ]);
             });
             if (profile === 'expanded') {
                 await runProduction44Expansion(pool);
@@ -50,7 +53,7 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`Google recovery
                 // suites temporarily expose invalid indexes during concurrent builds.
                 initialReleaseReport = await checkReleaseCompatibility(database, { profile: 'backend-only', mobileClientIds: [], runtime: {
                     generationQuotesEnabled: true, generationEnabled: true, pageGenerationEnabled: true, entityGenerationEnabled: true,
-                    entityImportAnalysisEnabled: true, entityReferenceDirectUploadEnabled: true, openAiApiKeyConfigured: true, openAiImageModel: 'gpt-image-2',
+                    entityImportAnalysisEnabled: true, entityReferenceDirectUploadEnabled: true, openAiApiKeyConfigured: true, openAiImageModel: 'gpt-image-2', openAiImageSunburstEnabled: false,
                     generationQueueConfigured: true, imageStorageConfigured: true, awsRegionConfigured: true, localImageFallbackEnabled: false,
                     webImageDeliveryClientIds: [], stateReferenceCopyV2AdmissionEnabled: false, stateReferenceCopyV2StorageContractAttested: false,
                 } }, { schemaProfile: 'production44_expanded_pg18_v1' });

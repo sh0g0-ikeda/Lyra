@@ -9,6 +9,7 @@ import type { GenerationQuoteService } from '../services/generation/GenerationQu
 import { hashQuoteToken } from '../services/generation/GenerationQuoteService.js';
 import { parseReferenceCandidateTokenDetails } from '../services/entity/ReferenceCandidateToken.js';
 import { env } from '../lib/env.js';
+import { GPT_IMAGE_2, GPT_IMAGE_25_SUNBURST } from '../domain/constants/openAIImageModel.js';
 import type { OrganizationServicePort } from '../services/organization/OrganizationService.js';
 import { parseOptionalOrganizationId, requireOrganizationCapability } from './organizationRouteHelpers.js';
 import { assertMobileResponseContract } from './mobileResponseContract.js';
@@ -18,6 +19,10 @@ export type GenerationQuoteServicePort=Pick<GenerationQuoteService,'issue'|'acce
 export function createGenerationQuoteRoutes(dependencies:{authMiddleware:MiddlewareHandler<AppEnv>;rateLimitMiddleware:MiddlewareHandler<AppEnv>;
   generationQuoteService:GenerationQuoteServicePort;organizationService?:OrganizationServicePort}):Hono<AppEnv>{
   const app=new Hono<AppEnv>();app.use('*',dependencies.authMiddleware);app.use('*',dependencies.rateLimitMiddleware);
+  app.get('/generation-quote-capabilities',(c)=>c.json({
+    image_model: env.OPENAI_IMAGE_SUNBURST_ENABLED && env.OPENAI_IMAGE_MODEL === GPT_IMAGE_2
+      ? GPT_IMAGE_25_SUNBURST : GPT_IMAGE_2,
+  }));
   app.post('/generation-quotes',async(c)=>{
     const organizationId=parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c,dependencies,organizationId,'generate');

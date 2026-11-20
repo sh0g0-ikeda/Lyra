@@ -43,6 +43,7 @@ export const generatePageSkeletonBodySchema = z
     overwrite_existing: z.boolean().optional().default(false),
     preserve_generated_images: z.boolean().optional().default(false),
     apply_story_plan: z.boolean().optional().default(false),
+    production_notes_version: z.literal('v1').optional(),
     language: z.enum(APP_LANGUAGES).optional().default('ja'),
   })
   .strict();
@@ -62,8 +63,27 @@ const episodeDraftFieldsSchema = z
   })
   .strict();
 
+export const estimateEpisodePagesBodySchema = z
+  .object({
+    episode_id: z.string().uuid(),
+    base_draft: episodeDraftFieldsSchema,
+    production_notes_enabled: z.boolean().optional().default(false),
+    language: z.enum(APP_LANGUAGES).optional().default('ja'),
+  })
+  .strict();
+
+export const episodePanelCountEstimateResponseSchema = z
+  .object({
+    blocks: z.array(z.object({
+      block_id: z.string().trim().min(1).max(80),
+      panel_count: z.number().int().min(1).max(STORY_AI_LIMITS.maxEstimatedPanels),
+    }).strict()).min(1).max(STORY_AI_LIMITS.maxEstimatedBlocks),
+  })
+  .strict();
+
 export const improveEpisodeDraftBodySchema = z
   .object({
+    include_production_notes: z.boolean().optional(),
     episode_id: z.string().uuid(),
     instruction: z.string().trim().min(1).max(STORY_AI_LIMITS.instructionMaxLength),
     language: z.enum(APP_LANGUAGES).optional().default('ja'),

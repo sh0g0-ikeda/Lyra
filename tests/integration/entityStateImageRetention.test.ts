@@ -35,7 +35,7 @@ describePostgres('entity state image retention', () => {
     ));
     expect(applied).toContain('046_bridge_production_schema_lineage.sql');
     expect(applied).toContain('047_add_state_reference_copy_attempts.sql');
-    expect(applied.at(-1)).toBe('052_add_generation_worker_warm_control.sql');
+    expect(applied.slice(-2)).toEqual(['053_add_episode_production_notes.sql', '054_add_episode_production_note_list.sql']);
   }, 120_000);
 
   afterAll(async () => {

@@ -7,6 +7,16 @@ import { normalizeAutofillDialogueReadingOrder } from '../../domain/policies/aut
   ValidationError,
 } from '../../domain/errors/index.js';
 import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
+import { productionNotesPrompt, readEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
+import {
+  applyManuscriptDirections,
+  collectManuscriptPlanViolations,
+  ManuscriptPlanConstraintError,
+  manuscriptPlanPrompt,
+  prepareEpisodeManuscriptPlan,
+  type ManuscriptPlanViolation,
+  validateManuscriptPlan,
+} from './StoryManuscriptPlan.js';
 import {
   canonicalizeEntityMentionsInText,
   extractEntityAliases,
@@ -20,7 +30,10 @@ import {
   packEpisodeBeatPlanLedgerPages,
   packEpisodePlanPages,
 } from '../../domain/episodePlanPacking.js';
-import { resolveDefaultPanelFrameTemplateId } from '../../domain/constants/panelFrameTemplates.js';
+import {
+  PANEL_FRAME_TEMPLATES,
+  resolveDefaultPanelFrameTemplateId,
+} from '../../domain/constants/panelFrameTemplates.js';
 import type {
   EpisodePagePlanApplyResult,
   EpisodePagePlanContext,
@@ -48,11 +61,17 @@ import type { StyleReferenceCompilerPort } from '../style/StyleReferenceCompiler
 import { resolveStyleReferenceForPersistence } from '../style/styleReferencePersistence.js';
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
 import type { PageAutofillCompilerPort } from './PageAutofillCompiler.js';
+import { validateAndPlaceProductionDirectives } from './EpisodeProductionPlan.js';
 import type { EpisodeAutofillCharacterReference, EpisodePagePlanCompilerPort } from './EpisodePagePlanCompiler.js';
 import {
   buildEpisodeAutofillCharacterReferences,
   resolveEpisodeAutofillDialogueSpeakers,
 } from './EpisodeAutofillCharacterResolution.js';
+import {
+  buildEpisodeAutofillStateReferences,
+  isEpisodeAutofillStateReferenceAllowed,
+  type EpisodeAutofillStateReference,
+} from './EpisodeAutofillStateReferences.js';
 import type { EpisodeStateTransitionCompilerPort } from './EpisodeStateTransitionCompiler.js';
 import {
   EpisodeBeatPlanOutputLimitError,
@@ -78,6 +97,7 @@ import type {
 import {
   applyEpisodeStateVisualDirectives,
   resolveEpisodePlanStateAssignments,
+  stripEpisodeStateVisualDirectivesFromContext,
 } from './EpisodeStateApplicationPlan.js';
 import { EpisodeStatePlanError } from './EpisodeStateAssignmentResolver.js';
 import {
@@ -128,7 +148,12 @@ export interface PageServicePort {
     organizationId?: string | null,
     executionControl?: EpisodePagePlanExecutionControl,
     stateOptions?: EpisodeStateAutofillOptions,
+    productionNoteOptions?: EpisodeProductionNotePlanOptions,
   ): Promise<EpisodePagePlanApplyResult>;
+}
+
+export interface EpisodeProductionNotePlanOptions {
+  applyProductionNotes: true;
 }
 
 export interface EpisodeStateAutofillOptions {
@@ -190,6 +215,10 @@ interface EpisodePlanExecutionResult {
   compilerError: string | null;
   stateTransitions?: EpisodeStateTransition[];
   stateVisualFallbacks?: EpisodeUnresolvedStateTransition[];
+  /** Completed draft before server visual directives; used only for strict locked revalidation. */
+  stateEvidenceSuggestion?: EpisodePagePlanSuggestion;
+  /** Final mode already normalized before complete directives were appended. */
+  preserveAppliedVisualDirectives?: boolean;
 }
 
 interface PanelMergeResult {
@@ -296,12 +325,15 @@ export class PageService implements PageServicePort {
       throw new ConfigurationError('Page autofill service is not fully configured');
     }
 
-    const context = await this.pageRepository.findAutofillContextByIdAndUserId(pageId, userId, organizationId);
-    if (context === null) {
+    const savedContext = await this.pageRepository.findAutofillContextByIdAndUserId(pageId, userId, organizationId);
+    if (savedContext === null) {
       throw new NotFoundError('Page not found');
     }
 
-    ensurePageEditable(context.status, 'scene autofill');
+    ensurePageEditable(savedContext.status, 'scene autofill');
+    // Single-page autofill keeps its legacy scope and never interprets prose
+    // headings as production notes. Episode-wide planning owns note validation.
+    const context = savedContext;
     if (context.frameCount === 0) {
       throw new ValidationError('Page must have frames before scene autofill can run');
     }
@@ -434,6 +466,7 @@ export class PageService implements PageServicePort {
     organizationId: string | null = null,
     executionControl?: EpisodePagePlanExecutionControl,
     stateOptions?: EpisodeStateAutofillOptions,
+    productionNoteOptions?: EpisodeProductionNotePlanOptions,
   ): Promise<EpisodePagePlanApplyResult> {
     await executionControl?.checkpoint();
     const storyAutofillJobId = executionControl?.jobId;
@@ -506,8 +539,27 @@ export class PageService implements PageServicePort {
       this.episodePlanContinuityV3Enabled || shouldUseAtomicPersistence
       ? initialContextFingerprint ?? fingerprintEpisodePlanningContext(context)
       : null;
+    const production = productionNoteOptions?.applyProductionNotes === true
+      && context.episode.productionNotesEnabled === true
+      ? readEpisodeProductionNotes(context.episode, context.episode.productionNotes ?? [])
+      : null;
+    const productionContext = production === null ? context : {
+      ...context,
+      episode: { ...context.episode, ...production.prose },
+      strictStateEvidenceSources: buildStrictStateEvidenceSources(context),
+      productionDirectives: production.directives,
+      manuscriptPlan: prepareEpisodeManuscriptPlan(context),
+    };
+    const finalDraftStateMode = stateOptions?.allowVisualStateFallback === true
+      && productionContext.stateDraftPersistenceSupported !== false;
+    const compilationContext = finalDraftStateMode
+      ? stripEpisodeStateVisualDirectivesFromContext(productionContext)
+      : productionContext;
+    if (stateOptions === undefined && production?.directives.some((directive) => directive.kind === 'state')) {
+      throw new ValidationError('Turn on episode character-state autofill to apply production state notes');
+    }
     const compiled = await this.compileEpisodePlanForContextSafely(
-      context,
+      compilationContext,
       language,
       controlledProgressReporter,
       stateOptions,
@@ -521,16 +573,68 @@ export class PageService implements PageServicePort {
       return buildSkippedEpisodePlanApplyResult(compiled.compilerError);
     }
 
-    const stateTransitions = compiled.stateTransitions ?? null;
-    const stateVisualFallbacks = compiled.stateVisualFallbacks ?? [];
+    validateManuscriptPlan(compilationContext.manuscriptPlan, compiled.suggestion);
+    compiled.suggestion = applyManuscriptDirections(compilationContext.manuscriptPlan, compiled.suggestion);
+    const authorStates = production === null ? null : validateAndPlaceProductionDirectives(
+      compilationContext, compiled.suggestion, production.directives,
+    );
+    const directedEntities = new Set([
+      ...authorStates?.transitions.map((transition) => transition.entityId) ?? [],
+      ...authorStates?.unresolved.map((transition) => transition.entityId) ?? [],
+    ]);
+    const orderedPanels = new Map([...context.pages]
+      .sort((a, b) => a.pageNumber - b.pageNumber)
+      .flatMap((page) => [...page.panels].sort((a, b) => a.order - b.order))
+      .map((panel, index) => [panel.id, index] as const));
+    const byReadingOrder = (a: { startsAtPanelId: string }, b: { startsAtPanelId: string }): number =>
+      (orderedPanels.get(a.startsAtPanelId) ?? 0) - (orderedPanels.get(b.startsAtPanelId) ?? 0);
+    const stateTransitions = compiled.stateTransitions === undefined ? null : [
+      ...compiled.stateTransitions.filter((transition) => !directedEntities.has(transition.entityId)),
+      ...authorStates?.transitions ?? [],
+    ].sort(byReadingOrder);
+    const stateVisualFallbacks = [
+      ...(compiled.stateVisualFallbacks ?? []).filter((transition) => !directedEntities.has(transition.entityId)),
+      ...authorStates?.unresolved ?? [],
+    ].sort(byReadingOrder);
+    // Only strict model-derived deltas are new draft-state persistence candidates.
+    // Author directives keep their released registered-state/text behavior.
+    const stateChangesToPersist = finalDraftStateMode
+      ? (compiled.stateVisualFallbacks ?? []).filter((transition) =>
+          !directedEntities.has(transition.entityId))
+      : [];
+    const strictModelStateTransitions = finalDraftStateMode
+      ? (compiled.stateTransitions ?? []).filter((transition) =>
+          !directedEntities.has(transition.entityId))
+      : [];
     if (stateOptions !== undefined && stateTransitions !== null) {
       const normalized = normalizeEpisodePlanToContext(context, compiled.suggestion, language);
-      validateEpisodePlanAgainstContext(context, normalized);
-      resolveEpisodeStateTransitionPlan(
+      const normalizedEvidence = normalizeEpisodePlanToContext(
         context,
-        { transitions: stateTransitions, unresolved: stateVisualFallbacks },
-        { allowVisualFallback: stateOptions.allowVisualStateFallback },
+        compiled.stateEvidenceSuggestion ?? compiled.suggestion,
+        language,
       );
+      validateEpisodePlanAgainstContext(context, normalized);
+      validateManuscriptPlan(compilationContext.manuscriptPlan, normalized);
+      if (finalDraftStateMode) {
+        resolveEpisodeStateTransitionPlan(context, {
+          transitions: strictModelStateTransitions,
+          unresolved: stateChangesToPersist,
+        }, {
+          allowVisualFallback: true,
+          strictEvidence: true,
+          finalSuggestion: normalizedEvidence,
+        });
+        if (authorStates !== null) {
+          resolveEpisodeStateTransitionPlan(context, authorStates, {
+            allowVisualFallback: stateOptions.allowVisualStateFallback,
+          });
+        }
+      } else {
+        resolveEpisodeStateTransitionPlan(context, {
+          transitions: stateTransitions,
+          unresolved: stateVisualFallbacks,
+        }, { allowVisualFallback: stateOptions.allowVisualStateFallback });
+      }
       resolveEpisodePlanStateAssignments({
         pages: context.pages,
         suggestion: normalized,
@@ -567,18 +671,42 @@ export class PageService implements PageServicePort {
           }
 
           let stateAssignmentsByPanelId: ReadonlyMap<string, readonly PanelEntityAssignment[]> | undefined;
+          let savedStateChanges = [] as Awaited<ReturnType<NonNullable<
+            EpisodePlanPersistenceResources['persistStateChanges']
+          >>>;
           let compiledForApply = compiled;
           if (stateOptions !== undefined && stateTransitions !== null) {
             if (resources.completeStoryAutofillJob === undefined) {
               throw new ConfigurationError('Episode state autofill job finalizer is not configured');
             }
             const normalized = normalizeEpisodePlanToContext(lockedContext, compiled.suggestion, language);
-            validateEpisodePlanAgainstContext(lockedContext, normalized);
-            resolveEpisodeStateTransitionPlan(
+            const normalizedEvidence = normalizeEpisodePlanToContext(
               lockedContext,
-              { transitions: stateTransitions, unresolved: stateVisualFallbacks },
-              { allowVisualFallback: stateOptions.allowVisualStateFallback },
+              compiled.stateEvidenceSuggestion ?? compiled.suggestion,
+              language,
             );
+            validateEpisodePlanAgainstContext(lockedContext, normalized);
+            validateManuscriptPlan(compilationContext.manuscriptPlan, normalized);
+            if (finalDraftStateMode) {
+              resolveEpisodeStateTransitionPlan(lockedContext, {
+                transitions: strictModelStateTransitions,
+                unresolved: stateChangesToPersist,
+              }, {
+                allowVisualFallback: true,
+                strictEvidence: true,
+                finalSuggestion: normalizedEvidence,
+              });
+              if (authorStates !== null) {
+                resolveEpisodeStateTransitionPlan(lockedContext, authorStates, {
+                  allowVisualFallback: stateOptions.allowVisualStateFallback,
+                });
+              }
+            } else {
+              resolveEpisodeStateTransitionPlan(lockedContext, {
+                transitions: stateTransitions,
+                unresolved: stateVisualFallbacks,
+              }, { allowVisualFallback: stateOptions.allowVisualStateFallback });
+            }
             compiledForApply = {
               ...compiled,
               suggestion: applyEpisodeStateVisualDirectives({
@@ -587,7 +715,11 @@ export class PageService implements PageServicePort {
                 transitions: stateTransitions,
                 visualFallbacks: stateVisualFallbacks,
                 language,
+                ...(finalDraftStateMode
+                  ? { accumulatingVisualFallbacks: stateChangesToPersist }
+                  : {}),
               }),
+              ...(finalDraftStateMode ? { preserveAppliedVisualDirectives: true } : {}),
             };
             stateAssignmentsByPanelId = resolveEpisodePlanStateAssignments({
               pages: lockedContext.pages,
@@ -613,6 +745,12 @@ export class PageService implements PageServicePort {
           } else if (!await resources.updateStoryAutofillProgress(applyingProgress)) {
             throw new ConflictError('Episode story autofill progress could not be committed atomically');
           }
+          if (stateChangesToPersist.length > 0) {
+            if (resources.persistStateChanges === undefined) {
+              throw new ConfigurationError('Episode state draft persistence is not configured');
+            }
+            savedStateChanges = await resources.persistStateChanges(stateChangesToPersist);
+          }
           const result = await this.applyEpisodePlanSuggestion(
             lockedContext,
             userId,
@@ -629,6 +767,7 @@ export class PageService implements PageServicePort {
                 stateTransitions,
                 statePlanVersion: stateOptions.statePlanVersion,
                 stateAssignmentPolicy: stateOptions.stateAssignmentPolicy,
+                ...(finalDraftStateMode ? { savedStateChanges } : {}),
               };
           if (storyAutofillJobId !== undefined) {
             if (resources.completeStoryAutofillJob === undefined) {
@@ -728,6 +867,7 @@ export class PageService implements PageServicePort {
     const characterReferences = this.episodePlanReliabilityOptions.completionFirstEnabled === true
       ? buildEpisodeAutofillCharacterReferences(context)
       : undefined;
+    const stateReferences = buildEpisodeAutofillStateReferences(context);
     const beforeDetailPlanRetry = executionControl === undefined
       ? undefined
       : () => executionControl.checkpoint();
@@ -740,6 +880,7 @@ export class PageService implements PageServicePort {
           stateOptions,
           executionControl,
           characterReferences,
+          stateReferences,
         );
       } catch (error) {
         if (!(error instanceof ConfigurationError)) {
@@ -781,6 +922,7 @@ export class PageService implements PageServicePort {
         false,
         undefined,
         characterReferences,
+        stateReferences,
       );
       if (compiled.compilerUsed) {
         await reportEpisodePlanProgress(progressReporter, {
@@ -819,6 +961,7 @@ export class PageService implements PageServicePort {
         false,
         undefined,
         characterReferences,
+        stateReferences,
       );
       if (!compiled.compilerUsed) {
         return compiled;
@@ -854,6 +997,7 @@ export class PageService implements PageServicePort {
     stateOptions?: EpisodeStateAutofillOptions,
     executionControl?: EpisodePagePlanExecutionControl,
     characterReferences?: readonly EpisodeAutofillCharacterReference[],
+    stateReferences: readonly EpisodeAutofillStateReference[] = buildEpisodeAutofillStateReferences(context),
   ): Promise<EpisodePlanExecutionResult> {
     if (this.episodeBeatPlanCompiler === undefined || this.episodePlanAuditCompiler === undefined) {
       throw new ConfigurationError('Episode continuity v3 compilers are not configured');
@@ -904,7 +1048,9 @@ export class PageService implements PageServicePort {
         } satisfies CompiledEpisodeBeatPlan;
     validateEpisodeBeatPlanCoverage(context, compiledBeatPlan.plan);
 
-    const resolvedStatePlan = stateOptions === undefined
+    const finalDraftStateMode = stateOptions?.allowVisualStateFallback === true
+      && context.stateDraftPersistenceSupported !== false;
+    const resolvedStatePlan = stateOptions === undefined || finalDraftStateMode
       ? undefined
       : resolveEpisodeStateTransitionPlan(context, (
           await this.episodeStateTransitionCompiler!.compileStateTransitions({
@@ -962,6 +1108,7 @@ export class PageService implements PageServicePort {
         sourceOwnedPageContext,
         compiledSourceRequirements?.requirements,
         characterReferences,
+        stateReferences,
       );
       if (!compiled.compilerUsed) {
         return compiled;
@@ -991,14 +1138,23 @@ export class PageService implements PageServicePort {
         progressReporter,
         stateLedger,
         sourceOwnedPageContext,
+        stateReferences,
       );
-      return {
+      const reviewedWithLegacyState = {
         ...applyEpisodeStateVisualsToExecutionResult(
           context, reviewed, stateTransitions, stateVisualFallbacks, language,
         ),
         stateTransitions,
         stateVisualFallbacks,
       };
+      return this.compileFinalDraftEpisodeStatePlan(
+        context,
+        compiledBeatPlan.plan,
+        reviewedWithLegacyState,
+        language,
+        stateOptions,
+        executionControl,
+      );
     }
 
     const audit = await this.auditEpisodePlanWithContinuityV3(
@@ -1011,13 +1167,21 @@ export class PageService implements PageServicePort {
       1,
       stateLedger,
       sourceOwnedPageContext,
+      stateReferences,
     );
     const blockingIssues = audit.issues.filter((issue) => issue.severity === 'error' && (
       this.episodePlanReliabilityOptions.completionFirstEnabled !== true || issue.code !== 'duplicate_dialogue'
     ));
     if (blockingIssues.length === 0) {
       this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
-      return { ...combined, stateTransitions, stateVisualFallbacks };
+      return this.compileFinalDraftEpisodeStatePlan(
+        context,
+        compiledBeatPlan.plan,
+        { ...combined, stateTransitions, stateVisualFallbacks },
+        language,
+        stateOptions,
+        executionControl,
+      );
     }
 
     const affectedChunkIndexes = resolveAffectedEpisodePlanChunkIndexes(
@@ -1068,6 +1232,7 @@ export class PageService implements PageServicePort {
         sourceOwnedPageContext,
         compiledSourceRequirements?.requirements,
         characterReferences,
+        stateReferences,
       );
       if (!repaired.compilerUsed) {
         return repaired;
@@ -1088,7 +1253,55 @@ export class PageService implements PageServicePort {
 
     this.assertDeterministicallyValidEpisodePlan(context, combined.suggestion);
 
-    return { ...combined, stateTransitions, stateVisualFallbacks };
+    return this.compileFinalDraftEpisodeStatePlan(
+      context,
+      compiledBeatPlan.plan,
+      { ...combined, stateTransitions, stateVisualFallbacks },
+      language,
+      stateOptions,
+      executionControl,
+    );
+  }
+
+  /** Automatic/default mode extracts state deltas once, after detail and its single audit/repair. */
+  private async compileFinalDraftEpisodeStatePlan(
+    context: EpisodePagePlanContext,
+    beatPlan: Awaited<ReturnType<EpisodeBeatPlanCompilerPort['compileBeatPlan']>>['plan'],
+    result: EpisodePlanExecutionResult,
+    language: AppLanguage,
+    stateOptions: EpisodeStateAutofillOptions | undefined,
+    executionControl: EpisodePagePlanExecutionControl | undefined,
+  ): Promise<EpisodePlanExecutionResult> {
+    const finalDraftStateMode = stateOptions?.allowVisualStateFallback === true
+      && context.stateDraftPersistenceSupported !== false;
+    if (!finalDraftStateMode) return result;
+
+    await executionControl?.checkpoint();
+    // Production-note separation may re-derive auxiliary sections from a full
+    // manuscript. Strict extraction uses the saved source identity; later final
+    // and locked validation intentionally continue to use their raw contexts.
+    const stateEvidenceContext = withStrictStateEvidenceSources(context);
+    const compiledStatePlan = await this.episodeStateTransitionCompiler!.compileStateTransitions({
+      context: stateEvidenceContext,
+      beatPlan,
+      language,
+      finalSuggestion: result.suggestion,
+      strictEvidence: true,
+      beforeRetry: executionControl === undefined
+        ? undefined
+        : () => executionControl.checkpoint(),
+    });
+    const resolved = resolveEpisodeStateTransitionPlan(stateEvidenceContext, compiledStatePlan.plan, {
+      allowVisualFallback: true,
+      strictEvidence: true,
+      finalSuggestion: result.suggestion,
+    });
+    return {
+      ...result,
+      stateTransitions: resolved.transitions,
+      stateVisualFallbacks: resolved.visualFallbacks,
+      stateEvidenceSuggestion: result.suggestion,
+    };
   }
 
   private async compileEpisodeSourceRequirements(
@@ -1128,7 +1341,7 @@ export class PageService implements PageServicePort {
   ): Promise<CompiledEpisodeBeatPlan> {
     try {
       return await this.episodeBeatPlanCompiler!.compileBeatPlan({
-        compilerBrief: buildEpisodeBeatPlanCompilerBrief(context, language),
+        compilerBrief: [buildEpisodeBeatPlanCompilerBrief(context, language), manuscriptPlanPrompt(context.manuscriptPlan)].filter(Boolean).join('\n\n'),
         language,
       });
     } catch (error) {
@@ -1171,7 +1384,7 @@ export class PageService implements PageServicePort {
       totalChunks: initialPacks.length,
     });
     const compiledOutline = await outlineCompiler.call(this.episodeBeatPlanCompiler, {
-      compilerBrief: buildEpisodeBeatPlanOutlineCompilerBrief(context, language),
+      compilerBrief: [buildEpisodeBeatPlanOutlineCompilerBrief(context, language), manuscriptPlanPrompt(context.manuscriptPlan)].filter(Boolean).join('\n\n'),
       language,
     });
     validateEpisodeBeatPlanOutlineCoverage(context, compiledOutline.outline);
@@ -1221,13 +1434,13 @@ export class PageService implements PageServicePort {
 
     try {
       const compiled = await this.episodeBeatPlanCompiler!.compileBeatPlan({
-        compilerBrief: buildEpisodeBeatPlanSegmentCompilerBrief({
+        compilerBrief: [buildEpisodeBeatPlanSegmentCompilerBrief({
           context: input.context,
           language: input.language,
           outline: input.outline,
           targetPages: input.pages,
           completedPages: input.completedPages,
-        }),
+        }), manuscriptPlanPrompt(input.context.manuscriptPlan)].filter(Boolean).join('\n\n'),
         language: input.language,
       });
       validateEpisodeBeatPlanCoverage(
@@ -1276,6 +1489,7 @@ export class PageService implements PageServicePort {
     progressReporter?: EpisodePagePlanProgressReporter,
     stateLedger?: string,
     sourceOwnedPageContext = false,
+    stateReferences: readonly EpisodeAutofillStateReference[] = buildEpisodeAutofillStateReferences(context),
   ): Promise<EpisodePlanExecutionResult> {
     const firstAudit = await this.auditEpisodePlanWithContinuityV3(
       context,
@@ -1287,6 +1501,7 @@ export class PageService implements PageServicePort {
       1,
       stateLedger,
       sourceOwnedPageContext,
+      stateReferences,
     );
     logEpisodePlanAuditSummary(context.episodeId, 1, firstAudit);
     if (!hasBlockingEpisodePlanAuditIssues(firstAudit.issues)) {
@@ -1331,6 +1546,13 @@ export class PageService implements PageServicePort {
         reason: error instanceof ValidationError
           ? 'invalid_repair_context'
           : 'invalid_repair_contract',
+        ...(error instanceof ManuscriptPlanConstraintError ? {
+          manuscriptConstraintId: error.constraintId,
+          manuscriptConstraintReason: error.reason,
+          ...(error.directionIndex === undefined
+            ? {}
+            : { manuscriptDirectionIndex: error.directionIndex }),
+        } : {}),
       });
       return combined;
     }
@@ -1341,6 +1563,7 @@ export class PageService implements PageServicePort {
     suggestion: EpisodePagePlanSuggestion,
   ): void {
     validateEpisodePlanAgainstContext(context, suggestion);
+    validateManuscriptPlan(context.manuscriptPlan, suggestion);
     const deterministicErrors = detectDeterministicContinuityIssues(suggestion).filter(
       (issue) => issue.severity === 'error',
     );
@@ -1405,6 +1628,7 @@ export class PageService implements PageServicePort {
     totalAuditPasses: number,
     stateLedger?: string,
     sourceOwnedPageContext = false,
+    stateReferences: readonly EpisodeAutofillStateReference[] = buildEpisodeAutofillStateReferences(context),
   ): Promise<EpisodePlanAudit> {
     console.info('episode_page_plan_continuity_v3_audit_started', {
       episodeId: context.episodeId,
@@ -1424,9 +1648,17 @@ export class PageService implements PageServicePort {
       language,
       sourceOwnedPageContext,
     });
+    const manuscriptViolations = collectManuscriptPlanViolations(
+      context.manuscriptPlan,
+      suggestion,
+    );
     const compiledAudit = await this.episodePlanAuditCompiler!.auditPlan({
       compilerBrief: appendEpisodeStateLedger(
-        auditArtifacts.compilerBrief,
+        [
+          auditArtifacts.compilerBrief,
+          manuscriptPlanPrompt(context.manuscriptPlan),
+          manuscriptViolationRepairPrompt(manuscriptViolations),
+        ].filter(Boolean).join('\n\n'),
         stateLedger,
       ),
       language,
@@ -1434,6 +1666,7 @@ export class PageService implements PageServicePort {
       ...(this.episodePlanReliabilityOptions.completionFirstEnabled === true
         ? { characterReferences: buildEpisodeAutofillCharacterReferences(context) }
         : {}),
+      stateReferences,
       coverageCatalog: auditArtifacts.coverageCatalog,
       visualSnapshot: buildEpisodePlanAuditVisualSnapshot(suggestion),
       sourceOwnedPageContext,
@@ -1521,8 +1754,10 @@ export class PageService implements PageServicePort {
     sourceOwnedPageContext = false,
     sourceRequirements?: EpisodeSourceRequirements,
     characterReferences?: readonly EpisodeAutofillCharacterReference[],
+    stateReferences?: readonly EpisodeAutofillStateReference[],
   ): Promise<EpisodePlanExecutionResult> {
-    const baseCompilerBrief = buildEpisodePlanCompilerBrief(context, language);
+    const baseCompilerBrief = [buildEpisodePlanCompilerBrief(context, language),
+      productionNotesPrompt(context.productionDirectives ?? []), manuscriptPlanPrompt(context.manuscriptPlan)].filter(Boolean).join('\n\n');
     const compilerBrief = continuitySupplement === undefined
       ? baseCompilerBrief
       : `${baseCompilerBrief}\n${continuitySupplement}`;
@@ -1533,6 +1768,7 @@ export class PageService implements PageServicePort {
         compilerBrief,
         language,
         ...(characterReferences === undefined ? {} : { characterReferences }),
+        ...(stateReferences === undefined ? {} : { stateReferences }),
         ...(sourceOwnedPageContext ? { sourceOwnedPageContext: true } : {}),
         ...(sourceRequirements === undefined ? {} : { sourceRequirements }),
         ...(sourceRequirements === undefined
@@ -1617,7 +1853,11 @@ export class PageService implements PageServicePort {
       throw new ConfigurationError('Episode page planning service is not fully configured');
     }
 
-    const normalizedSuggestion = normalizeEpisodePlanToContext(context, compiled.suggestion, language);
+    // Final-draft state directives are appended after normalization. Re-summarizing them here
+    // can cut the closing bracket and silently lose the persisted appearance delta.
+    const normalizedSuggestion = compiled.preserveAppliedVisualDirectives === true
+      ? compiled.suggestion
+      : normalizeEpisodePlanToContext(context, compiled.suggestion, language);
     validateEpisodePlanAgainstContext(context, normalizedSuggestion);
     // Legacy requests cannot opt into replacing manual state choices. Preflight the
     // entire plan before writes, including when no atomic persistence port exists.
@@ -1698,20 +1938,27 @@ export class PageService implements PageServicePort {
           throw new ValidationError('Episode page plan referenced an unknown panel order');
         }
 
-        const normalizedSuggestion = enrichPanelSuggestionForGeneration(
-          panel,
-          withPageLevelPanelNotes(panel, panelSuggestion, pageSuggestion),
-          {
-            scene: resolveSceneForPanelOrder(pageScenes, panelSuggestion.order, pageSuggestion.panels.length),
-            entityLookup,
-            pagePurpose: pageSuggestion.pagePurpose,
-            continuityNote: pageSuggestion.continuityNote,
-            storyLeadEntityId,
-            pageLeadEntityId,
-            language,
-            fillMissingCreativeFields: false,
-          },
-        );
+        const panelWithPageNotes = withPageLevelPanelNotes(panel, panelSuggestion, pageSuggestion);
+        const normalizedSuggestion = compiled.preserveAppliedVisualDirectives === true
+          ? panelWithPageNotes
+          : enrichPanelSuggestionForGeneration(
+              panel,
+              panelWithPageNotes,
+              {
+                scene: resolveSceneForPanelOrder(
+                  pageScenes,
+                  panelSuggestion.order,
+                  pageSuggestion.panels.length,
+                ),
+                entityLookup,
+                pagePurpose: pageSuggestion.pagePurpose,
+                continuityNote: pageSuggestion.continuityNote,
+                storyLeadEntityId,
+                pageLeadEntityId,
+                language,
+                fillMissingCreativeFields: false,
+              },
+            );
         const merge = mergePanelSuggestion(panel, normalizedSuggestion, {
           overwriteExisting: true,
         });
@@ -1841,7 +2088,22 @@ function logEpisodePlanAuditSummary(
   });
 }
 
+function manuscriptViolationRepairPrompt(
+  violations: readonly ManuscriptPlanViolation[],
+): string {
+  if (violations.length === 0) return '';
+  return [
+    'AUTHOR MANUSCRIPT CONSTRAINT VIOLATIONS IN THE CURRENT DRAFT (repair required).',
+    'Each constraintId refers to a block in AUTHOR MANUSCRIPT ALLOCATION above. For a direction violation, directions[directionIndex] identifies the exact direction. Use that entry\'s anchor as source DATA, not as dialogue unless it was original dialogue.',
+    'actualSlots lists only offending placements; a repeated anchor legally owned by another block is excluded and must remain. Restore missing anchors only to an allowed slot, remove them from listed disallowed slots, and keep every fixed-panel scene together. Do not move, split, invent, or append the source to another scene.',
+    JSON.stringify(violations),
+  ].join('\n');
+}
+
 function isDiscardableEpisodePlanAuditRepairError(error: unknown): boolean {
+  if (error instanceof ManuscriptPlanConstraintError) {
+    return true;
+  }
   if (error instanceof ValidationError) {
     switch (error.message) {
       case 'Episode page plan referenced a scene outside the episode':
@@ -2089,8 +2351,15 @@ function isEpisodePageLayoutMetadataConsistent(
     return false;
   }
 
-  const expectedTemplateId = resolveDefaultPanelFrameTemplateId(panelCount);
-  return expectedTemplateId === null || templateId === expectedTemplateId;
+  const selectedTemplate = Object.values(PANEL_FRAME_TEMPLATES).find(
+    (template) => template.id === templateId,
+  );
+  if (selectedTemplate?.panelCount === panelCount) {
+    return true;
+  }
+
+  const defaultTemplateId = resolveDefaultPanelFrameTemplateId(panelCount);
+  return defaultTemplateId === null || templateId === defaultTemplateId;
 }
 
 function buildPageScopedAutofillContext(
@@ -2167,6 +2436,38 @@ function inferPageLeadEntityIdFromPanelSuggestions(
   });
 
   return ranked[0]?.[0] ?? null;
+}
+
+function buildStrictStateEvidenceSources(
+  context: EpisodePagePlanContext,
+): NonNullable<EpisodePagePlanContext['strictStateEvidenceSources']> {
+  if (context.episode.storyFullDraft != null) {
+    return {
+      storyFullDraft: context.episode.storyFullDraft,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+    };
+  }
+  return {
+    storyFullDraft: null,
+    introduction: context.episode.introduction,
+    middle: context.episode.middle,
+    climax: context.episode.climax,
+    endingHook: context.episode.endingHook,
+  };
+}
+
+function withStrictStateEvidenceSources(
+  context: EpisodePagePlanContext,
+): EpisodePagePlanContext {
+  const sources = context.strictStateEvidenceSources;
+  if (sources === undefined) return context;
+  return {
+    ...context,
+    episode: { ...context.episode, ...sources },
+  };
 }
 
 function formatEpisodeStateTransitionLedger(
@@ -2277,16 +2578,7 @@ function validateEpisodePlanAgainstContext(
   const sceneIds = new Set(context.scenes.map((scene) => scene.id));
   const pageIds = new Set(context.pages.map((page) => page.pageId));
   const entityIds = new Set(context.entities.map((entity) => entity.id));
-  const sceneStateIds = new Set(
-    context.scenes.flatMap((scene) =>
-      scene.entityStates.map((state) => state.stateId),
-    ),
-  );
-  const readyLibraryStateKeys = new Set(
-    (context.stateLibrary ?? [])
-      .filter((state) => state.referenceReady && state.referenceImage !== null)
-      .map((state) => `${state.entityId}:${state.stateId}`),
-  );
+  const stateReferences = buildEpisodeAutofillStateReferences(context);
 
   const seenPageIds = new Set<string>();
   for (const page of suggestion.pages) {
@@ -2336,8 +2628,11 @@ function validateEpisodePlanAgainstContext(
           throw new ValidationError('Episode page plan assignment referenced an entity outside the episode');
         }
         if (assignment.stateId !== null
-          && !sceneStateIds.has(assignment.stateId)
-          && !readyLibraryStateKeys.has(`${assignment.entityId}:${assignment.stateId}`)) {
+          && !isEpisodeAutofillStateReferenceAllowed(
+            stateReferences,
+            assignment.entityId,
+            assignment.stateId,
+          )) {
           throw new ValidationError('Episode page plan assignment referenced a scene entity state outside the episode');
         }
       }

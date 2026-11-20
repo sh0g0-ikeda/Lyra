@@ -68,6 +68,7 @@ interface RuntimeGuardConfig {
   ENTITY_STATE_REFERENCE_GENERATION_ENABLED?: boolean;
   OPENAI_API_KEY?: string;
   OPENAI_IMAGE_MODEL?: string;
+  OPENAI_IMAGE_SUNBURST_ENABLED?: boolean;
   OPENAI_BASE_URL?: string;
   OPENAI_TIMEOUT_MS?: number;
   SQS_QUEUE_URL_GENERATION?: string;
@@ -451,6 +452,17 @@ export function assertProductionRuntimeConfig(
   const openAiApiKey = config.OPENAI_API_KEY;
   if (hasConfigValue(openAiApiKey) && !openAiApiKey.trim().startsWith('sk-')) {
     violations.push('OPENAI_API_KEY must start with sk-');
+  }
+  if (config.OPENAI_IMAGE_SUNBURST_ENABLED === true) {
+    if (openAiImageModel !== 'gpt-image-2') {
+      violations.push('OPENAI_IMAGE_MODEL must remain gpt-image-2 during GPT Image 2.5 cutover');
+    }
+    if (!hasConfigValue(openAiApiKey)) {
+      violations.push('OPENAI_API_KEY is required during GPT Image 2.5 cutover');
+    }
+    if (config.LOCAL_IMAGE_FALLBACK_ENABLED === true) {
+      violations.push('LOCAL_IMAGE_FALLBACK_ENABLED must be disabled during GPT Image 2.5 cutover');
+    }
   }
 
   if (

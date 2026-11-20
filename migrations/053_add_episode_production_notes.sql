@@ -1,0 +1,2 @@
+ALTER TABLE episodes
+  ADD COLUMN IF NOT EXISTS production_notes_enabled BOOLEAN NOT NULL DEFAULT FALSE;

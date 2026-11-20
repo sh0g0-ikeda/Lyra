@@ -16,7 +16,9 @@ interface Input {
 function dependencies(input: Input): ConstructorParameters<typeof GenerationQuoteController<AssetQuoteTarget, AssetQuoteTarget>>[0] {
   return {
     prepare: input.prepare ?? (async (target) => target), quoteMatchesTarget: assetQuoteMatchesTarget,
-    createQuote: (target, organizationId) => input.api.createGenerationQuote(target.request, organizationId),
+    createQuote: (target, organizationId) => target.request.operation === 'entity_import_analysis'
+      ? input.api.createGenerationQuote(target.request, organizationId)
+      : input.api.createPreferredGenerationQuote(target.request, organizationId),
     acceptQuote: (quoteId, body, organizationId) => input.api.acceptGenerationQuote(quoteId, body, organizationId),
     getReceipt: (quoteId, organizationId) => input.api.getGenerationQuote(quoteId, organizationId),
     requestKey: () => Crypto.randomUUID(), now: Date.now, onAccepted: input.onAccepted

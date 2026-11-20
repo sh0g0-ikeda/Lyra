@@ -44,6 +44,7 @@ import {
   type GenerationCapacityLimits,
 } from '../generation/GenerationCapacityGuard.js';
 import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolicy.js';
+import type { OpenAIImageRuntimeProvenance } from '../../domain/constants/openAIImageModel.js';
 
 export interface ConfirmEntityReferencesRequest {
   selectedS3Keys: string[];
@@ -112,6 +113,7 @@ export class EntityReferenceService implements EntityReferenceServicePort {
     private readonly recoveryService: EntityGenerationRecoveryServicePort = new NoopEntityGenerationRecoveryService(),
     private readonly importAnalysisEnabled = true,
     private readonly organizationService?: OrganizationServicePort,
+    private readonly imageProvenance?: OpenAIImageRuntimeProvenance,
   ) {}
 
   public async getReferenceSet(
@@ -233,6 +235,11 @@ export class EntityReferenceService implements EntityReferenceServicePort {
           entity_type: entity.entityType,
           previous_entity_status: entity.status,
           ...(sourceS3Key === null ? {} : { source_s3_key: sourceS3Key }),
+          ...(this.imageProvenance === undefined ? {} : {
+            image_model: this.imageProvenance.imageModel,
+            provider_model_id: this.imageProvenance.providerModelId,
+            provider: this.imageProvenance.provider,
+          }),
         },
       });
       createdJobId = job.id;

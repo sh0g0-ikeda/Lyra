@@ -787,6 +787,13 @@ a {
   gap: 8px;
 }
 
+.page-estimate-field { display: flex; flex-direction: column; gap: 8px; }
+.page-estimate-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(64px, 100px); align-items: stretch; gap: 8px; }
+.page-estimate-controls > .secondary-button { min-width: 0; white-space: normal; line-height: 1.35; padding: 10px 8px; }
+.page-estimate-controls input { width: 100%; min-width: 0; }
+.page-estimate-error { color: #f39b91; line-height: 1.45; }
+.page-estimate-summary { color: #e5c76b; line-height: 1.45; }
+
 .mobile-bottom-nav {
   display: none;
 }
@@ -1857,6 +1864,46 @@ a {
 
 .page-grid {
   grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
+}
+
+.character-photo-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(136px, 100%), 1fr));
+}
+
+.character-photo-card {
+  position: relative;
+  min-width: 0;
+}
+
+.character-photo-card .page-card {
+  width: 100%;
+  height: 100%;
+  overflow-wrap: anywhere;
+}
+
+.character-photo-frame {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(229, 199, 107, 0.06);
+}
+
+.character-photo-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.character-photo-card .character-photo-zoom {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 44px;
+  height: 44px;
+  background: #171717;
 }
 
 .reference-grid {

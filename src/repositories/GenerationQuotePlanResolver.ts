@@ -36,7 +36,7 @@ export interface GenerationQuotePlanResolver {
 }
 export interface GenerationQuotePlanResolverOptions {
   persistenceProfile?: RepositorySchemaProfile;
-  imageModel:string; generationEnabled:boolean; stateGenerationEnabled:boolean; importEnabled:boolean;
+  imageModel:string; sunburstEnabled?:boolean; generationEnabled:boolean; stateGenerationEnabled:boolean; importEnabled:boolean;
   pageGenerationEnabled?:boolean; entityGenerationEnabled?:boolean;
   uploadStorage?:EntityReferenceUploadStoragePort;
   candidateImageLoader?:StoredImageLoaderPort;
@@ -75,7 +75,7 @@ export class PostgresGenerationQuotePlanResolver implements GenerationQuotePlanR
   public async resolve(client:DatabaseClient,userId:string,organizationId:string|null,request:GenerationQuoteRequest,prepared:PreparedGenerationQuoteSource):Promise<GenerationQuotePlan>{
     try {
       await this.lockScope(client,userId,organizationId);
-      const selection=validateQuoteSelection(request,this.options.imageModel);
+      const selection=validateQuoteSelection(request,this.options.imageModel,this.options.sunburstEnabled);
       if(request.operation==='entity_import_analysis') return await this.resolveImport(client,userId,organizationId,request,prepared!==null && 'uploadId' in prepared ? prepared:null,selection);
       if(!this.options.generationEnabled) throw new ConflictError('Generation is temporarily disabled');
       if(request.operation==='page_generate' || request.operation==='page_regenerate') return await this.resolvePage(client,userId,organizationId,request,selection);

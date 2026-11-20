@@ -10,12 +10,16 @@ import { defaultSelection, episodesQueryKey } from '@/lib/queryKeys';
 let episode: EpisodeRecord;
 let selection = { ...defaultSelection, workId: 'work', chapterId: 'chapter', episodeId: 'episode' };
 let sessionKey = 'user';
-let registration: { save: () => Promise<void> };
+let registration: { dirty: boolean; save: () => Promise<void> };
 let root: ReactTestRenderer | undefined;
 const updateEpisode = vi.fn();
 const getEpisodes = vi.fn();
+const getProductionNotesCapabilities = vi.fn();
+const improveEpisodeDraft = vi.fn();
+let productionNotesEnabled = false;
 const fetchQuery = vi.fn();
 const confirmReload = vi.fn();
+const confirmAction = vi.hoisted(() => vi.fn());
 const queryClient = {
   fetchQuery,
   invalidateQueries: vi.fn(),
@@ -26,7 +30,7 @@ const query = (data: unknown): Record<string, unknown> => ({ data, isFetching: f
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => queryClient,
   useInfiniteQuery: ({ queryKey }: { queryKey: string[] }) => ({ ...query({ pages: [queryKey[0] === 'works' ? { works: [{ id: 'work', title: 'Work' }] } : { entities: [{ id: 'entity', name: 'Hero', work_id: 'work' }] }] }), hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn() }),
-  useQuery: ({ queryKey }: { queryKey: string[] }) => query(queryKey[0] === 'chapters' ? { chapters: [{ id: 'chapter', work_id: 'work' }] } : queryKey[0] === 'episodes' ? { episodes: [episode] } : queryKey[0] === 'scenes' ? { scenes: [] } : { id: 'work', title: 'Work' }),
+  useQuery: ({ queryKey }: { queryKey: string[] }) => query(queryKey[0] === 'chapters' ? { chapters: [{ id: 'chapter', work_id: 'work' }] } : queryKey[0] === 'episodes' ? { episodes: [episode] } : queryKey[0] === 'scenes' ? { scenes: [] } : queryKey[0] === 'production-notes-capabilities' ? { enabled: productionNotesEnabled } : { id: 'work', title: 'Work' }),
   useMutation: (options: { mutationFn: () => Promise<unknown>; onSuccess?: (value: unknown) => Promise<void>; onError?: (error: unknown) => void }) => {
     const [error, setError] = React.useState<unknown>(null);
     const run = async (): Promise<unknown> => {
@@ -43,18 +47,18 @@ vi.mock('@/components/PrimaryButton', () => ({ PrimaryButton: (props: Record<str
 vi.mock('@/components/FormField', () => ({ FormField: (props: Record<string, unknown>) => React.createElement('field', props) }));
 vi.mock('@/components/EpisodeStartingStatesEditor', () => ({ EpisodeStartingStatesEditor: (props: Record<string, unknown>) => React.createElement('starting-states', props) }));
 vi.mock('@/components/RecordPicker', () => ({ RecordPicker: (props: Record<string, unknown>) => React.createElement('picker', props) }));
-vi.mock('@/components/EpisodeImprovementPanel', () => ({ EpisodeImprovementPanel: () => null }));
+vi.mock('@/components/EpisodeImprovementPanel', () => ({ EpisodeImprovementPanel: (props: Record<string, unknown>) => React.createElement('episode-improvement', props) }));
 vi.mock('@/components/StoryCollaborationPanel', () => ({ StoryCollaborationPanel: () => null }));
 vi.mock('@/components/WorkspaceHierarchyNavigator', () => ({ WorkspaceHierarchyNavigator: () => null }));
 vi.mock('@/components/WorkspaceContextPicker', () => ({ useWorkspaceContextSelection: () => ({}) }));
 vi.mock('@/components/Notice', () => ({ Notice: () => null }));
 vi.mock('@/components/ActionableErrorNotice', () => ({ ActionableErrorNotice: (props: Record<string, unknown>) => React.createElement('error-notice', props) }));
-vi.mock('@/lib/confirm', () => ({ confirmAction: vi.fn(), confirmDestructiveAction: vi.fn() }));
+vi.mock('@/lib/confirm', () => ({ confirmAction, confirmDestructiveAction: vi.fn() }));
 vi.mock('@/lib/confirmStaleDraftReload', () => ({ confirmStaleDraftReload: (input: unknown) => confirmReload(input) }));
 vi.mock('@/lib/aiProviderDisclosure', () => ({ appendAiProviderDisclosure: (value: string) => value }));
 vi.mock('@/lib/api', () => ({ ApiError: class ApiError extends Error { code = 'RESOURCE_STALE'; } }));
 vi.mock('@/navigation/navigationRef', () => ({ navigationRef: { isReady: () => true, navigate: vi.fn() } }));
-vi.mock('@/state/appState', () => ({ useAppState: () => ({ api: { updateEpisode, getEpisodes, updateScene: vi.fn() }, hasCapability: () => true, language: 'ja', logout: vi.fn(), selection, sessionKey, session: { capabilities: { episode_state_autofill_v1: true } } }) }));
+vi.mock('@/state/appState', () => ({ useAppState: () => ({ api: { updateEpisode, getEpisodes, getProductionNotesCapabilities, improveEpisodeDraft, updateScene: vi.fn() }, hasCapability: () => true, language: 'ja', logout: vi.fn(), selection, sessionKey, session: { capabilities: { episode_state_autofill_v1: true } } }) }));
 vi.mock('@/state/dirtyState', () => ({ useDirtyState: () => ({ resolveDirtyEditors: vi.fn().mockResolvedValue(true) }), useDirtyEditorRegistration: (input: typeof registration) => { registration = input; } }));
 
 async function render(): Promise<void> { await act(async () => { if (root) root.update(<StoryScreen />); else root = create(<StoryScreen />); }); }
@@ -77,6 +81,14 @@ describe('Story stale draft retry', () => {
     sessionKey = 'user';
     updateEpisode.mockReset().mockResolvedValue(episode);
     getEpisodes.mockReset();
+    getProductionNotesCapabilities.mockReset().mockResolvedValue({ enabled: true });
+    improveEpisodeDraft.mockReset().mockResolvedValue({
+      draft: { title: null, purpose: null, story_input_mode: 'full', story_full_draft: '改善後の本文', introduction: null, middle: null, climax: null, ending_hook: null },
+      compiler_provider: 'openai', compiler_model: 'gpt-5', compiler_prompt_version: 'v1', compiler_error: null,
+      production_notes: ['「扉を押す」と「のぞく」は同じコマにする。'],
+    });
+    confirmAction.mockReset();
+    productionNotesEnabled = false;
     fetchQuery.mockReset().mockResolvedValue({ episodes: [episode] });
     confirmReload.mockReset();
     queryClient.invalidateQueries.mockReset();
@@ -105,6 +117,104 @@ describe('Story stale draft retry', () => {
     await act(async () => body().props.onChangeText('Edited legacy story'));
     await act(async () => registration.save());
     expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({ estimated_pages: 32, story_full_draft: 'Edited legacy story' }), null);
+  });
+
+  it('明示した演出指示オプトインと#付き原稿だけをepisode保存へ送る', async () => {
+    productionNotesEnabled = true;
+    await render();
+    await act(async () => body().props.onChangeText('# 「扉を押す」と「のぞく」は同じコマにする。'));
+    await act(async () => root!.root.findByProps({ accessibilityLabel: '演出指示を有効にする' }).props.onPress());
+    await act(async () => registration.save());
+
+    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({
+      story_full_draft: null,
+      production_notes_enabled: true,
+      production_notes: ['「扉を押す」と「のぞく」は同じコマにする。'],
+    }), null, true);
+  });
+
+  it('旧server相当でcapabilityが無い場合は#付きMarkdownを従来payloadのまま保存する', async () => {
+    await render();
+    await act(async () => body().props.onChangeText('# 以前から使っているMarkdown本文'));
+    await act(async () => registration.save());
+
+    expect(updateEpisode.mock.calls[0]?.[1]).toMatchObject({
+      story_full_draft: '# 以前から使っているMarkdown本文',
+    });
+    expect(updateEpisode.mock.calls[0]?.[1]).not.toHaveProperty('production_notes_enabled');
+    expect(root!.root.findAllByProps({ accessibilityLabel: '演出指示を有効にする' })).toHaveLength(0);
+  });
+
+  it('演出指示の有効化を保存した後は本文を変えない限り再保存を要求しない', async () => {
+    productionNotesEnabled = true;
+    episode = { ...episode, story_full_draft: 'A。B。\n＃ 「A」と「B」は同じコマ。' };
+    updateEpisode.mockImplementation(async (_id, bodyPayload) => {
+      const body = bodyPayload as Record<string, unknown>;
+      episode = {
+        ...episode,
+        story_full_draft: body.story_full_draft as string,
+        production_notes_enabled: body.production_notes_enabled as boolean,
+        production_notes: body.production_notes as string[],
+        version: 2,
+        updated_at: 'saved-revision',
+      };
+      return episode;
+    });
+    await render();
+    await act(async () => root!.root.findByProps({ accessibilityLabel: '演出指示を有効にする' }).props.onPress());
+    expect(registration.dirty).toBe(true);
+    await act(async () => registration.save());
+    await render();
+    expect(updateEpisode).toHaveBeenCalledTimes(1);
+    expect(registration.dirty).toBe(false);
+    expect(body().props.value).toBe('A。B。\n# 「A」と「B」は同じコマ。');
+  });
+
+  it('演出指示を無効化してもsidecarを消さず旧本文へ#行を混ぜない', async () => {
+    productionNotesEnabled = true;
+    const savedNote = '「A」と「B」は別のコマにする。';
+    episode = {
+      ...episode,
+      story_full_draft: '# 通常のMarkdown見出し\nA。B。',
+      production_notes_enabled: true,
+      production_notes: [savedNote],
+    };
+    updateEpisode.mockImplementation(async (_id, bodyPayload) => ({
+      ...episode,
+      ...(bodyPayload as Partial<EpisodeRecord>),
+    }));
+    await render();
+
+    expect(body().props.value).toContain(`# ${savedNote}`);
+    await act(async () => root!.root.findByProps({ accessibilityLabel: '演出指示を有効にする' }).props.onPress());
+    await act(async () => registration.save());
+
+    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({
+      story_full_draft: '# 通常のMarkdown見出し\nA。B。',
+      production_notes_enabled: false,
+      production_notes: [savedNote],
+    }), null, true);
+  });
+
+  it('本人が選んだ演出提案だけを本文へ追加してopt-in保存する', async () => {
+    productionNotesEnabled = true;
+    const authoredNote = '「Saved story」と「次の場面」は別のコマにする。';
+    episode = { ...episode, story_full_draft: `Saved story\n# ${authoredNote}` };
+    await render();
+    const panel = () => root!.root.findByType('episode-improvement');
+    await act(async () => panel().props.onImprove());
+    await act(async () => confirmAction.mock.calls[0]?.[0].onConfirm());
+    expect(body().props.value).toBe(`Saved story\n# ${authoredNote}`);
+    expect(panel().props.productionNotes).toEqual(['「扉を押す」と「のぞく」は同じコマにする。']);
+
+    await act(async () => panel().props.onToggleProductionNote('「扉を押す」と「のぞく」は同じコマにする。'));
+    await act(async () => panel().props.onApply());
+    expect(body().props.value).toBe(`改善後の本文\n# ${authoredNote}\n# 「扉を押す」と「のぞく」は同じコマにする。`);
+    await act(async () => registration.save());
+    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({
+      production_notes_enabled: true,
+      production_notes: [authoredNote, '「扉を押す」と「のぞく」は同じコマにする。'],
+    }), null, true);
   });
 
   it('既存25ページの話を26ページへ増やす場合は保存しない', async () => {

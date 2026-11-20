@@ -17,6 +17,11 @@ const messages = {
     storyInputHelp: 'この話の出来事を順番に書きます。人物の行動や会話も含められます（最大8,000文字）。',
     titleHelp: 'この話を一覧で見分ける名前です（最大200文字）。',
     pagesExample: '例：4', pagesHelp: '今回この話から作成するページの枚数です。例の4は4ページを表します。',
+    estimatePages: '話の長さから推定', estimatePagesLoading: '推定中…',
+    pageEstimateOverLimit: '推定は{pages}ページで、この話の上限{limit}ページを超えています。話を分割してください。現在のページ数は変更していません。',
+    pageEstimateSummary: '{panels}コマ→{pages}ページ',
+    pageEstimateManualSummary: '{panels}コマ→{pages}ページ（手動の区切りを優先）',
+    productionSyntaxHelp: '演出指示ON: ＃…＃。--- と === は単独行にし、その間の本文だけを各1コマ／1ページに固定します。区切りなしは自動配分でき、混在も可能です。',
     orderExample: '例：1', orderHelp: 'この話の中でのシーンの位置です。1は先頭、2はその次を表します。',
     locationExample: '例：夕方の駅のホーム', locationHelp: '場面の場所や背景を指定します（最大200文字）。',
     timeExample: '例：夏の夕方', timeHelp: '時間帯や季節を指定します（最大200文字）。',
@@ -39,6 +44,11 @@ const messages = {
     storyInputHelp: 'Describe this episode’s events in order, including actions and dialogue (up to 8,000 characters).',
     titleHelp: 'A name that identifies this episode in the list (up to 200 characters).',
     pagesExample: 'Example: 4', pagesHelp: 'The number of pages to create for this episode. The example 4 means four pages.',
+    estimatePages: 'Estimate from story length', estimatePagesLoading: 'Estimating…',
+    pageEstimateOverLimit: 'The estimate is {pages} pages, above this episode\'s {limit}-page limit. Split the story; the current page count was not changed.',
+    pageEstimateSummary: '{panels} panels → {pages} pages',
+    pageEstimateManualSummary: '{panels} panels → {pages} pages (manual delimiters take priority)',
+    productionSyntaxHelp: 'With production notes on: #…#. Put --- and === on their own lines; text between them is fixed to one panel or one page. Unmarked text is allocated automatically, and both may be mixed.',
     orderExample: 'Example: 1', orderHelp: 'This scene’s position within the episode. 1 is first and 2 follows it.',
     locationExample: 'Example: A station platform at dusk', locationHelp: 'Set the location or background (up to 200 characters).',
     timeExample: 'Example: A summer evening', timeHelp: 'Set the time of day or season (up to 200 characters).',
@@ -47,3 +57,13 @@ const messages = {
   }
 } as const;
 export function editorMessage(language: UiLanguage, key: keyof typeof messages.ja): string { return messages[language][key]; }
+
+export function formatEditorMessage(
+  language: UiLanguage,
+  key: keyof typeof messages.ja,
+  values: Record<string, string | number>,
+): string {
+  return editorMessage(language, key).replace(/\{(\w+)\}/gu, (placeholder, name: string) =>
+    values[name] === undefined ? placeholder : String(values[name]),
+  );
+}

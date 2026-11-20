@@ -10,7 +10,7 @@ import type { DatabaseClient, TransactionRunner } from '../src/lib/db.js';
 import type { Env } from '../src/lib/env.js';
 import { checkDeploymentDataInvariants } from './checkDeploymentDataInvariants.js';
 
-import { GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS, GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, WORK_DELETION_RUNTIME_MIGRATIONS, attestRuntimeSchema } from '../src/lib/runtimeSchemaAttestation.js';
+import { EPISODE_PRODUCTION_NOTES_RUNTIME_MIGRATIONS, GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS, GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, WORK_DELETION_RUNTIME_MIGRATIONS, attestRuntimeSchema } from '../src/lib/runtimeSchemaAttestation.js';
 
 
 import type { RepositorySchemaProfile } from '../src/repositories/RepositorySchemaProfile.js';
@@ -94,6 +94,24 @@ export async function checkReleaseCompatibility(
       mobileClientIds: input.mobileClientIds,
       runtime: input.runtime,
     });
+    let activePreCutoverImageJobs = 0;
+    if (input.runtime.openAiImageSunburstEnabled) {
+      // Strict workers may start only after every paid/accepted image job is
+      // drained. Quotes without a generation_jobs row are intentionally not
+      // counted; model-less legacy Web jobs are intentionally counted.
+      const activeJobs = await client.query<{ count: unknown }>(
+        `SELECT COUNT(*)::int AS count
+         FROM generation_jobs
+         WHERE job_type IN ('page_generate','entity_generate')
+           AND status IN ('queued','processing')
+           AND (
+             params->>'image_model' = 'gpt-image-2.5-sunburst'
+             AND params->>'provider_model_id' = 'gpt-image-2.5-sunburst-2026-09-08'
+             AND params->>'provider' = 'openai'
+           ) IS NOT TRUE`,
+      );
+      activePreCutoverImageJobs = readNonNegativeSafeInteger(activeJobs.rows);
+    }
     const violations: ReleaseCompatibilityViolation[] = [
       ...invariantReport.violations.map((violation) => ({
         category: 'database' as const,
@@ -101,8 +119,14 @@ export async function checkReleaseCompatibility(
         count: violation.sampleIds.length,
       })),
       ...policyReport.violations.map((violation) => ({ ...violation, count: 1 })),
+      ...(activePreCutoverImageJobs === 0 ? [] : [{
+        category: 'generation' as const,
+        code: 'ACTIVE_PRE_CUTOVER_IMAGE_JOBS',
+        count: activePreCutoverImageJobs,
+      }]),
     ];
-    return buildReport(input.profile, 2 + invariantReport.checkedCount + policyReport.checkedCount, journalPresent, violations);
+    return buildReport(input.profile, 2 + invariantReport.checkedCount + policyReport.checkedCount
+      + (input.runtime.openAiImageSunburstEnabled ? 1 : 0), journalPresent, violations);
   });
 }
 
@@ -142,6 +166,7 @@ export function runtimeFromEnv(environment: Env): ReleaseCompatibilityRuntime {
     entityReferenceDirectUploadEnabled: environment.ENTITY_REFERENCE_DIRECT_UPLOAD_ENABLED,
     openAiApiKeyConfigured: environment.OPENAI_API_KEY !== undefined,
     openAiImageModel: environment.OPENAI_IMAGE_MODEL,
+    openAiImageSunburstEnabled: environment.OPENAI_IMAGE_SUNBURST_ENABLED,
     generationQueueConfigured: environment.SQS_QUEUE_URL_GENERATION !== undefined,
     imageStorageConfigured: environment.S3_BUCKET_IMAGES !== undefined,
     awsRegionConfigured: environment.AWS_REGION !== undefined,
@@ -160,7 +185,7 @@ export function runtimeFromEnv(environment: Env): ReleaseCompatibilityRuntime {
 
 async function expectedMigrationFilenames(migrationsDir: string): Promise<string[]> {
   const filenames = (await readdir(migrationsDir)).filter((filename) => /^\d{3}_.+\.sql$/u.test(filename)).sort();
-  const supported = [WORK_DELETION_RUNTIME_MIGRATIONS, GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS];
+  const supported = [WORK_DELETION_RUNTIME_MIGRATIONS, GOOGLE_IDENTITY_RECOVERY_RUNTIME_MIGRATIONS, GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS, EPISODE_PRODUCTION_NOTES_RUNTIME_MIGRATIONS];
   if (!supported.some(expected => filenames.length === expected.length && filenames.every((filename, index) => filename === expected[index]))) {
     throw new Error('Current release migration files are unavailable');
   }

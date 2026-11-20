@@ -1,9 +1,15 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
+import { z } from 'zod';
+import { characterSuggestionsSchema } from '../../packages/api-contract/src/characterSuggestions.js';
+import { storyPageEstimateSchema } from '../../packages/api-contract/src/storyPageEstimate.js';
+import { characterAutofillResultSchema, characterAutofillWithReviewResultSchema } from '../../packages/api-contract/src/characterAutofill.js';
 import {
   chapterSchema,
   chaptersResponseSchema,
   episodeSchema,
+  episodeV2Schema,
   episodesResponseSchema,
+  episodesV2ResponseSchema,
   pageSkeletonResponseSchema,
   storyCollaborationEventSchema,
   storyEpisodeImprovementSchema,
@@ -19,6 +25,7 @@ import {
 import type { Chapter, Episode, Work } from '../domain/types/story.js';
 import {
   collaborateStoryBodySchema,
+  estimateEpisodePagesBodySchema,
   generatePageSkeletonBodySchema,
   generatePageSkeletonParamSchema,
   improveEpisodeDraftBodySchema,
@@ -32,11 +39,13 @@ import {
   storyUuidParamSchema,
   updateChapterBodySchema,
   updateEpisodeBodySchema,
+  updateEpisodeV2BodySchema,
   updateWorkBodySchema,
 } from '../lib/validators/story.schema.js';
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { StoryServicePort } from '../services/story/StoryService.js';
 import type { StoryCollaborationServicePort } from '../services/story/StoryCollaborationService.js';
+import type { CharacterAutofillServicePort } from '../services/story/CharacterAutofillService.js';
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
 import type { EpisodePageSkeletonServicePort } from '../services/story/EpisodePageSkeletonService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
@@ -52,6 +61,7 @@ import { assertMobileResponseContract } from './mobileResponseContract.js';
 import { readJsonBody, readOptionalJsonBody, REQUEST_BODY_LIMITS } from './requestBody.js';
 
 export interface StoryRouteDependencies {
+  productionNotesAvailable?: boolean;
   authMiddleware: MiddlewareHandler<AppEnv>;
   rateLimitMiddleware: MiddlewareHandler<AppEnv>;
   pageSkeletonService: PageSkeletonServicePort;
@@ -60,16 +70,83 @@ export interface StoryRouteDependencies {
   episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
   organizationService?: OrganizationServicePort;
   storyCollaborationService: StoryCollaborationServicePort;
+  characterAutofillService?: CharacterAutofillServicePort;
   storyService: StoryServicePort;
 }
 
 const MAX_WORK_LIST_PAGE_LIMIT = 100;
+const episodeCharacterSuggestionsBodySchema = z.object({
+  version: z.number().int().min(0),
+  production_notes_enabled: z.boolean().default(false),
+}).strict();
+const episodeCharacterAutofillBodySchema = z.object({
+  version: z.number().int().min(0),
+}).strict();
 
 export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
   app.use('*', dependencies.authMiddleware);
   app.use('*', dependencies.rateLimitMiddleware);
+
+  app.get('/story/character-suggestion-capabilities', (c) =>
+    c.json({ enabled: dependencies.storyCollaborationService.suggestEpisodeCharacters !== undefined }));
+  app.get('/story/character-autofill-capabilities', (c) =>
+    c.json({ enabled: dependencies.characterAutofillService !== undefined }));
+  app.get('/story/production-notes-capabilities', (c) => c.json({ enabled: dependencies.productionNotesAvailable !== false }));
+
+  app.post('/episodes/:id/character-autofill', async (c) => {
+    const episodeId = storyUuidParamSchema.safeParse(c.req.param('id'));
+    const body = episodeCharacterAutofillBodySchema.safeParse(await readStoryJsonBody(c));
+    if (!episodeId.success) throw new ValidationError(formatZodValidationError(episodeId.error));
+    if (!body.success) throw new ValidationError(formatZodValidationError(body.error));
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const service = dependencies.characterAutofillService;
+    if (service === undefined) throw new ConfigurationError('Character autofill is unavailable');
+    const reviewParam = c.req.queries('appearance_review') ?? [];
+    if (reviewParam.length && (reviewParam.length !== 1 || reviewParam[0] !== '1')) throw new ValidationError('Unsupported appearance review version');
+    const includeReview = reviewParam[0] === '1';
+    const result = await service.autofillEpisodeCharacters(
+      c.get('user').id,
+      episodeId.data,
+      body.data.version,
+      organizationId,
+      includeReview,
+    );
+    await recordOrganizationAudit(
+      dependencies,
+      organizationId,
+      c.get('user').id,
+      'episode.character_autofill_completed',
+      'episode',
+      episodeId.data,
+      {
+        characters: result.characters.length,
+        created: result.characters.filter((character) => character.created).length,
+        states_added: result.characters.reduce((sum, character) => sum + character.states_added, 0),
+        skipped: result.skipped_names.length,
+      },
+    );
+    if (includeReview) return c.json(assertMobileResponseContract(characterAutofillWithReviewResultSchema, result));
+    const { version, characters, skipped_names } = result;
+    return c.json(assertMobileResponseContract(characterAutofillResultSchema, { version, characters, skipped_names }));
+  });
+
+  app.post('/episodes/:episodeId/character-suggestions', async (c) => {
+    const episodeId = storyUuidParamSchema.safeParse(c.req.param('episodeId'));
+    const body = episodeCharacterSuggestionsBodySchema.safeParse(await readStoryJsonBody(c));
+    if (!episodeId.success) throw new ValidationError(formatZodValidationError(episodeId.error));
+    if (!body.success) throw new ValidationError(formatZodValidationError(body.error));
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const service = dependencies.storyCollaborationService;
+    if (service.suggestEpisodeCharacters === undefined) throw new ConfigurationError('Character suggestions are unavailable');
+    const result = await service.suggestEpisodeCharacters(
+      c.get('user').id, episodeId.data, body.data.version, body.data.production_notes_enabled, organizationId,
+    );
+    return c.json(assertMobileResponseContract(characterSuggestionsSchema, result));
+  });
 
   app.post('/story/collaborate', async (c) => {
     const user = c.get('user');
@@ -99,6 +176,34 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     return createSseResponse(stream);
   });
 
+  app.post('/story/estimate-pages', async (c) => {
+    const user = c.get('user');
+    const organizationId = parseOptionalOrganizationId(c);
+    const body = estimateEpisodePagesBodySchema.safeParse(await readStoryJsonBody(c));
+    if (!body.success) throw new ValidationError(formatZodValidationError(body.error));
+
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const estimator = dependencies.storyCollaborationService.estimateEpisodePages;
+    if (estimator === undefined) throw new ConfigurationError('Episode page estimation is unavailable');
+
+    const result = await estimator.call(dependencies.storyCollaborationService, user.id, {
+      episodeId: body.data.episode_id,
+      productionNotesEnabled: body.data.production_notes_enabled,
+      language: body.data.language,
+      baseDraft: {
+        title: body.data.base_draft.title,
+        purpose: body.data.base_draft.purpose,
+        storyInputMode: body.data.base_draft.story_input_mode,
+        storyFullDraft: body.data.base_draft.story_full_draft,
+        introduction: body.data.base_draft.introduction,
+        middle: body.data.base_draft.middle,
+        climax: body.data.base_draft.climax,
+        endingHook: body.data.base_draft.ending_hook,
+      },
+    }, organizationId);
+    return c.json(assertMobileResponseContract(storyPageEstimateSchema, result));
+  });
+
   app.post('/story/improve-episode-draft', async (c) => {
     const user = c.get('user');
     const organizationId = parseOptionalOrganizationId(c);
@@ -111,6 +216,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
 
     const result = await dependencies.storyCollaborationService.improveEpisodeDraft(user.id, {
+      ...(body.data.include_production_notes === true && dependencies.productionNotesAvailable !== false
+        ? { includeProductionNotes: true } : {}),
       episodeId: body.data.episode_id,
       instruction: body.data.instruction,
       language: body.data.language,
@@ -141,6 +248,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       compiler_model: result.compilerModel,
       compiler_prompt_version: result.compilerPromptVersion,
       compiler_error: result.compilerError,
+      ...(body.data.include_production_notes === true ? { production_notes: result.productionNotes ?? [] } : {}),
     };
     return c.json(assertMobileResponseContract(storyEpisodeImprovementSchema, payload));
   });
@@ -379,10 +487,14 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const chapterId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'view_work');
+    const contractVersion = parseEpisodeContractVersion(c);
     const episodes = await dependencies.storyService.listEpisodes(user.id, chapterId, organizationId);
 
-    const payload = { episodes: episodes.map(toEpisodeResponse) };
-    return c.json(assertMobileResponseContract(episodesResponseSchema, payload));
+    const payload = { episodes: episodes.map((episode) => toEpisodeResponse(episode, contractVersion)) };
+    return c.json(assertMobileResponseContract(
+      contractVersion === 'v2' ? episodesV2ResponseSchema : episodesResponseSchema,
+      payload,
+    ));
   });
 
   app.put('/episodes/:id', async (c) => {
@@ -390,13 +502,30 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     const episodeId = parseUuidParam(c, 'id');
     const organizationId = parseOptionalOrganizationId(c);
     await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
-    const body = updateEpisodeBodySchema.safeParse(await readStoryJsonBody(c));
+    const contractVersion = parseEpisodeContractVersion(c);
+    const body = (contractVersion === 'v2' ? updateEpisodeV2BodySchema : updateEpisodeBodySchema)
+      .safeParse(await readStoryJsonBody(c));
 
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
+    const rawProductionNotesEnabled = contractVersion === 'v2' && 'production_notes_enabled' in body.data
+      ? body.data.production_notes_enabled : undefined;
+    const productionNotesEnabled = typeof rawProductionNotesEnabled === 'boolean'
+      ? rawProductionNotesEnabled : undefined;
+    const rawProductionNotes = contractVersion === 'v2' && 'production_notes' in body.data
+      ? body.data.production_notes : undefined;
+    const productionNotes = Array.isArray(rawProductionNotes)
+      ? rawProductionNotes as string[] : undefined;
+    if (contractVersion === 'v2'
+      && (productionNotesEnabled !== undefined || productionNotes !== undefined)
+      && dependencies.productionNotesAvailable === false) {
+      throw new ConfigurationError('Episode production notes are unavailable');
+    }
 
     const episode = await dependencies.storyService.updateEpisode(user.id, episodeId, {
+      ...(productionNotesEnabled === undefined ? {} : { productionNotesEnabled }),
+      ...(productionNotes === undefined ? {} : { productionNotes }),
       expectedUpdatedAt: body.data.expected_updated_at,
       order: body.data.order,
       title: body.data.title,
@@ -417,8 +546,8 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }, organizationId);
     await recordOrganizationAudit(dependencies, organizationId, user.id, 'episode.updated', 'episode', episodeId);
 
-    const payload = toEpisodeResponse(episode);
-    return c.json(assertMobileResponseContract(episodeSchema, payload));
+    const payload = toEpisodeResponse(episode, contractVersion);
+    return c.json(assertMobileResponseContract(contractVersion === 'v2' ? episodeV2Schema : episodeSchema, payload));
   });
 
   app.delete('/episodes/:id', async (c) => {
@@ -487,6 +616,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
+    if (body.data.production_notes_version === 'v1' && dependencies.productionNotesAvailable === false) {
+      throw new ConfigurationError('Episode production notes are unavailable');
+    }
 
     if (dependencies.episodePageSkeletonService !== undefined) {
       const queued = await dependencies.episodePageSkeletonService.enqueueEpisodePageSkeleton(
@@ -496,6 +628,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
           overwriteExisting: body.data.overwrite_existing,
           preserveGeneratedImages: body.data.preserve_generated_images,
           applyStoryPlan: false,
+          ...(body.data.production_notes_version === 'v1' ? { applyProductionNotes: true } : {}),
           language: body.data.language,
         },
         organizationId,
@@ -527,6 +660,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       overwriteExisting: body.data.overwrite_existing,
       preserveGeneratedImages: body.data.preserve_generated_images,
       language: body.data.language,
+      ...(body.data.production_notes_version === 'v1' ? { applyProductionNotes: true } : {}),
     }, organizationId);
 
     // Skeleton and explicit autofill are separate user actions, including old clients.
@@ -647,7 +781,7 @@ function toChapterResponse(chapter: Chapter): Record<string, unknown> {
   };
 }
 
-function toEpisodeResponse(episode: Episode): Record<string, unknown> {
+function toEpisodeResponse(episode: Episode, contractVersion: 'v1' | 'v2' = 'v1'): Record<string, unknown> {
   return {
     id: episode.id,
     chapter_id: episode.chapterId,
@@ -671,7 +805,18 @@ function toEpisodeResponse(episode: Episode): Record<string, unknown> {
     status: episode.status,
     created_at: episode.createdAt.toISOString(),
     updated_at: episode.updatedAt.toISOString(),
+    ...(contractVersion === 'v2' ? {
+      production_notes_enabled: episode.productionNotesEnabled === true,
+      production_notes: episode.productionNotes ?? [],
+    } : {}),
   };
+}
+
+function parseEpisodeContractVersion(c: Context<AppEnv>): 'v1' | 'v2' {
+  const versions = c.req.queries('version') ?? [];
+  if (versions.length === 0) return 'v1';
+  if (versions.length === 1 && versions[0] === '2') return 'v2';
+  throw new ValidationError('version must be omitted or exactly 2');
 }
 
 function createSseResponse(stream: AsyncIterable<string>): Response {

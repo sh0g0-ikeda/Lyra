@@ -20,9 +20,16 @@ export interface EpisodeStateTransition {
   sourceSceneId: string | null;
   sourceField: EpisodeStateTransitionSourceField;
   sourceQuote: string;
+  /** Required only for final-draft automatic extraction; legacy plans may omit it. */
+  panelEvidenceQuote?: string;
 }
 
 export type StateAssignmentPolicy = 'preserve_existing' | 'overwrite_existing';
+
+export interface EpisodeStateDeltaReference {
+  sourceQuote: string;
+  description: string;
+}
 
 export interface EpisodeUnresolvedStateTransition {
   entityId: string;
@@ -33,6 +40,10 @@ export interface EpisodeUnresolvedStateTransition {
   sourceSceneId: string | null;
   sourceField: EpisodeStateTransitionSourceField;
   sourceQuote: string;
+  /** Literal evidence from the completed onset panel in final-draft automatic mode. */
+  panelEvidenceQuote?: string;
+  /** Final-draft mode only: exact prior literal deltas replaced by this delta. */
+  replacesDeltas?: readonly EpisodeStateDeltaReference[];
   reason: 'missing_reference' | 'ambiguous_mapping';
 }
 

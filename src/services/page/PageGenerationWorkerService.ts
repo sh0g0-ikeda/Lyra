@@ -3,11 +3,13 @@ import { ConfigurationError } from '../../domain/errors/index.js';
 import {
   requireOpenAIImageInputCompatible,
   requireOpenAIPageJobCompatible,
+  resolveQuotedOpenAIImageModel,
 } from '../../domain/generation/ImageInputProviderPolicy.js';
 import type { ImageProvenance } from '../../domain/generation/ImageAccessPolicy.js';
 import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import sharp from 'sharp';
 import { assertRasterImageInput } from '../../domain/generation/RasterImageInput.js';
+import { GPT_IMAGE_25_SUNBURST_SNAPSHOT } from '../../domain/constants/openAIImageModel.js';
 import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS, PAGE_GENERATION_MONOCHROME_MAX_INPUT_PIXELS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
@@ -83,6 +85,7 @@ export interface PageGenerationPlannerPort {
 }
 
 export interface RenderPageImageInput extends PageGenerationPlanInput {
+  providerModelId?: string;
   sceneGuidance?: string | null;
   layoutControl?: PageGenerationLayoutControl | null;
   panelCount?: number;
@@ -180,7 +183,8 @@ export class PageGenerationWorkerService {
     }
 
     try {
-      requireOpenAIPageJobCompatible(job.params, this.configuredImageModel);
+      const providerModelId = resolveQuotedOpenAIImageModel(job.params, this.configuredImageModel);
+      requireOpenAIPageJobCompatible(job.params, providerModelId);
       if (hasGenerationQuote(job) && this.quotedInputs === undefined) {
         throw new ConfigurationError('Quoted page execution is not configured');
       }
@@ -290,6 +294,8 @@ export class PageGenerationWorkerService {
             requestKind: params.request_kind,
             generationMode: params.generation_mode,
             prompt: compiledPrompt.prompt,
+            ...(quoted !== null && providerModelId !== undefined && providerModelId !== this.configuredImageModel
+              ? { providerModelId } : {}),
             quality: params.quality,
             renderStyle: params.render_style,
             internalPlan,
@@ -301,6 +307,11 @@ export class PageGenerationWorkerService {
         ),
       );
       assertRenderedPageImage(renderResult);
+      if (providerModelId !== undefined
+        && (providerModelId !== this.configuredImageModel || providerModelId === GPT_IMAGE_25_SUNBURST_SNAPSHOT)
+        && renderResult.providerModelId !== providerModelId) {
+        throw new ConfigurationError('Page render did not return the quoted model');
+      }
 
       if (await this.finalizeCancellationIfRequested(job.id)) {
         return { status: 'processed', jobStatus: 'cancelled' };

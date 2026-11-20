@@ -1,10 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { imageMobileAccess, readImageProvenance, readGenerationImageProvenance, toImageProvenanceRecord, assertImageDeliveryAllowed, requireAuthorizedWebImageClient } from '../../../../src/domain/generation/ImageAccessPolicy.js';
+import { imageMobileAccess, readImageProvenance, readGenerationImageProvenance, toImageProvenanceRecord, publicImageProvenance, assertImageDeliveryAllowed, requireAuthorizedWebImageClient } from '../../../../src/domain/generation/ImageAccessPolicy.js';
 
 describe('画像由来と配信境界', () => {
-  it.each([{}, { imageModel: null }, {imageModel:'gpt-image-1',provider:'openai',providerModelId:'gpt-image-1'}, { imageModel: 'gpt-image-2' }, { imageModel: 'gpt-image-2', provider: 'openai', providerModelId: 'gpt-image-2' }])('旧metadataまたは既知GPTはMobile互換 (%j)', (value) => {
+  it('2.5の来歴を保存しながら旧クライアントには配信可能な従来形を返す', () => {
+    const image = {
+      imageModel: 'gpt-image-2.5-sunburst',
+      providerModelId: 'gpt-image-2.5-sunburst-2026-09-08',
+      provider: 'openai',
+    };
+    expect(toImageProvenanceRecord(image)).toMatchObject({ image_model: image.imageModel, provider_model_id: image.providerModelId });
+    expect(publicImageProvenance(image)).toEqual({ mobile_access: 'available' });
+    expect(publicImageProvenance({ ...image, provider: 'unknown' }).mobile_access).toBe('unavailable');
+  });
+  it.each([{}, { imageModel: null }, {imageModel:'gpt-image-1',provider:'openai',providerModelId:'gpt-image-1'}, { imageModel: 'gpt-image-2' }, { imageModel: 'gpt-image-2', provider: 'openai', providerModelId: 'gpt-image-2' }, { imageModel: 'gpt-image-2.5-sunburst', provider: 'openai', providerModelId: 'gpt-image-2.5-sunburst-2026-09-08' }])('旧metadataまたは既知GPTはMobile互換 (%j)', (value) => {
     expect(imageMobileAccess(value)).toBe('available');
     expect(() => assertImageDeliveryAllowed(value)).not.toThrow();
+  });
+  it.each([
+    { imageModel: 'gpt-image-2.5-sunburst', provider: 'openai', providerModelId: 'gpt-image-2.5-sunburst' },
+    { imageModel: 'gpt-image-2.5-sunburst', provider: 'openai', providerModelId: 'gpt-image-2.5-sunburst-2026-09-09' },
+    { imageModel: 'gpt-image-2.5-sunburst', provider: 'other', providerModelId: 'gpt-image-2.5-sunburst-2026-09-08' },
+  ])('2.5の表示名と実行IDの既知組を崩した画像は配信しない (%j)', (provenance) => {
+    expect(imageMobileAccess(provenance)).toBe('unavailable');
   });
   it('Hy4画像はWebに限定し未対応モデルをGPTへ代替しない', () => {
     expect(imageMobileAccess({ imageModel: 'hy4-preview' })).toBe('web_only');

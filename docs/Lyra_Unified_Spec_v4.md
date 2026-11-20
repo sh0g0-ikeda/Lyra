@@ -389,6 +389,19 @@ and array bounds retain their existing validation and finite retry limits.
 State ledgers and detail provider schemas represent the default state as JSON null,
 never a label in a UUID field. The provider state-ID schema accepts UUID or null;
 unknown UUIDs still fail the existing authorized-reference validation.
+Episode detail generation and audit repairs receive the same server-derived
+assignable entity/state catalog: authorized scene-state pairs plus library states
+with a current ready reference image. Preserve the existing scene-only legacy
+contract; do not infer reference readiness from a missing library entry. Explicit
+empty catalogs restrict provider state IDs to JSON null; nonempty catalogs restrict
+them to listed IDs or null. After entity-alias decoding, validate the entity/state
+pair inside the existing bounded structured-response attempts, with bounded
+correction feedback and cancellation checkpoints. Require an explicit state_id
+when a catalog is supplied; never silently replace an omitted, unknown, or foreign
+state ID with null. Omitted catalogs retain the old internal
+compiler contract. The final context and locked-save checks retain the same pair
+ownership rules. This does not change automatic visual fallbacks, explicit V1
+blocking, OFF behavior, or existing manual-state preservation.
 
 Story-autofill workers prioritize an editable, persistable result over exact
 speaker attribution. For this worker path only, detail and audit compilers use
@@ -637,12 +650,35 @@ termination rules apply equally with or without a validated state ledger. State
 references are still independently checked before saving and again under the atomic
 planning lock; cancellation, authorization and concurrency errors remain hard.
 
-Automatic state planning with visual fallback requires a bounded, nonblank source
-quote and a source field or scene ID that identifies real non-null saved source.
-Literal containment is provenance metadata in this mode, so a paraphrased or
-translated quote does not reject an otherwise valid plan. Entity, panel and state
-ownership, READY references, and transition ordering remain hard validation. Legacy
-strict state validation continues to require exact source-quote containment.
+On schemas with named entity-state variants, automatic state planning runs once
+after detail generation and the existing single audit/repair have finished. Its
+inputs are the original saved source and the final, unannotated panel draft; the
+input fingerprint still covers the original locked context. Require a bounded,
+nonblank literal source quote, a literal visible-change description within that
+quote, and literal evidence from the final onset panel. Requests or predictions
+of a change do not establish its onset. Persistent appearance changes are states;
+ordinary actions, transient emotion and repeated base profiles are not new states.
+Cast extraction, its coverage pass and episode-state planning share a narrative
+persistence policy: clear injuries, missing body parts, sustained awakened forms,
+putting on/removing/changing clothes, and aging are typical state changes. One
+source mention can establish a lasting condition; repeated descriptions, explicit
+duration and a minimum number of already drawn panels are not required, including
+at the end of an episode. These examples do not limit other clear lasting changes.
+One-panel lighting, shadows, reflections, flashes, sparks and passing wind effects
+remain panel composition/effect settings. They are neither base appearance nor
+continuing states, even if the source omits an explicit return-to-normal sentence.
+Glowing eyes or hair can instead be a state when the story supports them as part
+of a sustained awakening. Decide from context, not a glow keyword alone, and keep
+source grounding without inventing unspecified attributes of an awakening.
+Group linked traits of one condition (an awakening with changed eyes, or a
+white-haired elderly form) rather than creating a generic state plus separate
+attribute states. Keep independently continuing conditions such as injury and
+outfit separate so that either can end without clearing the other.
+Validation feedback uses the existing bounded structured attempts and cancellation
+checkpoints. Do not move panel events after establishing their final boundaries.
+Older automatic callers on pre-variant physical schemas retain their visual-only
+contract, including auxiliary quote matching. Explicit V1 keeps its strict quote
+and READY-reference contract. Entity, panel and state ownership remain mandatory.
 Generated assignments may use a registered READY state owned by the assigned entity
 even when it is not preassigned to a scene; unknown, foreign-entity and unready states
 remain invalid. The plan uses each existing page's frame count as its story capacity
@@ -674,10 +710,27 @@ disables it. This boolean cannot be combined with the existing V1 version/policy
 options. New default or boolean-enabled requests update state assignments across
 the episode when the user explicitly runs story autofill. Registered, ready states
 continue until another registered state or an explicit return to the base state.
-Source-backed changes without a usable registered state use the current authorized
-character reference and editable visual instructions; they neither create state
-records/images nor require the user to create a missing state. A cosmetic overlay
-does not clear a continuing registered state. Exact source grounding, known entity
+On named-variant schemas, source-backed changes without a usable registered state
+are saved or reused as draft entity-state records, with their literal source quote
+in extra_note, inside the same transaction as pages and job completion. Existing
+base characters and state records are not overwritten. Reuse a draft when its
+normalized appearance delta matches exactly and its source evidence matches or
+substantively contains the same quote, even if its label differs. A broad shared
+quote alone must not merge independent changes. These drafts have
+no reference image, cause no image generation or charge, and never become
+panel.state_id assignments until a usable reference is available. They use the
+current authorized character reference and editable visual instructions instead.
+Record their state IDs, final onset panels and source evidence in internal job
+saved_state_changes metadata; preserve the older strict job response projection.
+This metadata is diagnostic, not the sole persistence of the state or its visual
+application. Existing user-authored state directives retain precedence and reuse
+their already registered states without creating or rewriting them.
+Strip only machine-generated appearance annotations from automatic compiler inputs
+and apply the new final annotations after validation. Preserve unrelated authored
+text. Keep continuing independent appearance deltas, end only the explicitly
+replaced delta, and clear all deltas only at a supported full return to base or
+registered-state boundary. A cosmetic overlay does not clear a continuing
+registered state. Exact source grounding, known entity
 and panel IDs, state ownership, reference readiness and the atomic input fingerprint
 remain mandatory. Invalid or stale references are never written as assignments.
 Older explicit V1 policies and an explicit OFF retain their request contracts;
@@ -1268,3 +1321,183 @@ is either wholly absent (existing fail-closed adapter) or complete test mode onl
 Only staging may omit the OpenAI key when all five generation gates are explicitly
 false in the input environment and generation quotes remain disabled. Provider
 operations then fail closed; production still requires a real provider key.
+
+### Episode character suggestions and production notes
+
+The authenticated character suggestion endpoint reads a saved episode version
+in the actor's work scope. It returns editable suggestions with literal source
+quotations, retaining multiple details such as a nonhuman character's
+silhouette, colors and part counts. Match names and registered aliases across
+the work, including cast from episodes other than the selected one. A match never causes an update to a
+base character. Released clients can still save these suggestions individually.
+
+The character editor on Web and Mobile also offers one action to autofill and
+save the named cast of a saved episode. Capability discovery is scoped to
+`GET /api/story/character-autofill-capabilities`. The action submits the saved
+episode version to `POST /api/episodes/:id/character-autofill`. Inside one
+transaction the server checks scope and version, creates the new cast together,
+and appends distinct source-backed appearance changes to matching characters.
+Ambiguous matches are reported for review. A repeated action preserves edits
+to existing base characters and states. Explicit traits use the editor's stored
+option IDs where they match. A compound description may supply more than one
+selection. Store only the remaining source-backed details in free description.
+Unmentioned fields stay empty. The returned character IDs open their ordinary
+editors, including after reloading the work. The user can review each character
+and separately request an image preview under the existing credit contract.
+
+Saved episode cast autofill uses `gpt-6-luna` with low reasoning for extraction
+and a second reconciliation against the full original manuscript. Keep literal
+evidence separate from editor option IDs and validate both before persistence.
+Resolve omitted subjects only when the surrounding text identifies one character.
+Merge grounded appearance details from repeated mentions of the same character.
+Report ambiguous ownership or conflicting descriptions for review.
+The model's proposed option ID is advisory. Validate the response structure,
+then derive stored choices from grounded literal evidence on the server.
+An inconsistent proposed ID must not abort saving the other grounded traits.
+Preserve grounded descriptions that have no matching choice as free text.
+Within a bounded, continuous appearance description in one paragraph, omitted
+subjects may inherit the nearest unambiguous named character. Stop at another
+subject, ordinary actions, uncertainty or an appearance change. Never repair a
+fabricated quotation by inventing source text. Reconciliation compares the
+manuscript with grounded first-pass evidence; rejected details are not complete.
+If later passes cannot resolve a source-backed trait, report it for review.
+Map synonymous garment names such as 甲冑 and 鎧 to the armor choice, and retain
+unsupported garment colors/materials with their garment in literal free text.
+An explicit named profile heading and its immediately nested 容姿 property also
+provide source ownership for appearance details. Keep the property's original
+boundaries and literal evidence. A supported assertive classification note such
+as 人型ではない存在 belongs to the heading, so it does not negate positive body
+descriptions. Do not relax negation, uncertainty or state-change checks on the
+appearance claim itself, or accept quotations crossing another profile/property.
+An explicit different subject inside that property stops inherited ownership;
+body-part descriptions alone do not switch the subject. State-scoped headings
+must not turn a changed appearance into a base trait. Source-grounded changes
+remain eligible for the separate state-change list.
+
+Clients opt into appearance review with `?appearance_review=1`. The response
+adds source-backed empty-field suggestions for existing human characters and
+unresolved source quotations. Each accepted suggestion uses
+`POST /api/entities/:id/appearance-review` with a known field, option value and
+`expected_updated_at`. Recheck scope, the empty field and the entity revision
+when saving. Preserve populated fields, historical custom values and siblings.
+Replaying an already accepted value succeeds without another edit. Requests
+without the query parameter retain the original autofill response contract.
+Mobile uses its existing 55-second StoryAI write timeout for this action.
+The staging CloudFront origin waits up to 60 seconds for the API response.
+
+The normal character selection screen also shows a portrait grid beside the
+name selector. A saved reference supplies the portrait. Characters without a
+photo keep a selectable blank frame with the name underneath. Selecting a card
+opens its editor. Its separate magnifier enlarges the photo without switching
+characters. The list is scoped to the current work and organization.
+
+Migration 053 adds the episode opt-in flag (default false). Migration 054
+stores the directions separately from the manuscript (default empty list).
+Deploy a compatible API and Worker first. For the expanded PostgreSQL 18
+lineage apply each additive migration with its receipt, in order, after 052.
+Refresh the runtime schema proof before enabling writes. Keep a compatible
+image for rollback. The original episode API continues to read and edit
+prose, including pre-existing Markdown headings. Its saves preserve the
+directions. Version 2 of the episode list and update APIs also returns the
+saved directions and opt-in flag. Turning directions off keeps them available
+for later editing. Story improvement can return a separate editable list
+when the client requests it with `include_production_notes`.
+
+An opted-in episode accepts lines beginning with `#` or `＃` followed by a
+supported direction with quoted source fragments. The space after the marker
+is optional. Ordinary Markdown headings remain part of the manuscript.
+Supported commands group two events in a panel, separate two events, or set a
+registered character state or base-state return at a quoted event. The episode
+planner separates these directions from prose and validates their placement
+before applying the plan. Registered state references and the existing visual
+fallback rules apply. A client requests enforcement on the whole-episode
+autofill job with `production_notes_version: "v1"`. Missing, ambiguous or
+conflicting anchors in this mode require review before applying the plan.
+Released clients can continue using full-episode and single-page autofill
+with the saved prose, including after they edit a quoted passage. Valid
+AI-selected layout templates survive skeleton repair and
+subsequent autofill when the template, frame and panel counts agree.
+
+Opted-in manuscripts also accept paired `＃direction＃` at the relevant scene,
+standalone `===` / `＝＝＝` page boundaries, and standalone `---` / `ーーー`
+panel boundaries. These tokens stay at their original positions in the saved
+manuscript; existing quoted notes remain in the sidecar list. Ordinary Markdown
+headings (including closing `#`) and escaped delimiter lines remain prose.
+Unclosed inline full-width instructions require correction before AI processing;
+the released full-width `＃ heading` form remains ordinary prose.
+
+Boundaries can be sparse. Only text bounded on both sides by authored markers
+is fixed: either a panel marker and another panel/page marker fixes one panel,
+or two page markers enclose one page. Unmarked leading/trailing prose remains
+automatically divisible. Thus `=== A --- B ===` is one page with two panels,
+while `prefix --- A --- suffix` fixes A alone. A fixed panel may contain several
+actions or dialogue lines and must not be split. A fixed page has at most eight
+panels; a fixed panel's source has at most 2,000 characters. Impossible bounds
+fail explicitly without dropping source or overflowing to another page.
+
+New clients opt skeleton jobs into this interpretation with
+`production_notes_version: "v1"`; both that marker and the saved episode flag
+are required. Old jobs and clients retain their previous skeleton path.
+Generated layout metadata records the raw manuscript and each source block's
+assigned panel slots. Detail, audit and final validation use the same ownership;
+editing the source or losing the mapping requires rebuilding the structure.
+An audit patch that violates output ownership or direction placement is rejected
+as a whole under the existing optional-repair policy. The unchanged original
+draft may be saved only after every context, manuscript and deterministic gate
+passes again. Never insert source anchors merely to make a repaired draft pass;
+invalid originals and stale source mappings remain hard failures.
+Pass deterministic manuscript violations to the existing single audit as source
+data so it can repair an invalid detail draft without adding another audit pass.
+Directions are editable composition notes, never dialogue, character base
+attributes, or evidence for automatically created states. Wrapped existing
+quoted state-timing commands use the established registered-state rules.
+Character and automatic-state evidence excludes command tokens and cannot join
+source fragments across an instruction. The raw manuscript remains the
+concurrency/fingerprint authority.
+For opted-in production-note processing, strict state extraction keeps a separate
+snapshot of the original active source fields. Full-draft input cites only the
+saved full draft, not sections re-derived after command removal; structured input
+retains each saved section's identity. The compiler sees separate literal evidence
+spans and uses the same source authority as final and transaction-locked validation.
+Do not repair a field mismatch by remapping a quote or weakening evidence checks.
+
+“話の長さから推定” uses GPT-6 Luna / low with validated block IDs and panel counts
+to estimate the current unsaved narrative. Without page constraints, the server
+computes `ceil(total panels / 4)`. Manual one-panel blocks count as one; a fixed
+page counts as one page, and each free region separated by page markers is
+estimated independently at four panels per page. The API is authenticated,
+organization-scoped and read-only: it does not save drafts or spend image credits.
+Clients update the page-count field for review and normal saving, discard stale
+results after scope/draft/count changes, and show an over-limit result without
+clamping or overwriting the field. The existing new/increased-page limit applies.
+
+AI story improvement preserves authored commands through a separate structured
+writer: only identified prose fragments are editable. The server retains command
+tokens and surrounding whitespace, validates the exact fragment ID set, then
+reassembles and re-parses the boundary structure. Failure returns the original
+draft for review instead of a version with lost or moved commands. No migration
+or change to released response shapes is required.
+
+### Image generation model rollout
+
+Mobile 1.0.11 requires the compatible JavaScript update to display and accept
+new paid image quotes after cutover. It discovers the preferred model,
+displays the returned price and model, and recognizes verified 2.5 state
+images. Stage this update against the released native dependency lock. Retain
+the previous Web release's hashed JavaScript and CSS across the switch so
+open tabs can finish lazy-loading the PDF exporter.
+
+Before activation, stop new image admissions and drain image jobs accepted
+under the previous policy. Then enable `OPENAI_IMAGE_SUNBURST_ENABLED` on
+both API and Worker, retaining `OPENAI_IMAGE_MODEL=gpt-image-2` as the
+pre-cutover configuration value. Active generation pins page generation,
+regeneration, base references and state references to
+`gpt-image-2.5-sunburst-2026-09-08`. A direct request from the released Web
+uses the same pin. Mobile must explicitly request the advertised model.
+An unaccepted GPT Image 2 quote requires a new quote before charging. A
+replayed accepted request returns its existing receipt. Provider failure
+follows the generation failure and credit recovery path. Record the actual
+provider and snapshot on generated images. Imported-image analysis retains
+its separate model and pricing. If the active snapshot becomes unavailable,
+pause new image admissions until 2.5 is healthy. Preserve the original
+model, ledger and receipt for historical jobs.

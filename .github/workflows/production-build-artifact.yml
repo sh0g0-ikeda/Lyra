@@ -82,8 +82,10 @@ jobs:
             /usr/local/bin/bun -e 'import {MAX_NEW_EPISODE_PAGES} from "./dist/packages/api-contract/src/episodePageLimits.js";
             import {readFileSync,readdirSync} from "node:fs";
             if(MAX_NEW_EPISODE_PAGES!==20)throw new Error("Incorrect episode limit");
-            const files=readdirSync("./public/assets").filter(x=>x.endsWith(".js"));
-            const js=files.map(x=>readFileSync("./public/assets/"+x,"utf8")).join("\n");
+            const entry=readFileSync("./public/index.html","utf8").match(/src="(\/assets\/index-[\w-]+\.js)"/)?.[1];
+            if(!entry || entry==="/assets/index-D8wmWVX6.js")throw new Error("Missing current release entry");
+            const js=readFileSync("./public"+entry,"utf8");
+            for(const name of ["index-D8wmWVX6.js","jspdf.es.min-7UXyf_23.js"])if(!readdirSync("./public/assets").includes(name))throw new Error("Missing previous release module");
             const forbidden=["d2dw83tkmziksr","lyra-staging-20261003-auth.auth.ap-northeast-1.amazoncognito.com","7oma7s7gkoo5au4jk4ak9mkihd","6sarocqfaahcpl7cs5o0o9ja3c"];
             if(forbidden.some(value=>js.includes(value)))throw new Error("Staging value in production browser");
             if(!js.includes("https://app.lyra-editor.com")||!js.includes("6b2h941o888u2l7ejhv5jog94"))throw new Error("Missing production browser auth");

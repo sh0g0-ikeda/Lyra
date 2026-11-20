@@ -30,6 +30,7 @@ export interface EpisodePageSkeletonJobRepository
 }
 
 export interface EnqueueEpisodePageSkeletonInput {
+  applyProductionNotes?: boolean;
   overwriteExisting: boolean;
   preserveGeneratedImages?: boolean;
   applyStoryPlan: boolean;
@@ -93,6 +94,7 @@ export class EpisodePageSkeletonService implements EpisodePageSkeletonServicePor
           language: input.language,
           organization_id: organizationId,
           max_new_page_count: MAX_NEW_EPISODE_PAGES,
+          ...(input.applyProductionNotes === true ? { production_notes_version: 'v1' } : {}),
         },
         capacityLimits: this.capacityLimits,
       });

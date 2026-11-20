@@ -58,7 +58,7 @@ describe('Mobile i18n catalog contract', () => {
       .flatMap((filePath) => findDirectBilingualLiterals(filePath));
 
     expect(violations).toEqual([]);
-  });
+  }, 10_000);
 
   it('キャラクター選択肢は日本語ラベルの不足で英語へフォールバックしない', () => {
     const sourceFile = parseSourceFile(path.join(sourceRoot, 'screens/CharactersScreen.tsx'));

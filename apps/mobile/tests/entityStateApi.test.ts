@@ -29,9 +29,11 @@ describe('named state API', () => {
     await api.autofillEpisodePagesFromStory('episode', 'ja', 'org');
     await api.autofillEpisodePagesFromStory('episode', 'ja', 'org', { state_autofill_enabled: true });
     await api.autofillEpisodePagesFromStory('episode', 'ja', 'org', { state_autofill_version: 'v1', state_assignment_policy: 'overwrite_existing' });
+    await api.autofillEpisodePagesFromStory('episode', 'ja', 'org', undefined, true);
     expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body)).toEqual({ language: 'ja' });
     expect(JSON.parse(fetchMock.mock.calls[1]?.[1].body)).toEqual({ language: 'ja', state_autofill_enabled: true });
     expect(JSON.parse(fetchMock.mock.calls[2]?.[1].body)).toEqual({ language: 'ja', state_autofill_version: 'v1', state_assignment_policy: 'overwrite_existing' });
+    expect(JSON.parse(fetchMock.mock.calls[3]?.[1].body)).toEqual({ language: 'ja', production_notes_version: 'v1' });
   });
   it('story autofill retryは元jobを指定するだけで再実行する', async () => {
     const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ job_id: 'retry-job' }), { status: 202 }));

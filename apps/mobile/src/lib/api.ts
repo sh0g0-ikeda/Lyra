@@ -1,5 +1,15 @@
 import { workDeletionSchema, workDeletionsSchema, type WorkDeletionRecord, type WorkDeletionsRecord } from '@/domain/workDeletion';
 import { pageSkeletonCapabilitiesSchema, type PageSkeletonCapabilities } from '@/domain/pageSkeletonCapabilities';
+import {
+  characterSuggestionsSchema,
+  type EpisodeCharacterSuggestion,
+} from '@/domain/characterSuggestionsContract';
+import {
+  characterAutofillWithReviewResultSchema,
+  type CharacterAppearanceSuggestion,
+  type CharacterAutofillResult,
+} from '@/domain/characterAutofillContract';
+
 import type { GenerationQuote, GenerationQuoteReceipt, GenerationQuoteAcceptance, GenerationQuoteRequest } from '@/domain/pageGenerationQuote';
 import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStartBody, type GoogleLinkStatus } from '@/domain/googleAuth';
 import { z, type ZodType } from 'zod';
@@ -7,6 +17,7 @@ import type { EditableEntityState, NamedEntityStatePayload } from '@/domain/enti
 import type { InsertPanelAfterPayload, PanelStructurePayload, PanelStructureResult } from '@/domain/panelInsertion';
 import type { EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
 import { onlineManager } from '@tanstack/react-query';
+import { storyPageEstimateSchema, type StoryPageEstimate } from '@/domain/storyPageEstimateContract';
 
 import {
   generationQuoteRequestSchema, generationQuoteAcceptanceSchema, generationQuoteResponseSchema, generationQuoteReceiptSchema,
@@ -33,7 +44,9 @@ import {
   entityReferenceSetSchema,
   entitySchema,
   episodeSchema,
+  episodeV2Schema,
   episodesResponseSchema,
+  episodesV2ResponseSchema,
   episodeExportStatusResponseSchema,
   frameTemplateResponseSchema,
   framesResponseSchema,
@@ -179,6 +192,8 @@ import {
   STORY_AI_WRITE_TIMEOUT_MS,
 } from '@/lib/requestPolicy';
 
+export type CharacterSuggestion = EpisodeCharacterSuggestion;
+
 type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: unknown; timeoutMs?: number };
 
 type StoryCollaborationRequest = StoryCollaborationInput & { language: UiLanguage };
@@ -301,6 +316,39 @@ const organizationQuery = (organizationId?: string | null): string => {
     return '';
   }
   return `?organization_id=${encodeURIComponent(organizationId)}`;
+};
+
+const episodeContractQuery = (organizationId: string | null | undefined, version2: boolean): string => {
+  const params = new URLSearchParams();
+  if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
+    params.set('organization_id', organizationId);
+  }
+  if (version2) params.set('version', '2');
+  const query = params.toString();
+  return query.length === 0 ? '' : `?${query}`;
+};
+
+const characterSuggestionCapabilitiesSchema = z.object({
+  enabled: z.boolean(),
+}).strict();
+
+const characterSuggestionRequestSchema = z.object({
+  version: z.number().int().min(0),
+  production_notes_enabled: z.boolean().optional(),
+}).strict();
+
+export interface CharacterSuggestionCapabilities {
+  enabled: boolean;
+}
+
+export type { CharacterAutofillResult } from '@/domain/characterAutofillContract';
+
+export interface ProductionNotesCapabilities {
+  enabled: boolean;
+}
+
+export type StoryEpisodeImprovementWithProductionNotes = StoryEpisodeImprovementRecord & {
+  production_notes?: string[];
 };
 
 export interface ListPageInput {
@@ -830,8 +878,9 @@ export class LyraMobileApiClient {
     return this.requestVoid(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
-  public getEpisodes(chapterId: string, organizationId?: string | null): Promise<{ episodes: EpisodeRecord[] }> {
-    return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`, episodesResponseSchema);
+  public getEpisodes(chapterId: string, organizationId?: string | null, version2 = false): Promise<{ episodes: EpisodeRecord[] }> {
+    return this.request(`/api/chapters/${chapterId}/episodes${episodeContractQuery(organizationId, version2)}`,
+      version2 ? episodesV2ResponseSchema : episodesResponseSchema);
   }
 
   public createEpisode(
@@ -847,10 +896,12 @@ export class LyraMobileApiClient {
 
   public updateEpisode(
     episodeId: string,
-    body: UpdateEpisodePayload,
-    organizationId?: string | null
+    body: UpdateEpisodePayload & { production_notes_enabled?: boolean; production_notes?: string[] },
+    organizationId?: string | null,
+    version2 = false,
   ): Promise<EpisodeRecord> {
-    return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, episodeSchema, {
+    return this.request(`/api/episodes/${episodeId}${episodeContractQuery(organizationId, version2)}`,
+      version2 ? episodeV2Schema : episodeSchema, {
       method: 'PUT',
       body
     });
@@ -874,6 +925,72 @@ export class LyraMobileApiClient {
 
   public getPageSkeletonCapabilities(): Promise<PageSkeletonCapabilities> {
     return this.request('/api/story/page-skeleton-capabilities', pageSkeletonCapabilitiesSchema);
+  }
+
+  public getCharacterSuggestionCapabilities(): Promise<CharacterSuggestionCapabilities> {
+    return this.request(
+      '/api/story/character-suggestion-capabilities',
+      characterSuggestionCapabilitiesSchema,
+    );
+  }
+
+  /**
+   * Persists every unambiguous named cast member for the selected episode.
+   * The server owns matching and state creation; callers must use the current
+   * episode version to avoid writing against a stale story draft.
+   */
+  public getCharacterAutofillCapabilities(): Promise<CharacterSuggestionCapabilities> {
+    return this.request(
+      '/api/story/character-autofill-capabilities',
+      characterSuggestionCapabilitiesSchema,
+    );
+  }
+
+  public autofillEpisodeCharacters(
+    episodeId: string,
+    body: { version: number },
+    organizationId?: string | null,
+  ): Promise<CharacterAutofillResult> {
+    const requestBody = z.object({ version: z.number().int().min(0) }).strict().parse(body);
+    const params = new URLSearchParams(organizationQuery(organizationId));
+    params.set('appearance_review', '1');
+    return this.request(
+      `/api/episodes/${encodeURIComponent(episodeId)}/character-autofill?${params.toString()}`,
+      characterAutofillWithReviewResultSchema,
+      { method: 'POST', body: requestBody, timeoutMs: STORY_AI_WRITE_TIMEOUT_MS },
+    );
+  }
+
+  public approveCharacterAppearance(
+    suggestion: Pick<CharacterAppearanceSuggestion, 'entity_id' | 'field' | 'value' | 'expected_updated_at'>,
+    organizationId?: string | null,
+  ): Promise<EntityRecord> {
+    const { entity_id: entityId, field, value, expected_updated_at } = suggestion;
+    return this.request(
+      `/api/entities/${encodeURIComponent(entityId)}/appearance-review${organizationQuery(organizationId)}`,
+      entitySchema,
+      { method: 'POST', body: { field, value, expected_updated_at } },
+    );
+  }
+
+  public getProductionNotesCapabilities(): Promise<ProductionNotesCapabilities> {
+    return this.request(
+      '/api/story/production-notes-capabilities',
+      characterSuggestionCapabilitiesSchema,
+    );
+  }
+
+  public suggestEpisodeCharacters(
+    episodeId: string,
+    body: { version: number; production_notes_enabled?: boolean },
+    organizationId?: string | null,
+  ): Promise<{ version: number; characters: EpisodeCharacterSuggestion[] }> {
+    const requestBody = characterSuggestionRequestSchema.parse(body);
+    return this.request(
+      `/api/episodes/${encodeURIComponent(episodeId)}/character-suggestions${organizationQuery(organizationId)}`,
+      characterSuggestionsSchema,
+      { method: 'POST', body: requestBody },
+    );
   }
 
   public deleteWork(workId: string, organizationId?: string | null): Promise<WorkDeletionRecord> {
@@ -904,6 +1021,7 @@ export class LyraMobileApiClient {
       episode_id: string;
       instruction: string;
       language: 'ja' | 'en';
+      include_production_notes?: true;
       base_draft: {
         title: string | null;
         purpose: string | null;
@@ -916,11 +1034,36 @@ export class LyraMobileApiClient {
       };
     },
     organizationId?: string | null
-  ): Promise<StoryEpisodeImprovementRecord> {
+  ): Promise<StoryEpisodeImprovementWithProductionNotes> {
     return this.request(
       `/api/story/improve-episode-draft${organizationQuery(organizationId)}`,
       storyEpisodeImprovementSchema,
       { method: 'POST', body, timeoutMs: STORY_AI_WRITE_TIMEOUT_MS }
+    );
+  }
+
+  public estimateStoryPages(
+    body: {
+      episode_id: string;
+      production_notes_enabled: boolean;
+      language: 'ja' | 'en';
+      base_draft: {
+        title?: string | null;
+        purpose?: string | null;
+        story_input_mode: 'full' | 'structured';
+        story_full_draft: string | null;
+        introduction: string | null;
+        middle: string | null;
+        climax: string | null;
+        ending_hook: string | null;
+      };
+    },
+    organizationId?: string | null,
+  ): Promise<StoryPageEstimate> {
+    return this.request(
+      `/api/story/estimate-pages${organizationQuery(organizationId)}`,
+      storyPageEstimateSchema,
+      { method: 'POST', body, timeoutMs: STORY_AI_WRITE_TIMEOUT_MS },
     );
   }
 
@@ -1278,6 +1421,33 @@ export class LyraMobileApiClient {
     });
   }
 
+  public async createPreferredGenerationQuote(
+    input: GenerationQuoteRequest,
+    organizationId?: string | null,
+  ): Promise<GenerationQuote> {
+    if (input.operation === 'entity_import_analysis' || input.image_model !== undefined) {
+      return this.createGenerationQuote(input, organizationId);
+    }
+    let preferred: 'gpt-image-2' | 'gpt-image-2.5-sunburst' = 'gpt-image-2';
+    try {
+      const capability = await this.request(
+        `/api/generation-quote-capabilities${organizationQuery(organizationId)}`,
+        z.object({ image_model: z.enum(['gpt-image-2', 'gpt-image-2.5-sunburst']) }).strict(),
+      );
+      preferred = capability.image_model;
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) throw error;
+    }
+    const quote = await this.createGenerationQuote(
+      preferred === 'gpt-image-2.5-sunburst' ? { ...input, image_model: preferred } : input,
+      organizationId,
+    );
+    if (quote.image_model !== preferred) {
+      throw new ApiError('API response did not match the requested image model.', 502, 'INVALID_API_RESPONSE');
+    }
+    return quote;
+  }
+
   public acceptGenerationQuote(quoteId: string, input: GenerationQuoteAcceptance, organizationId?: string | null): Promise<GenerationQuoteReceipt> {
     return this.request(`/api/generation-quotes/${encodeURIComponent(quoteId)}/accept${organizationQuery(organizationId)}`, generationQuoteReceiptSchema, {
       method: 'POST', body: generationQuoteAcceptanceSchema.parse(input)
@@ -1297,13 +1467,18 @@ export class LyraMobileApiClient {
     language: 'ja' | 'en',
     organizationId?: string | null,
     stateOptions?: EpisodeStateAutofillRequestOptions,
+    applyProductionNotes = false,
   ): Promise<{ job_id: string }> {
     return this.request(
       `/api/episodes/${episodeId}/autofill-pages-from-story${organizationQuery(organizationId)}`,
       jobAcceptedSchema,
       {
       method: 'POST',
-      body: { language, ...stateOptions }
+      body: {
+        language,
+        ...stateOptions,
+        ...(applyProductionNotes ? { production_notes_version: 'v1' } : {}),
+      }
       }
     );
   }

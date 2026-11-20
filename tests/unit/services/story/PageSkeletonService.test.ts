@@ -262,6 +262,65 @@ class FakeStoryAiClient implements StoryAiClientPort {
 }
 
 describe('PageSkeletonService', () => {
+  it('新しい明示opt-inの場合に囲まれた2コマを1ページへ保存する', async () => {
+    const repository = new FakeStoryRepository();
+    const source = '===\nAki reaches the rooftop.\n---\nRin blocks the path.\n===';
+    repository.skeletonContext = { ...repository.skeletonContext!, storyFullDraft: source, productionNotesEnabled: true };
+    const client = new FakeStoryAiClient();
+    const preparation = await new PageSkeletonService(repository, client).prepareForEpisode(
+      'user-1', repository.skeletonContext.episodeId, { applyProductionNotes: true });
+    expect(preparation.pages).toHaveLength(1);
+    expect(preparation.pages[0]?.panels.map(panel => panel.situationHint)).toEqual([
+      'Aki reaches the rooftop.', 'Rin blocks the path.',
+    ]);
+    expect(preparation.pages[0]?.manuscriptSource).toMatchObject({ source, version: 1 });
+    expect(client.lastRequest).toBeNull();
+  });
+
+  it('手動区切りがあっても旧要求や保存flag無効の場合に従来経路を使う', async () => {
+    for (const [savedFlag, options] of [[true, undefined], [false, { applyProductionNotes: true }]] as const) {
+      const repository = new FakeStoryRepository();
+      repository.skeletonContext = { ...repository.skeletonContext!, storyFullDraft: '===\nA\n---\nB\n===', productionNotesEnabled: savedFlag };
+      const client = new FakeStoryAiClient();
+      const preparation = await new PageSkeletonService(repository, client).prepareForEpisode('user-1',
+        repository.skeletonContext.episodeId, options);
+      expect(preparation.pages).toHaveLength(2);
+      expect(preparation.pages.every(page => page.manuscriptSource === undefined)).toBe(true);
+      expect(client.lastRequest).not.toBeNull();
+    }
+  });
+
+  it('手動ページ数が保存済み画像ページ数と異なる場合に画像維持の骨格変更を拒否する', async () => {
+    const repository = new FakeStoryRepository();
+    repository.skeletonContext = { ...repository.skeletonContext!, storyFullDraft: '===\nA\n---\nB\n===',
+      productionNotesEnabled: true, existingPageCount: 2, existingMaxPageNumber: 2 };
+    await expect(new PageSkeletonService(repository, new FakeStoryAiClient()).prepareForEpisode('user-1',
+      repository.skeletonContext.episodeId, { applyProductionNotes: true, overwriteExisting: true, preserveGeneratedImages: true }))
+      .rejects.toThrow();
+    expect(repository.createdPages).toEqual([]);
+  });
+
+  it('自由本文を生成する場合に別の区切りの本文や演出指示を混入させない', async () => {
+    const repository = new FakeStoryRepository();
+    repository.skeletonContext = { ...repository.skeletonContext!,
+      storyFullDraft: '前の本文＃引きアングル＃\n===\n中央の本文\n===\n後の本文', productionNotesEnabled: true, estimatedPages: 3 };
+    const client = new FakeStoryAiClient();
+    const requests: StoryAiModelRequest[] = [];
+    vi.spyOn(client, 'generatePageSkeleton').mockImplementation(async request => {
+      requests.push(request);
+      return [client.generatedPages[1]!];
+    });
+    const preparation = await new PageSkeletonService(repository, client).prepareForEpisode('user-1',
+      repository.skeletonContext.episodeId, { applyProductionNotes: true });
+    expect(preparation.pages).toHaveLength(3);
+    expect(requests).toHaveLength(3);
+    expect(requests[0]?.userPrompt).toContain('前の本文');
+    expect(requests[0]?.userPrompt).not.toContain('中央の本文');
+    expect(requests[0]?.userPrompt).not.toContain('後の本文');
+    expect(requests[0]?.userPrompt).not.toContain('引きアングル');
+    expect(requests[0]?.userPrompt).not.toContain('Scene 1:');
+  });
+
   it('legacy graph digestは指紋に含めるがprovider入力へ含めない', async () => {
     const canonicalRepository = new FakeStoryRepository();
     const legacyRepository = new FakeStoryRepository();
@@ -343,6 +402,23 @@ describe('PageSkeletonService', () => {
     expect(client.lastRequest?.userPrompt).toContain('Scene 1: Rooftop / night / tense');
     expect(client.lastRequest?.userPrompt).toContain('Chapter consistency note: Chapter 1 / Set the stakes');
     expect(client.lastRequest?.userPrompt).not.toContain('Chapter purpose:');
+  });
+
+  it('旧full skeletonはstale sidecarを本文へ混ぜず生成を止めない', async () => {
+    const repository = new FakeStoryRepository();
+    repository.skeletonContext = {
+      ...repository.skeletonContext!,
+      productionNotesEnabled: true,
+      productionNotes: ['「消えた出来事」と「別の出来事」は別のコマにする。'],
+    };
+    const client = new FakeStoryAiClient();
+    const service = new PageSkeletonService(repository, client);
+
+    await expect(service.generateForEpisode(
+      'user-1',
+      '33333333-3333-4333-8333-333333333333',
+    )).resolves.toMatchObject({ pagesCreated: 2 });
+    expect(client.lastRequest?.userPrompt).not.toContain('消えた出来事');
   });
 
   it('fallback skeleton は同じ導入を複数ページにそのまま貼らずページごとの beat に分ける', async () => {
@@ -430,6 +506,23 @@ describe('PageSkeletonService', () => {
     expect(repository.createdPages[0]?.suggestedPanelCount).toBe(4);
     expect(repository.createdPages[0]?.suggestedLayout).toBe('standard_4');
     expect(repository.createdPages[0]?.panels).toHaveLength(4);
+  });
+
+  it('preserves a model-selected template when its panel count matches the repaired panels', async () => {
+    const repository = new FakeStoryRepository();
+    const client = new FakeStoryAiClient();
+    client.generatedPages[0] = {
+      ...client.generatedPages[0],
+      suggestedLayout: 'stacked_wide_4',
+    };
+    const service = new PageSkeletonService(repository, client);
+
+    await service.generateForEpisode('user-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(repository.createdPages[0]).toMatchObject({
+      suggestedPanelCount: 4,
+      suggestedLayout: 'stacked_wide_4',
+    });
   });
 
   it('repairs page numbers, panel orders, and invalid entity ids before saving', async () => {

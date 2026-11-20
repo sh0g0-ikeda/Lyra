@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { ConflictError, ValidationError } from '../../domain/errors/index.js';
-import { fingerprintQuoteInput, GENERATION_QUOTE_MAX_SNAPSHOT_BYTES, GENERATION_QUOTE_TTL_MS } from '../../domain/generation/GenerationQuotePolicy.js';
+import { assertQuoteMatchesRequiredImageModel, fingerprintQuoteInput, GENERATION_QUOTE_MAX_SNAPSHOT_BYTES, GENERATION_QUOTE_TTL_MS, requireExplicitQuoteImageModel } from '../../domain/generation/GenerationQuotePolicy.js';
 import type { GenerationQuote, GenerationQuoteReceipt, GenerationQuoteRequest, PreparedGenerationQuoteSource } from '../../domain/types/generationQuote.js';
 import type { DatabaseClient, TransactionRunner } from '../../lib/db.js';
 import { PostgresGenerationQuoteRepository } from '../../repositories/GenerationQuoteRepository.js';
@@ -23,6 +23,7 @@ export interface GenerationQuoteServiceDependencies {
   enabled: boolean;
   capacityLimits?: GenerationCapacityLimits;
   dispatcher?: GenerationQuoteDispatcherPort;
+  requiredImageModel?: string;
 }
 
 /** A quote check and legacy enqueue are NOT atomic; all accepted writes share one client here. */
@@ -33,6 +34,7 @@ export class GenerationQuoteService {
   }
   public async issue(userId: string, request: GenerationQuoteRequest, organizationId: string | null = null): Promise<{quote: GenerationQuote; quoteToken: string}> {
     this.ensureEnabled();
+    requireExplicitQuoteImageModel(request, this.dependencies.requiredImageModel);
     await this.requireScope(this.dependencies.database,userId,organizationId);
     const prepared=await this.dependencies.resolver.prepare(this.dependencies.database,userId,organizationId,request);
     const quoteToken=randomBytes(32).toString('base64url');
@@ -52,6 +54,7 @@ export class GenerationQuoteService {
     let prepared:PreparedGenerationQuoteSource=null;
     if(initial.acceptedJobId===null){
       this.ensureEnabled();
+      assertQuoteMatchesRequiredImageModel(initial.plan, this.dependencies.requiredImageModel);
       if(initial.expiresAt.getTime()<=Date.now()) throw new ConflictError('Generation quote expired; request a new quote');
       try{
         prepared=await this.dependencies.resolver.prepare(this.dependencies.database,userId,organizationId,initial.request);
@@ -71,6 +74,7 @@ export class GenerationQuoteService {
           return this.repository.receipt(client,userId,organizationId,quoteId);
         }
         this.ensureEnabled();
+        assertQuoteMatchesRequiredImageModel(quote.plan, this.dependencies.requiredImageModel);
         if(quote.expiresAt.getTime()<=Date.now()) throw new ConflictError('Generation quote expired; request a new quote');
         await this.repository.assertUnusedRequestKey(client,quote,requestKey);
         await this.admit(client,quote,prepared,requestKey);
@@ -105,6 +109,7 @@ export class GenerationQuoteService {
       generationMode:plan.generationMode,creditCost:plan.amountCredits,
       capacityLimits:this.dependencies.capacityLimits ?? DEFAULT_GENERATION_CAPACITY_LIMITS,
       params:{...plan.jobParams,quote_id:quote.id,image_model:plan.imageModel,provider_model_id:plan.providerModelId,
+        ...(plan.imageModel === null ? {} : {provider:'openai'}),
         pricing_version:plan.pricingVersion,quoted_input_revision:plan.inputRevision},
     },async(transactionClient)=>{
       const current=await this.dependencies.resolver.resolve(transactionClient,quote.userId,quote.organizationId,quote.request,prepared);

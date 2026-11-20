@@ -58,6 +58,23 @@ describePostgres('release compatibility preflight', () => {
     expect(database.transactionStatements.every((sql) => /^\s*(SELECT|WITH|SET)\b/u.test(sql))).toBe(true);
   });
 
+  it('モデルが未設定の旧Webジョブだけが残っていても2.5への切替を止める', async () => {
+    const user = randomUUID();
+    await pool.query('INSERT INTO users (id,supabase_id,email) VALUES ($1,$2,$3)', [user, user, user + '@example.invalid']);
+    const insert = (status: string, params: object) => pool.query(
+      'INSERT INTO generation_jobs (id,user_id,job_type,status,credit_cost,params) VALUES ($1,$2,$3,$4,1,$5::jsonb)',
+      [randomUUID(), user, 'page_generate', status, JSON.stringify(params)],
+    );
+    await insert('queued', {});
+    await insert('processing', { image_model: 'gpt-image-2.5-sunburst' });
+    await insert('completed', {});
+    await insert('queued', { image_model: 'gpt-image-2.5-sunburst', provider_model_id: 'gpt-image-2.5-sunburst-2026-09-08', provider: 'openai' });
+    const report = await checkReleaseCompatibility(database, {
+      profile: 'backend-only', mobileClientIds: [], runtime: runtime({ openAiImageSunburstEnabled: true }),
+    });
+    expect(report.violations).toContainEqual({ code: 'ACTIVE_PRE_CUTOVER_IMAGE_JOBS', category: 'generation', count: 2 });
+  });
+
   it('terminal v2 journalがあればadmission OFFでもrecovery設定なしを拒否する', async () => {
     const repository = new PostgresFencedStateReferenceRepository(database);
     const attempt = requiredAttempt((await repository.admit(await seed(pool), {
@@ -119,6 +136,7 @@ function runtime(overrides: Partial<ReleaseCompatibilityRuntime> = {}): ReleaseC
     entityReferenceDirectUploadEnabled: true,
     openAiApiKeyConfigured: true,
     openAiImageModel: 'gpt-image-2',
+    openAiImageSunburstEnabled: false,
     generationQueueConfigured: true,
     imageStorageConfigured: true,
     awsRegionConfigured: true,

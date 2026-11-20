@@ -9,6 +9,21 @@ import { PAGE_VISUAL_INTEGRITY_POLICY } from '../../../../src/services/page/Page
 import { buildPersistedPromptDiagnostics } from '../../../../src/lib/promptDiagnostics.js';
 
 describe('OpenAIPageImageRenderer', () => {
+  it('2.5の見積もりでは既定モデルと共存し固定スナップショットを実行する', async () => {
+    const postJson = vi.fn().mockResolvedValue({ body: { data: [{ b64_json: 'cG5n' }] }, requestId: 'req-1' });
+    const renderer = new OpenAIPageImageRenderer({ postJson, postFormData: vi.fn() } as unknown as OpenAIClient);
+    const input = {
+      jobId: 'job', userId: 'user', pageId: 'page',
+      requestKind: 'initial', generationMode: 'standard', quality: 'medium', prompt: 'authored scene',
+      internalPlan: null, inputImages: [],
+    } as const;
+    await renderer.render({ ...input, inputImages: [] });
+    const result = await renderer.render({
+      ...input, inputImages: [], providerModelId: 'gpt-image-2.5-sunburst-2026-09-08',
+    });
+    expect(postJson.mock.calls.map((call) => call[1]?.model)).toEqual(['gpt-image-2', 'gpt-image-2.5-sunburst-2026-09-08']);
+    expect(result).toMatchObject({ imageModel: 'gpt-image-2.5-sunburst', providerModelId: 'gpt-image-2.5-sunburst-2026-09-08' });
+  });
   it('任意planが長すぎる場合にも生成前の場面指示を省略せず描画へ渡す', async () => {
     const postJson = vi.fn().mockResolvedValue({ body: { data: [{ b64_json: 'cG5n' }] }, requestId: 'req-1' });
     const client = {

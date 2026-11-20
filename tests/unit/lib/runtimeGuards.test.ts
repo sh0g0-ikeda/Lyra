@@ -566,6 +566,18 @@ describe('assertProductionRuntimeConfig', () => {
     }).toThrow(/OPENAI_IMAGE_MODEL must be an OpenAI image generation model/);
   });
 
+  it.each([
+    [{ OPENAI_IMAGE_MODEL: 'gpt-image-1' }, /OPENAI_IMAGE_MODEL must remain gpt-image-2/],
+    [{ OPENAI_API_KEY: undefined }, /OPENAI_API_KEY is required/],
+    [{ LOCAL_IMAGE_FALLBACK_ENABLED: true }, /LOCAL_IMAGE_FALLBACK_ENABLED must be disabled during GPT Image 2.5 cutover/],
+  ])('2.5 cutoverは固定OpenAI実行境界を要求する (%j)', (override, expected) => {
+    expect(() => assertProductionRuntimeConfig({
+      ...safeProductionConfig,
+      OPENAI_IMAGE_SUNBURST_ENABLED: true,
+      ...override,
+    }, 'production')).toThrow(expected);
+  });
+
   it('production では OpenAI API key の形式を要求する', () => {
     expect(() => {
       assertProductionRuntimeConfig(

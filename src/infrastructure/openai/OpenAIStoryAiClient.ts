@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   PAGE_SKELETON_MAX_TOKENS,
   PAGE_SKELETON_MODEL,
@@ -6,24 +7,129 @@ import {
   STORY_COLLABORATION_MODEL,
   STORY_EPISODE_IMPROVEMENT_WRITER_MAX_TOKENS,
   STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
+  CHARACTER_AUTOFILL_COVERAGE_MAX_TOKENS,
+  CHARACTER_AUTOFILL_EXTRACTION_MAX_TOKENS,
+  CHARACTER_AUTOFILL_OPENAI_MODEL,
+  CHARACTER_AUTOFILL_REASONING_EFFORT,
+  STORY_PAGE_ESTIMATE_MAX_TOKENS,
+  STORY_PAGE_ESTIMATE_OPENAI_MODEL,
+  STORY_PAGE_ESTIMATE_REASONING_EFFORT,
+  STORY_EPISODE_MANUSCRIPT_IMPROVEMENT_MAX_TOKENS,
+  STORY_EPISODE_MANUSCRIPT_MAX_FRAGMENTS,
 } from '../../domain/constants/storyAi.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { PageSkeletonPageDraft } from '../../domain/types/storyAi.js';
 import { PANEL_FRAME_TEMPLATE_IDS } from '../../domain/constants/panelFrameTemplates.js';
 import {
   improveEpisodeDraftResponseSchema,
+  episodePanelCountEstimateResponseSchema,
   pageSkeletonResponseSchema,
 } from '../../lib/validators/storyAi.schema.js';
 import type {
   StoryAiClientPort,
   StoryAiModelRequest,
   StoryEpisodeDraftWriterOutput,
+  StoryPanelCountEstimate,
+  StoryManuscriptFragmentOutput,
 } from '../../services/story/StoryAiClientPort.js';
 import { OpenAIClient } from './OpenAIClient.js';
 import { requestOpenAIText, requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
+import { extractedCharactersSchema, type ExtractedCharacter } from '../../../packages/api-contract/src/characterSuggestions.js';
+import { characterAutofillExtractionSchema, type CharacterAutofillExtraction } from '../../services/story/CharacterAutofillFields.js';
+import {
+  characterAppearanceCoverageResponseSchema,
+  type CharacterAppearanceCoverageResponse,
+} from '../../services/story/CharacterAppearanceCoverage.js';
 
 export class OpenAIStoryAiClient implements StoryAiClientPort {
   public constructor(private readonly client: OpenAIClient) {}
+
+  public async estimateEpisodePanelCount(request: StoryAiModelRequest): Promise<StoryPanelCountEstimate[]> {
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(
+      episodePanelCountEstimateResponseSchema,
+    );
+    const result = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: STORY_PAGE_ESTIMATE_OPENAI_MODEL,
+      reasoningEffort: STORY_PAGE_ESTIMATE_REASONING_EFFORT,
+      maxOutputTokens: STORY_PAGE_ESTIMATE_MAX_TOKENS,
+      schemaName: 'episode_panel_count_estimate',
+      jsonSchema,
+      responseSchema: episodePanelCountEstimateResponseSchema,
+      errorLabel: 'OpenAI episode panel count estimator',
+      input: buildInput(request),
+    });
+    return result.blocks.map((block) => ({
+      blockId: block.block_id,
+      panelCount: block.panel_count,
+    }));
+  }
+
+  public async suggestEpisodeProductionNotes(request: StoryAiModelRequest): Promise<string[]> {
+    const schema = z.object({ notes: z.array(z.string().trim().min(1).max(600)).max(8) }).strict();
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(schema);
+    const result = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
+      maxOutputTokens: 3_000,
+      schemaName: 'episode_production_note_suggestions',
+      jsonSchema,
+      responseSchema: schema,
+      errorLabel: 'OpenAI episode production suggestions',
+      input: buildInput(request),
+    });
+    return result.notes;
+  }
+
+  public async extractEpisodeCharacters(request: StoryAiModelRequest): Promise<ExtractedCharacter[]> {
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(extractedCharactersSchema);
+    const result = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
+      maxOutputTokens: 8_000,
+      schemaName: 'episode_character_suggestions',
+      jsonSchema,
+      responseSchema: extractedCharactersSchema,
+      errorLabel: 'OpenAI episode character extractor',
+      input: buildInput(request),
+    });
+    return result.characters;
+  }
+
+  public async extractCharacterAutofill(request: StoryAiModelRequest): Promise<CharacterAutofillExtraction> {
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(characterAutofillExtractionSchema);
+    const result = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: CHARACTER_AUTOFILL_OPENAI_MODEL,
+      reasoningEffort: CHARACTER_AUTOFILL_REASONING_EFFORT,
+      maxOutputTokens: CHARACTER_AUTOFILL_EXTRACTION_MAX_TOKENS,
+      schemaName: 'episode_character_autofill',
+      jsonSchema,
+      responseSchema: characterAutofillExtractionSchema,
+      errorLabel: 'OpenAI episode character autofill',
+      input: buildInput(request),
+    });
+    return result.characters;
+  }
+
+  public async reconcileCharacterAutofillCoverage(
+    request: StoryAiModelRequest,
+  ): Promise<CharacterAppearanceCoverageResponse> {
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(
+      characterAppearanceCoverageResponseSchema,
+    );
+    return requestStructuredOpenAIResponse({
+      client: this.client,
+      model: CHARACTER_AUTOFILL_OPENAI_MODEL,
+      reasoningEffort: CHARACTER_AUTOFILL_REASONING_EFFORT,
+      maxOutputTokens: CHARACTER_AUTOFILL_COVERAGE_MAX_TOKENS,
+      schemaName: 'episode_character_appearance_coverage',
+      jsonSchema,
+      responseSchema: characterAppearanceCoverageResponseSchema,
+      errorLabel: 'OpenAI episode character appearance coverage',
+      input: buildInput(request),
+    });
+  }
 
   public streamCollaboration(request: StoryAiModelRequest): AsyncIterable<string> {
     return this.streamSingleResponse(request);
@@ -64,6 +170,29 @@ export class OpenAIStoryAiClient implements StoryAiClientPort {
       climax: parsed.climax,
       endingHook: parsed.ending_hook,
     };
+  }
+
+  public async improveEpisodeManuscript(
+    request: StoryAiModelRequest,
+  ): Promise<StoryManuscriptFragmentOutput[]> {
+    const schema = z.object({
+      fragments: z.array(z.object({
+        id: z.string().trim().min(1).max(80),
+        text: z.string().max(8_000),
+      }).strict()).min(1).max(STORY_EPISODE_MANUSCRIPT_MAX_FRAGMENTS),
+    }).strict();
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(schema);
+    const result = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
+      maxOutputTokens: STORY_EPISODE_MANUSCRIPT_IMPROVEMENT_MAX_TOKENS,
+      schemaName: 'episode_manuscript_improvement',
+      jsonSchema,
+      responseSchema: schema,
+      errorLabel: 'OpenAI episode manuscript writer',
+      input: buildInput(request),
+    });
+    return result.fragments;
   }
 
   private async *streamSingleResponse(

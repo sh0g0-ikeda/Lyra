@@ -96,6 +96,7 @@ assert.deepEqual(distribution.ViewerCertificate, {
 });
 assert.equal(distribution.ViewerCertificate.CloudFrontDefaultCertificate, undefined);
 assert.equal(distribution.Origins[0].CustomOriginConfig.OriginProtocolPolicy, 'https-only');
+assert.equal(distribution.Origins[0].CustomOriginConfig.OriginReadTimeout, 60);
 assert.equal(distribution.Origins[0].OriginCustomHeaders[0].HeaderName, 'x-lyra-origin-verify');
 assert.deepEqual(distribution.DefaultCacheBehavior.AllowedMethods, ['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'POST', 'DELETE']);
 assert.equal(distribution.DefaultCacheBehavior.CachePolicyId, '4135ea2d-6df8-44a3-9df3-4b5a84be39ad');
