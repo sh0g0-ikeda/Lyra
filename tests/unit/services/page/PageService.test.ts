@@ -4296,6 +4296,185 @@ describe('PageService', () => {
     expect(persistence.calls).toHaveLength(0);
   });
 
+  it('演出指示付きfull原稿はstrict状態抽出だけ保存済みfull sourceを正本にして原子的保存する', async () => {
+    const context = buildProductionStateEvidenceContext();
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPanels = new FakePanelRepository();
+    let persistedChanges: readonly EpisodeUnresolvedStateTransition[] = [];
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(),
+      panelRepository: transactionPanels,
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+      persistStateChanges: async (changes) => {
+        persistedChanges = changes;
+        return changes.map((change) => ({
+          entityId: change.entityId,
+          stateId: '99999999-9999-4999-8999-999999999999',
+          startsAtPanelId: change.startsAtPanelId,
+          sourceSceneId: change.sourceSceneId,
+          sourceField: change.sourceField,
+          sourceQuote: change.sourceQuote,
+          description: change.suggestedDescription,
+          created: true,
+        }));
+      },
+      completeStoryAutofillJob: async () => true,
+    });
+    let stateCompilerInput: CompileEpisodeStateTransitionInput | undefined;
+    const stateCompiler = {
+      compileStateTransitions: async (input: CompileEpisodeStateTransitionInput) => {
+        stateCompilerInput = input;
+        return {
+          plan: { transitions: [], unresolved: [{
+            entityId: '11111111-1111-4111-8111-111111111111',
+            candidateStateId: null,
+            startsAtPanelId: 'panel-1',
+            suggestedName: '右頬の切り傷',
+            suggestedDescription: '赤い切り傷ができる',
+            sourceSceneId: null,
+            sourceField: 'story_full_draft' as const,
+            sourceQuote: productionStateSourceQuote,
+            panelEvidenceQuote: productionStateSourceQuote,
+            replacesDeltas: [],
+            reason: 'missing_reference' as const,
+          }] },
+          compilerProvider: 'openai' as const,
+          compilerModel: 'test',
+          compilerPromptVersion: 'episode_state_transition_v6',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), productionStateEvidencePageCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+
+    const result = await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-1', checkpoint: async () => undefined, beginCommit: async () => undefined },
+      {
+        statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing',
+        allowVisualStateFallback: true,
+      },
+      { applyProductionNotes: true },
+    );
+
+    expect(stateCompilerInput?.context.episode.storyFullDraft).toBe(context.episode.storyFullDraft);
+    expect(stateCompilerInput?.context.episode.introduction).toBeNull();
+    expect(stateCompilerInput?.context.episode.middle).toBeNull();
+    expect(stateCompilerInput?.context.episode.climax).toBeNull();
+    expect(stateCompilerInput?.context.episode.endingHook).toBeNull();
+    expect(persistedChanges).toEqual([expect.objectContaining({
+      sourceField: 'story_full_draft', sourceQuote: productionStateSourceQuote,
+    })]);
+    expect(result.savedStateChanges).toHaveLength(1);
+    expect(persistence.calls).toHaveLength(1);
+  });
+
+  it('structured原稿のstrict状態抽出は保存済み4フィールドをそのまま使う', async () => {
+    const context = buildEpisodePlanningContext();
+    context.episode.productionNotesEnabled = true;
+    context.episode.storyFullDraft = null;
+    context.stateLibrary = [];
+    const original = {
+      introduction: context.episode.introduction,
+      middle: context.episode.middle,
+      climax: context.episode.climax,
+      endingHook: context.episode.endingHook,
+    };
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(), panelRepository: new FakePanelRepository(),
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+      completeStoryAutofillJob: async () => true,
+    });
+    let stateCompilerInput: CompileEpisodeStateTransitionInput | undefined;
+    const stateCompiler = {
+      compileStateTransitions: async (input: CompileEpisodeStateTransitionInput) => {
+        stateCompilerInput = input;
+        return {
+          plan: { transitions: [], unresolved: [] }, compilerProvider: 'openai' as const,
+          compilerModel: 'test', compilerPromptVersion: 'episode_state_transition_v6',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), new FakeEpisodePagePlanCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+
+    await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-structured', checkpoint: async () => undefined, beginCommit: async () => undefined },
+      {
+        statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing',
+        allowVisualStateFallback: true,
+      },
+      { applyProductionNotes: true },
+    );
+
+    expect(stateCompilerInput?.context.episode).toMatchObject({
+      storyFullDraft: null,
+      ...original,
+    });
+    expect(persistence.calls).toHaveLength(1);
+  });
+
+  it('full原稿の派生middleだけにあると偝装したstrict状態quoteは書き込まない', async () => {
+    const context = buildProductionStateEvidenceContext();
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPanels = new FakePanelRepository();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(),
+      panelRepository: transactionPanels,
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+      persistStateChanges: async () => {
+        throw new Error('不正な状態を保存しました');
+      },
+      completeStoryAutofillJob: async () => true,
+    });
+    const stateCompiler = {
+      compileStateTransitions: async () => ({
+        plan: { transitions: [], unresolved: [{
+          entityId: '11111111-1111-4111-8111-111111111111', candidateStateId: null,
+          startsAtPanelId: 'panel-1', suggestedName: '右頬の切り傷',
+          suggestedDescription: '切り傷はこの後も残り続ける',
+          sourceSceneId: null, sourceField: 'middle' as const,
+          sourceQuote: 'その切り傷はこの後も残り続ける。',
+          panelEvidenceQuote: productionStateSourceQuote, replacesDeltas: [],
+          reason: 'missing_reference' as const,
+        }] },
+        compilerProvider: 'openai' as const, compilerModel: 'test',
+        compilerPromptVersion: 'episode_state_transition_v6',
+      }),
+    };
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), productionStateEvidencePageCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: 'job-2', checkpoint: async () => undefined, beginCommit: async () => undefined },
+      {
+        statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing',
+        allowVisualStateFallback: true,
+      },
+      { applyProductionNotes: true },
+    )).rejects.toMatchObject({ code: 'STATE_PLAN_INVALID' });
+    expect(persistence.calls).toHaveLength(0);
+    expect(transactionPanels.updatedPanels).toHaveLength(0);
+  });
+
   it.each([false, true])('状態反映v1は完走優先%sでも1回の監査後に確定状態を原子的保存へ渡す', async (completionFirstEnabled) => {
     const stateId = '22222222-2222-4222-8222-222222222222';
     const context = buildEpisodePlanningContext();
@@ -6707,6 +6886,37 @@ function buildEpisodePlanningContext(): EpisodePagePlanContext {
         panels: [buildAutofillPanelContext()],
       },
     ],
+  };
+}
+
+const productionStateSourceQuote = 'カイの投げた小石がミオの右頬をかすめ、赤い切り傷ができる。その切り傷はこの後も残り続ける。';
+
+function buildProductionStateEvidenceContext(): EpisodePagePlanContext {
+  const context = buildEpisodePlanningContext();
+  context.episode = {
+    ...context.episode,
+    productionNotesEnabled: true,
+    storyFullDraft: `ミオが港に立つ。＃ミオの右頬を寄りで描く＃${productionStateSourceQuote}`,
+    introduction: 'ミオが港に立つ。',
+    middle: 'その切り傷はこの後も残り続ける。',
+    climax: null,
+    endingHook: null,
+    startingEntityStates: [],
+  };
+  context.stateLibrary = [];
+  return context;
+}
+
+function productionStateEvidencePageCompiler(): EpisodePagePlanCompilerPort {
+  const baseCompiler = new FakeEpisodePagePlanCompiler();
+  return {
+    async compilePlan(input): Promise<CompiledEpisodePagePlan> {
+      const compiled = await baseCompiler.compilePlan(input);
+      const panel = compiled.suggestion.pages[0]!.panels[0]!;
+      panel.situationText = productionStateSourceQuote;
+      panel.entities![0]!.effectNote = '右頬の赤い切り傷が残る';
+      return compiled;
+    },
   };
 }
 

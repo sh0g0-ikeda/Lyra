@@ -1454,6 +1454,12 @@ quoted state-timing commands use the established registered-state rules.
 Character and automatic-state evidence excludes command tokens and cannot join
 source fragments across an instruction. The raw manuscript remains the
 concurrency/fingerprint authority.
+For opted-in production-note processing, strict state extraction keeps a separate
+snapshot of the original active source fields. Full-draft input cites only the
+saved full draft, not sections re-derived after command removal; structured input
+retains each saved section's identity. The compiler sees separate literal evidence
+spans and uses the same source authority as final and transaction-locked validation.
+Do not repair a field mismatch by remapping a quote or weakening evidence checks.
 
 “話の長さから推定” uses GPT-6 Luna / low with validated block IDs and panel counts
 to estimate the current unsaved narrative. Without page constraints, the server

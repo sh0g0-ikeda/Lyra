@@ -159,7 +159,7 @@ describe('OpenAIEpisodeStateTransitionCompiler', () => {
     });
 
     expect(result.plan.transitions).toEqual([{ entityId: ENTITY, stateId: STATE, startsAtPanelId: PANEL, sourceSceneId: null, sourceField: 'middle', sourceQuote: '腕を負傷した' }]);
-    expect(result.compilerPromptVersion).toBe('episode_state_transition_v6');
+    expect(result.compilerPromptVersion).toBe('episode_state_transition_v7');
     expect(requests).toHaveLength(1);
     expect(requests[0]!.model).toBe('gpt-5');
     expect(requests[0]!.reasoning).toBeUndefined();

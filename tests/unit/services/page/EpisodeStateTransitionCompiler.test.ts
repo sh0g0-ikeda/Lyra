@@ -31,9 +31,35 @@ describe('buildEpisodeStateTransitionCompilerBrief', () => {
     expect(brief).not.toContain('base-ref-secret');
     expect(brief).toContain('visual-only fallback');
     expect(brief).toContain('Do not create a new state');
+    expect(brief).toContain('Full draft: 主人公は腕を負傷した。');
     expect(brief).toContain('complete visible appearance');
     expect(brief).toContain('Keep suggested_description concise');
     expect(brief).toContain('Do not drop an earlier injury, costume, or transformation unless the saved source explicitly ends it');
+  });
+  it('strict抽出は指示の前後を別evidence spanにして内部sidecarを露出しない', () => {
+    const input = context();
+    input.episode.productionNotesEnabled = true;
+    input.episode.storyFullDraft = '右頬に傷ができ。＃寄りで描く。別の指示＃その傷が残り続ける。';
+    input.strictStateEvidenceSources = {
+      storyFullDraft: input.episode.storyFullDraft,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+    };
+
+    const brief = buildEpisodeStateTransitionCompilerBrief(input, 'ja', undefined, {
+      pages: [{ pageId: input.pages[0]!.pageId, pageNumber: 2, panels: [{
+        order: 1, situationText: '右頬に傷ができ、その傷が残り続ける。', entities: [],
+      }] }],
+    });
+
+    expect(brief).toContain('story_full_draft evidence span 1: 右頬に傷ができ。');
+    expect(brief).toContain('story_full_draft evidence span 2: その傷が残り続ける。');
+    expect(brief).not.toContain('右頬に傷ができ。\n\nその傷が残り続ける。');
+    expect(brief).not.toContain('寄りで描く。別の指示');
+    expect(brief).not.toContain('strictStateEvidenceSources');
+    expect(brief).toContain('within one evidence span');
   });
 });
 

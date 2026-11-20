@@ -146,6 +146,15 @@ export interface EpisodePagePlanContext {
   manuscriptPlan?: EpisodeManuscriptPlan;
   /** Internal physical-schema capability; absent in older internal callers. */
   stateDraftPersistenceSupported?: boolean;
+  /** Trusted saved story sources used only by strict final-draft state extraction
+   * after production-note prose has been separated. Never persist or expose it. */
+  strictStateEvidenceSources?: {
+    storyFullDraft: string | null;
+    introduction: string | null;
+    middle: string | null;
+    climax: string | null;
+    endingHook: string | null;
+  };
   productionDirectives?: EpisodeProductionDirective[];
   episodeId: string;
   workId: string;

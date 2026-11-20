@@ -3,7 +3,10 @@ import type { AppLanguage } from '../../domain/types/language.js';
 import type { EpisodePagePlanContext, EpisodePagePlanSuggestion } from '../../domain/types/page.js';
 import type { EpisodeBeatPlan } from './EpisodeBeatPlanCompiler.js';
 import { CHARACTER_STATE_EXTRACTION_RULES } from '../../domain/state/CharacterStateExtractionPolicy.js';
-import { analyzeStoryManuscript } from '../../../packages/api-contract/src/storyManuscript.js';
+import {
+  analyzeStoryManuscript,
+  storyManuscriptEvidence,
+} from '../../../packages/api-contract/src/storyManuscript.js';
 
 export interface CompileEpisodeStateTransitionInput {
   context: EpisodePagePlanContext;
@@ -91,6 +94,15 @@ export function buildEpisodeStateTransitionCompilerBrief(
   const beatLines = beatPlan === undefined ? [] : [...beatPlan.pages]
     .sort((left, right) => left.pageNumber - right.pageNumber)
     .map((page) => `Page ${page.pageNumber} | page_id=${page.pageId} | entry=${page.entryState} | exit=${page.exitState} | beats=${page.storyBeats.join(' / ')}`);
+  const savedStoryLines = finalSuggestion === undefined
+    ? [
+        `Full draft: ${prose(context.episode.storyFullDraft)}`,
+        `Introduction: ${prose(context.episode.introduction)}`,
+        `Middle: ${prose(context.episode.middle)}`,
+        `Climax: ${prose(context.episode.climax)}`,
+        `Ending hook: ${prose(context.episode.endingHook)}`,
+      ]
+    : strictSavedStoryEvidenceLines(context);
 
   return [
     '[PURPOSE]',
@@ -98,11 +110,7 @@ export function buildEpisodeStateTransitionCompilerBrief(
     `Output language: ${language === 'en' ? 'English' : 'Japanese'}`,
     '',
     '[SAVED EPISODE STORY]',
-    `Full draft: ${prose(context.episode.storyFullDraft)}`,
-    `Introduction: ${prose(context.episode.introduction)}`,
-    `Middle: ${prose(context.episode.middle)}`,
-    `Climax: ${prose(context.episode.climax)}`,
-    `Ending hook: ${prose(context.episode.endingHook)}`,
+    ...savedStoryLines,
     '',
     '[SAVED SCENES]',
     ...(scenes.length === 0 ? ['(none)'] : scenes),
@@ -142,6 +150,7 @@ export function buildEpisodeStateTransitionCompilerBrief(
     'Keep suggested_description concise (prefer at most 300 characters) while preserving the persistent visible change supported by the saved source.',
     'Do not output decisions, smiles, poses, held objects, hand movements, or other transient emotion/action as character states.',
     ...(finalSuggestion === undefined ? [] : [
+      'A source_quote from a saved episode story field must stay within one evidence span. Never join text across a removed production instruction.',
       'For every boundary, panel_evidence_quote must be a literal substring of the completed onset panel situation, composition, or matching entity effect note and must show the change already visible there.',
       'A request, prediction, preparation, or not-yet-visible change is not an onset. Choose the first completed panel that visibly depicts the persistent delta.',
       'For each unresolved boundary, emit replaces_deltas as an array. An additive delta uses []; a partial reversal names only earlier active deltas for the same entity by their exact source_quote and literal description. Two independent deltas may share one source quote and onset panel.',
@@ -149,6 +158,28 @@ export function buildEpisodeStateTransitionCompilerBrief(
     'For each transition, quote the saved source text that proves it. Do not infer facts absent from that text.',
     'Use null state_id only when returning to the default state.',
   ].join('\n');
+}
+
+function strictSavedStoryEvidenceLines(context: EpisodePagePlanContext): string[] {
+  const fields = [
+    ['story_full_draft', context.episode.storyFullDraft],
+    ['introduction', context.episode.introduction],
+    ['middle', context.episode.middle],
+    ['climax', context.episode.climax],
+    ['ending_hook', context.episode.endingHook],
+  ] as const;
+  return fields.flatMap(([field, value]) => {
+    if (value === null || value === undefined || value.trim().length === 0) {
+      return [`${field}: (none)`];
+    }
+    const spans = storyManuscriptEvidence(
+      value,
+      context.episode.productionNotesEnabled === true,
+    );
+    return spans.length === 0
+      ? [`${field}: (none)`]
+      : spans.map((span, index) => `${field} evidence span ${index + 1}: ${span}`);
+  });
 }
 
 function textOrNone(value: string | null | undefined): string {

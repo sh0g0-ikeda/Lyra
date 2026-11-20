@@ -546,6 +546,7 @@ export class PageService implements PageServicePort {
     const productionContext = production === null ? context : {
       ...context,
       episode: { ...context.episode, ...production.prose },
+      strictStateEvidenceSources: buildStrictStateEvidenceSources(context),
       productionDirectives: production.directives,
       manuscriptPlan: prepareEpisodeManuscriptPlan(context),
     };
@@ -1276,8 +1277,12 @@ export class PageService implements PageServicePort {
     if (!finalDraftStateMode) return result;
 
     await executionControl?.checkpoint();
+    // Production-note separation may re-derive auxiliary sections from a full
+    // manuscript. Strict extraction uses the saved source identity; later final
+    // and locked validation intentionally continue to use their raw contexts.
+    const stateEvidenceContext = withStrictStateEvidenceSources(context);
     const compiledStatePlan = await this.episodeStateTransitionCompiler!.compileStateTransitions({
-      context,
+      context: stateEvidenceContext,
       beatPlan,
       language,
       finalSuggestion: result.suggestion,
@@ -1286,7 +1291,7 @@ export class PageService implements PageServicePort {
         ? undefined
         : () => executionControl.checkpoint(),
     });
-    const resolved = resolveEpisodeStateTransitionPlan(context, compiledStatePlan.plan, {
+    const resolved = resolveEpisodeStateTransitionPlan(stateEvidenceContext, compiledStatePlan.plan, {
       allowVisualFallback: true,
       strictEvidence: true,
       finalSuggestion: result.suggestion,
@@ -2431,6 +2436,38 @@ function inferPageLeadEntityIdFromPanelSuggestions(
   });
 
   return ranked[0]?.[0] ?? null;
+}
+
+function buildStrictStateEvidenceSources(
+  context: EpisodePagePlanContext,
+): NonNullable<EpisodePagePlanContext['strictStateEvidenceSources']> {
+  if (context.episode.storyFullDraft != null) {
+    return {
+      storyFullDraft: context.episode.storyFullDraft,
+      introduction: null,
+      middle: null,
+      climax: null,
+      endingHook: null,
+    };
+  }
+  return {
+    storyFullDraft: null,
+    introduction: context.episode.introduction,
+    middle: context.episode.middle,
+    climax: context.episode.climax,
+    endingHook: context.episode.endingHook,
+  };
+}
+
+function withStrictStateEvidenceSources(
+  context: EpisodePagePlanContext,
+): EpisodePagePlanContext {
+  const sources = context.strictStateEvidenceSources;
+  if (sources === undefined) return context;
+  return {
+    ...context,
+    episode: { ...context.episode, ...sources },
+  };
 }
 
 function formatEpisodeStateTransitionLedger(

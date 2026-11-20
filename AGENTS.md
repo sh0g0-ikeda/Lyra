@@ -1623,3 +1623,5 @@ exclude them from automatic character/state evidence, preserve source-to-slot
 ownership through generation and audit, and retain the opt-in/legacy job split.
 Discard an invalid audit repair as a whole; only a fully revalidated unchanged
 draft may survive. Never restore source anchors to bypass manuscript checks.
+Strict state extraction in production-note flows uses the original active source
+fields and separate literal evidence spans, never re-derived story sections (§6).
