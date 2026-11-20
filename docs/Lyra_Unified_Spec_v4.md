@@ -1276,9 +1276,20 @@ in the actor's work scope. It returns editable suggestions with literal source
 quotations, retaining multiple details such as a nonhuman character's
 silhouette, colors and part counts. Match names and registered aliases across
 the work, including cast from episodes other than the selected one. A match never causes an update to a
-base character. The user saves a character or state draft explicitly before
-requesting an image preview. The existing generation and credit admission
-contracts apply after the save.
+base character. Released clients can still save these suggestions individually.
+
+The character editor on Web and Mobile also offers one action to autofill and
+save the named cast of a saved episode. Capability discovery is scoped to
+`GET /api/story/character-autofill-capabilities`. The action submits the saved
+episode version to `POST /api/episodes/:id/character-autofill`. Inside one
+transaction the server checks scope and version, creates the new cast together,
+and appends distinct source-backed appearance changes to matching characters.
+Ambiguous matches are reported for review. A repeated action preserves edits
+to existing base characters and states. Explicit traits use the editor's stored
+option IDs where they match. Unmentioned fields stay empty and custom details
+retain their source wording. The returned character IDs open their ordinary
+editors, including after reloading the work. The user can review each character
+and separately request an image preview under the existing credit contract.
 
 Migration 053 adds the episode opt-in flag (default false). Migration 054
 stores the directions separately from the manuscript (default empty list).

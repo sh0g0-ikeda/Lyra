@@ -107,6 +107,8 @@ import { PostgresAccountDeletionRepository } from './repositories/AccountDeletio
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
+import { PostgresCharacterAutofillRepository } from './repositories/CharacterAutofillRepository.js';
+import { hasPreVariantEntitySchema } from './repositories/RepositorySchemaProfile.js';
 import {
   PostgresEntityReferenceUploadTokenRepository,
 } from './repositories/EntityReferenceUploadTokenRepository.js';
@@ -320,6 +322,10 @@ import {
   StoryCollaborationService,
   type StoryCollaborationServicePort,
 } from './services/story/StoryCollaborationService.js';
+import {
+  CharacterAutofillService,
+  type CharacterAutofillServicePort,
+} from './services/story/CharacterAutofillService.js';
 import type { StoryAiClientPort } from './services/story/StoryAiClientPort.js';
 import type { StoryEpisodeImprovementPlannerPort } from './services/story/StoryEpisodeImprovementPlanner.js';
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
@@ -395,6 +401,7 @@ export interface AppDependencies {
   storyAiClient?: StoryAiClientPort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
   storyCollaborationService?: StoryCollaborationServicePort;
+  characterAutofillService?: CharacterAutofillServicePort;
   stripeWebhookService?: StripeWebhookServicePort;
   storyService?: StoryServicePort;
   userProvisioningService?: UserProvisioningPort;
@@ -732,6 +739,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       organizationService: resolvedDependencies.organizationService,
       storyCollaborationService: resolvedDependencies.storyCollaborationService,
+      characterAutofillService: resolvedDependencies.characterAutofillService,
       storyService: resolvedDependencies.storyService,
     }),
   );
@@ -873,6 +881,7 @@ function resolveDependencies(
       | 'readinessCheck'
       | 'fencedStateReferenceRuntime'
       | 'attestedRuntime'
+      | 'characterAutofillService'
     >
   >,
   'storyEpisodeImprovementPlanner'
@@ -888,6 +897,7 @@ function resolveDependencies(
   googlePubSubPushVerifier?: Pick<GooglePubSubPushVerifier, 'verifyAuthorization'>;
   pushTokenRegistryService?: PushTokenRegistryServicePort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
+  characterAutofillService?: CharacterAutofillServicePort;
 } {
   const fencedStateReferenceRuntime = dependencies.fencedStateReferenceRuntime ?? createFencedStateReferenceRuntime(env, db);
   const persistenceProfile = dependencies.attestedRuntime?.repositoryProfile ?? env.LYRA_PERSISTENCE_PROFILE;
@@ -1296,6 +1306,14 @@ function resolveDependencies(
       storyAiClient,
       storyEpisodeImprovementPlanner,
     );
+  const characterAutofillService = dependencies.characterAutofillService
+    ?? (hasPreVariantEntitySchema(persistenceProfile)
+      ? undefined
+      : new CharacterAutofillService(
+          new PostgresStoryRepository(db, db, persistenceProfile),
+          storyAiClient,
+          new PostgresCharacterAutofillRepository(db, persistenceProfile),
+        ));
   const pageSkeletonService =
     dependencies.pageSkeletonService ??
     new PageSkeletonService(new PostgresStoryRepository(db, db, persistenceProfile), storyAiClient);
@@ -1384,6 +1402,7 @@ function resolveDependencies(
     storyAiClient,
     storyEpisodeImprovementPlanner,
     storyCollaborationService,
+    characterAutofillService,
     stripeWebhookService,
     storyService,
     userProvisioningService,

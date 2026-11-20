@@ -21,6 +21,7 @@ import type {
 } from '../../../src/services/story/PageSkeletonService.js';
 import type { EpisodePageSkeletonServicePort } from '../../../src/services/story/EpisodePageSkeletonService.js';
 import type { StoryCollaborationServicePort } from '../../../src/services/story/StoryCollaborationService.js';
+import type { CharacterAutofillServicePort } from '../../../src/services/story/CharacterAutofillService.js';
 import type { PageServicePort } from '../../../src/services/page/PageService.js';
 import type {
   EnqueueEpisodeStoryAutofillResult,
@@ -292,6 +293,24 @@ class FakeStoryCollaborationService implements StoryCollaborationServicePort {
       compilerModel: 'gpt-5.4-mini',
       compilerPromptVersion: 'story_episode_improve_v1',
       compilerError: null,
+    };
+  }
+}
+
+class FakeCharacterAutofillService implements CharacterAutofillServicePort {
+  public calls: Array<{ userId: string; episodeId: string; version: number; organizationId: string | null }> = [];
+
+  public async autofillEpisodeCharacters(
+    userId: string,
+    requestedEpisodeId: string,
+    version: number,
+    organizationId: string | null = null,
+  ) {
+    this.calls.push({ userId, episodeId: requestedEpisodeId, version, organizationId });
+    return {
+      version,
+      characters: [{ entity_id: workId, name: 'ミオ', created: true, states_added: 1 }],
+      skipped_names: ['正体不明'],
     };
   }
 }
@@ -871,6 +890,67 @@ describe('story routes', () => {
     expect(response.status).toBe(401);
   });
 
+  it('キャラクター自動入力の能力を公開し、strictなversionで保存サービスを呼ぶ', async () => {
+    const characterAutofillService = new FakeCharacterAutofillService();
+    const app = createTestApp({ characterAutofillService });
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const capabilities = await app.request('/api/story/character-autofill-capabilities', { headers });
+    expect(capabilities.status).toBe(200);
+    await expect(capabilities.json()).resolves.toEqual({ enabled: true });
+
+    const response = await app.request(`/api/episodes/${episodeId}/character-autofill`, {
+      method: 'POST', headers, body: JSON.stringify({ version: 7 }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      version: 7,
+      characters: [{ entity_id: workId, name: 'ミオ', created: true, states_added: 1 }],
+      skipped_names: ['正体不明'],
+    });
+    expect(characterAutofillService.calls).toEqual([{
+      userId: user.id, episodeId, version: 7, organizationId: null,
+    }]);
+
+    const invalid = await app.request(`/api/episodes/${episodeId}/character-autofill`, {
+      method: 'POST', headers, body: JSON.stringify({ version: 7, overwrite: true }),
+    });
+    expect(invalid.status).toBe(422);
+    expect(characterAutofillService.calls).toHaveLength(1);
+  });
+
+  it('組織のキャラクター自動入力はedit_work権限を要求して保存結果を監査する', async () => {
+    const organizationId = '550e8400-e29b-41d4-a716-446655440000';
+    const organizationService = new FakeOrganizationService();
+    const characterAutofillService = new FakeCharacterAutofillService();
+    const app = createTestApp({
+      organizationService: organizationService as unknown as OrganizationServicePort,
+      characterAutofillService,
+    });
+    const token = await createToken();
+    const response = await app.request(
+      `/api/episodes/${episodeId}/character-autofill?organization_id=${organizationId}`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: 2 }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(organizationService.requiredMemberships).toContainEqual({
+      organizationId, userId: user.id, capability: 'edit_work',
+    });
+    expect(characterAutofillService.calls[0]).toMatchObject({ organizationId });
+    expect(organizationService.auditEvents).toContainEqual(expect.objectContaining({
+      action: 'episode.character_autofill_completed',
+      targetType: 'episode',
+      targetId: episodeId,
+      metadata: { characters: 1, created: 1, states_added: 1, skipped: 1 },
+    }));
+  });
+
   it('streams story collaboration events', async () => {
     const collaborationService = new FakeStoryCollaborationService();
     const app = createTestApp(collaborationService, new FakePageSkeletonService());
@@ -1425,6 +1505,7 @@ describe('story routes', () => {
 });
 
 interface CreateStoryTestAppOptions {
+  characterAutofillService?: CharacterAutofillServicePort;
   storyCollaborationService?: StoryCollaborationServicePort;
   pageSkeletonService?: PageSkeletonServicePort;
   pageService?: PageServicePort;
@@ -1458,6 +1539,7 @@ function createTestApp(
     pageService: options.pageService ?? new FakePageService(),
     pageSkeletonService: options.pageSkeletonService ?? new FakePageSkeletonService(),
     storyCollaborationService: options.storyCollaborationService ?? new FakeStoryCollaborationService(),
+    characterAutofillService: options.characterAutofillService,
     storyService: options.storyService ?? new FakeStoryService(),
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,

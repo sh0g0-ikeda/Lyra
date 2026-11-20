@@ -1585,3 +1585,7 @@ notes. Enable new note writes only after the 053 and 054 schema checks pass.
 The image cutover contract in the Unified Spec requires the compatible
 Mobile 1.0.11 update, a drained legacy queue and the same pinned GPT Image
 2.5 snapshot for all new page and character image generation.
+
+Episode cast autofill follows the Unified Spec §6 episode character contract.
+Persist source-backed editor selections for all new named characters together,
+preserve existing base settings and keep the released suggestion endpoint read-only.

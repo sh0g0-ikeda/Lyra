@@ -1,6 +1,7 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { characterSuggestionsSchema } from '../../packages/api-contract/src/characterSuggestions.js';
+import { characterAutofillResultSchema } from '../../packages/api-contract/src/characterAutofill.js';
 import {
   chapterSchema,
   chaptersResponseSchema,
@@ -42,6 +43,7 @@ import {
 import { formatZodValidationError } from '../lib/validationErrorFormatter.js';
 import type { StoryServicePort } from '../services/story/StoryService.js';
 import type { StoryCollaborationServicePort } from '../services/story/StoryCollaborationService.js';
+import type { CharacterAutofillServicePort } from '../services/story/CharacterAutofillService.js';
 import type { PageSkeletonServicePort } from '../services/story/PageSkeletonService.js';
 import type { EpisodePageSkeletonServicePort } from '../services/story/EpisodePageSkeletonService.js';
 import type { PageServicePort } from '../services/page/PageService.js';
@@ -66,6 +68,7 @@ export interface StoryRouteDependencies {
   episodeStoryAutofillService?: EpisodeStoryAutofillServicePort;
   organizationService?: OrganizationServicePort;
   storyCollaborationService: StoryCollaborationServicePort;
+  characterAutofillService?: CharacterAutofillServicePort;
   storyService: StoryServicePort;
 }
 
@@ -73,6 +76,9 @@ const MAX_WORK_LIST_PAGE_LIMIT = 100;
 const episodeCharacterSuggestionsBodySchema = z.object({
   version: z.number().int().min(0),
   production_notes_enabled: z.boolean().default(false),
+}).strict();
+const episodeCharacterAutofillBodySchema = z.object({
+  version: z.number().int().min(0),
 }).strict();
 
 export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<AppEnv> {
@@ -83,7 +89,41 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
 
   app.get('/story/character-suggestion-capabilities', (c) =>
     c.json({ enabled: dependencies.storyCollaborationService.suggestEpisodeCharacters !== undefined }));
+  app.get('/story/character-autofill-capabilities', (c) =>
+    c.json({ enabled: dependencies.characterAutofillService !== undefined }));
   app.get('/story/production-notes-capabilities', (c) => c.json({ enabled: dependencies.productionNotesAvailable !== false }));
+
+  app.post('/episodes/:id/character-autofill', async (c) => {
+    const episodeId = storyUuidParamSchema.safeParse(c.req.param('id'));
+    const body = episodeCharacterAutofillBodySchema.safeParse(await readStoryJsonBody(c));
+    if (!episodeId.success) throw new ValidationError(formatZodValidationError(episodeId.error));
+    if (!body.success) throw new ValidationError(formatZodValidationError(body.error));
+    const organizationId = parseOptionalOrganizationId(c);
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const service = dependencies.characterAutofillService;
+    if (service === undefined) throw new ConfigurationError('Character autofill is unavailable');
+    const result = await service.autofillEpisodeCharacters(
+      c.get('user').id,
+      episodeId.data,
+      body.data.version,
+      organizationId,
+    );
+    await recordOrganizationAudit(
+      dependencies,
+      organizationId,
+      c.get('user').id,
+      'episode.character_autofill_completed',
+      'episode',
+      episodeId.data,
+      {
+        characters: result.characters.length,
+        created: result.characters.filter((character) => character.created).length,
+        states_added: result.characters.reduce((sum, character) => sum + character.states_added, 0),
+        skipped: result.skipped_names.length,
+      },
+    );
+    return c.json(assertMobileResponseContract(characterAutofillResultSchema, result));
+  });
 
   app.post('/episodes/:episodeId/character-suggestions', async (c) => {
     const episodeId = storyUuidParamSchema.safeParse(c.req.param('episodeId'));
