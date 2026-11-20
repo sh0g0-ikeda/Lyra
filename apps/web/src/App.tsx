@@ -6445,7 +6445,7 @@ function StudioShell(props: {
                         {productionNotesRequested ? <small>{pickUiText(uiLanguage,
                           'Examples: #「A」と「B」は同じコマ / 別のコマ, #「A」のコマから「ミオ」は「雨ぬれ」状態, #「B」のコマで「ミオ」は通常に戻る',
                           '書き方例: #「A」と「B」は同じコマ / 別のコマ、#「A」のコマから「ミオ」は「雨ぬれ」状態、#「B」のコマで「ミオ」は通常に戻る')}</small> : null}
-                        {productionNotesRequested ? <small>{pickUiText(uiLanguage, 'Optional sparse delimiters: ---scene--- fixes only that scene to one panel; ===scene=== fixes only that portion to one page. Unmarked text is allocated automatically; combine ===/--- for fixed panels on one page.', '任意の区切り: ---場面--- はその場面だけ1コマ、===場面=== はその部分だけ1ページに固定します。区切りのない本文は自動配分され、同じページ内の ===/--- の組合せで固定コマも指定できます。')}</small> : null}
+                        {productionNotesRequested ? <small>{pickUiText(uiLanguage, 'Place --- or === on its own line. Text between --- lines is one panel; text between === lines is one page. Combine ===/--- for a fixed panel. Unmarked regions are allocated automatically.', '--- または === はそれだけの行に書きます。--- で挟んだ部分は1コマ、=== で挟んだ部分は1ページ。=== と --- の組合せでも1コマに指定でき、区切りのない部分は自動配分します。')}</small> : null}
                       </div>
                     ) : null}
                     <div className="episode-save-mobile">

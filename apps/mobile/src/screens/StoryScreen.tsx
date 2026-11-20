@@ -48,7 +48,7 @@ import {
   worksQueryKey
 } from '@/lib/queryKeys';
 import { t } from '@/lib/i18n';
-import { editorMessage } from '@/lib/editorUiMessages';
+import { editorMessage, formatEditorMessage } from '@/lib/editorUiMessages';
 import { ApiError, type StoryEpisodeImprovementWithProductionNotes } from '@/lib/api';
 import { mayApplyStoryPageEstimate } from '@/lib/storyPageEstimateGuard';
 import { userErrorMessage } from '@/lib/userMessages';
@@ -301,16 +301,16 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
       const nextPages = result.explicit_page_count ?? result.estimated_pages;
       if (nextPages > editableEpisodePageLimit(selectedEpisode.estimated_pages)) {
         const limit = editableEpisodePageLimit(selectedEpisode.estimated_pages);
-        setPageEstimateError(language === 'ja'
-          ? `推定は${nextPages}ページで、この話の上限${limit}ページを超えています。話を分割してください。現在のページ数は変更していません。`
-          : `The estimate is ${nextPages} pages, above this episode's ${limit}-page limit. Split the story; the current page count was not changed.`);
+        setPageEstimateError(formatEditorMessage(language, 'pageEstimateOverLimit', { pages: nextPages, limit }));
         return;
       }
       setEstimatedPages(String(nextPages));
       const hasManualBounds = result.explicit_page_count !== null || result.estimated_pages !== result.calculated_pages;
-      setPageEstimateSummary(!hasManualBounds
-        ? `${result.panel_count}${language === 'ja' ? 'コマ→' : ' panels → '}${nextPages}${language === 'ja' ? 'ページ' : ' pages'}`
-        : `${result.panel_count}${language === 'ja' ? 'コマ→' : ' panels → '}${nextPages}${language === 'ja' ? 'ページ（手動の区切りを優先）' : ' pages (manual delimiters take priority)'}`);
+      setPageEstimateSummary(formatEditorMessage(
+        language,
+        hasManualBounds ? 'pageEstimateManualSummary' : 'pageEstimateSummary',
+        { panels: result.panel_count, pages: nextPages },
+      ));
     } catch (error) {
       if (mayApplyStoryPageEstimate(submitted, currentStoryDraftRef.current)) {
         setPageEstimateError(userErrorMessage(error, language));
