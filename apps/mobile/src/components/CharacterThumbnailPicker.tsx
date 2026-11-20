@@ -39,8 +39,8 @@ export function CharacterThumbnailPicker({ characters, hasNextPage = false, isFe
   const visibleCharacters = characters.slice(safePageIndex * pageSize, (safePageIndex + 1) * pageSize);
   const gridWidth = Math.min(720, Math.max(0, windowWidth - spacing.lg * 4));
   const cardWidth = Math.floor((gridWidth - spacing.sm * (columnCount - 1)) / columnCount);
-  const previousLabel = language === 'ja' ? '前のキャラクター' : 'Previous characters';
-  const nextLabel = language === 'ja' ? '次のキャラクター' : 'Next characters';
+  const previousLabel = t(language, 'screen.characters.thumbnail.previous');
+  const nextLabel = t(language, 'screen.characters.thumbnail.next');
 
   if (characters.length === 0) return <Text style={styles.empty}>{t(language, 'component.characterThumbnailPicker.empty')}</Text>;
 
