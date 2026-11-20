@@ -658,6 +658,22 @@ nonblank literal source quote, a literal visible-change description within that
 quote, and literal evidence from the final onset panel. Requests or predictions
 of a change do not establish its onset. Persistent appearance changes are states;
 ordinary actions, transient emotion and repeated base profiles are not new states.
+Cast extraction, its coverage pass and episode-state planning share a narrative
+persistence policy: clear injuries, missing body parts, sustained awakened forms,
+putting on/removing/changing clothes, and aging are typical state changes. One
+source mention can establish a lasting condition; repeated descriptions, explicit
+duration and a minimum number of already drawn panels are not required, including
+at the end of an episode. These examples do not limit other clear lasting changes.
+One-panel lighting, shadows, reflections, flashes, sparks and passing wind effects
+remain panel composition/effect settings. They are neither base appearance nor
+continuing states, even if the source omits an explicit return-to-normal sentence.
+Glowing eyes or hair can instead be a state when the story supports them as part
+of a sustained awakening. Decide from context, not a glow keyword alone, and keep
+source grounding without inventing unspecified attributes of an awakening.
+Group linked traits of one condition (an awakening with changed eyes, or a
+white-haired elderly form) rather than creating a generic state plus separate
+attribute states. Keep independently continuing conditions such as injury and
+outfit separate so that either can end without clearing the other.
 Validation feedback uses the existing bounded structured attempts and cancellation
 checkpoints. Do not move panel events after establishing their final boundaries.
 Older automatic callers on pre-variant physical schemas retain their visual-only

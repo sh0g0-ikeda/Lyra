@@ -1613,3 +1613,6 @@ keep invalid-state correction within existing retry/cancellation limits (§6).
 Automatic state drafts on named-variant schemas are resolved from the final
 unannotated panels, then saved with the page plan in the same transaction (§6).
 Never assign an unready draft as an image reference or overwrite an existing state.
+Cast, coverage and episode-state extraction share the narrative-persistence policy
+in Unified Spec §6: a single mention can establish a lasting injury, loss, form,
+outfit or age change; one-panel lighting and transient effects stay panel-local.

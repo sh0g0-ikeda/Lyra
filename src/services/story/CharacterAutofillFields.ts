@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { humanAppearanceChoices } from '../../../packages/api-contract/src/characterAppearanceCatalog.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { CHARACTER_STATE_EXTRACTION_RULES } from '../../domain/state/CharacterStateExtractionPolicy.js';
 import type { Episode } from '../../domain/types/story.js';
 import { parseStructuredFields } from '../../lib/validators/entity.schema.js';
 import { episodeCharacterSource, mentionsName } from './EpisodeCharacterSuggestions.js';
@@ -994,7 +995,10 @@ export async function extractCharacterAutofillEvidence(
       'Split explicit appearance into all matching editor fields, including colors, length, styling, clothing category and color, and every stated size, shape and count. Ponytail, braids, buns and other tied hairstyles are hair.arrangement. Use only visible explicitly stated traits, never supply defaults or infer missing traits.',
       'For each value copy a short exact substring in the source language. Use the shortest verbatim quote that contains both the character name and the value and ties the trait to that character, without other cast names. When the name is omitted across adjacent appearance-only sentences, copy one continuous source span from the last explicit character name through the value; never synthesize a name, punctuation or quotation. Preserve qualifiers, colors and counts.',
       'For other visible attributes use distinguishing_features for humans, distinctive_features for nonhumans. Keep each body part with its color and count in ONE verbatim value (e.g. 赤い角が二本 and 金色の目が三つ), including for nonhumans. A nonhuman silhouette belongs in base_form, and its modifying color must stay in that same verbatim value (e.g. 青いしずく形の生き物), not a separate feature.',
-      'Do not repeat traits from a specific field in general features. If appearance changes, put it ONLY in changes; name is a brief label for the new condition (e.g. 赤い模様), never a character name. Use exact source substrings for name and description. Ordinary actions are not states. Do not assign a later appearance to the base character.',
+      // Design: preserve one shared narrative-persistence boundary for initial
+      // extraction and coverage reconciliation; source and ownership guards stay local.
+      'Do not repeat traits from a specific field in general features. Put only qualifying lasting appearance changes in changes; name is a brief label for the new condition (e.g. 赤い模様), never a character name. Use exact source substrings for name and description. Do not assign a later appearance or a panel-only effect to the base character.',
+      ...CHARACTER_STATE_EXTRACTION_RULES,
     ].join(' '),
     userPrompt: JSON.stringify({ episode: prose, allowed_human_catalog: allowedHumanCatalog }),
   });

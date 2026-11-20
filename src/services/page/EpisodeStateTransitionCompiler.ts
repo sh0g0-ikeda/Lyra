@@ -2,6 +2,7 @@ import type { EpisodeStateTransitionPlan } from '../../domain/types/episodeState
 import type { AppLanguage } from '../../domain/types/language.js';
 import type { EpisodePagePlanContext, EpisodePagePlanSuggestion } from '../../domain/types/page.js';
 import type { EpisodeBeatPlan } from './EpisodeBeatPlanCompiler.js';
+import { CHARACTER_STATE_EXTRACTION_RULES } from '../../domain/state/CharacterStateExtractionPolicy.js';
 
 export interface CompileEpisodeStateTransitionInput {
   context: EpisodePagePlanContext;
@@ -124,7 +125,8 @@ export function buildEpisodeStateTransitionCompilerBrief(
     'Use only entity IDs, state IDs, scene IDs, and panel IDs listed above.',
     'Prefer a listed reference_ready=true state for a supported transformation.',
     'A state with reference_ready=false remains an unassignable candidate; report it as an unresolved visual-only fallback when it is needed.',
-    'If no listed READY state represents an explicit injury, expression, costume, or other visible change, report a visual-only fallback. Do not create a new state.',
+    ...CHARACTER_STATE_EXTRACTION_RULES,
+    'If no listed READY state represents a qualifying continuing condition, report a visual-only fallback. Do not create a new state.',
     finalSuggestion === undefined
       ? 'Each unresolved suggested_description must describe the complete visible appearance from its boundary until the next boundary for that character.'
       : 'Each unresolved suggested_description must be only the persistent visible appearance delta copied literally from source_quote; do not rewrite the base profile or include actions and transient emotions.',

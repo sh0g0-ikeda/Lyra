@@ -58,6 +58,23 @@ describe('CharacterAppearanceCoverage', () => {
     expect(result.candidates[0]?.structuredFields).not.toHaveProperty('eyes.color');
   });
 
+  it('一コマ限りの照明による見かけの髪色で基本の髪色を競合させない', async () => {
+    const base = 'ハルは黒髪の人間だ。';
+    const lighting = '一コマだけ、照明でハルの髪が緑色に見える。すぐに照明が消える。';
+    const client = new FakeStoryAiClient(
+      [{
+        name: 'ハル', name_quote: base, entity_type: 'character', changes: [],
+        appearance: [{ field: 'hair.color', value: '黒髪', quote: base }],
+      }],
+      emptyCoverage(),
+    );
+
+    const result = await extractCharacterAutofillWithCoverage(client, episode(`${base}\n${lighting}`));
+
+    expect(result.candidates[0]?.structuredFields).toEqual({ hair: { color: 'black' } });
+    expect(result.unresolved).toEqual([]);
+  });
+
   it('500文字を超える原文ではスキャナーを安全に省略する', async () => {
     const manuscript = `アキは${'とても'.repeat(170)}黒髪。`;
     const client = new FakeStoryAiClient(

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { humanAppearanceChoices } from '../../../packages/api-contract/src/characterAppearanceCatalog.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { CHARACTER_STATE_EXTRACTION_RULES } from '../../domain/state/CharacterStateExtractionPolicy.js';
 import type { Episode } from '../../domain/types/story.js';
 import {
   buildCharacterAutofillCandidates,
@@ -110,7 +111,10 @@ const COVERAGE_SYSTEM_PROMPT = [
   'Never invent a character, trait, quotation or option. Exclude unnamed, hypothetical, negated and changed-only base appearances.',
   'Keep value and quote as literal source text. field and option_id are separate canonical identifiers. Catalog fields require an exact allowed option_id; otherwise report unverified_trait. Nonhuman and free-text fields use null option_id.',
   'A detail without an exact editor choice still belongs in a free-text appearance field. Preserve the whole source phrase linking a garment to its unsupported color, material or decoration (for example 銀色の甲冑), instead of omitting it or guessing a different color.',
-  'Preserve exact colors, shapes and part counts. Keep each nonhuman body part with its color and count in one literal value. Put later appearance changes only in changes.',
+  // Design: use the same persistence boundary as first-pass extraction without
+  // changing coverage's independent literal-evidence or ownership validation.
+  'Preserve exact colors, shapes and part counts. Keep each nonhuman body part with its color and count in one literal value. Put only qualifying lasting appearance changes in changes; do not add panel-only effects to appearance or changes.',
+  ...CHARACTER_STATE_EXTRACTION_RULES,
   'Report ambiguous ownership, conflicting traits and unverifiable evidence in unresolved.',
 ].join(' ');
 
@@ -247,6 +251,16 @@ const scanners: ReadonlyArray<{
 const unsafeContext = /(?:もし|ならば|かもしれ|ではない|じゃない|染め|変わ(?:る|っ)|変化(?:し|す)|にな(?:る|っ)|\b(?:if|might|not|dyed?|changed?|turned?)\b)/iu;
 const unclassifiedAppearance = /(?:傷|痣|ほくろ|刺青|紋様|斑点|角|翼|尾|牙)/u;
 
+// Deterministic recovery may add only stable base traits. This deliberately
+// requires all three signals so a sustained awakening or innate glow remains
+// available to the model-backed, source-grounded extraction path.
+function isTransientPanelAppearanceEffect(sentence: string): boolean {
+  const momentary = /(?:一コマ(?:だけ)?|一瞬(?:だけ)?|その瞬間(?:だけ)?|すぐに)/u.test(sentence);
+  const stagingCause = /(?:照明|反射|影|フラッシュ|火花|風)/u.test(sentence);
+  const perceivedAppearance = /(?:見え(?:る|た)|輝(?:く|い)|揺(?:れる|れた))/u.test(sentence);
+  return momentary && stagingCause && perceivedAppearance;
+}
+
 function scanDeterministicOmissions(
   source: readonly string[], cast: CharacterAutofillExtraction,
   unresolved: CharacterAppearanceCoverageResult['unresolved'],
@@ -282,7 +296,8 @@ function scanDeterministicOmissions(
         previous = null;
         anchoredQuote = '';
       }
-      if (subject === null || subject === undefined || unsafeContext.test(sentence)) continue;
+      if (subject === null || subject === undefined || unsafeContext.test(sentence)
+        || isTransientPanelAppearanceEffect(sentence)) continue;
       const others = humans
         .filter(candidate => normalizeName(candidate.name) !== normalizeName(subject.name))
         .map(candidate => candidate.name);

@@ -3,6 +3,7 @@ import {
   MAX_EPISODE_STATE_TRANSITIONS,
 } from '../../domain/constants/storyState.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
+import { CHARACTER_STATE_EXTRACTION_RULES } from '../../domain/state/CharacterStateExtractionPolicy.js';
 import { describeAppLanguage } from '../../domain/types/language.js';
 import {
   episodeStateTransitionPlanSchema,
@@ -27,7 +28,7 @@ import {
 const EPISODE_STATE_TRANSITION_COMPILER_MODEL = 'gpt-5';
 const EPISODE_STATE_TRANSITION_COMPILER_MAX_TOKENS = 12_000;
 const EPISODE_STATE_TRANSITION_COMPILER_MAX_ATTEMPTS = 2;
-const EPISODE_STATE_TRANSITION_COMPILER_VERSION = 'episode_state_transition_v5';
+const EPISODE_STATE_TRANSITION_COMPILER_VERSION = 'episode_state_transition_v6';
 const EPISODE_STATE_TRANSITION_COMPILER_MAX_INPUT_ITEMS = 512;
 const EPISODE_STATE_TRANSITION_COMPILER_MAX_INPUT_CHARS = 120_000;
 
@@ -141,6 +142,7 @@ function buildSystemPrompt(input: CompileEpisodeStateTransitionInput): string {
     'Use each listed panel ID in chronological reading order. Do not invent panels, characters, states, scenes, or events.',
     'For an explicit visible change without a listed READY state, emit unresolved_state_transitions as a source-grounded visual-only fallback.',
     'Do not request or create a new state or image. Keep the current assignable state reference until a later listed READY or default boundary.',
+    ...CHARACTER_STATE_EXTRACTION_RULES,
     input.strictEvidence === true
       ? 'An unresolved suggested_description must be only a persistent visible appearance delta copied literally from source_quote. Never rewrite the base appearance.'
       : 'An unresolved suggested_description must carry the complete visible appearance through later panels until the next boundary for that character.',
@@ -152,7 +154,7 @@ function buildSystemPrompt(input: CompileEpisodeStateTransitionInput): string {
     ...(input.strictEvidence === true ? [
       'For every transition and unresolved change, panel_evidence_quote is required and must be copied literally from the completed onset panel situation, composition, or the matching visible entity effect note.',
       'The onset panel must visibly show the change already happened. A request, prediction, preparation, or later panel is not valid evidence.',
-      'Emit independent appearance deltas as separate unresolved entries even when they start in the same panel and share one source_quote. A later partial reversal must replace only the matching prior delta pair; never combine or rewrite the unrelated deltas that remain active.',
+      'Emit independently continuing conditions as separate unresolved entries even when they start in the same panel and share one source_quote; keep linked traits of a single condition together. A later partial reversal must replace only the matching prior delta pair; never combine or rewrite the unrelated deltas that remain active.',
       'For every unresolved change, replaces_deltas is required. Use [] for an additive delta. For a partial reversal, identify each earlier active delta for the same entity by its exact source_quote and literal description. Never replace a future, another entity delta, or an unrelated delta from the same source quote.',
       'Use a state_id=null transition only when the source and final panel show the character returning completely to the base appearance; this clears every active unresolved delta.',
     ] : [
