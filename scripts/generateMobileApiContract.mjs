@@ -37,6 +37,8 @@ const contracts = [
   ['packages/api-contract/src/mobileApiSchemas.ts', 'apps/mobile/src/domain/apiSchemas.ts', `\n${compatibilityExport}`],
   ['packages/api-contract/src/episodePageLimits.ts', 'apps/mobile/src/domain/episodePageLimits.ts', ''],
   ['packages/api-contract/src/characterSuggestions.ts', 'apps/mobile/src/domain/characterSuggestionsContract.ts', ''],
+  ['packages/api-contract/src/characterAutofill.ts', 'apps/mobile/src/domain/characterAutofillContract.ts', ''],
+  ['packages/api-contract/src/characterAppearanceCatalog.ts', 'apps/mobile/src/domain/characterAppearanceCatalog.ts', ''],
 ];
 
 for (const [canonicalFile, generatedFile, suffix] of contracts) {

@@ -64,7 +64,7 @@ function normalizeName(value: string): string {
   return value.trim().normalize('NFKC').toLowerCase();
 }
 
-function mentionsName(quoteText: string, characterName: string): boolean {
+export function mentionsName(quoteText: string, characterName: string): boolean {
   const normalizedName = normalizeName(characterName);
   const escaped = normalizedName.replace(/[.*+?^$${}()|[\]\\]/gu, '\\$&');
   return /^[a-z\d .'-]+$/u.test(normalizedName)

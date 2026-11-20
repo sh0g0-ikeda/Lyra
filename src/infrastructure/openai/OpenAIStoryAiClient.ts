@@ -23,6 +23,7 @@ import type {
 import { OpenAIClient } from './OpenAIClient.js';
 import { requestOpenAIText, requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
 import { extractedCharactersSchema, type ExtractedCharacter } from '../../../packages/api-contract/src/characterSuggestions.js';
+import { characterAutofillExtractionSchema, type CharacterAutofillExtraction } from '../../services/story/CharacterAutofillFields.js';
 
 export class OpenAIStoryAiClient implements StoryAiClientPort {
   public constructor(private readonly client: OpenAIClient) {}
@@ -53,6 +54,21 @@ export class OpenAIStoryAiClient implements StoryAiClientPort {
       jsonSchema,
       responseSchema: extractedCharactersSchema,
       errorLabel: 'OpenAI episode character extractor',
+      input: buildInput(request),
+    });
+    return result.characters;
+  }
+
+  public async extractCharacterAutofill(request: StoryAiModelRequest): Promise<CharacterAutofillExtraction> {
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(characterAutofillExtractionSchema);
+    const result = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
+      maxOutputTokens: 16_000,
+      schemaName: 'episode_character_autofill',
+      jsonSchema,
+      responseSchema: characterAutofillExtractionSchema,
+      errorLabel: 'OpenAI episode character autofill',
       input: buildInput(request),
     });
     return result.characters;

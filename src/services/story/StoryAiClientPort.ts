@@ -1,5 +1,6 @@
 import type { PageSkeletonPageDraft, StoryEpisodeDraftFields } from '../../domain/types/storyAi.js';
 import type { ExtractedCharacter } from '../../../packages/api-contract/src/characterSuggestions.js';
+import type { CharacterAutofillExtraction } from './CharacterAutofillFields.js';
 
 export interface StoryAiModelRequest {
   systemPrompt: string;
@@ -16,5 +17,6 @@ export interface StoryAiClientPort {
   generatePageSkeleton(request: StoryAiModelRequest): Promise<PageSkeletonPageDraft[]>;
   improveEpisodeDraft(request: StoryAiModelRequest): Promise<StoryEpisodeDraftWriterOutput>;
   extractEpisodeCharacters?(request: StoryAiModelRequest): Promise<ExtractedCharacter[]>;
+  extractCharacterAutofill?(request: StoryAiModelRequest): Promise<CharacterAutofillExtraction>;
   suggestEpisodeProductionNotes?(request: StoryAiModelRequest): Promise<string[]>;
 }
