@@ -129,6 +129,34 @@ describe('新規人物だけの編集可能な初期値', () => {
     expect(rendered.indexOf('すべての項目を埋める必要はありません')).toBeLessThan(rendered.indexOf('性別表現'));
   });
 
+  it('通常のキャラ一覧では写真カードから未保存編集保護を経て選択する', async () => {
+    await render();
+    const thumbnailPicker = root!.root.findByType('CharacterThumbnailPicker');
+
+    expect(thumbnailPicker.props.characters).toEqual([entity]);
+    expect(thumbnailPicker.props.selectedId).toBeNull();
+    await act(async () => thumbnailPicker.props.onSelect(entity.id));
+
+    expect(saveDirtyEditors).toHaveBeenCalledTimes(1);
+    expect(updateSelection).toHaveBeenCalledWith({ entityId: entity.id }, { skipDirtyCheck: true });
+  });
+
+  it('保存済みの顔・髪・服の値は選択時に折り畳まず表示する', async () => {
+    selection.entityId = entity.id;
+    entity = {
+      ...entity,
+      structured_fields: { face_shape: 'round', hair_color: 'black', clothing_category: 'school' },
+    };
+    entityDetail = entity;
+    pages = [{ entities: [entity] }];
+    await render();
+
+    for (const label of ['顔', '髪', '服装']) {
+      expect(root!.root.findAllByType('button').find((node) => node.props.accessibilityLabel === label)!.props.accessibilityState.expanded).toBe(true);
+    }
+    expect(choice('髪の色').props.value).toBe('black');
+  });
+
   it('キャラ一覧の初期データがない読み込み失敗だけを必須エラーとして表示する', async () => {
     entitiesError = new Error('offline');
     pages = [{ entities: [] }];
@@ -164,11 +192,11 @@ describe('新規人物だけの編集可能な初期値', () => {
     await render();
     await act(async () => root!.root.findAllByType('PrimaryButton').find(node => node.props.label === 'この話から候補を作る')!.props.onPress());
     await act(async () => root!.root.findByProps({ accessibilityLabel: '澪の候補を選択' }).props.onPress());
-    await act(async () => root!.root.findAllByType('button').find(node => node.props.accessibilityLabel === '髪')!.props.onPress());
 
     expect(getEpisodes).toHaveBeenCalledWith('chapter', null);
     expect(suggestEpisodeCharacters).toHaveBeenCalledWith('episode', { version: 3 }, null);
     expect(field('名前').props.value).toBe('澪');
+    expect(root!.root.findAllByType('button').find(node => node.props.accessibilityLabel === '髪')!.props.accessibilityState.expanded).toBe(true);
     expect(choice('髪の色').props.value).toBe('黒');
     expect(choice('性別表現').props.value).toBe('');
     expect(field('自由入力欄').props.value).toBe('赤いスカーフ');
@@ -476,7 +504,7 @@ describe('新規人物だけの編集可能な初期値', () => {
     await rerender();
     expect(updateSelection).toHaveBeenCalledWith({ entityId: autofilledEntity.id }, { skipDirtyCheck: true });
     expect(choice('性別表現').props.value).toBe('');
-    await act(async () => root!.root.findAllByType('button').find(node => node.props.accessibilityLabel === '髪')!.props.onPress());
+    expect(root!.root.findAllByType('button').find(node => node.props.accessibilityLabel === '髪')!.props.accessibilityState.expanded).toBe(true);
     expect(choice('髪の色').props.value).toBe('black');
     await act(async () => field('名前').props.onChangeText('保存し直した澪'));
     await act(async () => registration.save());

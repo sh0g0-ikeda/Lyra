@@ -545,6 +545,15 @@ const characterFieldKeys = [
   'socks_or_legwear'
 ];
 
+const faceDetailFieldKeys = [
+  'face_shape', 'eyebrow_shape', 'nose_shape', 'mouth_shape', 'eye_color', 'eye_shape',
+  'eyelid_type', 'eye_size', 'eye_angle', 'pupil_style', 'under_eye_detail', 'mouth_default',
+] as const;
+
+const outfitDetailFieldKeys = [
+  'clothing_category', 'clothing_main_color', 'clothing_impression', 'clothing_description',
+] as const;
+
 const genericFieldKeys = [
   'category',
   'shape',
@@ -1016,6 +1025,10 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   useLayoutEffect(() => { imageImportWorkspaceScopeRef.current = imageImportWorkspaceScope; }, [imageImportWorkspaceScope]);
 
   const activeFieldKeys = entityType === 'character' ? characterFieldKeys : genericFieldKeys;
+  const faceDetailsKey = faceDetailFieldKeys.map((key) => structuredDraft[key] ?? '').join('\u0000');
+  const outfitDetailsKey = outfitDetailFieldKeys.map((key) => structuredDraft[key] ?? '').join('\u0000');
+  const hasFaceDetails = faceDetailFieldKeys.some((key) => (structuredDraft[key] ?? '').trim().length > 0);
+  const hasOutfitDetails = outfitDetailFieldKeys.some((key) => (structuredDraft[key] ?? '').trim().length > 0);
 
   const entitiesQuery = useInfiniteQuery({
     enabled: activeWorkId !== null,
@@ -1756,7 +1769,10 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
       return;
     }
     void (async () => {
-      if (await updateSelection({ entityId })) {
+      if (!await saveDirtyEditors()) {
+        return;
+      }
+      if (await updateSelection({ entityId }, { skipDirtyCheck: true })) {
         setEntityEditorMode('edit');
       }
     })();
@@ -2090,6 +2106,20 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         </Section>
       ) : null}
       <Section collapsible persistKey="characters:list" title={editorMessage(language, 'characterList')}>
+        <CharacterThumbnailPicker
+          characters={entities}
+          hasNextPage={entitiesQuery.hasNextPage}
+          isFetchingNextPage={entitiesQuery.isFetchingNextPage}
+          language={language}
+          onEndReached={async () => {
+            if (entitiesQuery.hasNextPage && !entitiesQuery.isFetchingNextPage) {
+              await entitiesQuery.fetchNextPage();
+            }
+          }}
+          onPreview={(_entityId, sources) => openImagePreview(sources)}
+          onSelect={switchEntity}
+          selectedId={entityEditorMode === 'create' ? null : selection.entityId}
+        />
         <RecordPicker
           emptyLabel={t(language, 'emptyCharacters')}
           hasNextPage={entitiesQuery.hasNextPage}
@@ -2171,7 +2201,11 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.art.style.3dbfd980")} language={language} onChange={(value) => setStructuredValue('art_style', value)} options={artStyleOptions} value={structuredDraft.art_style ?? ''} />
             </CollapsibleGroup>
 
-            <CollapsibleGroup defaultCollapsed title={t(language, "generated.screens.CharactersScreen.face.f4d8eb6a")}>
+            <CollapsibleGroup
+              defaultCollapsed={!hasFaceDetails}
+              key={`face:${selectedEntity?.id ?? 'new'}:${faceDetailsKey}`}
+              title={t(language, "generated.screens.CharactersScreen.face.f4d8eb6a")}
+            >
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.face.shape.129e8c22")} language={language} onChange={(value) => setStructuredValue('face_shape', value)} options={faceShapeOptions} value={structuredDraft.face_shape ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.eyebrow.shape.0e2aaabf")} language={language} onChange={(value) => setStructuredValue('eyebrow_shape', value)} options={eyebrowShapeOptions} value={structuredDraft.eyebrow_shape ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.nose.shape.aa0c3304")} language={language} onChange={(value) => setStructuredValue('nose_shape', value)} options={noseShapeOptions} value={structuredDraft.nose_shape ?? ''} />
@@ -2186,7 +2220,11 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.mouth.default.4bde6546")} language={language} onChange={(value) => setStructuredValue('mouth_default', value)} options={mouthDefaultOptions} value={structuredDraft.mouth_default ?? ''} />
             </CollapsibleGroup>
 
-            <CollapsibleGroup defaultCollapsed title={t(language, "generated.screens.CharactersScreen.hair.d1fbc0ef")}>
+            <CollapsibleGroup
+              defaultCollapsed={(structuredDraft.hair_color ?? '').trim().length === 0}
+              key={`hair:${selectedEntity?.id ?? 'new'}:${structuredDraft.hair_color ?? ''}`}
+              title={t(language, "generated.screens.CharactersScreen.hair.d1fbc0ef")}
+            >
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.hair.color.71cf2ed1")} language={language} onChange={(value) => setStructuredValue('hair_color', value)} options={hairColorOptions} value={structuredDraft.hair_color ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.hair.length.210757f7")} language={language} onChange={(value) => setStructuredValue('hair_length', value)} options={hairLengthOptions} value={structuredDraft.hair_length ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.hair.style.746c37e2")} language={language} onChange={(value) => setStructuredValue('hair_style', value)} options={hairStyleOptions} value={structuredDraft.hair_style ?? ''} />
@@ -2197,7 +2235,11 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.back.shape.a85f5892")} language={language} onChange={(value) => setStructuredValue('hair_back_shape', value)} options={hairBackShapeOptions} value={structuredDraft.hair_back_shape ?? ''} />
             </CollapsibleGroup>
 
-            <CollapsibleGroup defaultCollapsed title={t(language, "generated.screens.CharactersScreen.outfit.c6a8820c")}>
+            <CollapsibleGroup
+              defaultCollapsed={!hasOutfitDetails}
+              key={`outfit:${selectedEntity?.id ?? 'new'}:${outfitDetailsKey}`}
+              title={t(language, "generated.screens.CharactersScreen.outfit.c6a8820c")}
+            >
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.category.da912e83")} language={language} onChange={(value) => setStructuredValue('clothing_category', value)} searchable options={clothingOptions} value={structuredDraft.clothing_category ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.main.color.250a10a8")} language={language} onChange={(value) => setStructuredValue('clothing_main_color', value)} options={clothingColorOptions} value={structuredDraft.clothing_main_color ?? ''} />
               <ChoiceField label={t(language, "generated.screens.CharactersScreen.impression.811cb717")} language={language} onChange={(value) => setStructuredValue('clothing_impression', value)} options={clothingImpressionOptions} value={structuredDraft.clothing_impression ?? ''} />
