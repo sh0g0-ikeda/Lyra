@@ -11,18 +11,26 @@ import {
   CHARACTER_AUTOFILL_EXTRACTION_MAX_TOKENS,
   CHARACTER_AUTOFILL_OPENAI_MODEL,
   CHARACTER_AUTOFILL_REASONING_EFFORT,
+  STORY_PAGE_ESTIMATE_MAX_TOKENS,
+  STORY_PAGE_ESTIMATE_OPENAI_MODEL,
+  STORY_PAGE_ESTIMATE_REASONING_EFFORT,
+  STORY_EPISODE_MANUSCRIPT_IMPROVEMENT_MAX_TOKENS,
+  STORY_EPISODE_MANUSCRIPT_MAX_FRAGMENTS,
 } from '../../domain/constants/storyAi.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { PageSkeletonPageDraft } from '../../domain/types/storyAi.js';
 import { PANEL_FRAME_TEMPLATE_IDS } from '../../domain/constants/panelFrameTemplates.js';
 import {
   improveEpisodeDraftResponseSchema,
+  episodePanelCountEstimateResponseSchema,
   pageSkeletonResponseSchema,
 } from '../../lib/validators/storyAi.schema.js';
 import type {
   StoryAiClientPort,
   StoryAiModelRequest,
   StoryEpisodeDraftWriterOutput,
+  StoryPanelCountEstimate,
+  StoryManuscriptFragmentOutput,
 } from '../../services/story/StoryAiClientPort.js';
 import { OpenAIClient } from './OpenAIClient.js';
 import { requestOpenAIText, requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
@@ -35,6 +43,27 @@ import {
 
 export class OpenAIStoryAiClient implements StoryAiClientPort {
   public constructor(private readonly client: OpenAIClient) {}
+
+  public async estimateEpisodePanelCount(request: StoryAiModelRequest): Promise<StoryPanelCountEstimate[]> {
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(
+      episodePanelCountEstimateResponseSchema,
+    );
+    const result = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: STORY_PAGE_ESTIMATE_OPENAI_MODEL,
+      reasoningEffort: STORY_PAGE_ESTIMATE_REASONING_EFFORT,
+      maxOutputTokens: STORY_PAGE_ESTIMATE_MAX_TOKENS,
+      schemaName: 'episode_panel_count_estimate',
+      jsonSchema,
+      responseSchema: episodePanelCountEstimateResponseSchema,
+      errorLabel: 'OpenAI episode panel count estimator',
+      input: buildInput(request),
+    });
+    return result.blocks.map((block) => ({
+      blockId: block.block_id,
+      panelCount: block.panel_count,
+    }));
+  }
 
   public async suggestEpisodeProductionNotes(request: StoryAiModelRequest): Promise<string[]> {
     const schema = z.object({ notes: z.array(z.string().trim().min(1).max(600)).max(8) }).strict();
@@ -141,6 +170,29 @@ export class OpenAIStoryAiClient implements StoryAiClientPort {
       climax: parsed.climax,
       endingHook: parsed.ending_hook,
     };
+  }
+
+  public async improveEpisodeManuscript(
+    request: StoryAiModelRequest,
+  ): Promise<StoryManuscriptFragmentOutput[]> {
+    const schema = z.object({
+      fragments: z.array(z.object({
+        id: z.string().trim().min(1).max(80),
+        text: z.string().max(8_000),
+      }).strict()).min(1).max(STORY_EPISODE_MANUSCRIPT_MAX_FRAGMENTS),
+    }).strict();
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(schema);
+    const result = await requestStructuredOpenAIResponse({
+      client: this.client,
+      model: STORY_EPISODE_IMPROVEMENT_WRITER_MODEL,
+      maxOutputTokens: STORY_EPISODE_MANUSCRIPT_IMPROVEMENT_MAX_TOKENS,
+      schemaName: 'episode_manuscript_improvement',
+      jsonSchema,
+      responseSchema: schema,
+      errorLabel: 'OpenAI episode manuscript writer',
+      input: buildInput(request),
+    });
+    return result.fragments;
   }
 
   private async *streamSingleResponse(

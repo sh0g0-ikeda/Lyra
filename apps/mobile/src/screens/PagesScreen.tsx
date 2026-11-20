@@ -1740,6 +1740,8 @@ export function PagesScreen(): React.JSX.Element {
           overwrite_existing: request.overwriteExisting,
           ...(request.preserveGeneratedImages ? { preserve_generated_images: true } : {}),
           apply_story_plan: false,
+          ...(productionNotesCapabilitiesQuery.data?.enabled === true && productionNotesPlanningEnabled
+            ? { production_notes_version: 'v1' as const } : {}),
           language
         },
         organizationId

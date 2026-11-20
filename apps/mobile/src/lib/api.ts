@@ -17,6 +17,7 @@ import type { EditableEntityState, NamedEntityStatePayload } from '@/domain/enti
 import type { InsertPanelAfterPayload, PanelStructurePayload, PanelStructureResult } from '@/domain/panelInsertion';
 import type { EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
 import { onlineManager } from '@tanstack/react-query';
+import { storyPageEstimateSchema, type StoryPageEstimate } from '@/domain/storyPageEstimateContract';
 
 import {
   generationQuoteRequestSchema, generationQuoteAcceptanceSchema, generationQuoteResponseSchema, generationQuoteReceiptSchema,
@@ -1038,6 +1039,31 @@ export class LyraMobileApiClient {
       `/api/story/improve-episode-draft${organizationQuery(organizationId)}`,
       storyEpisodeImprovementSchema,
       { method: 'POST', body, timeoutMs: STORY_AI_WRITE_TIMEOUT_MS }
+    );
+  }
+
+  public estimateStoryPages(
+    body: {
+      episode_id: string;
+      production_notes_enabled: boolean;
+      language: 'ja' | 'en';
+      base_draft: {
+        title?: string | null;
+        purpose?: string | null;
+        story_input_mode: 'full' | 'structured';
+        story_full_draft: string | null;
+        introduction: string | null;
+        middle: string | null;
+        climax: string | null;
+        ending_hook: string | null;
+      };
+    },
+    organizationId?: string | null,
+  ): Promise<StoryPageEstimate> {
+    return this.request(
+      `/api/story/estimate-pages${organizationQuery(organizationId)}`,
+      storyPageEstimateSchema,
+      { method: 'POST', body, timeoutMs: STORY_AI_WRITE_TIMEOUT_MS },
     );
   }
 

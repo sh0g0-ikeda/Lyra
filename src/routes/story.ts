@@ -1,6 +1,7 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { characterSuggestionsSchema } from '../../packages/api-contract/src/characterSuggestions.js';
+import { storyPageEstimateSchema } from '../../packages/api-contract/src/storyPageEstimate.js';
 import { characterAutofillResultSchema, characterAutofillWithReviewResultSchema } from '../../packages/api-contract/src/characterAutofill.js';
 import {
   chapterSchema,
@@ -24,6 +25,7 @@ import {
 import type { Chapter, Episode, Work } from '../domain/types/story.js';
 import {
   collaborateStoryBodySchema,
+  estimateEpisodePagesBodySchema,
   generatePageSkeletonBodySchema,
   generatePageSkeletonParamSchema,
   improveEpisodeDraftBodySchema,
@@ -172,6 +174,34 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     }, organizationId);
 
     return createSseResponse(stream);
+  });
+
+  app.post('/story/estimate-pages', async (c) => {
+    const user = c.get('user');
+    const organizationId = parseOptionalOrganizationId(c);
+    const body = estimateEpisodePagesBodySchema.safeParse(await readStoryJsonBody(c));
+    if (!body.success) throw new ValidationError(formatZodValidationError(body.error));
+
+    await requireOrganizationCapability(c, dependencies, organizationId, 'edit_work');
+    const estimator = dependencies.storyCollaborationService.estimateEpisodePages;
+    if (estimator === undefined) throw new ConfigurationError('Episode page estimation is unavailable');
+
+    const result = await estimator.call(dependencies.storyCollaborationService, user.id, {
+      episodeId: body.data.episode_id,
+      productionNotesEnabled: body.data.production_notes_enabled,
+      language: body.data.language,
+      baseDraft: {
+        title: body.data.base_draft.title,
+        purpose: body.data.base_draft.purpose,
+        storyInputMode: body.data.base_draft.story_input_mode,
+        storyFullDraft: body.data.base_draft.story_full_draft,
+        introduction: body.data.base_draft.introduction,
+        middle: body.data.base_draft.middle,
+        climax: body.data.base_draft.climax,
+        endingHook: body.data.base_draft.ending_hook,
+      },
+    }, organizationId);
+    return c.json(assertMobileResponseContract(storyPageEstimateSchema, result));
   });
 
   app.post('/story/improve-episode-draft', async (c) => {
@@ -586,6 +616,9 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
     if (!body.success) {
       throw new ValidationError(formatZodValidationError(body.error));
     }
+    if (body.data.production_notes_version === 'v1' && dependencies.productionNotesAvailable === false) {
+      throw new ConfigurationError('Episode production notes are unavailable');
+    }
 
     if (dependencies.episodePageSkeletonService !== undefined) {
       const queued = await dependencies.episodePageSkeletonService.enqueueEpisodePageSkeleton(
@@ -595,6 +628,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
           overwriteExisting: body.data.overwrite_existing,
           preserveGeneratedImages: body.data.preserve_generated_images,
           applyStoryPlan: false,
+          ...(body.data.production_notes_version === 'v1' ? { applyProductionNotes: true } : {}),
           language: body.data.language,
         },
         organizationId,
@@ -626,6 +660,7 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
       overwriteExisting: body.data.overwrite_existing,
       preserveGeneratedImages: body.data.preserve_generated_images,
       language: body.data.language,
+      ...(body.data.production_notes_version === 'v1' ? { applyProductionNotes: true } : {}),
     }, organizationId);
 
     // Skeleton and explicit autofill are separate user actions, including old clients.

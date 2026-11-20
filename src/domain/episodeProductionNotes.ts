@@ -1,5 +1,6 @@
 import { ValidationError } from './errors/index.js';
 import { deriveStructuredStorySections } from './episodeStoryInput.js';
+import { parseStoryManuscript, StoryManuscriptError } from '../../packages/api-contract/src/storyManuscript.js';
 
 
 export const episodeProseFields = ['storyFullDraft', 'introduction', 'middle', 'climax', 'endingHook'] as const;
@@ -24,16 +25,26 @@ export function readEpisodeProductionNotes(
   directives: EpisodeProductionDirective[];
 } {
   const prose: ProseFields = {};
+  const inlineNotes: string[] = [];
   const activeFields = input.storyFullDraft == null
     ? episodeProseFields.slice(1) : ['storyFullDraft'] as const;
   for (const field of activeFields) {
     const value = input[field];
     if (typeof value !== 'string') continue;
-    prose[field] = value;
+    try {
+      const manuscript = parseStoryManuscript(value, true);
+      prose[field] = manuscript.prose;
+      inlineNotes.push(...manuscript.pages.flatMap(page => page.blocks.flatMap(block => block.directions
+        .map(direction => direction.instruction).filter(note => parseProductionDirective(note) !== null))));
+    } catch (error) {
+      if (error instanceof StoryManuscriptError) throw new ValidationError(error.message);
+      throw error;
+    }
   }
-  if (authoredNotes.length > maxDirectives) throw new ValidationError('Too many episode production notes');
+  const notes = [...new Set([...authoredNotes, ...inlineNotes])];
+  if (notes.length > maxDirectives) throw new ValidationError('Too many episode production notes');
   const body = Object.values(prose);
-  const directives = authoredNotes.map((note) => {
+  const directives = notes.map((note) => {
     const directive = parseProductionDirective(note);
     if (directive === null) throw new ValidationError('Episode production note has an unsupported form');
     const anchors = 'at' in directive ? [directive.at] : [directive.first, directive.second];

@@ -1418,6 +1418,53 @@ with the saved prose, including after they edit a quoted passage. Valid
 AI-selected layout templates survive skeleton repair and
 subsequent autofill when the template, frame and panel counts agree.
 
+Opted-in manuscripts also accept paired `＃direction＃` at the relevant scene,
+standalone `===` / `＝＝＝` page boundaries, and standalone `---` / `ーーー`
+panel boundaries. These tokens stay at their original positions in the saved
+manuscript; existing quoted notes remain in the sidecar list. Ordinary Markdown
+headings (including closing `#`) and escaped delimiter lines remain prose.
+Unclosed inline full-width instructions require correction before AI processing;
+the released full-width `＃ heading` form remains ordinary prose.
+
+Boundaries can be sparse. Only text bounded on both sides by authored markers
+is fixed: either a panel marker and another panel/page marker fixes one panel,
+or two page markers enclose one page. Unmarked leading/trailing prose remains
+automatically divisible. Thus `=== A --- B ===` is one page with two panels,
+while `prefix --- A --- suffix` fixes A alone. A fixed panel may contain several
+actions or dialogue lines and must not be split. A fixed page has at most eight
+panels; a fixed panel's source has at most 2,000 characters. Impossible bounds
+fail explicitly without dropping source or overflowing to another page.
+
+New clients opt skeleton jobs into this interpretation with
+`production_notes_version: "v1"`; both that marker and the saved episode flag
+are required. Old jobs and clients retain their previous skeleton path.
+Generated layout metadata records the raw manuscript and each source block's
+assigned panel slots. Detail, audit and final validation use the same ownership;
+editing the source or losing the mapping requires rebuilding the structure.
+Directions are editable composition notes, never dialogue, character base
+attributes, or evidence for automatically created states. Wrapped existing
+quoted state-timing commands use the established registered-state rules.
+Character and automatic-state evidence excludes command tokens and cannot join
+source fragments across an instruction. The raw manuscript remains the
+concurrency/fingerprint authority.
+
+“話の長さから推定” uses GPT-6 Luna / low with validated block IDs and panel counts
+to estimate the current unsaved narrative. Without page constraints, the server
+computes `ceil(total panels / 4)`. Manual one-panel blocks count as one; a fixed
+page counts as one page, and each free region separated by page markers is
+estimated independently at four panels per page. The API is authenticated,
+organization-scoped and read-only: it does not save drafts or spend image credits.
+Clients update the page-count field for review and normal saving, discard stale
+results after scope/draft/count changes, and show an over-limit result without
+clamping or overwriting the field. The existing new/increased-page limit applies.
+
+AI story improvement preserves authored commands through a separate structured
+writer: only identified prose fragments are editable. The server retains command
+tokens and surrounding whitespace, validates the exact fragment ID set, then
+reassembles and re-parses the boundary structure. Failure returns the original
+draft for review instead of a version with lost or moved commands. No migration
+or change to released response shapes is required.
+
 ### Image generation model rollout
 
 Mobile 1.0.11 requires the compatible JavaScript update to display and accept

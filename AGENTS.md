@@ -1616,3 +1616,8 @@ Never assign an unready draft as an image reference or overwrite an existing sta
 Cast, coverage and episode-state extraction share the narrative-persistence policy
 in Unified Spec §6: a single mention can establish a lasting injury, loss, form,
 outfit or age change; one-panel lighting and transient effects stay panel-local.
+
+Story manuscript commands and page estimation follow Unified Spec §6: keep sparse
+authored page/panel boundaries and paired directions in the raw manuscript,
+exclude them from automatic character/state evidence, preserve source-to-slot
+ownership through generation and audit, and retain the opt-in/legacy job split.

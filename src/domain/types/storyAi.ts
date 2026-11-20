@@ -135,6 +135,12 @@ export interface PageSkeletonPanelDraft {
 }
 
 export interface PageSkeletonPageDraft {
+  /** Server-owned source allocation, persisted in layout_config for later autofill. */
+  manuscriptSource?: {
+    version: 1;
+    source: string;
+    panels: Array<{ order: number; blockId: string }>;
+  };
   pageNumber: number;
   purpose: string;
   suggestedPanelCount: number;

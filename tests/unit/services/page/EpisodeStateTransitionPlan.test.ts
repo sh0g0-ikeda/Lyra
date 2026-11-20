@@ -115,6 +115,14 @@ function injuredTransition(): EpisodeStateTransition {
 }
 
 describe('validateEpisodeStateTransitionPlan', () => {
+  it('作画指示だけの外傷を原文の状態変化として認めない', () => {
+    const story = context();
+    story.episode.productionNotesEnabled = true;
+    story.episode.middle = '主人公は歩く。＃腕を負傷した＃';
+    expect(() => validateEpisodeStateTransitionPlan(story, {
+      transitions: [injuredTransition()], unresolved: [],
+    })).toThrow(EpisodeStatePlanError);
+  });
   it.each([
     ['原文外のdescription', { suggestedDescription: '髪全体が虹色に輝く' }],
     ['完成コマ外のpanel evidence', { panelEvidenceQuote: 'まだ変化していない' }],

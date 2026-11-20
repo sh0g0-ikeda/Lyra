@@ -3,6 +3,12 @@ import type { EpisodePagePlanContext } from '../../../../src/domain/types/page.j
 import { buildEpisodeStateTransitionCompilerBrief } from '../../../../src/services/page/EpisodeStateTransitionCompiler.js';
 
 describe('buildEpisodeStateTransitionCompilerBrief', () => {
+  it('指示内だけの外傷を状態抽出の原文に混ぜない', () => {
+    const input = context();
+    input.episode.productionNotesEnabled = true;
+    input.episode.storyFullDraft = '主人公が歩く。＃主人公の左頬に赤い傷を描く＃';
+    expect(buildEpisodeStateTransitionCompilerBrief(input, 'ja')).not.toContain('左頬に赤い傷');
+  });
   it('保存済みstory、scene、panel読順、開始状態と未確定候補だけをAI briefへ渡す', () => {
     const brief = buildEpisodeStateTransitionCompilerBrief(context(), 'ja');
 

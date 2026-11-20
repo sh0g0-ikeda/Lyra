@@ -5,6 +5,7 @@ import { colors, radius, spacing, textStyles } from '@/constants/theme';
 
 interface FormFieldProps {
   label: string;
+  hideLabel?: boolean;
   value: string;
   onChangeText: (value: string) => void;
   editable?: boolean;
@@ -25,6 +26,7 @@ interface FormFieldProps {
 
 export function FormField({
   label,
+  hideLabel = false,
   value,
   onChangeText,
   editable = true,
@@ -54,12 +56,12 @@ export function FormField({
 
   return (
     <View style={styles.field}>
-      <View style={styles.labelRow}>
+      {hideLabel ? null : <View style={styles.labelRow}>
         <Text style={styles.label}>{label}</Text>
         {maxLength === undefined ? null : (
           <Text style={styles.counter}>{value.length}/{maxLength}</Text>
         )}
-      </View>
+      </View>}
       <TextInput
         accessibilityLabel={label}
         autoCapitalize={autoCapitalize}

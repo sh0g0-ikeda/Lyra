@@ -219,6 +219,17 @@ class FakeStoryService implements StoryServicePort {
 class FakeStoryCollaborationService implements StoryCollaborationServicePort {
   public lastInput: Record<string, unknown> | null = null;
   public lastImproveInput: Record<string, unknown> | null = null;
+  public estimateCalls = 0;
+
+  public async estimateEpisodePages(
+    userId: string,
+    input: Parameters<NonNullable<StoryCollaborationServicePort['estimateEpisodePages']>>[1],
+    organizationId?: string | null,
+  ) {
+    this.estimateCalls += 1;
+    this.lastInput = { userId, ...input, organizationId };
+    return { panel_count: 5, calculated_pages: 2, estimated_pages: 2, explicit_page_count: null };
+  }
 
   public async collaborate(
     userId: string,
@@ -319,11 +330,12 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
   public requestedEpisodeId: string | null = null;
   public overwriteExisting = false;
   public preserveGeneratedImages = false;
+  public lastOptions: Record<string, unknown> | null = null;
 
   public async generateForEpisode(
     userId: string,
     requestedEpisodeId: string,
-    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean },
+    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean; applyProductionNotes?: boolean },
   ): Promise<{
     pagesCreated: number;
     panelsCreated: number;
@@ -336,8 +348,9 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
   public async prepareForEpisode(
     userId: string,
     requestedEpisodeId: string,
-    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean },
+    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean; applyProductionNotes?: boolean },
   ): Promise<PageSkeletonPreparation> {
+    this.lastOptions = options ?? null;
     this.requestedEpisodeId = requestedEpisodeId;
     this.overwriteExisting = options?.overwriteExisting === true;
     this.preserveGeneratedImages = options?.preserveGeneratedImages === true;
@@ -992,6 +1005,49 @@ describe('story routes', () => {
     });
   });
 
+  it('現在の未保存本文をページ見積もりServiceへ渡す', async () => {
+    const collaborationService = new FakeStoryCollaborationService();
+    const app = createTestApp(collaborationService);
+    const token = await createToken();
+
+    const response = await app.request('/api/story/estimate-pages', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        episode_id: episodeId,
+        production_notes_enabled: true,
+        language: 'ja',
+        base_draft: {
+          story_input_mode: 'full', story_full_draft: '扉を開ける。',
+          title: null, purpose: null, introduction: null, middle: null, climax: null, ending_hook: null,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      panel_count: 5, calculated_pages: 2, estimated_pages: 2, explicit_page_count: null,
+    });
+    expect(collaborationService.lastInput).toMatchObject({
+      userId: user.id, episodeId, productionNotesEnabled: true,
+      baseDraft: { storyInputMode: 'full', storyFullDraft: '扉を開ける。' },
+    });
+  });
+
+  it('ページ見積もりは未認証リクエストでServiceを呼ばない', async () => {
+    const collaborationService = new FakeStoryCollaborationService();
+    const app = createTestApp(collaborationService);
+
+    const response = await app.request('/api/story/estimate-pages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ episode_id: episodeId, base_draft: { story_input_mode: 'full', story_full_draft: '本文' } }),
+    });
+
+    expect(response.status).toBe(401);
+    expect(collaborationService.estimateCalls).toBe(0);
+  });
+
   it('story collaborate returns 422 for unknown keys', async () => {
     const app = createTestApp(new FakeStoryCollaborationService(), new FakePageSkeletonService());
     const token = await createToken();
@@ -1484,7 +1540,32 @@ describe('story routes', () => {
     });
     expect(response.status).toBe(202);
     expect(received).toMatchObject({overwriteExisting:true,preserveGeneratedImages:true,applyStoryPlan:false});
+    expect(received).not.toHaveProperty('applyProductionNotes');
     await expect(response.json()).resolves.toMatchObject({story_plan_applied:false});
+  });
+
+  it('production notes v1を明示したskeletonだけ解釈フラグを転送する', async () => {
+    const skeleton = new FakeEpisodePageSkeletonService();
+    let received: unknown;
+    skeleton.enqueueEpisodePageSkeleton = async (...args: unknown[]) => { received = args[2]; return {jobId: skeleton.jobId}; };
+    const app = createTestApp({episodePageSkeletonService:skeleton});
+    const token = await createToken();
+    const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method:'POST', headers: {Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({production_notes_version:'v1'}),
+    });
+    expect(response.status).toBe(202);
+    expect(received).toMatchObject({applyProductionNotes:true,applyStoryPlan:false});
+
+    const sync = new FakePageSkeletonService();
+    const syncResponse = await createTestApp({pageSkeletonService:sync}).request(
+      `/api/episodes/${episodeId}/generate-page-skeleton`, {
+        method:'POST', headers: {Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+        body:JSON.stringify({production_notes_version:'v1'}),
+      },
+    );
+    expect(syncResponse.status).toBe(201);
+    expect(sync.lastOptions).toMatchObject({applyProductionNotes:true});
   });
 
   it('episode PUTの開始状態をsnake caseでServiceへ渡し、responseへ返す', async () => {

@@ -346,8 +346,10 @@ function validateSource(
   }
   const savedText = sourceText(context, source.sourceField, source.sourceSceneId);
   const quote = normalizeSourceText(source.sourceQuote);
+  const evidenceSpans = savedText === null ? [] : storyManuscriptEvidence(savedText,
+    context.episode.productionNotesEnabled === true && !source.sourceField.startsWith('scene_'));
   if (savedText === null || normalizeSourceText(savedText).length === 0 || quote.length === 0
-    || (!allowAuxiliaryQuoteMismatch && !normalizeSourceText(savedText).includes(quote))) {
+    || (!allowAuxiliaryQuoteMismatch && !evidenceSpans.some(span => normalizeSourceText(span).includes(quote)))) {
     throw new EpisodeStatePlanError('STATE_PLAN_INVALID', 'Episode state quote is not present in the saved story');
   }
 }
@@ -384,3 +386,4 @@ function sourceText(
 function normalizeSourceText(value: string): string {
   return value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
 }
+import { storyManuscriptEvidence } from '../../../packages/api-contract/src/storyManuscript.js';

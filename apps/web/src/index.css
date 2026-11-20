@@ -787,6 +787,13 @@ a {
   gap: 8px;
 }
 
+.page-estimate-field { display: flex; flex-direction: column; gap: 8px; }
+.page-estimate-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(64px, 100px); align-items: stretch; gap: 8px; }
+.page-estimate-controls > .secondary-button { min-width: 0; white-space: normal; line-height: 1.35; padding: 10px 8px; }
+.page-estimate-controls input { width: 100%; min-width: 0; }
+.page-estimate-error { color: #f39b91; line-height: 1.45; }
+.page-estimate-summary { color: #e5c76b; line-height: 1.45; }
+
 .mobile-bottom-nav {
   display: none;
 }

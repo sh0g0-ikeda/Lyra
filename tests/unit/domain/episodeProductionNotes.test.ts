@@ -36,4 +36,10 @@ describe('splitEpisodeProductionNotes', () => {
     expect(result.prose.storyFullDraft).toBe(input);
     expect(result.directives).toEqual([]);
   });
+  it('＃で囲んだ既存の状態タイミング指示を従来の状態制約へ渡す', () => {
+    const result = readEpisodeProductionNotes({ storyFullDraft:
+      'ルカの翼が光る。＃「翼が光る」のコマから「ルカ」は「覚醒」状態。＃' }, []);
+    expect(result.directives).toEqual([{ kind: 'state', at: '翼が光る', name: 'ルカ', state: '覚醒' }]);
+    expect(result.prose.storyFullDraft).toBe('ルカの翼が光る。');
+  });
 });

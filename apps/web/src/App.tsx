@@ -3,6 +3,7 @@ import { MAX_NEW_EPISODE_PAGES, editableEpisodePageLimit } from '../../../packag
 import type { CharacterAppearanceSuggestion, CharacterAutofillResult } from '../../../packages/api-contract/src/characterAutofill.ts';
 import { humanAppearanceChoices } from '../../../packages/api-contract/src/characterAppearanceCatalog.ts';
 import type { EpisodeCharacterSuggestion } from '../../../packages/api-contract/src/characterSuggestions.ts';
+import type { StoryPageEstimate } from '../../../packages/api-contract/src/storyPageEstimate.ts';
 import { useRetainedSelection } from './hooks/useRetainedSelection';
 import { reconcileSavedStoryDraft, sameStoryDraft } from './domain/storyDraftSave';
 import { GoogleSignInButton, GoogleIdentityLinkPanel } from './components/GoogleAuthControls';
@@ -2459,6 +2460,8 @@ function StudioShell(props: {
   const hydratedEpisodeVersionRef = useRef<string | null>(null);
   const [storyInstruction, setStoryInstruction] = useState('');
   const [storyBusy, setStoryBusy] = useState(false);
+  const [pageEstimateState, setPageEstimateState] = useState<{ error: string | null; summary: string | null }>({ error: null, summary: null });
+  const [estimatingPages, setEstimatingPages] = useState(false);
   const [storyImprovementDraft, setStoryImprovementDraft] = useState<StoryEpisodeImprovementRecord['draft'] | null>(null);
   const [storyImprovementMeta, setStoryImprovementMeta] = useState<{
     compiler_provider: StoryEpisodeImprovementRecord['compiler_provider'];
@@ -2974,6 +2977,18 @@ function StudioShell(props: {
     production_notes_enabled: productionNotesRequested,
     production_notes: separatedProductionNotes.notes,
   } : {};
+  const pageEstimateRevision = JSON.stringify({
+    session: props.authSessionKey,
+    organization: activeOrganizationId,
+    episode: selectedEpisode?.id ?? null,
+    draft: episodeProseDraft,
+    rawStoryDraft: episodeDraft.story_full_draft,
+    productionNotes: separatedProductionNotes.notes,
+    estimatedPages: episodeDraft.estimated_pages,
+    productionNotesRequested,
+  });
+  const pageEstimateRevisionRef = useRef(pageEstimateRevision);
+  useLayoutEffect(() => { pageEstimateRevisionRef.current = pageEstimateRevision; }, [pageEstimateRevision]);
   const suggestedEntityStatesQuery = useQuery({
     queryKey: scopedQueryKey(['entity-states', suggestedStateDraft?.entityId ?? '']),
     queryFn: () => api.getEntityStates(suggestedStateDraft?.entityId ?? '', activeOrganizationId),
@@ -4579,6 +4594,53 @@ function StudioShell(props: {
     });
   };
 
+  // Estimation is deliberately draft-only; a response may change the page input only when its editor context is unchanged.
+  const estimateSelectedEpisodePages = async (): Promise<void> => {
+    if (selectedEpisode === null || !canCreateActiveOrganizationWorks || episodeProseDraft.story_full_draft.trim().length === 0 || estimatingPages) return;
+    const submittedRevision = pageEstimateRevision;
+    setEstimatingPages(true);
+    setPageEstimateState({ error: null, summary: null });
+    try {
+      const result: StoryPageEstimate = await api.estimateStoryPages({
+        episode_id: selectedEpisode.id,
+        production_notes_enabled: productionNotesRequested,
+        language: uiLanguage,
+        base_draft: {
+          title: nullableString(episodeDraft.title),
+          purpose: nullableString(episodeDraft.purpose),
+          story_input_mode: 'full',
+          story_full_draft: nullableString(episodeProseDraft.story_full_draft),
+          introduction: null,
+          middle: null,
+          climax: null,
+          ending_hook: null,
+        },
+      }, activeOrganizationId);
+      if (pageEstimateRevisionRef.current !== submittedRevision) return;
+      const nextPages = result.explicit_page_count ?? result.estimated_pages;
+      const pageLimit = editableEpisodePageLimit(selectedEpisode.estimated_pages);
+      if (nextPages > pageLimit) {
+        setPageEstimateState({
+          error: pickUiText(uiLanguage, `The estimate is ${nextPages} pages, which exceeds this episode's ${pageLimit}-page limit. Split the story into episodes; the current page count was not changed.`, `推定は${nextPages}ページで、この話の上限${pageLimit}ページを超えています。話を分割してください。現在のページ数は変更していません。`),
+          summary: null,
+        });
+        return;
+      }
+      setEpisodeDraft((current) => ({ ...current, estimated_pages: String(nextPages) }));
+      const hasManualBounds = result.explicit_page_count !== null || result.estimated_pages !== result.calculated_pages;
+      const resultText = !hasManualBounds
+        ? pickUiText(uiLanguage, `${result.panel_count} panels → ${nextPages} pages`, `${result.panel_count}コマ→${nextPages}ページ`)
+        : pickUiText(uiLanguage, `${result.panel_count} panels → ${nextPages} pages (manual delimiters take priority)`, `${result.panel_count}コマ→${nextPages}ページ（手動の区切りを優先）`);
+      setPageEstimateState({ error: null, summary: resultText });
+    } catch (error) {
+      if (pageEstimateRevisionRef.current === submittedRevision) {
+        setPageEstimateState({ error: toMessage(error, uiLanguage), summary: null });
+      }
+    } finally {
+      setEstimatingPages(false);
+    }
+  };
+
   const workspacePanel = (
     <PanelSection
       title={pickUiText(uiLanguage, 'Workspace', 'ワークスペース')}
@@ -5673,6 +5735,8 @@ function StudioShell(props: {
         const result = await api.generatePageSkeleton(intent.episodeId, {
           overwrite_existing: overwriteExisting,
           ...(overwriteExisting ? { preserve_generated_images: true } : {}),
+          ...(storyProductionNoteCapabilities.data?.enabled === true && selectedEpisode?.production_notes_enabled === true
+            ? { production_notes_version: 'v1' as const } : {}),
           apply_story_plan: false, language: intent.language,
         }, intent.organizationId);
         if (pageDesignScopeRef.current !== intent.scope) return;
@@ -6351,14 +6415,18 @@ function StudioShell(props: {
                   >
                     <div className="form-grid two">
                       <InputField label="Title" value={episodeDraft.title} onChange={(value) => setEpisodeDraft({ ...episodeDraft, title: value })} />
-                      <InputField
-                        label="Estimated pages"
-                        value={episodeDraft.estimated_pages}
-                        onChange={(value) => setEpisodeDraft({ ...episodeDraft, estimated_pages: value })}
-                        type="number"
-                        min={1}
-                        max={editableEpisodePageLimit(selectedEpisode?.estimated_pages)}
-                      />
+                      <div className="field page-estimate-field">
+                        <span>{pickUiText(uiLanguage, 'Estimated pages', '想定ページ数')}</span>
+                        <div className="page-estimate-controls">
+                          <button aria-label={pickUiText(uiLanguage, 'Estimate pages from story length', '話の長さから推定')} className="secondary-button" disabled={!canCreateActiveOrganizationWorks || episodeProseDraft.story_full_draft.trim().length === 0 || estimatingPages} onClick={() => { void estimateSelectedEpisodePages(); }} type="button">
+                            {estimatingPages ? <LoaderCircle className="spin" size={16} /> : null}
+                            {pickUiText(uiLanguage, estimatingPages ? 'Estimating…' : 'Estimate from story length', estimatingPages ? '推定中…' : '話の長さから推定')}
+                          </button>
+                          <input aria-label={pickUiText(uiLanguage, 'Estimated pages', '想定ページ数')} max={editableEpisodePageLimit(selectedEpisode?.estimated_pages)} min={1} onChange={(event) => setEpisodeDraft({ ...episodeDraft, estimated_pages: event.target.value })} type="number" value={episodeDraft.estimated_pages} />
+                        </div>
+                        {pageEstimateState.error === null ? null : <small className="page-estimate-error" role="alert">{pageEstimateState.error}</small>}
+                        {pageEstimateState.summary === null ? null : <small className="page-estimate-summary" role="status">{pageEstimateState.summary}</small>}
+                      </div>
                     </div>
                     <TextAreaField
                       label="Whole story draft"
@@ -6377,6 +6445,7 @@ function StudioShell(props: {
                         {productionNotesRequested ? <small>{pickUiText(uiLanguage,
                           'Examples: #「A」と「B」は同じコマ / 別のコマ, #「A」のコマから「ミオ」は「雨ぬれ」状態, #「B」のコマで「ミオ」は通常に戻る',
                           '書き方例: #「A」と「B」は同じコマ / 別のコマ、#「A」のコマから「ミオ」は「雨ぬれ」状態、#「B」のコマで「ミオ」は通常に戻る')}</small> : null}
+                        {productionNotesRequested ? <small>{pickUiText(uiLanguage, 'Optional sparse delimiters: ---scene--- fixes only that scene to one panel; ===scene=== fixes only that portion to one page. Unmarked text is allocated automatically; combine ===/--- for fixed panels on one page.', '任意の区切り: ---場面--- はその場面だけ1コマ、===場面=== はその部分だけ1ページに固定します。区切りのない本文は自動配分され、同じページ内の ===/--- の組合せで固定コマも指定できます。')}</small> : null}
                       </div>
                     ) : null}
                     <div className="episode-save-mobile">

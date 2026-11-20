@@ -2670,6 +2670,7 @@ export class PostgresStoryRepository
           template_id: page.suggestedLayout,
           panel_count: page.suggestedPanelCount,
           frame_definitions: frameDefinitions,
+          ...(page.manuscriptSource === undefined ? {} : { story_manuscript: page.manuscriptSource }),
         });
         const existingPageId = preserveGeneratedImages
           ? existingPageIdsByNumber.get(page.pageNumber)

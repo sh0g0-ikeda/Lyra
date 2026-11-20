@@ -1034,6 +1034,64 @@ test('未保存の想定ページ数は章と作品の変更をCancelしても�
   expect(episodePutCount).toBe(0);
 });
 
+test('未保存本文からページ数を推定し、古い推定結果では編集中のページ数を上書きしない', async ({ page }, testInfo) => {
+  const fixtures = storyNavigationFixtures();
+  const requests: Record<string, unknown>[] = [];
+  let releaseStaleEstimate: (() => void) | null = null;
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    if (new URL(request.url()).pathname === '/api/story/estimate-pages' && request.method() === 'POST') {
+      requests.push(request.postDataJSON() as Record<string, unknown>);
+      if (requests.length === 2) {
+        await new Promise<void>((resolve) => { releaseStaleEstimate = resolve; });
+        await route.fulfill({ json: { panel_count: 36, calculated_pages: 9, estimated_pages: 9, explicit_page_count: null } });
+        return;
+      }
+      await route.fulfill({ json: { panel_count: 28, calculated_pages: 7, estimated_pages: 6, explicit_page_count: null } });
+      return;
+    }
+    await mockStoryNavigationApi(route, fixtures);
+  });
+  await page.goto('/');
+
+  const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
+  const estimate = page.getByRole('button', { name: 'Estimate pages from story length', exact: true });
+  const pages = page.getByRole('spinbutton', { name: 'Estimated pages', exact: true });
+  await draft.fill('Current unsaved story used only for the estimate.');
+  await estimate.click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect((requests[0].base_draft as Record<string, unknown>).story_full_draft).toBe('Current unsaved story used only for the estimate.');
+  await expect(pages).toHaveValue('6');
+  await expect(page.getByRole('status').filter({ hasText: 'manual delimiters take priority' })).toBeVisible();
+  await expect(page.locator('.splash-overlay')).toHaveCount(0);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const desktopButton = await estimate.boundingBox();
+  const desktopInput = await pages.boundingBox();
+  expect(desktopButton).not.toBeNull();
+  expect(desktopInput).not.toBeNull();
+  expect(desktopButton?.x).toBeLessThan(desktopInput?.x ?? 0);
+  await page.locator('.episode-draft-section').screenshot({ path: testInfo.outputPath('page-estimate-desktop.png') });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileButton = await estimate.boundingBox();
+  const mobileInput = await pages.boundingBox();
+  expect(mobileButton).not.toBeNull();
+  expect(mobileInput).not.toBeNull();
+  expect(mobileButton?.x).toBeLessThan(mobileInput?.x ?? 0);
+  await page.locator('.episode-draft-section').screenshot({ path: testInfo.outputPath('page-estimate-mobile.png') });
+
+  await draft.fill('Changed while the next estimate is waiting.');
+  await estimate.click();
+  await expect.poll(() => requests.length).toBe(2);
+  await draft.fill('Newest unsaved story must keep the current page count.');
+  releaseStaleEstimate?.();
+  await expect(estimate).toBeEnabled();
+  await expect(pages).toHaveValue('6');
+});
+
 test('1話の上限20ページを超える入力は保存せず20ページは保存する', async ({ page }) => {
   const fixtures = storyNavigationFixtures();
   const savedCounts: number[] = [];

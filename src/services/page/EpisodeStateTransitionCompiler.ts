@@ -3,6 +3,7 @@ import type { AppLanguage } from '../../domain/types/language.js';
 import type { EpisodePagePlanContext, EpisodePagePlanSuggestion } from '../../domain/types/page.js';
 import type { EpisodeBeatPlan } from './EpisodeBeatPlanCompiler.js';
 import { CHARACTER_STATE_EXTRACTION_RULES } from '../../domain/state/CharacterStateExtractionPolicy.js';
+import { analyzeStoryManuscript } from '../../../packages/api-contract/src/storyManuscript.js';
 
 export interface CompileEpisodeStateTransitionInput {
   context: EpisodePagePlanContext;
@@ -35,6 +36,8 @@ export function buildEpisodeStateTransitionCompilerBrief(
   beatPlan?: EpisodeBeatPlan,
   finalSuggestion?: EpisodePagePlanSuggestion,
 ): string {
+  const prose = (value: string | null | undefined): string => textOrNone(value == null ? value
+    : analyzeStoryManuscript(value, context.episode.productionNotesEnabled === true).prose);
   const suggestionByPageId = new Map(finalSuggestion?.pages.map((page) => [page.pageId, page] as const));
   const panels = [...context.pages]
     .sort((left, right) => left.pageNumber - right.pageNumber)
@@ -95,11 +98,11 @@ export function buildEpisodeStateTransitionCompilerBrief(
     `Output language: ${language === 'en' ? 'English' : 'Japanese'}`,
     '',
     '[SAVED EPISODE STORY]',
-    `Full draft: ${textOrNone(context.episode.storyFullDraft)}`,
-    `Introduction: ${textOrNone(context.episode.introduction)}`,
-    `Middle: ${textOrNone(context.episode.middle)}`,
-    `Climax: ${textOrNone(context.episode.climax)}`,
-    `Ending hook: ${textOrNone(context.episode.endingHook)}`,
+    `Full draft: ${prose(context.episode.storyFullDraft)}`,
+    `Introduction: ${prose(context.episode.introduction)}`,
+    `Middle: ${prose(context.episode.middle)}`,
+    `Climax: ${prose(context.episode.climax)}`,
+    `Ending hook: ${prose(context.episode.endingHook)}`,
     '',
     '[SAVED SCENES]',
     ...(scenes.length === 0 ? ['(none)'] : scenes),

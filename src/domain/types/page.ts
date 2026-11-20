@@ -1,5 +1,6 @@
 ﻿import type { ImageProvenance } from '../generation/ImageAccessPolicy.js';
 import type { PanelEntityAssignment } from './panelEntityAssignment.js';
+import type { EpisodeManuscriptPlan } from './storyManuscriptPlan.js';
 import type { PageGenerationMode } from './pageGeneration.js';
 import type { StyleReferenceMetadata } from './styleReference.js';
 import type {
@@ -142,6 +143,7 @@ export interface PageAutofillContext {
 }
 
 export interface EpisodePagePlanContext {
+  manuscriptPlan?: EpisodeManuscriptPlan;
   /** Internal physical-schema capability; absent in older internal callers. */
   stateDraftPersistenceSupported?: boolean;
   productionDirectives?: EpisodeProductionDirective[];

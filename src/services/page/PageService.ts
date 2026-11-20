@@ -8,6 +8,7 @@ import { normalizeAutofillDialogueReadingOrder } from '../../domain/policies/aut
 } from '../../domain/errors/index.js';
 import { distributeStoryBeats } from '../../domain/storyBeatDistribution.js';
 import { productionNotesPrompt, readEpisodeProductionNotes } from '../../domain/episodeProductionNotes.js';
+import { applyManuscriptDirections, manuscriptPlanPrompt, prepareEpisodeManuscriptPlan, validateManuscriptPlan } from './StoryManuscriptPlan.js';
 import {
   canonicalizeEntityMentionsInText,
   extractEntityAliases,
@@ -538,6 +539,7 @@ export class PageService implements PageServicePort {
       ...context,
       episode: { ...context.episode, ...production.prose },
       productionDirectives: production.directives,
+      manuscriptPlan: prepareEpisodeManuscriptPlan(context),
     };
     const finalDraftStateMode = stateOptions?.allowVisualStateFallback === true
       && productionContext.stateDraftPersistenceSupported !== false;
@@ -562,6 +564,8 @@ export class PageService implements PageServicePort {
       return buildSkippedEpisodePlanApplyResult(compiled.compilerError);
     }
 
+    validateManuscriptPlan(compilationContext.manuscriptPlan, compiled.suggestion);
+    compiled.suggestion = applyManuscriptDirections(compilationContext.manuscriptPlan, compiled.suggestion);
     const authorStates = production === null ? null : validateAndPlaceProductionDirectives(
       compilationContext, compiled.suggestion, production.directives,
     );
@@ -601,6 +605,7 @@ export class PageService implements PageServicePort {
         language,
       );
       validateEpisodePlanAgainstContext(context, normalized);
+      validateManuscriptPlan(compilationContext.manuscriptPlan, normalized);
       if (finalDraftStateMode) {
         resolveEpisodeStateTransitionPlan(context, {
           transitions: strictModelStateTransitions,
@@ -672,6 +677,7 @@ export class PageService implements PageServicePort {
               language,
             );
             validateEpisodePlanAgainstContext(lockedContext, normalized);
+            validateManuscriptPlan(compilationContext.manuscriptPlan, normalized);
             if (finalDraftStateMode) {
               resolveEpisodeStateTransitionPlan(lockedContext, {
                 transitions: strictModelStateTransitions,
@@ -1322,7 +1328,7 @@ export class PageService implements PageServicePort {
   ): Promise<CompiledEpisodeBeatPlan> {
     try {
       return await this.episodeBeatPlanCompiler!.compileBeatPlan({
-        compilerBrief: buildEpisodeBeatPlanCompilerBrief(context, language),
+        compilerBrief: [buildEpisodeBeatPlanCompilerBrief(context, language), manuscriptPlanPrompt(context.manuscriptPlan)].filter(Boolean).join('\n\n'),
         language,
       });
     } catch (error) {
@@ -1365,7 +1371,7 @@ export class PageService implements PageServicePort {
       totalChunks: initialPacks.length,
     });
     const compiledOutline = await outlineCompiler.call(this.episodeBeatPlanCompiler, {
-      compilerBrief: buildEpisodeBeatPlanOutlineCompilerBrief(context, language),
+      compilerBrief: [buildEpisodeBeatPlanOutlineCompilerBrief(context, language), manuscriptPlanPrompt(context.manuscriptPlan)].filter(Boolean).join('\n\n'),
       language,
     });
     validateEpisodeBeatPlanOutlineCoverage(context, compiledOutline.outline);
@@ -1415,13 +1421,13 @@ export class PageService implements PageServicePort {
 
     try {
       const compiled = await this.episodeBeatPlanCompiler!.compileBeatPlan({
-        compilerBrief: buildEpisodeBeatPlanSegmentCompilerBrief({
+        compilerBrief: [buildEpisodeBeatPlanSegmentCompilerBrief({
           context: input.context,
           language: input.language,
           outline: input.outline,
           targetPages: input.pages,
           completedPages: input.completedPages,
-        }),
+        }), manuscriptPlanPrompt(input.context.manuscriptPlan)].filter(Boolean).join('\n\n'),
         language: input.language,
       });
       validateEpisodeBeatPlanCoverage(
@@ -1537,6 +1543,7 @@ export class PageService implements PageServicePort {
     suggestion: EpisodePagePlanSuggestion,
   ): void {
     validateEpisodePlanAgainstContext(context, suggestion);
+    validateManuscriptPlan(context.manuscriptPlan, suggestion);
     const deterministicErrors = detectDeterministicContinuityIssues(suggestion).filter(
       (issue) => issue.severity === 'error',
     );
@@ -1623,7 +1630,7 @@ export class PageService implements PageServicePort {
     });
     const compiledAudit = await this.episodePlanAuditCompiler!.auditPlan({
       compilerBrief: appendEpisodeStateLedger(
-        auditArtifacts.compilerBrief,
+        [auditArtifacts.compilerBrief, manuscriptPlanPrompt(context.manuscriptPlan)].filter(Boolean).join('\n\n'),
         stateLedger,
       ),
       language,
@@ -1722,7 +1729,7 @@ export class PageService implements PageServicePort {
     stateReferences?: readonly EpisodeAutofillStateReference[],
   ): Promise<EpisodePlanExecutionResult> {
     const baseCompilerBrief = [buildEpisodePlanCompilerBrief(context, language),
-      productionNotesPrompt(context.productionDirectives ?? [])].filter(Boolean).join('\n\n');
+      productionNotesPrompt(context.productionDirectives ?? []), manuscriptPlanPrompt(context.manuscriptPlan)].filter(Boolean).join('\n\n');
     const compilerBrief = continuitySupplement === undefined
       ? baseCompilerBrief
       : `${baseCompilerBrief}\n${continuitySupplement}`;

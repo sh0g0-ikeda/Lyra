@@ -1,6 +1,7 @@
 import { googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStatus } from './googleIdentityLink';
 import type { CharacterAppearanceSuggestion, CharacterAutofillResult } from '../../../../packages/api-contract/src/characterAutofill.ts';
 import type { EpisodeCharacterSuggestion } from '../../../../packages/api-contract/src/characterSuggestions.ts';
+import { storyPageEstimateSchema, type StoryPageEstimate } from '../../../../packages/api-contract/src/storyPageEstimate.ts';
 import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
 import { pageImageDeliveryPath, entityReferenceImageDeliveryPath, entityReferenceCandidateDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
 import type {
@@ -373,6 +374,7 @@ export class LyraApiClient {
       overwrite_existing?: boolean;
       preserve_generated_images?: boolean;
       apply_story_plan?: boolean;
+      production_notes_version?: 'v1';
       language?: 'ja' | 'en';
     },
     organizationId?: string | null,
@@ -438,6 +440,27 @@ export class LyraApiClient {
     };
   }, organizationId?: string | null): Promise<StoryEpisodeImprovementRecord> {
     return this.request(`/api/story/improve-episode-draft${organizationQuery(organizationId)}`, { method: 'POST', body });
+  }
+
+  public async estimateStoryPages(body: {
+    episode_id: string;
+    production_notes_enabled: boolean;
+    language: 'ja' | 'en';
+    base_draft: {
+      title?: string | null;
+      purpose?: string | null;
+      story_input_mode: 'structured' | 'full';
+      story_full_draft: string | null;
+      introduction: string | null;
+      middle: string | null;
+      climax: string | null;
+      ending_hook: string | null;
+    };
+  }, organizationId?: string | null): Promise<StoryPageEstimate> {
+    return storyPageEstimateSchema.parse(await this.request(
+      `/api/story/estimate-pages${organizationQuery(organizationId)}`,
+      { method: 'POST', body },
+    ));
   }
 
   public getCharacterSuggestionCapabilities(): Promise<{ enabled: boolean }> {

@@ -1,14 +1,21 @@
 import type { EpisodeCharacterSuggestion, ExtractedCharacter } from '../../../packages/api-contract/src/characterSuggestions.js';
 import type { Episode } from '../../domain/types/story.js';
 import type { StoryEntitySummary } from '../../domain/types/storyAi.js';
+import { storyManuscriptEvidence, StoryManuscriptError } from '../../../packages/api-contract/src/storyManuscript.js';
+import { ValidationError } from '../../domain/errors/index.js';
 
-export function episodeCharacterSource(episode: Episode, _productionNotesEnabled: boolean): string[] {
+export function episodeCharacterSource(episode: Pick<Episode,
+  'storyInputMode' | 'storyFullDraft' | 'introduction' | 'middle' | 'climax' | 'endingHook'>,
+  productionNotesEnabled: boolean): string[] {
   const body = episode.storyInputMode === 'full' ? [episode.storyFullDraft] :
     [episode.introduction, episode.middle, episode.climax, episode.endingHook];
   return body.flatMap((field) => {
     if (field === null) return [];
-    const prose = field.trim();
-    return prose.length === 0 ? [] : [prose];
+    try { return storyManuscriptEvidence(field, productionNotesEnabled).map(part => part.trim()).filter(Boolean); }
+    catch (error) {
+      if (error instanceof StoryManuscriptError) throw new ValidationError(error.message);
+      throw error;
+    }
   });
 }
 

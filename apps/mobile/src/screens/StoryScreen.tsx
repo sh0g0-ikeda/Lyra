@@ -50,6 +50,7 @@ import {
 import { t } from '@/lib/i18n';
 import { editorMessage } from '@/lib/editorUiMessages';
 import { ApiError, type StoryEpisodeImprovementWithProductionNotes } from '@/lib/api';
+import { mayApplyStoryPageEstimate } from '@/lib/storyPageEstimateGuard';
 import { userErrorMessage } from '@/lib/userMessages';
 import { collectOperationFailures, operationFailure } from '@/lib/operationErrorContext';
 import { useResetOnScopeChange } from '@/hooks/useResetOnScopeChange';
@@ -95,6 +96,9 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   const [episodeDraft, setEpisodeDraft] = useState('');
   const [productionNotesEnabled, setProductionNotesEnabled] = useState(false);
   const [estimatedPages, setEstimatedPages] = useState('4');
+  const [pageEstimateError, setPageEstimateError] = useState<string | null>(null);
+  const [pageEstimateSummary, setPageEstimateSummary] = useState<string | null>(null);
+  const [estimatingPages, setEstimatingPages] = useState(false);
   const [sceneId, setSceneId] = useState<string | null>(null);
   const [sceneOrder, setSceneOrder] = useState('1');
   const [sceneLocation, setSceneLocation] = useState('');
@@ -269,6 +273,52 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
   }, [episodeDirty, episodeScopeKey, selectedEpisode]);
 
   useEffect(() => () => collaborationAbortRef.current?.abort(), []);
+
+  // Page estimates never save a draft. The submitted scope/revision protects edits and navigation while AI is responding.
+  const estimatePagesFromStory = async (): Promise<void> => {
+    if (selectedEpisode === null || !canEdit || episodeDraft.trim().length === 0 || estimatingPages) return;
+    const submitted = { scope: episodeScopeKey, revision: storyEditorRevision };
+    setEstimatingPages(true);
+    setPageEstimateError(null);
+    setPageEstimateSummary(null);
+    try {
+      const result = await api.estimateStoryPages({
+        episode_id: selectedEpisode.id,
+        production_notes_enabled: productionNotesEnabled,
+        language,
+        base_draft: {
+          title: nullable(episodeTitle),
+          purpose: selectedEpisode.purpose ?? null,
+          story_input_mode: 'full',
+          story_full_draft: nullable(separatedProductionNotes.body),
+          introduction: null,
+          middle: null,
+          climax: null,
+          ending_hook: null,
+        },
+      }, organizationId);
+      if (!mayApplyStoryPageEstimate(submitted, currentStoryDraftRef.current)) return;
+      const nextPages = result.explicit_page_count ?? result.estimated_pages;
+      if (nextPages > editableEpisodePageLimit(selectedEpisode.estimated_pages)) {
+        const limit = editableEpisodePageLimit(selectedEpisode.estimated_pages);
+        setPageEstimateError(language === 'ja'
+          ? `推定は${nextPages}ページで、この話の上限${limit}ページを超えています。話を分割してください。現在のページ数は変更していません。`
+          : `The estimate is ${nextPages} pages, above this episode's ${limit}-page limit. Split the story; the current page count was not changed.`);
+        return;
+      }
+      setEstimatedPages(String(nextPages));
+      const hasManualBounds = result.explicit_page_count !== null || result.estimated_pages !== result.calculated_pages;
+      setPageEstimateSummary(!hasManualBounds
+        ? `${result.panel_count}${language === 'ja' ? 'コマ→' : ' panels → '}${nextPages}${language === 'ja' ? 'ページ' : ' pages'}`
+        : `${result.panel_count}${language === 'ja' ? 'コマ→' : ' panels → '}${nextPages}${language === 'ja' ? 'ページ（手動の区切りを優先）' : ' pages (manual delimiters take priority)'}`);
+    } catch (error) {
+      if (mayApplyStoryPageEstimate(submitted, currentStoryDraftRef.current)) {
+        setPageEstimateError(userErrorMessage(error, language));
+      }
+    } finally {
+      setEstimatingPages(false);
+    }
+  };
 
   useEffect(() => {
     const nextId = selectedScene?.id ?? null;
@@ -979,11 +1029,18 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
                 <Text style={styles.productionNotesHint}>
                   {t(language, 'screen.story.productionNotes.hint')}
                 </Text>
+                <Text style={styles.productionNotesHint}>{editorMessage(language, 'productionSyntaxHelp')}</Text>
                 {separatedProductionNotes.notes.map((note) => <Text key={note} style={styles.productionNotesHint}># {note}</Text>)}
               </View>
             ) : null}
-            <FormField editable={canEdit} keyboardType="numeric" label={t(language, 'estimatedPages')} placeholder={editorMessage(language, 'pagesExample')} help={editorMessage(language, 'pagesHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} onChangeText={setEstimatedPages} value={estimatedPages} />
+            <Text style={styles.label}>{t(language, 'estimatedPages')}</Text>
+            <View style={styles.pageEstimateRow}>
+              <View style={styles.pageEstimateButton}><PrimaryButton disabled={!canEdit || episodeDraft.trim().length === 0 || estimatingPages} label={editorMessage(language, estimatingPages ? 'estimatePagesLoading' : 'estimatePages')} loading={estimatingPages} onPress={() => { void estimatePagesFromStory(); }} variant="secondary" /></View>
+              <View style={styles.pageEstimateInput}><FormField hideLabel editable={canEdit} keyboardType="numeric" label={t(language, 'estimatedPages')} placeholder={editorMessage(language, 'pagesExample')} help={editorMessage(language, 'pagesHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} onChangeText={setEstimatedPages} value={estimatedPages} /></View>
+            </View>
             {estimatedPagesInvalid ? <Notice message={t(language, 'screen.story.estimatedPagesOutOfRange', { maximum: maxEstimatedPages })} tone="warning" /> : null}
+            {pageEstimateError === null ? null : <Notice message={pageEstimateError} tone="warning" />}
+            {pageEstimateSummary === null ? null : <Notice message={pageEstimateSummary} tone="info" />}
             <View style={styles.buttonRow}>
               <PrimaryButton disabled={!canEdit || activeStaleResource === 'episode' || estimatedPagesInvalid || episodeTitle.trim().length === 0} label={t(language, 'save')} loading={updateEpisodeMutation.isPending} onPress={() => updateEpisodeMutation.mutate()} variant="secondary" />
             </View>
@@ -1127,6 +1184,9 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontWeight: '700'
   },
+  pageEstimateButton: { flex: 1, minWidth: 0 },
+  pageEstimateInput: { flex: 0.55, minWidth: 72, maxWidth: 120 },
+  pageEstimateRow: { alignItems: 'flex-end', flexDirection: 'row', gap: spacing.sm },
   productionNotes: {
     backgroundColor: colors.surfaceAlt,
     borderColor: colors.border,

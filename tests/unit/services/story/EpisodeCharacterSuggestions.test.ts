@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groundCharacterSuggestions } from '../../../../src/services/story/EpisodeCharacterSuggestions.js';
+import { episodeCharacterSource, groundCharacterSuggestions } from '../../../../src/services/story/EpisodeCharacterSuggestions.js';
 
 const source = ['銀髪のミオが扉を押す。店員は黒い服を着ている。', 'ルカが覚醒し、翼が青く光った。'];
 const roster = [{
@@ -7,6 +7,15 @@ const roster = [{
 }];
 
 describe('groundCharacterSuggestions', () => {
+  it('指示だけに書かれた人名・傷をキャラ情報へ登録しない', () => {
+    const quote = 'カイの左頬に赤い傷を描く';
+    const evidence = episodeCharacterSource({ storyInputMode: 'full',
+      storyFullDraft: `ミオが歩く。＃${quote}＃\n---\nミオが止まる。`,
+      introduction: null, middle: null, climax: null, endingHook: null }, true);
+    expect(evidence.join('\n')).not.toContain(quote);
+    expect(groundCharacterSuggestions(evidence, [], [{ name: 'カイ', name_quote: quote,
+      entity_type: 'character', appearance: [], changes: [{ label: '赤い傷', description: '赤い傷', quote }] }])).toEqual([]);
+  });
   it('同じ人外キャラの輪郭と部位数をすべて残し重複する特徴だけをまとめる', () => {
     const quote = 'ルゥは青いしずく形で赤い角が二本、金色の目が三つある。';
     const traits = ['青いしずく形', '赤い角が二本', '金色の目が三つ'];
