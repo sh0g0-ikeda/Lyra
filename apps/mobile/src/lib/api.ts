@@ -4,6 +4,10 @@ import {
   characterSuggestionsSchema,
   type EpisodeCharacterSuggestion,
 } from '@/domain/characterSuggestionsContract';
+import {
+  characterAutofillResultSchema,
+  type CharacterAutofillResult,
+} from '@/domain/characterAutofillContract';
 
 import type { GenerationQuote, GenerationQuoteReceipt, GenerationQuoteAcceptance, GenerationQuoteRequest } from '@/domain/pageGenerationQuote';
 import { googleAuthCapabilitiesSchema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStartBody, type GoogleLinkStatus } from '@/domain/googleAuth';
@@ -334,6 +338,8 @@ const characterSuggestionRequestSchema = z.object({
 export interface CharacterSuggestionCapabilities {
   enabled: boolean;
 }
+
+export type { CharacterAutofillResult } from '@/domain/characterAutofillContract';
 
 export interface ProductionNotesCapabilities {
   enabled: boolean;
@@ -923,6 +929,31 @@ export class LyraMobileApiClient {
     return this.request(
       '/api/story/character-suggestion-capabilities',
       characterSuggestionCapabilitiesSchema,
+    );
+  }
+
+  /**
+   * Persists every unambiguous named cast member for the selected episode.
+   * The server owns matching and state creation; callers must use the current
+   * episode version to avoid writing against a stale story draft.
+   */
+  public getCharacterAutofillCapabilities(): Promise<CharacterSuggestionCapabilities> {
+    return this.request(
+      '/api/story/character-autofill-capabilities',
+      characterSuggestionCapabilitiesSchema,
+    );
+  }
+
+  public autofillEpisodeCharacters(
+    episodeId: string,
+    body: { version: number },
+    organizationId?: string | null,
+  ): Promise<CharacterAutofillResult> {
+    const requestBody = z.object({ version: z.number().int().min(0) }).strict().parse(body);
+    return this.request(
+      `/api/episodes/${encodeURIComponent(episodeId)}/character-autofill${organizationQuery(organizationId)}`,
+      characterAutofillResultSchema,
+      { method: 'POST', body: requestBody },
     );
   }
 

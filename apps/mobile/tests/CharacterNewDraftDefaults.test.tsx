@@ -12,10 +12,11 @@ let entityDetail: EntityRecord | undefined;
 let entityDetailError: Error | null;
 let entitiesError: Error | null;
 let language: 'ja' | 'en';
+let characterAutofillEnabled = false;
 const refetchEntity = vi.fn();
 let pages: { entities: EntityRecord[] }[];
 let registration: {dirty:boolean;save:()=>Promise<void>;discard:()=>void};
-const updateEntity=vi.fn(); const createEntity=vi.fn(); const getEpisodes=vi.fn(); const suggestEpisodeCharacters=vi.fn(); const getCharacterSuggestionCapabilities=vi.fn(); const navigate=vi.fn(); const trackJob=vi.fn();
+const updateEntity=vi.fn(); const createEntity=vi.fn(); const getEpisodes=vi.fn(); const suggestEpisodeCharacters=vi.fn(); const getCharacterSuggestionCapabilities=vi.fn(); const getCharacterAutofillCapabilities=vi.fn(); const autofillEpisodeCharacters=vi.fn(); const navigate=vi.fn(); const trackJob=vi.fn();
 const resolveDirtyEditors = vi.fn();
 const assetQuoteCapture = vi.hoisted(() => ({ options: null as Record<string, unknown> | null }));
 const updateSelection = vi.fn(async (next: Partial<typeof selection>) => { selection = { ...selection, ...next }; return true; });
@@ -27,6 +28,8 @@ vi.mock('@tanstack/react-query',()=>({useQueryClient:()=>queryClient,
  useInfiniteQuery:()=>({...query({pages}),error:entitiesError,hasNextPage:false,isFetchingNextPage:false,fetchNextPage:vi.fn()}),
  useQuery:(options:{queryKey:readonly unknown[]})=>options.queryKey[0] === 'entity-detail'
    ? {...query(entityDetail),error:entityDetailError,refetch:refetchEntity}
+   : options.queryKey[0] === 'character-autofill-capabilities'
+     ? query({enabled:characterAutofillEnabled})
    : options.queryKey[0] === 'character-suggestion-capabilities'
      ? query({enabled:true})
      : query(undefined),
@@ -34,7 +37,7 @@ vi.mock('@tanstack/react-query',()=>({useQueryClient:()=>queryClient,
  const run=async(variables?:unknown):Promise<unknown>=>{try{const value=await options.mutationFn(variables);await options.onSuccess?.(value,variables);return value;}catch(error){options.onError?.(error);throw error;}};
  return {mutateAsync:run,mutate:(variables?:unknown)=>{void run(variables);},isPending:false,error:null,reset:vi.fn()};}
 }));
-vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity,getEpisodes,suggestEpisodeCharacters,getCharacterSuggestionCapabilities},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob,updateSelection})}));
+vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity,getEpisodes,suggestEpisodeCharacters,getCharacterSuggestionCapabilities,getCharacterAutofillCapabilities,autofillEpisodeCharacters},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob,updateSelection})}));
 vi.mock('@/state/dirtyState',()=>({useDirtyState:()=>({resolveDirtyEditors}),useDirtyEditorRegistration:(input:typeof registration)=>{registration=input;}}));
 vi.mock('@/hooks/useActiveResourceJobId',()=>({useActiveResourceJobId:()=>null}));
 vi.mock('@/hooks/useAssetGenerationQuote',()=>({useAssetGenerationQuote:(options: Record<string, unknown>)=>{assetQuoteCapture.options=options;return {state:{phase:'closed',visible:false},controller:{open:vi.fn(),close:vi.fn(),accept:vi.fn(),reconcile:vi.fn(),canAccept:()=>false}};}}));
@@ -79,6 +82,7 @@ beforeEach(() => {
   selection = { workId: 'work', entityId: null, organizationId: null };
   sessionKey = 'user';
   language = 'ja';
+  characterAutofillEnabled = false;
   entityDetail = undefined;
   entityDetailError = null;
   entitiesError = null;
@@ -93,6 +97,8 @@ beforeEach(() => {
   getEpisodes.mockReset().mockResolvedValue({ episodes: [{ id: 'episode', version: 3 }] });
   suggestEpisodeCharacters.mockReset().mockResolvedValue({ version: 3, characters: [] });
   getCharacterSuggestionCapabilities.mockReset().mockResolvedValue({ enabled: true });
+  getCharacterAutofillCapabilities.mockReset().mockResolvedValue({ enabled: false });
+  autofillEpisodeCharacters.mockReset().mockResolvedValue({ version: 3, characters: [], skipped_names: [] });
   updateSelection.mockClear();
   resolveDirtyEditors.mockReset().mockResolvedValue(true);
   trackJob.mockReset().mockResolvedValue(undefined);
@@ -436,5 +442,54 @@ describe('新規人物だけの編集可能な初期値', () => {
     expect(status.props.jobId).toBe('expired-job');
     await act(async () => { await status.props.onMissing(); });
     expect(root!.root.findByType('JobStatusCard').props.jobId).toBeNull();
+  });
+
+  it('新しい保存型autofillは全員の結果を表示し、各人物を一度で編集できる', async () => {
+    characterAutofillEnabled = true;
+    const autofilledEntity = {
+      ...entity,
+      id: '00000000-0000-4000-8000-000000000002',
+      name: '澪',
+      structured_fields: { hair_color: 'black' },
+    };
+    pages = [{ entities: [entity, autofilledEntity] }];
+    autofillEpisodeCharacters.mockResolvedValueOnce({
+      version: 3,
+      characters: [
+        { entity_id: entity.id, name: 'Saved hero', created: false, states_added: 2 },
+        { entity_id: '00000000-0000-4000-8000-000000000002', name: '澪', created: true, states_added: 1 },
+      ],
+      skipped_names: ['通行人'],
+    });
+    await render();
+    await act(async () => root!.root.findByProps({ testID: 'character-autofill-save-all' }).props.onPress());
+
+    expect(getEpisodes).toHaveBeenCalledWith('chapter', null);
+    expect(autofillEpisodeCharacters).toHaveBeenCalledWith('episode', { version: 3 }, null);
+    expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['entities', sessionKey, 'work', 'personal'] });
+    expect(root!.root.findByProps({ testID: 'character-autofill-results' })).toBeDefined();
+    expect(JSON.stringify(root!.toJSON())).toContain('通行人');
+
+    await act(async () => root!.root.findByProps({ testID: `character-autofill-edit-${autofilledEntity.id}` }).props.onPress());
+    await rerender();
+    expect(updateSelection).toHaveBeenCalledWith({ entityId: autofilledEntity.id }, { skipDirtyCheck: true });
+    expect(choice('性別表現').props.value).toBe('');
+    await act(async () => root!.root.findAllByType('button').find(node => node.props.accessibilityLabel === '髪')!.props.onPress());
+    expect(choice('髪の色').props.value).toBe('black');
+    await act(async () => field('名前').props.onChangeText('保存し直した澪'));
+    await act(async () => registration.save());
+    expect(updateEntity.mock.lastCall?.[1]).toEqual({
+      name: '保存し直した澪',
+      expected_updated_at: 'revision',
+    });
+  });
+
+  it('保存型autofillは未保存の人物編集を解決できない間は書き込まない', async () => {
+    characterAutofillEnabled = true;
+    resolveDirtyEditors.mockResolvedValueOnce(false);
+    await render();
+    await act(async () => root!.root.findByProps({ testID: 'character-autofill-save-all' }).props.onPress());
+
+    expect(autofillEpisodeCharacters).not.toHaveBeenCalled();
   });
 });

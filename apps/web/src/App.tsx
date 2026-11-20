@@ -1,5 +1,6 @@
 import { isOlderEditorRevision, reconcileSavedEditorDraft } from './domain/editorDraftSave';
 import { MAX_NEW_EPISODE_PAGES, editableEpisodePageLimit } from '../../../packages/api-contract/src/episodePageLimits.js';
+import type { CharacterAutofillResult } from '../../../packages/api-contract/src/characterAutofill.ts';
 import type { EpisodeCharacterSuggestion } from '../../../packages/api-contract/src/characterSuggestions.ts';
 import { useRetainedSelection } from './hooks/useRetainedSelection';
 import { reconcileSavedStoryDraft, sameStoryDraft } from './domain/storyDraftSave';
@@ -2430,6 +2431,9 @@ function StudioShell(props: {
   const [characterSuggestionResult, setCharacterSuggestionResult] = useState<{
     scope: string; version: number; characters: EpisodeCharacterSuggestion[];
   } | null>(null);
+  const [characterAutofillResult, setCharacterAutofillResult] = useState<{
+    scope: string; result: CharacterAutofillResult;
+  } | null>(null);
   const [storedSuggestedStateDraft, setSuggestedStateDraft] = useState<(SuggestedStateDraft & { scope: string }) | null>(null);
   const suggestedStateDraft = storedSuggestedStateDraft?.scope === readerScope ? storedSuggestedStateDraft : null;
   const savedEntityDraftRef = useRef<{ scope: string; workId: string; id: string; draft: EntityDraft; updatedAt: string } | null>(null);
@@ -2908,6 +2912,12 @@ function StudioShell(props: {
   const characterSuggestionCapabilitiesQuery = useQuery({
     queryKey: scopedQueryKey(['character-suggestion-capabilities']),
     queryFn: () => api.getCharacterSuggestionCapabilities(),
+    enabled: activeTab === 'entities' && selectedWork !== null && selectedEpisode !== null,
+    retry: false,
+  });
+  const characterAutofillCapabilitiesQuery = useQuery({
+    queryKey: scopedQueryKey(['character-autofill-capabilities']),
+    queryFn: () => api.getCharacterAutofillCapabilities(),
     enabled: activeTab === 'entities' && selectedWork !== null && selectedEpisode !== null,
     retry: false,
   });
@@ -4159,6 +4169,26 @@ function StudioShell(props: {
 
   const selectSuggestedExistingEntity = (entityId: string): void => {
     selectEntityForEditing(entityId);
+  };
+
+  const runEpisodeCharacterAutofill = async (): Promise<string> => {
+    if (selectedEpisode === null || selectedWork === null) {
+      throw new Error(pickUiText(uiLanguage, 'Choose an episode before saving characters.', 'キャラクターを保存する前に話を選択してください。'));
+    }
+    const episodeId = selectedEpisode.id;
+    const version = selectedEpisode.version;
+    const result = await api.autofillEpisodeCharacters(episodeId, { version }, activeOrganizationId);
+    if (result.version !== version) {
+      throw new Error(pickUiText(uiLanguage, 'The episode changed. Please try again.', '話の内容が変わりました。もう一度お試しください。'));
+    }
+    await entitiesQuery.refetch();
+    setCharacterAutofillResult({ scope: readerScope, result });
+    const savedCount = result.characters.length;
+    return pickUiText(
+      uiLanguage,
+      `${savedCount} named character${savedCount === 1 ? '' : 's'} saved. No image preview was generated.`,
+      `${savedCount}人の名前付きキャラクターを保存しました。画像プレビューは生成していません。`,
+    );
   };
 
   const saveSuggestedState = async (): Promise<void> => {
@@ -6612,7 +6642,37 @@ function StudioShell(props: {
                     )}
                   </PanelSection>
 
-                  {selectedEpisode !== null && characterSuggestionCapabilitiesQuery.data?.enabled === true ? <PanelSection title="Character suggestions" collapsible actions={<button className="secondary-button" disabled={busyAction !== null} onClick={() => void runAction('Find character suggestions', async () => {
+                  {selectedEpisode !== null && characterAutofillCapabilitiesQuery.data?.enabled === true ? <PanelSection title="Autofill character details" collapsible actions={<button className="secondary-button" disabled={busyAction !== null} onClick={() => {
+                    // The confirmation must happen before the server transaction writes any character or state.
+                    if (!confirmEntityNavigation()) return;
+                    if (isEntityDraftDirty()) discardEntityDraft();
+                    void runAction('Save named characters from this episode', runEpisodeCharacterAutofill);
+                  }} type="button"><Save size={16} />{pickUiText(uiLanguage, 'Autofill and save character details', 'キャラ情報を自動入力して保存')}</button>}>
+                    <p className="muted small">{pickUiText(uiLanguage, 'Saves unambiguous named characters and states. No image preview is generated.', '名前付きキャラと状態を自動入力して保存します。画像は生成しません。')}</p>
+                    {characterAutofillResult?.scope === readerScope && characterAutofillResult.result.version === selectedEpisode.version ? <div className="stack">
+                      {characterAutofillResult.result.characters.length === 0 && characterAutofillResult.result.skipped_names.length === 0 ? <div className="notice notice-info">
+                        {pickUiText(uiLanguage, 'No named characters were found to save from this episode.', 'この話には保存する名前付きキャラクターが見つかりませんでした。')}
+                      </div> : null}
+                      {characterAutofillResult.result.characters.map((character) => (
+                        <div className="mini-card" key={character.entity_id}>
+                          <strong>{character.name}</strong>
+                          <p className="muted small">{character.created
+                            ? pickUiText(uiLanguage, 'New character saved.', '新しいキャラクターを保存しました。')
+                            : pickUiText(uiLanguage, 'Existing character updated with saved episode states.', '既存キャラクターに話の状態を保存しました。')}
+                            {' '}{pickUiText(uiLanguage, `${character.states_added} state${character.states_added === 1 ? '' : 's'} added.`, `状態を${character.states_added}件追加しました。`)}</p>
+                          <button className="ghost-button" type="button" onClick={() => selectSuggestedExistingEntity(character.entity_id)}>
+                            {pickUiText(uiLanguage, 'Open saved character', '保存したキャラクターを開く')}
+                          </button>
+                        </div>
+                      ))}
+                      {characterAutofillResult.result.skipped_names.length > 0 ? <div className="notice notice-info">
+                        {pickUiText(uiLanguage, 'Skipped because the name was ambiguous or did not match:', '名前が曖昧、または一致しなかったため保存しなかった項目:')}
+                        <ul>{characterAutofillResult.result.skipped_names.map((name) => <li key={name}>{name}</li>)}</ul>
+                      </div> : null}
+                    </div> : null}
+                  </PanelSection> : null}
+
+                  {selectedEpisode !== null && characterAutofillCapabilitiesQuery.data?.enabled !== true && characterSuggestionCapabilitiesQuery.data?.enabled === true ? <PanelSection title="Character suggestions (legacy)" collapsible actions={<button className="secondary-button" disabled={busyAction !== null} onClick={() => void runAction('Find character suggestions', async () => {
                     const result = await api.getEpisodeCharacterSuggestions(selectedEpisode.id, { version: selectedEpisode.version }, activeOrganizationId);
                     if (result.version !== selectedEpisode.version) throw new Error(pickUiText(uiLanguage, 'The episode changed. Please try again.', '話の内容が変わりました。もう一度お試しください。'));
                     setCharacterSuggestionResult({ scope: readerScope, version: result.version, characters: result.characters });

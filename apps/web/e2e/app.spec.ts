@@ -83,6 +83,75 @@ const workspaceViewStorageKey = 'lyra:web:workspace-view:email:session';
 const mangaTutorialStorageKey = 'lyra:web:manga-tutorial:v1:email:session';
 const legacyTrackedJobsStorageKey = 'lyra:web:tracked-jobs:email:session';
 
+test('話の名前付きキャラを一括保存し、保存済み選択肢を通常の編集画面で再読込できる', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  const rin = {
+    ...entity,
+    id: 'entity-rin',
+    name: 'Rin',
+    // The server omitted gender; the editor must retain that blank instead of selecting a default.
+    structured_fields: { hair: { color: 'silver' } },
+    updated_at: '2026-04-27T00:00:00.000Z',
+  };
+  let savedEntities = [entity];
+  let autofillRequests = 0;
+  const imageGenerationRequests: string[] = [];
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/story/character-autofill-capabilities') return route.fulfill({ json: { enabled: true } });
+    if (path === `/api/episodes/${episode.id}/character-autofill`) {
+      autofillRequests += 1;
+      expect(route.request().postDataJSON()).toEqual({ version: episode.version });
+      savedEntities = [entity, rin];
+      return route.fulfill({ json: {
+        version: episode.version,
+        characters: [
+          { entity_id: rin.id, name: rin.name, created: true, states_added: 0 },
+          { entity_id: entity.id, name: entity.name, created: false, states_added: 1 },
+        ],
+        skipped_names: ['Unknown twin'],
+      } });
+    }
+    if (path.includes('/reference/generate') || path.includes('/preview')) imageGenerationRequests.push(path);
+    if (path === `/api/works/${work.id}/entities` && route.request().method() === 'GET') {
+      return route.fulfill({ json: { entities: savedEntities } });
+    }
+    if (path === `/api/entities/${rin.id}/reference-set`) {
+      return route.fulfill({ json: {
+        entity_id: rin.id,
+        primary_ref_id: null,
+        status: 'empty',
+        updated_at: rin.updated_at,
+        reference_images: [],
+      } });
+    }
+    return mockApi(route);
+  });
+  await page.goto('/');
+  await openMangaStep(page, '2. Characters');
+  await page.getByLabel('Free description', { exact: true }).first().fill('Keep this unsaved edit');
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.getByRole('button', { name: 'Autofill and save character details', exact: true }).click();
+  await expect.poll(() => autofillRequests).toBe(0);
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Autofill and save character details', exact: true }).click();
+  await expect.poll(() => autofillRequests).toBe(1);
+  await expect(page.getByText('Unknown twin', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open saved character', exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Open saved character', exact: true }).first().click();
+  await expect(page.getByLabel('Name', { exact: true }).first()).toHaveValue('Rin');
+  await expect(page.getByRole('combobox', { name: 'Gender', exact: true })).toHaveValue('');
+  await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('silver');
+  expect(imageGenerationRequests).toEqual([]);
+
+  await page.reload();
+  await openMangaStep(page, '2. Characters');
+  await page.getByRole('button', { name: 'Rin Character', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'Gender', exact: true })).toHaveValue('');
+  await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('silver');
+});
+
 test('話から抽出した外見をキャラ欄で確認でき、既存キャラには編集した状態だけを保存する', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);

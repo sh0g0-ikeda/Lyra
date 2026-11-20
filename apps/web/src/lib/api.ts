@@ -1,4 +1,5 @@
 import { googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStatus } from './googleIdentityLink';
+import type { CharacterAutofillResult } from '../../../../packages/api-contract/src/characterAutofill.ts';
 import type { EpisodeCharacterSuggestion } from '../../../../packages/api-contract/src/characterSuggestions.ts';
 import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
 import { pageImageDeliveryPath, entityReferenceImageDeliveryPath, entityReferenceCandidateDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
@@ -443,6 +444,10 @@ export class LyraApiClient {
     return this.request('/api/story/character-suggestion-capabilities');
   }
 
+  public getCharacterAutofillCapabilities(): Promise<{ enabled: boolean }> {
+    return this.request('/api/story/character-autofill-capabilities');
+  }
+
   public getStoryProductionNoteCapabilities(): Promise<{ enabled: boolean }> {
     return this.request('/api/story/production-notes-capabilities');
   }
@@ -453,6 +458,17 @@ export class LyraApiClient {
     organizationId?: string | null,
   ): Promise<CharacterSuggestionResponse> {
     return this.request(`/api/episodes/${episodeId}/character-suggestions${organizationQuery(organizationId)}`, {
+      method: 'POST',
+      body,
+    });
+  }
+
+  public autofillEpisodeCharacters(
+    episodeId: string,
+    body: { version: number },
+    organizationId?: string | null,
+  ): Promise<CharacterAutofillResult> {
+    return this.request(`/api/episodes/${episodeId}/character-autofill${organizationQuery(organizationId)}`, {
       method: 'POST',
       body,
     });

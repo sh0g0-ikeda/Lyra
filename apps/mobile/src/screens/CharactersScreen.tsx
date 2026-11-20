@@ -30,9 +30,43 @@ import { Section } from '@/components/Section';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { WorkspaceHierarchyNavigator } from '@/components/WorkspaceHierarchyNavigator';
 import { useWorkspaceContextSelection } from '@/components/WorkspaceContextPicker';
-import { entityTypes, type LabelOption } from '@/constants/options';
+import { entityTypes } from '@/constants/options';
 import { characterContinuityStateUiEnabled } from '@/constants/mobileFeatureVisibility';
 import { colors, spacing, textStyles } from '@/constants/theme';
+import {
+  ageOptions,
+  artStyleOptions,
+  bodyOptions,
+  clothingColorOptions,
+  clothingImpressionOptions,
+  clothingOptions,
+  eyebrowShapeOptions,
+  eyeAngleOptions,
+  eyeColorOptions,
+  eyeShapeOptions,
+  eyeSizeOptions,
+  eyelidTypeOptions,
+  expressionOptions,
+  faceShapeOptions,
+  firstImpressionOptions,
+  genderOptions,
+  hairArrangementOptions,
+  hairBackShapeOptions,
+  hairBangsOptions,
+  hairColorOptions,
+  hairFrontShapeOptions,
+  hairLengthOptions,
+  hairSideOptions,
+  hairStyleOptions,
+  heightOptions,
+  mouthDefaultOptions,
+  mouthShapeOptions,
+  noseShapeOptions,
+  pupilStyleOptions,
+  skinToneOptions,
+  standingStyleOptions,
+  underEyeDetailOptions,
+} from '@/domain/characterAppearanceCatalog';
 import { mergeCharacterClothingDescription } from '@/domain/characterClothing';
 import {
   buildCreateEntityPayload,
@@ -81,6 +115,7 @@ import { t } from '@/lib/i18n';
 import type { ScreenTranslationKey } from '@/lib/i18nScreenMessages';
 import { appendOrganizationQuery, downloadAuthenticatedFile } from '@/lib/download';
 import { ApiError, type CharacterSuggestion } from '@/lib/api';
+import type { CharacterAutofillResult } from '@/domain/characterAutofillContract';
 import {
   flattenUniqueRecords,
   MOBILE_LIST_PAGE_SIZE,
@@ -887,736 +922,6 @@ const toStructuredFieldsPayload = (entityType: EntityType, draft: DraftRecord, e
     ? toCharacterStructuredFieldsPayload(draft, extras)
     : toGenericStructuredFieldsPayload(entityType, draft);
 
-const japaneseOptionLabels: Record<string, string> = {
-  Accessory: 'アクセサリー',
-  'Accessory / prop': 'アクセサリー・小道具',
-  Ahoge: 'アホ毛',
-  Beard: 'ひげ',
-  'Beauty mark': 'ほくろ',
-  'Broad-shouldered': '肩幅広め',
-  'Color blocking': '色面の切り分け',
-  'Compact silhouette': 'コンパクトなシルエット',
-  Earrings: 'イヤリング',
-  'Expression gap': '表情のギャップ',
-  'Eye bags': '目の下のくま',
-  'Eye color contrast': '目の色の対比',
-  'Eye line': '目線',
-  'Face + hair balance': '顔と髪のバランス',
-  Fang: '八重歯',
-  Glasses: '眼鏡',
-  Goatee: 'あごひげ',
-  'Hair shape': '髪型',
-  'Hair streak': 'メッシュ',
-  'Long coat outline': 'ロングコートの輪郭',
-  'Military block': '軍服らしい面構成',
-  'Outfit shape': '服の形',
-  'Posture read': '姿勢の読み取りやすさ',
-  Scar: '傷跡',
-  'Scar / mark': '傷跡・印',
-  'Sharp jawline': '鋭い顎のライン',
-  'Silhouette edge': 'シルエットの端',
-  'Silhouette outline': 'シルエット輪郭',
-  'Skirt line': 'スカートライン',
-  'Soft rounded outline': '柔らかい丸みの輪郭',
-  Stance: '立ち姿',
-  Stubble: '無精ひげ',
-  'Tall and slender': '背が高く細身',
-  'Thick eyebrows': '太い眉',
-  ageless: '年齢不詳',
-  'about eight heads tall': '8頭身くらい',
-  'about seven and a half heads tall': '7.5頭身くらい',
-  'about seven heads tall': '7頭身くらい',
-  'about six and a half heads tall': '6.5頭身くらい',
-  'about six heads tall': '6頭身くらい',
-  androgynous: '中性的',
-  anime: 'アニメ調',
-  'ankle socks': 'くるぶし丈ソックス',
-  armor: '鎧',
-  arms_crossed: '腕組み',
-  ash_blonde: 'アッシュブロンド',
-  athletic: '引き締まった体型',
-  auburn: '赤茶',
-  average: '標準',
-  'balanced eyes': '標準的な目',
-  'balanced leg length': '標準的な脚の長さ',
-  'balanced shoulders': '標準的な肩幅',
-  'bare legs': '素足',
-  black: '黒',
-  blonde: '金髪',
-  blue: '青',
-  blunt: 'ぱっつん',
-  'blunt front': 'ぱっつん前髪',
-  boots: 'ブーツ',
-  bored_gaze: '退屈そうな目線',
-  braid: '三つ編み',
-  'braided back': '編み込んだ後ろ髪',
-  'bright reflective pupils': '明るい反射の瞳',
-  bright_friendly: '明るく親しみやすい',
-  broad: '肩幅広め',
-  'broad shoulders': '広い肩幅',
-  brown: '茶色',
-  bun: 'お団子',
-  business_casual: 'ビジネスカジュアル',
-  button: '丸い小鼻',
-  buzz_cut: '坊主',
-  calm_neutral: '穏やかな無表情',
-  'cargo pants': 'カーゴパンツ',
-  casual: 'カジュアル',
-  center_part: 'センター分け',
-  center_parted: 'センター分け',
-  'centered and straight': 'まっすぐ中心軸',
-  'center-parted front': 'センター分け前髪',
-  cheerful_smile: '快活な笑顔',
-  child: '子ども',
-  'clean bob back': '整ったボブの後ろ髪',
-  'closed neutral mouth': '閉じた自然な口元',
-  coarse: '硬め',
-  'combat boots': 'コンバットブーツ',
-  'combat utility details': '戦闘用の実用ディテール',
-  'comma front': 'コンマ風前髪',
-  comma_hair: 'コンマヘア',
-  confident_open: '自信があり開いた姿勢',
-  confident_smirk: '自信のある笑み',
-  cool_distant: 'クールで距離感がある',
-  cool_unfazed: 'クールで動じない',
-  crew_cut: 'クルーカット',
-  curly: 'カール',
-  curtain: 'カーテンバング',
-  'curtain front': 'カーテン風前髪',
-  curvy: '曲線的',
-  custom: '自由入力',
-  cute: 'かわいい',
-  dark_brown: '濃い茶色',
-  deep: '濃い肌',
-  'defined lower lash line': '下まつげの線あり',
-  diamond: 'ダイヤ型',
-  double: '二重',
-  down: '下ろし髪',
-  'dress shoes': '革靴',
-  'drooping eyes': 'たれ目',
-  'ear-length sides': '耳丈の横髪',
-  early_teens: '10代前半',
-  elegant: '上品',
-  elegant_upright: '上品な直立',
-  energetic_bold: '元気で大胆',
-  fade_cut: 'フェードカット',
-  'faded sides': 'フェードした横髪',
-  fair: '色白',
-  fantasy: 'ファンタジー',
-  female: '女性',
-  'firm straight mouth': 'きゅっと結んだ口',
-  fluffy: 'ふんわり',
-  formal: 'フォーマル',
-  formal_dress: 'フォーマルドレス',
-  forties_plus: '40代以上',
-  full: 'ふっくら',
-  gentle: 'やさしい',
-  gentle_soft: 'やさしく柔らかい',
-  gold: '金色',
-  gothic: 'ゴシック',
-  gray: '灰色',
-  green: '緑',
-  guarded_stance: '警戒した姿勢',
-  half_up: 'ハーフアップ',
-  hands_in_pockets: 'ポケットに手',
-  heart: 'ハート型',
-  heavy: '重め',
-  'heavy eye bags': '濃い目のくま',
-  heels: 'ヒール',
-  high_arch: '高いアーチ',
-  'hooded neckline': 'フード付き襟元',
-  hoodie: 'パーカー',
-  idol_stage: 'アイドル衣装',
-  japanese: '和風',
-  jeans: 'ジーンズ',
-  'knee socks': 'ひざ丈ソックス',
-  lab_coat: '白衣',
-  large: '大きめ',
-  'large eyes': '大きい目',
-  'large pupils': '大きい瞳',
-  late_teens: '10代後半',
-  'layered back': 'レイヤーの後ろ髪',
-  'layered practical details': '実用的な重ね着ディテール',
-  lean: '引き締まった細身',
-  'level eye line': '水平な目元',
-  light: '明るめ',
-  loafers: 'ローファー',
-  long: '長い',
-  'long legs': '長い脚',
-  'long loose back': '長く下ろした後ろ髪',
-  'long side locks': '長い横髪',
-  'long skirt': 'ロングスカート',
-  'long sleeves': '長袖',
-  long_bangs: '長い前髪',
-  long_straight: 'ロングストレート',
-  male: '男性',
-  man_bun: 'マンバン',
-  manga: '漫画調',
-  mature_composed: '大人びて落ち着いた',
-  medium: '中くらい',
-  medium_layered: 'ミディアムレイヤー',
-  'messy front': '無造作な前髪',
-  messy_bangs: '無造作な前髪',
-  messy_short: '無造作ショート',
-  military: '軍服',
-  'minimal clean design': 'ミニマルで整ったデザイン',
-  muscular: '筋肉質',
-  mysterious_fragile: '神秘的で儚い',
-  narrow: '細い',
-  'narrow shoulders': '狭い肩幅',
-  natural_relaxed: '自然でリラックス',
-  navy: '紺',
-  none: 'なし',
-  'none visible': '目立つ要素なし',
-  'open outward posture': '外へ開いた姿勢',
-  'ornamental trim': '装飾的な縁取り',
-  oval: '卵型',
-  painterly: '絵画調',
-  parted: '分け前髪',
-  petite: '小柄',
-  pink: 'ピンク',
-  playful_confident: '遊び心があり自信あり',
-  pompadour: 'ポンパドール',
-  ponytail: 'ポニーテール',
-  'ponytail fall': 'ポニーテールの落ち方',
-  practical: '実用的',
-  purple: '紫',
-  quiet_neat: '静かできちんとした',
-  red: '赤',
-  rough: 'ラフ',
-  round: '丸型',
-  'round collar': '丸襟',
-  rounded: '丸みあり',
-  'rounded front curve': '丸みのある前髪',
-  rugged_calm: '無骨で落ち着いた',
-  'sailor collar': 'セーラー襟',
-  school: '制服',
-  'school shoes': '学生靴',
-  semi_realistic: 'セミリアル',
-  serious: '真面目',
-  serious_focus: '真剣な表情',
-  serious_reliable: '真面目で信頼感がある',
-  sharp: '鋭い',
-  'sharp collar': '鋭い襟',
-  'sharp pupils': '鋭い瞳',
-  sharp_elite: '鋭くエリート感',
-  shaved: '刈り上げ',
-  'shaved sides': '刈り上げた横髪',
-  shaved_sides: 'サイド刈り上げ',
-  short: '短い',
-  'short clipped back': '短く整えた後ろ髪',
-  'short legs': '短めの脚',
-  'short side locks': '短い横髪',
-  'short skirt': '短いスカート',
-  'short sleeves': '半袖',
-  'short textured front': '短く束感のある前髪',
-  short_bangs: '短い前髪',
-  short_bob: 'ショートボブ',
-  short_cut: 'ショートカット',
-  shorts: 'ショートパンツ',
-  shy_reserved: '控えめ',
-  side_part: '横分け',
-  side_ponytail: 'サイドポニーテール',
-  side_swept: '流し前髪',
-  sideburns: 'もみあげ',
-  'side-swept front': '流した前髪',
-  silver: '銀色',
-  'simple uniform detailing': 'シンプルな制服ディテール',
-  single: '一重',
-  slacks: 'スラックス',
-  sleeveless: 'ノースリーブ',
-  slender: '細身',
-  slick: 'なでつけ',
-  slick_back: 'オールバック',
-  'slight eye bags': '薄いくま',
-  'slight smile': 'わずかな笑み',
-  'slightly backward-leaning': '少し後ろ重心',
-  'slightly downturned eyes': '少したれ目',
-  'slightly forward-leaning': '少し前傾',
-  'slightly upturned eyes': '少しつり目',
-  small: '小さめ',
-  'small eyes': '小さい目',
-  'small pupils': '小さい瞳',
-  smirk: '片笑い',
-  sneakers: 'スニーカー',
-  soft: 'やわらかい',
-  'soft cheek framing': '頬にかかる柔らかい横髪',
-  'soft inward posture': '内向きの柔らかい姿勢',
-  'soft parted lips': '少し開いた柔らかい口元',
-  'soft round pupils': '柔らかい丸い瞳',
-  'soft shadows': '柔らかい影',
-  soft_arch: 'ゆるいアーチ',
-  soft_smile: 'やわらかい笑顔',
-  soft_triangle: '柔らかい三角型',
-  spiky: 'ツンツン',
-  sports: 'スポーツ',
-  square: '四角型',
-  standard: '標準',
-  'standing collar': '立ち襟',
-  stern_look: '厳しい目つき',
-  still_quiet: '静かに立つ',
-  stocky: 'がっしり',
-  stoic_reserved: '寡黙で控えめ',
-  straight: 'まっすぐ',
-  'straight front line': 'まっすぐな前髪ライン',
-  'straight long back': 'ストレートの後ろ髪',
-  'straight pants': 'ストレートパンツ',
-  street_jacket: 'ストリートジャケット',
-  streetwear: 'ストリートウェア',
-  'strongly upturned eyes': '強いつり目',
-  suit: 'スーツ',
-  'swept-up front': '上げた前髪',
-  tactical: 'タクティカル',
-  tall: '高い',
-  tan: '小麦色',
-  'tapered nape': '襟足を絞った形',
-  teasing_smile: 'からかう笑み',
-  thick: '太め',
-  'thigh-high socks': '太もも丈ソックス',
-  thin: '細め',
-  thirties: '30代',
-  'three-quarter sleeves': '七分袖',
-  tied_back: '後ろ結び',
-  'tied-back hair': '後ろで結んだ髪',
-  tights: 'タイツ',
-  tired_neutral: '疲れ気味の無表情',
-  topknot: 'トップノット',
-  tousled: 'くしゃっと',
-  traditional_formal: '伝統的な正装',
-  trench_coat: 'トレンチコート',
-  'trimmed sides': '整えた横髪',
-  'tucked behind ears': '耳かけ',
-  twenties: '20代',
-  twin_tails: 'ツインテール',
-  two_block: 'ツーブロック',
-  two_tone: 'ツートーン',
-  undercut: 'アンダーカット',
-  'undercut back': 'アンダーカットの後ろ髪',
-  unspecified: '未指定',
-  upright_neat: 'きちんと直立',
-  'very large eyes': 'とても大きい目',
-  very_long: 'とても長い',
-  very_short: 'とても短い',
-  very_short_height: 'とても低い',
-  very_tall_height: 'とても高い',
-  wavy: 'ウェーブ',
-  white: '白',
-  wide: '横広',
-  'wide pants': 'ワイドパンツ',
-  'wide sleeves': '広袖',
-  wide_grounded_stance: '足幅広く安定した姿勢',
-  wild: 'ワイルド',
-  winter_coat: '冬用コート',
-  'wolf nape': 'ウルフ風の襟足',
-  wolf_cut: 'ウルフカット',
-  workwear: '作業着'
-};
-
-const optionSet = (entries: [string, string][]): LabelOption<string>[] =>
-  entries.map(([value, label]) => ({ value, labelJa: japaneseOptionLabels[value] ?? label, labelEn: label }));
-
-const genderOptions = optionSet([
-  ['', '-'],
-  ['female', 'Female'],
-  ['male', 'Male'],
-  ['androgynous', 'Androgynous'],
-  ['unspecified', 'Unspecified']
-]);
-
-const ageOptions = optionSet([
-  ['', '-'],
-  ['child', 'Child'],
-  ['early_teens', 'Early teens'],
-  ['late_teens', 'Late teens'],
-  ['twenties', 'Twenties'],
-  ['thirties', 'Thirties'],
-  ['forties_plus', 'Forties+'],
-  ['ageless', 'Ageless']
-]);
-
-const skinToneOptions = optionSet([
-  ['', '-'],
-  ['fair', 'Fair'],
-  ['light', 'Light'],
-  ['medium', 'Medium'],
-  ['tan', 'Tan'],
-  ['deep', 'Deep'],
-  ['custom', 'Custom']
-]);
-
-const firstImpressionOptions = optionSet([
-  ['', '-'],
-  ['bright_friendly', 'Bright friendly'],
-  ['quiet_neat', 'Quiet neat'],
-  ['cool_distant', 'Cool distant'],
-  ['gentle_soft', 'Gentle soft'],
-  ['serious_reliable', 'Serious reliable'],
-  ['mysterious_fragile', 'Mysterious fragile'],
-  ['energetic_bold', 'Energetic bold'],
-  ['stoic_reserved', 'Stoic reserved'],
-  ['rugged_calm', 'Rugged calm'],
-  ['sharp_elite', 'Sharp elite'],
-  ['playful_confident', 'Playful confident'],
-  ['mature_composed', 'Mature composed']
-]);
-
-const standingStyleOptions = optionSet([
-  ['', '-'],
-  ['upright_neat', 'Upright neat'],
-  ['natural_relaxed', 'Natural relaxed'],
-  ['shy_reserved', 'Shy reserved'],
-  ['confident_open', 'Confident open'],
-  ['still_quiet', 'Still quiet'],
-  ['arms_crossed', 'Arms crossed'],
-  ['hands_in_pockets', 'Hands in pockets'],
-  ['guarded_stance', 'Guarded stance'],
-  ['wide_grounded_stance', 'Wide grounded stance'],
-  ['elegant_upright', 'Elegant upright']
-]);
-
-const expressionOptions = optionSet([
-  ['', '-'],
-  ['soft_smile', 'Soft smile'],
-  ['calm_neutral', 'Calm neutral'],
-  ['serious_focus', 'Serious focus'],
-  ['cheerful_smile', 'Cheerful smile'],
-  ['shy_reserved', 'Shy reserved'],
-  ['cool_unfazed', 'Cool unfazed'],
-  ['stern_look', 'Stern look'],
-  ['tired_neutral', 'Tired neutral'],
-  ['confident_smirk', 'Confident smirk'],
-  ['bored_gaze', 'Bored gaze'],
-  ['teasing_smile', 'Teasing smile']
-]);
-
-const heightOptions = optionSet([
-  ['', '-'],
-  ['very_short_height', 'Very short height'],
-  ['short', 'Short'],
-  ['average', 'Average'],
-  ['tall', 'Tall'],
-  ['very_tall_height', 'Very tall height']
-]);
-
-const bodyOptions = optionSet([
-  ['', '-'],
-  ['petite', 'Petite'],
-  ['slender', 'Slender'],
-  ['average', 'Average'],
-  ['athletic', 'Athletic'],
-  ['muscular', 'Muscular'],
-  ['curvy', 'Curvy'],
-  ['lean', 'Lean'],
-  ['stocky', 'Stocky'],
-  ['broad', 'Broad build'],
-  ['large', 'Large build']
-]);
-
-const artStyleOptions = optionSet([
-  ['', '-'],
-  ['anime', 'Anime'],
-  ['semi_realistic', 'Semi-realistic'],
-  ['manga', 'Manga'],
-  ['painterly', 'Painterly']
-]);
-
-const faceShapeOptions = optionSet([
-  ['', '-'],
-  ['round', 'Round'],
-  ['oval', 'Oval'],
-  ['heart', 'Heart'],
-  ['square', 'Square'],
-  ['diamond', 'Diamond'],
-  ['long', 'Long'],
-  ['soft_triangle', 'Soft triangle'],
-  ['custom', 'Custom']
-]);
-
-const eyebrowShapeOptions = optionSet([
-  ['', '-'],
-  ['straight', 'Straight'],
-  ['soft_arch', 'Soft arch'],
-  ['high_arch', 'High arch'],
-  ['thick', 'Thick'],
-  ['thin', 'Thin'],
-  ['sharp', 'Sharp'],
-  ['custom', 'Custom']
-]);
-
-const noseShapeOptions = optionSet([
-  ['', '-'],
-  ['small', 'Small'],
-  ['straight', 'Straight'],
-  ['button', 'Button'],
-  ['sharp', 'Sharp'],
-  ['rounded', 'Rounded'],
-  ['broad', 'Broad'],
-  ['custom', 'Custom']
-]);
-
-const mouthShapeOptions = optionSet([
-  ['', '-'],
-  ['soft', 'Soft'],
-  ['full', 'Full'],
-  ['thin', 'Thin'],
-  ['wide', 'Wide'],
-  ['smirk', 'Smirk'],
-  ['serious', 'Serious'],
-  ['custom', 'Custom']
-]);
-
-const eyeColorOptions = optionSet([
-  ['', '-'],
-  ['black', 'Black'],
-  ['brown', 'Brown'],
-  ['blue', 'Blue'],
-  ['green', 'Green'],
-  ['red', 'Red'],
-  ['gold', 'Gold'],
-  ['silver', 'Silver'],
-  ['purple', 'Purple'],
-  ['custom', 'Custom']
-]);
-
-const eyeShapeOptions = optionSet([
-  ['', '-'],
-  ['gentle', 'Gentle'],
-  ['sharp', 'Sharp'],
-  ['round', 'Round'],
-  ['narrow', 'Narrow']
-]);
-
-const eyelidTypeOptions = optionSet([
-  ['', '-'],
-  ['single', 'Single'],
-  ['double', 'Double']
-]);
-
-const eyeSizeOptions = optionSet([
-  ['', '-'],
-  ['small eyes', 'small eyes'],
-  ['balanced eyes', 'balanced eyes'],
-  ['large eyes', 'large eyes'],
-  ['very large eyes', 'very large eyes']
-]);
-
-const eyeAngleOptions = optionSet([
-  ['', '-'],
-  ['level eye line', 'level eye line'],
-  ['slightly upturned eyes', 'slightly upturned eyes'],
-  ['strongly upturned eyes', 'strongly upturned eyes'],
-  ['slightly downturned eyes', 'slightly downturned eyes'],
-  ['drooping eyes', 'drooping eyes']
-]);
-
-const pupilStyleOptions = optionSet([
-  ['', '-'],
-  ['small pupils', 'small pupils'],
-  ['large pupils', 'large pupils'],
-  ['sharp pupils', 'sharp pupils'],
-  ['soft round pupils', 'soft round pupils'],
-  ['bright reflective pupils', 'bright reflective pupils']
-]);
-
-const underEyeDetailOptions = optionSet([
-  ['', '-'],
-  ['none visible', 'none visible'],
-  ['soft shadows', 'soft shadows'],
-  ['defined lower lash line', 'defined lower lash line'],
-  ['slight eye bags', 'slight eye bags'],
-  ['heavy eye bags', 'heavy eye bags']
-]);
-
-const mouthDefaultOptions = optionSet([
-  ['', '-'],
-  ['closed neutral mouth', 'closed neutral mouth'],
-  ['slight smile', 'slight smile'],
-  ['firm straight mouth', 'firm straight mouth'],
-  ['soft parted lips', 'soft parted lips']
-]);
-
-const hairColorOptions = optionSet([
-  ['', '-'],
-  ['black', 'Black'],
-  ['brown', 'Brown'],
-  ['dark_brown', 'Dark brown'],
-  ['blonde', 'Blonde'],
-  ['ash_blonde', 'Ash blonde'],
-  ['auburn', 'Auburn'],
-  ['silver', 'Silver'],
-  ['gray', 'Gray'],
-  ['white', 'White'],
-  ['blue', 'Blue'],
-  ['green', 'Green'],
-  ['red', 'Red'],
-  ['pink', 'Pink'],
-  ['purple', 'Purple'],
-  ['two_tone', 'Two tone'],
-  ['custom', 'Custom']
-]);
-
-const hairLengthOptions = optionSet([
-  ['', '-'],
-  ['very_short', 'Very short'],
-  ['short', 'Short'],
-  ['medium', 'Medium'],
-  ['long', 'Long'],
-  ['very_long', 'Very long']
-]);
-
-const hairStyleOptions = optionSet([
-  ['', '-'],
-  ['straight', 'Straight'],
-  ['wavy', 'Wavy'],
-  ['curly', 'Curly'],
-  ['wild', 'Wild'],
-  ['tousled', 'Tousled'],
-  ['spiky', 'Spiky'],
-  ['fluffy', 'Fluffy'],
-  ['slick', 'Slick'],
-  ['coarse', 'Coarse'],
-  ['shaved', 'Shaved']
-]);
-
-const hairArrangementOptions = optionSet([
-  ['', '-'],
-  ['down', 'Down'],
-  ['short_cut', 'Short cut'],
-  ['buzz_cut', 'Buzz cut'],
-  ['crew_cut', 'Crew cut'],
-  ['two_block', 'Two block'],
-  ['undercut', 'Undercut'],
-  ['fade_cut', 'Fade cut'],
-  ['side_part', 'Side part'],
-  ['center_part', 'Center part'],
-  ['comma_hair', 'Comma hair'],
-  ['slick_back', 'Slick back'],
-  ['messy_short', 'Messy short'],
-  ['pompadour', 'Pompadour'],
-  ['short_bob', 'Short bob'],
-  ['medium_layered', 'Medium layered'],
-  ['wolf_cut', 'Wolf cut'],
-  ['long_straight', 'Long straight'],
-  ['ponytail', 'Ponytail'],
-  ['side_ponytail', 'Side ponytail'],
-  ['twin_tails', 'Twin tails'],
-  ['bun', 'Bun'],
-  ['man_bun', 'Man bun'],
-  ['topknot', 'Topknot'],
-  ['braid', 'Braid'],
-  ['half_up', 'Half up'],
-  ['tied_back', 'Tied back'],
-  ['shaved_sides', 'Shaved sides'],
-  ['custom', 'Custom']
-]);
-
-const hairBangsOptions = optionSet([
-  ['', '-'],
-  ['none', 'None'],
-  ['light', 'Light'],
-  ['standard', 'Standard'],
-  ['heavy', 'Heavy'],
-  ['side_swept', 'Side swept'],
-  ['blunt', 'Blunt'],
-  ['parted', 'Parted'],
-  ['center_parted', 'Center parted'],
-  ['curtain', 'Curtain'],
-  ['messy_bangs', 'Messy bangs'],
-  ['short_bangs', 'Short bangs'],
-  ['long_bangs', 'Long bangs']
-]);
-
-const hairFrontShapeOptions = optionSet([
-  ['', '-'],
-  ['straight front line', 'straight front line'],
-  ['center-parted front', 'center-parted front'],
-  ['rounded front curve', 'rounded front curve'],
-  ['side-swept front', 'side-swept front'],
-  ['blunt front', 'blunt front'],
-  ['short textured front', 'short textured front'],
-  ['comma front', 'comma front'],
-  ['curtain front', 'curtain front'],
-  ['messy front', 'messy front'],
-  ['swept-up front', 'swept-up front']
-]);
-
-const hairSideOptions = optionSet([
-  ['', '-'],
-  ['short side locks', 'short side locks'],
-  ['soft cheek framing', 'soft cheek framing'],
-  ['long side locks', 'long side locks'],
-  ['tucked behind ears', 'tucked behind ears'],
-  ['trimmed sides', 'trimmed sides'],
-  ['faded sides', 'faded sides'],
-  ['shaved sides', 'shaved sides'],
-  ['sideburns', 'sideburns'],
-  ['ear-length sides', 'ear-length sides']
-]);
-
-const hairBackShapeOptions = optionSet([
-  ['', '-'],
-  ['clean bob back', 'clean bob back'],
-  ['layered back', 'layered back'],
-  ['straight long back', 'straight long back'],
-  ['ponytail fall', 'ponytail fall'],
-  ['braided back', 'braided back'],
-  ['tapered nape', 'tapered nape'],
-  ['short clipped back', 'short clipped back'],
-  ['undercut back', 'undercut back'],
-  ['tied-back hair', 'tied-back hair'],
-  ['long loose back', 'long loose back'],
-  ['wolf nape', 'wolf nape']
-]);
-
-const clothingOptions = optionSet([
-  ['', '-'],
-  ['military', 'Military'],
-  ['school', 'School'],
-  ['casual', 'Casual'],
-  ['suit', 'Suit'],
-  ['business_casual', 'Business casual'],
-  ['lab_coat', 'Lab coat'],
-  ['trench_coat', 'Trench coat'],
-  ['tactical', 'Tactical'],
-  ['traditional_formal', 'Traditional formal'],
-  ['street_jacket', 'Street jacket'],
-  ['fantasy', 'Fantasy'],
-  ['japanese', 'Japanese'],
-  ['streetwear', 'Streetwear'],
-  ['hoodie', 'Hoodie'],
-  ['sports', 'Sports'],
-  ['winter_coat', 'Winter coat'],
-  ['workwear', 'Workwear'],
-  ['armor', 'Armor'],
-  ['gothic', 'Gothic'],
-  ['formal_dress', 'Formal dress'],
-  ['idol_stage', 'Idol stage'],
-  ['custom', 'Custom']
-]);
-
-const clothingColorOptions = optionSet([
-  ['', '-'],
-  ['black', 'Black'],
-  ['white', 'White'],
-  ['navy', 'Navy'],
-  ['gray', 'Gray'],
-  ['brown', 'Brown'],
-  ['red', 'Red'],
-  ['blue', 'Blue'],
-  ['green', 'Green'],
-  ['custom', 'Custom']
-]);
-
-const clothingImpressionOptions = optionSet([
-  ['', '-'],
-  ['formal', 'Formal'],
-  ['practical', 'Practical'],
-  ['elegant', 'Elegant'],
-  ['rough', 'Rough'],
-  ['cute', 'Cute'],
-  ['custom', 'Custom']
-]);
-
 interface CollapsibleGroupProps {
   title: string;
   defaultCollapsed?: boolean;
@@ -1692,6 +997,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   const [discardedStateCandidate, setDiscardedStateCandidate] = useState<InitialStateCandidate | undefined>(undefined);
   const [characterSuggestions, setCharacterSuggestions] = useState<readonly CharacterSuggestion[]>([]);
   const [selectedCharacterSuggestion, setSelectedCharacterSuggestion] = useState<CharacterSuggestion | null>(null);
+  const [characterAutofillResult, setCharacterAutofillResult] = useState<CharacterAutofillResult | null>(null);
   const [dirtySaveError, setDirtySaveError] = useState<Error | null>(null);
   const [reloadError, setReloadError] = useState<Error | null>(null);
   const screenScrollRef = useRef<ScrollView | null>(null);
@@ -1735,6 +1041,35 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     queryKey: ['character-suggestion-capabilities', sessionKey],
     queryFn: () => api.getCharacterSuggestionCapabilities(),
     retry: false,
+  });
+  const characterAutofillCapabilitiesQuery = useQuery({
+    enabled: workspaceContext.selectedEpisodeId !== null,
+    queryKey: ['character-autofill-capabilities', sessionKey],
+    queryFn: () => api.getCharacterAutofillCapabilities(),
+    retry: false,
+  });
+  const characterAutofillMutation = useMutation({
+    mutationFn: async () => {
+      const chapterId = workspaceContext.selectedChapterId;
+      const episodeId = workspaceContext.selectedEpisodeId;
+      if (chapterId === null || episodeId === null) {
+        throw new Error('Select an episode before saving characters');
+      }
+      if (!await resolveDirtyEditors(language)) {
+        return null;
+      }
+      const latestEpisodes = await api.getEpisodes(chapterId, organizationId);
+      const latestEpisode = latestEpisodes.episodes.find((episode) => episode.id === episodeId);
+      if (latestEpisode === undefined) {
+        throw new Error('The selected episode is no longer available');
+      }
+      return api.autofillEpisodeCharacters(episodeId, { version: latestEpisode.version }, organizationId);
+    },
+    onSuccess: async (result) => {
+      if (result === null) return;
+      setCharacterAutofillResult(result);
+      await invalidateEntities();
+    },
   });
   const characterSuggestionsMutation = useMutation({
     mutationFn: async () => {
@@ -2045,6 +1380,11 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     if (!await resolveDirtyEditors(language)) return;
     if (!await updateSelection({ entityId }, { skipDirtyCheck: true })) return;
     setSelectedCharacterSuggestion(suggestion);
+  };
+
+  const editAutofilledCharacter = async (entityId: string): Promise<void> => {
+    if (!await resolveDirtyEditors(language)) return;
+    await updateSelection({ entityId }, { skipDirtyCheck: true });
   };
 
   const suggestedExistingCharacters = useMemo(
@@ -2512,8 +1852,10 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   ]);
   useResetOnScopeChange(characterSuggestionScope, [
     characterSuggestionsMutation.reset,
+    characterAutofillMutation.reset,
     () => setCharacterSuggestions([]),
     () => setSelectedCharacterSuggestion(null),
+    () => setCharacterAutofillResult(null),
   ]);
   const entityStateDirty = JSON.stringify(entityStateDraft) !== JSON.stringify(entityStateDraftFromRecord(selectedEntityState));
   const characterErrors = collectOperationFailures([
@@ -2635,7 +1977,53 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
           />
         </View>
       ) : null}
-      {characterSuggestionCapabilitiesQuery.data?.enabled === true ? (
+      {characterAutofillCapabilitiesQuery.data?.enabled === true ? (
+        <Section
+          collapsible
+          persistKey="characters:episode-autofill"
+          subtitle={t(language, 'screen.characters.autofill.subtitle')}
+          title={t(language, 'screen.characters.autofill.title')}
+        >
+          <PrimaryButton
+            disabled={!canEdit || workspaceContext.selectedChapterId === null || workspaceContext.selectedEpisodeId === null}
+            disabledReason={!canEdit ? t(language, 'screen.characters.suggestions.editPermissionRequired') : t(language, 'screen.characters.suggestions.selectEpisodeFirst')}
+            label={t(language, 'screen.characters.autofill.save')}
+            loading={characterAutofillMutation.isPending}
+            onPress={() => characterAutofillMutation.mutate()}
+            testID="character-autofill-save-all"
+            variant="secondary"
+          />
+          {characterAutofillMutation.error === null ? null : (
+            <Notice message={t(language, 'screen.characters.autofill.failed')} tone="warning" />
+          )}
+          {characterAutofillResult === null ? null : (
+            <View style={styles.buttonRow} testID="character-autofill-results">
+              {characterAutofillResult.characters.map((character) => (
+                <Pressable
+                  accessibilityLabel={t(language, 'screen.characters.autofill.edit', { name: character.name })}
+                  accessibilityRole="button"
+                  key={character.entity_id}
+                  onPress={() => { void editAutofilledCharacter(character.entity_id); }}
+                  style={styles.suggestionCard}
+                  testID={`character-autofill-edit-${character.entity_id}`}
+                >
+                  <Text style={styles.groupTitle}>{character.name}</Text>
+                  <Text style={styles.caption}>{t(
+                    language,
+                    character.created ? 'screen.characters.autofill.created' : 'screen.characters.autofill.existing',
+                    { count: character.states_added },
+                  )}</Text>
+                </Pressable>
+              ))}
+              {characterAutofillResult.skipped_names.length === 0 ? null : (
+                <Text style={styles.caption}>{t(language, 'screen.characters.autofill.skipped', {
+                  names: characterAutofillResult.skipped_names.join(language === 'ja' ? '、' : ', '),
+                })}</Text>
+              )}
+            </View>
+          )}
+        </Section>
+      ) : characterSuggestionCapabilitiesQuery.data?.enabled === true ? (
         <Section
           collapsible
           persistKey="characters:episode-suggestions"

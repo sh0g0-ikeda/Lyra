@@ -46,4 +46,39 @@ describe('LyraMobileApiClient character suggestions', () => {
       expect.any(Object),
     );
   });
+
+  it('uses the current episode version and organization for persisted character autofill', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      version: 8,
+      characters: [{
+        entity_id: '00000000-0000-4000-8000-000000000001',
+        name: '澪',
+        created: true,
+        states_added: 1,
+      }],
+      skipped_names: ['通行人'],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(client.autofillEpisodeCharacters('episode-1', { version: 8 }, 'organization-1'))
+      .resolves.toMatchObject({ version: 8, skipped_names: ['通行人'] });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/episodes/episode-1/character-autofill?organization_id=organization-1'),
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ version: 8 }) }),
+    );
+  });
+
+  it('reads the persisted-autofill capability separately from the legacy suggestion capability', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ enabled: true }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(client.getCharacterAutofillCapabilities()).resolves.toEqual({ enabled: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/story/character-autofill-capabilities'),
+      expect.any(Object),
+    );
+  });
 });
