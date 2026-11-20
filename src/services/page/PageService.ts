@@ -58,6 +58,11 @@ import {
   buildEpisodeAutofillCharacterReferences,
   resolveEpisodeAutofillDialogueSpeakers,
 } from './EpisodeAutofillCharacterResolution.js';
+import {
+  buildEpisodeAutofillStateReferences,
+  isEpisodeAutofillStateReferenceAllowed,
+  type EpisodeAutofillStateReference,
+} from './EpisodeAutofillStateReferences.js';
 import type { EpisodeStateTransitionCompilerPort } from './EpisodeStateTransitionCompiler.js';
 import {
   EpisodeBeatPlanOutputLimitError,
@@ -773,6 +778,7 @@ export class PageService implements PageServicePort {
     const characterReferences = this.episodePlanReliabilityOptions.completionFirstEnabled === true
       ? buildEpisodeAutofillCharacterReferences(context)
       : undefined;
+    const stateReferences = buildEpisodeAutofillStateReferences(context);
     const beforeDetailPlanRetry = executionControl === undefined
       ? undefined
       : () => executionControl.checkpoint();
@@ -785,6 +791,7 @@ export class PageService implements PageServicePort {
           stateOptions,
           executionControl,
           characterReferences,
+          stateReferences,
         );
       } catch (error) {
         if (!(error instanceof ConfigurationError)) {
@@ -826,6 +833,7 @@ export class PageService implements PageServicePort {
         false,
         undefined,
         characterReferences,
+        stateReferences,
       );
       if (compiled.compilerUsed) {
         await reportEpisodePlanProgress(progressReporter, {
@@ -864,6 +872,7 @@ export class PageService implements PageServicePort {
         false,
         undefined,
         characterReferences,
+        stateReferences,
       );
       if (!compiled.compilerUsed) {
         return compiled;
@@ -899,6 +908,7 @@ export class PageService implements PageServicePort {
     stateOptions?: EpisodeStateAutofillOptions,
     executionControl?: EpisodePagePlanExecutionControl,
     characterReferences?: readonly EpisodeAutofillCharacterReference[],
+    stateReferences: readonly EpisodeAutofillStateReference[] = buildEpisodeAutofillStateReferences(context),
   ): Promise<EpisodePlanExecutionResult> {
     if (this.episodeBeatPlanCompiler === undefined || this.episodePlanAuditCompiler === undefined) {
       throw new ConfigurationError('Episode continuity v3 compilers are not configured');
@@ -1007,6 +1017,7 @@ export class PageService implements PageServicePort {
         sourceOwnedPageContext,
         compiledSourceRequirements?.requirements,
         characterReferences,
+        stateReferences,
       );
       if (!compiled.compilerUsed) {
         return compiled;
@@ -1036,6 +1047,7 @@ export class PageService implements PageServicePort {
         progressReporter,
         stateLedger,
         sourceOwnedPageContext,
+        stateReferences,
       );
       return {
         ...applyEpisodeStateVisualsToExecutionResult(
@@ -1056,6 +1068,7 @@ export class PageService implements PageServicePort {
       1,
       stateLedger,
       sourceOwnedPageContext,
+      stateReferences,
     );
     const blockingIssues = audit.issues.filter((issue) => issue.severity === 'error' && (
       this.episodePlanReliabilityOptions.completionFirstEnabled !== true || issue.code !== 'duplicate_dialogue'
@@ -1113,6 +1126,7 @@ export class PageService implements PageServicePort {
         sourceOwnedPageContext,
         compiledSourceRequirements?.requirements,
         characterReferences,
+        stateReferences,
       );
       if (!repaired.compilerUsed) {
         return repaired;
@@ -1321,6 +1335,7 @@ export class PageService implements PageServicePort {
     progressReporter?: EpisodePagePlanProgressReporter,
     stateLedger?: string,
     sourceOwnedPageContext = false,
+    stateReferences: readonly EpisodeAutofillStateReference[] = buildEpisodeAutofillStateReferences(context),
   ): Promise<EpisodePlanExecutionResult> {
     const firstAudit = await this.auditEpisodePlanWithContinuityV3(
       context,
@@ -1332,6 +1347,7 @@ export class PageService implements PageServicePort {
       1,
       stateLedger,
       sourceOwnedPageContext,
+      stateReferences,
     );
     logEpisodePlanAuditSummary(context.episodeId, 1, firstAudit);
     if (!hasBlockingEpisodePlanAuditIssues(firstAudit.issues)) {
@@ -1450,6 +1466,7 @@ export class PageService implements PageServicePort {
     totalAuditPasses: number,
     stateLedger?: string,
     sourceOwnedPageContext = false,
+    stateReferences: readonly EpisodeAutofillStateReference[] = buildEpisodeAutofillStateReferences(context),
   ): Promise<EpisodePlanAudit> {
     console.info('episode_page_plan_continuity_v3_audit_started', {
       episodeId: context.episodeId,
@@ -1479,6 +1496,7 @@ export class PageService implements PageServicePort {
       ...(this.episodePlanReliabilityOptions.completionFirstEnabled === true
         ? { characterReferences: buildEpisodeAutofillCharacterReferences(context) }
         : {}),
+      stateReferences,
       coverageCatalog: auditArtifacts.coverageCatalog,
       visualSnapshot: buildEpisodePlanAuditVisualSnapshot(suggestion),
       sourceOwnedPageContext,
@@ -1566,6 +1584,7 @@ export class PageService implements PageServicePort {
     sourceOwnedPageContext = false,
     sourceRequirements?: EpisodeSourceRequirements,
     characterReferences?: readonly EpisodeAutofillCharacterReference[],
+    stateReferences?: readonly EpisodeAutofillStateReference[],
   ): Promise<EpisodePlanExecutionResult> {
     const baseCompilerBrief = [buildEpisodePlanCompilerBrief(context, language),
       productionNotesPrompt(context.productionDirectives ?? [])].filter(Boolean).join('\n\n');
@@ -1579,6 +1598,7 @@ export class PageService implements PageServicePort {
         compilerBrief,
         language,
         ...(characterReferences === undefined ? {} : { characterReferences }),
+        ...(stateReferences === undefined ? {} : { stateReferences }),
         ...(sourceOwnedPageContext ? { sourceOwnedPageContext: true } : {}),
         ...(sourceRequirements === undefined ? {} : { sourceRequirements }),
         ...(sourceRequirements === undefined
@@ -2330,16 +2350,7 @@ function validateEpisodePlanAgainstContext(
   const sceneIds = new Set(context.scenes.map((scene) => scene.id));
   const pageIds = new Set(context.pages.map((page) => page.pageId));
   const entityIds = new Set(context.entities.map((entity) => entity.id));
-  const sceneStateIds = new Set(
-    context.scenes.flatMap((scene) =>
-      scene.entityStates.map((state) => state.stateId),
-    ),
-  );
-  const readyLibraryStateKeys = new Set(
-    (context.stateLibrary ?? [])
-      .filter((state) => state.referenceReady && state.referenceImage !== null)
-      .map((state) => `${state.entityId}:${state.stateId}`),
-  );
+  const stateReferences = buildEpisodeAutofillStateReferences(context);
 
   const seenPageIds = new Set<string>();
   for (const page of suggestion.pages) {
@@ -2389,8 +2400,11 @@ function validateEpisodePlanAgainstContext(
           throw new ValidationError('Episode page plan assignment referenced an entity outside the episode');
         }
         if (assignment.stateId !== null
-          && !sceneStateIds.has(assignment.stateId)
-          && !readyLibraryStateKeys.has(`${assignment.entityId}:${assignment.stateId}`)) {
+          && !isEpisodeAutofillStateReferenceAllowed(
+            stateReferences,
+            assignment.entityId,
+            assignment.stateId,
+          )) {
           throw new ValidationError('Episode page plan assignment referenced a scene entity state outside the episode');
         }
       }

@@ -1605,3 +1605,7 @@ source-backed losses for review after reconciliation (Unified Spec §6).
 Named profile headings may ground their nested 容姿 properties. Treat supported
 nonhuman classification notes as metadata; keep actual appearance negations,
 uncertainty and cross-profile ownership checks strict (Unified Spec §6).
+
+Episode detail and audit compilers use a shared authorized entity/state catalog.
+Preserve legacy scene-state semantics, validate pairs after alias decoding, and
+keep invalid-state correction within existing retry/cancellation limits (§6).

@@ -389,6 +389,19 @@ and array bounds retain their existing validation and finite retry limits.
 State ledgers and detail provider schemas represent the default state as JSON null,
 never a label in a UUID field. The provider state-ID schema accepts UUID or null;
 unknown UUIDs still fail the existing authorized-reference validation.
+Episode detail generation and audit repairs receive the same server-derived
+assignable entity/state catalog: authorized scene-state pairs plus library states
+with a current ready reference image. Preserve the existing scene-only legacy
+contract; do not infer reference readiness from a missing library entry. Explicit
+empty catalogs restrict provider state IDs to JSON null; nonempty catalogs restrict
+them to listed IDs or null. After entity-alias decoding, validate the entity/state
+pair inside the existing bounded structured-response attempts, with bounded
+correction feedback and cancellation checkpoints. Require an explicit state_id
+when a catalog is supplied; never silently replace an omitted, unknown, or foreign
+state ID with null. Omitted catalogs retain the old internal
+compiler contract. The final context and locked-save checks retain the same pair
+ownership rules. This does not change automatic visual fallbacks, explicit V1
+blocking, OFF behavior, or existing manual-state preservation.
 
 Story-autofill workers prioritize an editable, persistable result over exact
 speaker attribution. For this worker path only, detail and audit compilers use

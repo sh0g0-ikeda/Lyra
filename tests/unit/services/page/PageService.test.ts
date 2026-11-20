@@ -61,6 +61,7 @@ import type {
   CompiledStyleReference,
   StyleReferenceCompilerPort,
 } from '../../../../src/services/style/StyleReferenceCompiler.js';
+import { buildEpisodeAutofillStateReferences } from '../../../../src/services/page/EpisodeAutofillStateReferences.js';
 
 class FakePageRepository implements PageRepository {
   public page: PageSummary | null = buildPageSummary();
@@ -1508,6 +1509,58 @@ describe('PageService', () => {
     expect(assignments.updates[0]!.assignments).toEqual([assignment]);
   });
 
+  it('legacy autofill でもscene stateを別キャラへ付け替える提案は保存前に拒否する', async () => {
+    const context = buildEpisodePlanningContext();
+    const compiled = await new FakeEpisodePagePlanCompiler().compilePlan({ compilerBrief: '', language: 'ja' });
+    const assignment = compiled.suggestion.pages[0]!.panels[0]!.entities![0]!;
+    assignment.stateId = 'state-1';
+    const otherEntityId = '22222222-2222-4222-8222-222222222222';
+    context.entities.push({ ...context.entities[0]!, id: otherEntityId, name: 'Other' });
+    assignment.entityId = otherEntityId;
+    context.pages[0]!.panels[0]!.entities = [{ ...assignment, stateId: null }];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const assignments = new FakePanelEntityAssignmentService();
+    const service = new PageService(pageRepository, new FakePanelRepository(), assignments, undefined, {
+      compilePlan: async () => compiled,
+    });
+
+    await expect(service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja'))
+      .rejects.toBeInstanceOf(ValidationError);
+    expect(assignments.updates).toHaveLength(0);
+  });
+
+  it('state catalogはscene正所有者とREADY画像だけを採用しdraft・画像なし・未知entityを除外する', () => {
+    const context = buildEpisodePlanningContext();
+    const entityId = context.entities[0]!.id;
+    const readyStateId = '22222222-2222-4222-8222-222222222222';
+    const draftStateId = '33333333-3333-4333-8333-333333333333';
+    const noImageStateId = '44444444-4444-4444-8444-444444444444';
+    context.scenes[0]!.entityStates.push({
+      ...context.scenes[0]!.entityStates[0]!,
+      entityId: '55555555-5555-4555-8555-555555555555',
+      stateId: '66666666-6666-4666-8666-666666666666',
+    });
+    const referenceImage = {
+      refId: 'ready-ref', s3Key: 'private/ready.png', storageOwnerUserId: 'user-1',
+      imageModel: 'gpt-image-2', baseRefId: 'base-ref',
+      createdAt: '2026-10-01T00:00:00.000Z', inputFingerprint: 'fingerprint',
+    };
+    context.stateLibrary = [
+      { entityId, stateId: readyStateId, name: '雨具', description: '赤いレインコート', revision: null,
+        baseRefId: null, baseRefUpdatedAt: null, referenceImage, referenceReady: true },
+      { entityId, stateId: draftStateId, name: '下書き', description: '未確定', revision: null,
+        baseRefId: null, baseRefUpdatedAt: null, referenceImage, referenceReady: false },
+      { entityId, stateId: noImageStateId, name: '画像なし', description: '参照なし', revision: null,
+        baseRefId: null, baseRefUpdatedAt: null, referenceImage: null, referenceReady: true },
+    ];
+
+    expect(buildEpisodeAutofillStateReferences(context)).toEqual([
+      expect.objectContaining({ entityId, stateId: readyStateId, name: '雨具', description: '赤いレインコート' }),
+      expect.objectContaining({ entityId, stateId: 'state-1', description: expect.stringContaining('Long coat') }),
+    ]);
+  });
+
   it('episode story plan は scene がなくても episode text から pages と panels に反映する', async () => {
     const pageRepository = new FakePageRepository();
     pageRepository.episodePlanningContext = { ...buildEpisodePlanningContext(), scenes: [] };
@@ -1744,6 +1797,15 @@ describe('PageService', () => {
       compilerPromptVersion: 'episode_page_plan_v2',
     });
     expect(episodeCompiler.inputs).toHaveLength(3);
+    expect(episodeCompiler.inputs.every((input) => input.stateReferences === episodeCompiler.inputs[0]?.stateReferences))
+      .toBe(true);
+    expect(episodeCompiler.inputs[0]?.stateReferences).toEqual([
+      expect.objectContaining({
+        entityId: '11111111-1111-4111-8111-111111111111',
+        stateId: 'state-1',
+        description: expect.stringContaining('Long coat over school uniform'),
+      }),
+    ]);
     expect(episodeCompiler.inputs[0]?.compilerBrief).toContain('Page 1 (page-1)');
     expect(episodeCompiler.inputs[0]?.compilerBrief).toContain('Page 3 (page-3)');
     expect(episodeCompiler.inputs[0]?.compilerBrief).not.toContain('Page 4 (page-4)');
@@ -1819,6 +1881,7 @@ describe('PageService', () => {
     expect(episodeCompiler.inputs[1]?.compilerBrief).toContain('Page 1 (page-1)');
     expect(episodeCompiler.inputs[1]?.compilerBrief).toContain('[FUTURE RESERVED BEATS]');
     expect(auditCompiler.inputs).toHaveLength(1);
+    expect(auditCompiler.inputs[0]?.stateReferences).toEqual(episodeCompiler.inputs[0]?.stateReferences);
     expect(auditCompiler.inputs[0]?.pageIds).toEqual([
       'page-1',
       'page-2',
