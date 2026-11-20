@@ -952,7 +952,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   const navigation = useNavigation<BottomTabNavigationProp<MobileTabParamList>>();
   const queryClient = useQueryClient();
   const { api, hasCapability, language, logout, selection, session, sessionKey, tokens, trackJob, updateSelection } = useAppState();
-  const { resolveDirtyEditors } = useDirtyState();
+  const { resolveDirtyEditors, saveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEdit = hasCapability('edit_work');
   const paidGenerationBlocked = selection.organizationId === null
@@ -1055,7 +1055,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
       if (chapterId === null || episodeId === null) {
         throw new Error('Select an episode before saving characters');
       }
-      if (!await resolveDirtyEditors(language)) {
+      if (!await saveDirtyEditors()) {
         return null;
       }
       const latestEpisodes = await api.getEpisodes(chapterId, organizationId);
@@ -1383,7 +1383,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
   };
 
   const editAutofilledCharacter = async (entityId: string): Promise<void> => {
-    if (!await resolveDirtyEditors(language)) return;
+    if (!await saveDirtyEditors()) return;
     await updateSelection({ entityId }, { skipDirtyCheck: true });
   };
 
@@ -1553,12 +1553,12 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     setStructuredExtras
   ]);
 
+  const draftSaveIntent = entityDirtySaveIntent({
+    dirty: entityDirty,
+    selectedEntityId: selectedEntity?.id ?? null,
+  });
   const saveEntityDraft = useCallback(async (): Promise<void> => {
-    const intent = entityDirtySaveIntent({
-      dirty: entityDirty,
-      selectedEntityId: selectedEntity?.id ?? null
-    });
-    if (intent === null) {
+    if (draftSaveIntent === null) {
       return;
     }
     setDirtySaveError(null);
@@ -1566,7 +1566,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
       if (name.trim().length === 0) {
         throw new Error(t(language, "generated.screens.CharactersScreen.enter.a.name.4cb35ca6"));
       }
-      if (intent === 'create') {
+      if (draftSaveIntent === 'create') {
         if (activeWorkId === null) {
           throw new Error(t(language, "generated.screens.CharactersScreen.select.a.work.first.d7bcfe9f"));
         }
@@ -1586,13 +1586,12 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     }
   }, [
     activeWorkId,
-    entityDirty,
+    draftSaveIntent,
     entityReloadScope,
     language,
     name,
     saveExistingEntityMutation,
     saveNewEntityMutation,
-    selectedEntity?.id,
     setDirtySaveError
   ]);
 

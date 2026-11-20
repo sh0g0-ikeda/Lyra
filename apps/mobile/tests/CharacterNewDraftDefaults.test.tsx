@@ -18,6 +18,7 @@ let pages: { entities: EntityRecord[] }[];
 let registration: {dirty:boolean;save:()=>Promise<void>;discard:()=>void};
 const updateEntity=vi.fn(); const createEntity=vi.fn(); const getEpisodes=vi.fn(); const suggestEpisodeCharacters=vi.fn(); const getCharacterSuggestionCapabilities=vi.fn(); const getCharacterAutofillCapabilities=vi.fn(); const autofillEpisodeCharacters=vi.fn(); const navigate=vi.fn(); const trackJob=vi.fn();
 const resolveDirtyEditors = vi.fn();
+const saveDirtyEditors = vi.fn();
 const assetQuoteCapture = vi.hoisted(() => ({ options: null as Record<string, unknown> | null }));
 const updateSelection = vi.fn(async (next: Partial<typeof selection>) => { selection = { ...selection, ...next }; return true; });
 const queryClient={invalidateQueries:vi.fn(),fetchQuery:vi.fn()};
@@ -38,7 +39,7 @@ vi.mock('@tanstack/react-query',()=>({useQueryClient:()=>queryClient,
  return {mutateAsync:run,mutate:(variables?:unknown)=>{void run(variables);},isPending:false,error:null,reset:vi.fn()};}
 }));
 vi.mock('@/state/appState',()=>({useAppState:()=>({api:{updateEntity,createEntity,getEpisodes,suggestEpisodeCharacters,getCharacterSuggestionCapabilities,getCharacterAutofillCapabilities,autofillEpisodeCharacters},hasCapability:()=>true,language,logout:vi.fn(),selection,session:{organizations:[],capabilities:{}},sessionKey,tokens:null,trackJob,updateSelection})}));
-vi.mock('@/state/dirtyState',()=>({useDirtyState:()=>({resolveDirtyEditors}),useDirtyEditorRegistration:(input:typeof registration)=>{registration=input;}}));
+vi.mock('@/state/dirtyState',()=>({useDirtyState:()=>({resolveDirtyEditors, saveDirtyEditors}),useDirtyEditorRegistration:(input:typeof registration)=>{registration=input;}}));
 vi.mock('@/hooks/useActiveResourceJobId',()=>({useActiveResourceJobId:()=>null}));
 vi.mock('@/hooks/useAssetGenerationQuote',()=>({useAssetGenerationQuote:(options: Record<string, unknown>)=>{assetQuoteCapture.options=options;return {state:{phase:'closed',visible:false},controller:{open:vi.fn(),close:vi.fn(),accept:vi.fn(),reconcile:vi.fn(),canAccept:()=>false}};}}));
 vi.mock('@/components/WorkspaceContextPicker',()=>({useWorkspaceContextSelection:()=>({selectedWorkId:selection.workId,selectedChapterId:'chapter',selectedEpisodeId:'episode'})}));
@@ -101,6 +102,7 @@ beforeEach(() => {
   autofillEpisodeCharacters.mockReset().mockResolvedValue({ version: 3, characters: [], skipped_names: [] });
   updateSelection.mockClear();
   resolveDirtyEditors.mockReset().mockResolvedValue(true);
+  saveDirtyEditors.mockReset().mockResolvedValue(true);
   trackJob.mockReset().mockResolvedValue(undefined);
   assetQuoteCapture.options = null;
 });
@@ -486,10 +488,11 @@ describe('新規人物だけの編集可能な初期値', () => {
 
   it('保存型autofillは未保存の人物編集を解決できない間は書き込まない', async () => {
     characterAutofillEnabled = true;
-    resolveDirtyEditors.mockResolvedValueOnce(false);
+    saveDirtyEditors.mockResolvedValueOnce(false);
     await render();
     await act(async () => root!.root.findByProps({ testID: 'character-autofill-save-all' }).props.onPress());
 
     expect(autofillEpisodeCharacters).not.toHaveBeenCalled();
+    expect(resolveDirtyEditors).not.toHaveBeenCalled();
   });
 });
