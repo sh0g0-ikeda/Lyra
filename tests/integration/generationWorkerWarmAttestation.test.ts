@@ -12,6 +12,7 @@ const url = process.env.DATABASE_URL;
 const migration = '052_add_generation_worker_warm_control.sql';
 const notesMigration = '053_add_episode_production_notes.sql';
 const noteListMigration = '054_add_episode_production_note_list.sql';
+const batchMigration = '055_add_generation_batches.sql';
 function isSyntheticTarget(): boolean {
   if (process.env.APP_ENV !== 'test' || url === undefined) return false;
   const address = new URL(url);
@@ -75,6 +76,12 @@ for (const profile of ['canonical', 'expanded'] as const) suites[profile](`gener
     };
     await withPostgresTestMigrationLock(admin, async () => {
       await runPendingMigrations(database, profile === 'canonical' ? undefined : { migrationsDir: join(process.cwd(), 'tests/fixtures/production44-pg18') });
+      if (profile === 'canonical') {
+        await database.transaction(async client => {
+          await client.query('DROP TABLE generation_batch_items, generation_batches');
+          await client.query('DELETE FROM schema_migrations WHERE filename=$1', [batchMigration]);
+        });
+      }
       if (profile === 'expanded') {
         await runProduction44Expansion(schemaPool);
         for (const filename of ['051_add_google_link_recovery.sql', migration, notesMigration, noteListMigration]) {

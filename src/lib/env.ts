@@ -76,6 +76,7 @@ const envSchema = z.object({
   OPENAI_IMAGE_MODEL: z.string().min(1).default('gpt-image-2'),
   OPENAI_IMAGE_SUNBURST_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   GENERATION_QUOTES_ENABLED: z.string().optional().transform((value) => value === 'true'),
+  GENERATION_BATCHES_ENABLED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600000).default(300000),
   LOCAL_IMAGE_FALLBACK_ENABLED: z.string().optional().transform((value) => value === 'true'),

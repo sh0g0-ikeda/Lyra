@@ -99,7 +99,7 @@ describePostgres('forward-only production lineage bridge', () => {
         const applied = await upgrade(db);
         expect(applied).toContain(PRODUCTION_BRIDGE_FILENAME);
         expect(applied).toContain('047_add_state_reference_copy_attempts.sql');
-        expect(applied.slice(-2)).toEqual(['053_add_episode_production_notes.sql', '054_add_episode_production_note_list.sql']);
+        expect(applied.slice(-2)).toEqual(['054_add_episode_production_note_list.sql', '055_add_generation_batches.sql']);
         expect((await pool.query("SELECT to_regclass(format('%I.%I', current_schema(), 'state_reference_copy_attempts')) AS journal")).rows[0]?.journal).toBe('state_reference_copy_attempts');
         for (const row of history) {
             expect((await pool.query('SELECT applied_at FROM schema_migrations WHERE filename=$1', [row.filename])).rows[0]?.applied_at).toEqual(row.applied_at);
@@ -382,7 +382,7 @@ describePostgres('forward-only production lineage bridge', () => {
         });
         expect(applied).toContain(PRODUCTION_BRIDGE_FILENAME);
         expect(applied).toContain('047_add_state_reference_copy_attempts.sql');
-        expect(applied.slice(-2)).toEqual(['053_add_episode_production_notes.sql', '054_add_episode_production_note_list.sql']);
+        expect(applied.slice(-2)).toEqual(['054_add_episode_production_note_list.sql', '055_add_generation_batches.sql']);
         expect(invariants.violations).toEqual([]);
         expect(reapplied).toEqual([]);
     }, 120000);

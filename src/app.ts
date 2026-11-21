@@ -151,6 +151,8 @@ import { createPanelFrameRoutes } from './routes/panelFrames.js';
 import { createPagePanelStructureRoutes } from './routes/pagePanelStructure.js';
 import { createGenerationQuoteRoutes, type GenerationQuoteServicePort } from './routes/generationQuotes.js';
 import { GenerationQuoteService } from './services/generation/GenerationQuoteService.js';
+import { createGenerationBatchRoutes, type GenerationBatchServicePort } from './routes/generationBatches.js';
+import { createGenerationBatchRuntime } from './infrastructure/generation/GenerationBatchRuntime.js';
 import { GenerationQuoteDispatcher } from './services/generation/GenerationQuoteDispatcher.js';
 import { PostgresGenerationQuotePlanResolver } from './repositories/GenerationQuotePlanResolver.js';
 import { PostgresQuotedImportExecutionRepository } from './repositories/QuotedImportExecutionRepository.js';
@@ -392,6 +394,7 @@ export interface AppDependencies {
   pageLayoutService?: PageLayoutServicePort;
   pagePanelStructureService?: PagePanelStructureServicePort;
   generationQuoteService?: GenerationQuoteServicePort;
+  generationBatchService?: GenerationBatchServicePort;
   pushTokenRegistryService?: PushTokenRegistryServicePort;
   googleIdentityLinkService?: GoogleIdentityLinkServicePort;
   panelService?: PanelServicePort;
@@ -620,6 +623,14 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     generationQuoteService: resolvedDependencies.generationQuoteService,
     organizationService: resolvedDependencies.organizationService,
   }));
+  if (resolvedDependencies.generationBatchService !== undefined) {
+    app.route('/api', createGenerationBatchRoutes({
+      authMiddleware, rateLimitMiddleware,
+      service: resolvedDependencies.generationBatchService,
+      organizationService: resolvedDependencies.organizationService,
+      jobCancellation: resolvedDependencies.jobService,
+    }));
+  }
   if (resolvedDependencies.entityReferenceUploadService !== undefined) {
     app.route(
       '/api',
@@ -882,6 +893,7 @@ function resolveDependencies(
       | 'fencedStateReferenceRuntime'
       | 'attestedRuntime'
       | 'characterAutofillService'
+      | 'generationBatchService'
     >
   >,
   'storyEpisodeImprovementPlanner'
@@ -898,9 +910,11 @@ function resolveDependencies(
   pushTokenRegistryService?: PushTokenRegistryServicePort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
   characterAutofillService?: CharacterAutofillServicePort;
+  generationBatchService?: GenerationBatchServicePort;
 } {
   const fencedStateReferenceRuntime = dependencies.fencedStateReferenceRuntime ?? createFencedStateReferenceRuntime(env, db);
   const persistenceProfile = dependencies.attestedRuntime?.repositoryProfile ?? env.LYRA_PERSISTENCE_PROFILE;
+  const generationBatchService = dependencies.generationBatchService ?? createGenerationBatchRuntime(env, db, persistenceProfile);
   const creditRepository = new PostgresCreditRepository(db, db);
   const aiContentReportService =
     dependencies.aiContentReportService ?? new AiContentReportService(new StructuredLogAiContentReportSink());
@@ -1393,6 +1407,7 @@ function resolveDependencies(
     pageLayoutService,
     pagePanelStructureService,
     generationQuoteService,
+    generationBatchService,
     googleIdentityLinkService,
     pushTokenRegistryService,
     panelService,

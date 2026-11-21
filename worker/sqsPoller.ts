@@ -30,6 +30,9 @@ export interface GenerationQueuePollerOptions {
   visibilityTimeoutSeconds?: number;
   idleDelayMs?: number;
   onWorkSettled?: () => Promise<void>;
+  /** Bounded durable orchestration also runs when SQS is empty, under the same
+   * task protection as image work. It must not start an unbounded background loop. */
+  onProtectedPoll?: () => Promise<void>;
 }
 
 export interface GenerationQueuePollResult {
@@ -114,6 +117,11 @@ export class GenerationQueuePoller {
     await this.taskProtection.protect(protectionExpiryMinutes);
     let workStarted = false;
     try {
+      if (this.options.onProtectedPoll !== undefined) {
+        try { await this.options.onProtectedPoll(); }
+        catch { console.warn('[generation-batch] protected reconciliation will retry'); }
+      }
+      if (this.shouldStop) return emptyPollResult();
       const messages = await this.receiveMessages();
       if (messages.length === 0) {
         return emptyPollResult();

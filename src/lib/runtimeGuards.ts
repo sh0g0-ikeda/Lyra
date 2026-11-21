@@ -4,8 +4,12 @@ import { assertVerifiedRuntimeProof, type AttestedRuntime } from './runtimeSchem
 export function assertAttestedRuntimeCapabilities(runtime: AttestedRuntime, config: {
   ENTITY_STATE_REFERENCE_GENERATION_ENABLED?: boolean;
   STATE_REFERENCE_COPY_V2_ADMISSION_ENABLED?: boolean;
+  GENERATION_BATCHES_ENABLED?: boolean;
 }): void {
   assertVerifiedRuntimeProof(runtime);
+  if (config.GENERATION_BATCHES_ENABLED === true && runtime.capabilities.generationBatches !== true) {
+    throw new ConfigurationError('Generation batches require attested migration 055');
+  }
   if (runtime.capabilities.stripeCreditRecovery !== true) {
     throw new ConfigurationError('Credit recovery requires attested migration 049');
   }

@@ -49,6 +49,7 @@ const routeMountPrefixes = new Map([
   ['pageGenerationWarmup.ts', '/api'],
   ['pagePanelStructure.ts', '/api'],
   ['generationQuotes.ts', '/api'],
+  ['generationBatches.ts', '/api'],
   ['panelEntityAssignments.ts', '/api'],
   ['panelFrames.ts', '/api'],
   ['panels.ts', '/api'],

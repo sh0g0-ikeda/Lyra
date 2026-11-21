@@ -1576,6 +1576,13 @@ and keep a compatible flag-OFF rollback image after the migration.
 Workers are on demand at every hour; retain the shared twenty-minute idle lease
 and active-job/task protection when changing warm control.
 
+Bulk image generation follows Unified Spec §6: deploy pre/post-055-compatible
+code with GENERATION_BATCHES_ENABLED off before migration 055, then enable only
+after schema attestation. Keep compatible flag-OFF rollback code. Bulk acceptance
+preserves existing images and explicitly authorizes base/state auto-confirmation;
+each child retains existing quote, authorization, cancellation and credit fences.
+Page scene audit and image rendering share a maximum of two worker attempts.
+
 Personal subscription monthly grants follow Unified Spec §7: Standard 100 credits
 for JPY 1,000 and Premium 350 credits for JPY 3,500, with historical grants and
 refund records preserved. Generated-page editing is permitted on Mobile.

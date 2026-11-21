@@ -30,7 +30,7 @@ describePostgres('story deletion safety', () => {
     ));
     expect(applied).toContain('046_bridge_production_schema_lineage.sql');
     expect(applied).toContain('047_add_state_reference_copy_attempts.sql');
-    expect(applied.slice(-2)).toEqual(['053_add_episode_production_notes.sql', '054_add_episode_production_note_list.sql']);
+    expect(applied.slice(-2)).toEqual(['054_add_episode_production_note_list.sql', '055_add_generation_batches.sql']);
   }, 120_000);
 
   afterAll(async () => {

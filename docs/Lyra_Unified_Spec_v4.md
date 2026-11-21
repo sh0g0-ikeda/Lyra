@@ -287,6 +287,51 @@ New episode/page generation jobs and failed-job retries acquire the same
 transaction-scoped episode admission lock used by story deletion, then revalidate
 the authorized target before entering an active state.
 
+An image worker owns at most two generation attempts for a single claimed job.
+For pages, the pre-render audit and image rendering share this budget; a validated
+audit is reused when only rendering needs a retry. The first transient,
+invalid-audit-output or unusable-image response is retried automatically; only the
+final failure follows the existing failure/refund path. Image HTTP clients retain
+one transport attempt so retry layers do not multiply this budget. Cancellation
+is checked around each attempt. Readiness, authorization, model and credit gates
+remain authoritative. Successful image bytes are never rendered again after a
+storage or result-commit failure. Processing jobs are not reclaimed for rendering;
+existing stale-job recovery still fails and settles that job. Internal failure
+logs identify the stage and an application-owned reason, never authored content,
+provider response bodies, credentials, or signed image URLs.
+
+Missing-image bulk generation uses a durable `generation_batches` parent and
+ordered items added by migration 055. It is opt-in through
+`GENERATION_BATCHES_ENABLED` (default false), requires existing quotes, durable
+SQS/S3 and the forced GPT Image 2.5 snapshot, and introduces no new image job
+type. Web and Mobile show the exact missing targets and maximum total credits
+before acceptance. Character acceptance also explicitly authorizes confirmation
+of each generated base and state reference. Character bases precede dependent
+states; existing confirmed references and generated page images are preserved.
+Page batches offer color and monochrome for missing pages only.
+
+Each child retains the existing immutable quote, authorization, capacity,
+transactional credit and refund checks. Acceptance uses a stable idempotency key;
+lost responses are recovered by reading the same batch. Progress survives screen
+and process restarts. Input or price changes require review; credit/capacity
+pauses require explicit resume. Cancellation stops further admission and uses
+the existing active-job cancellation flow. Reads never admit or charge a child.
+The worker advances bounded batches under its existing task protection, keeps
+the shared twenty-minute warm lease, and distributes progress across concurrent
+batches. Confirmation claims are fenced against duplicate coordinators and
+recheck ownership, cancellation and the approved input before committing.
+
+Deploy pre/post-055-compatible code to all services with batches disabled before
+applying migration 055. Enable only after exact schema attestation; retain a
+compatible flag-OFF rollback image. Existing single-generation APIs and released
+frontend clients keep their existing contracts. Old backends may report no batch
+capability, in which case the new frontend retains the existing controls.
+
+Mobile page quote preparation and acceptance acknowledge the exact editor revision
+whose save completed. A delayed React commit cannot require a second tap; edits or
+scope changes during an awaited save/read still reject the stale operation. Price
+confirmation and server-side quote revision checks remain mandatory.
+
 Generation and regeneration both create a new result from the current saved inputs.
 A previous generated page image is not an implicit image reference. Confirmed entity
 reference images are explicit subject-consistency inputs.
@@ -327,6 +372,13 @@ Audit guidance is mandatory prompt content, retained when an optional plan excee
 the existing prompt limit. No completed image is audited and no post-render
 quality-based regeneration is introduced. API/UI, generation prices, migrations,
 quoted input immutability and existing saved images remain unchanged.
+
+Scene audit v2 offers only application-generated directive IDs tied to valid
+panel/assigned-entity combinations. The model selects IDs; it cannot invent panel
+or entity identifiers, empty subject lists or invalid subject counts. Selected
+IDs are deduplicated, mapped back to domain directives and validated again. Empty
+clear/uncertain results retain their meaning. Unknown IDs or malformed output
+remain failures subject to the shared two-attempt image-worker budget.
 
 Mobile state-preview availability follows the persisted primary character image,
 not the reference-set image count. A matching Mobile-compatible confirmed primary
@@ -1435,9 +1487,15 @@ actions or dialogue lines and must not be split. A fixed page has at most eight
 panels; a fixed panel's source has at most 2,000 characters. Impossible bounds
 fail explicitly without dropping source or overflowing to another page.
 
-New clients opt skeleton jobs into this interpretation with
-`production_notes_version: "v1"`; both that marker and the saved episode flag
-are required. Old jobs and clients retain their previous skeleton path.
+New clients opt skeleton and autofill jobs into this interpretation with
+`production_notes_version: "v1"`. For versioned requests, authored inline commands
+express intent even when the saved episode flag is off. The saved flag continues
+to govern saved sidecar notes: inline commands must not reactivate disabled notes
+or rewrite that flag. Old jobs and clients without the version marker retain their
+previous path. Clients resolve the saved command intent after pending editor saves
+and use the same intent for both skeleton and subsequent autofill, including cold
+capability loads. Page estimation also honors explicit commands independently of
+the saved flag.
 Generated layout metadata records the raw manuscript and each source block's
 assigned panel slots. Detail, audit and final validation use the same ownership;
 editing the source or losing the mapping requires rebuilding the structure.

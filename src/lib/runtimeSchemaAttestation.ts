@@ -5,6 +5,7 @@ import { PRODUCTION44_EXPANSION_MIGRATIONS } from './production44ExpandedRuntime
 import { describeProduction44ExpansionCheckpoint } from './production44ExpandedRuntimeSchemaAttestation.js';
 import { WORK_DELETION_SCHEMA } from './workDeletionSchemaDescriptor.js';
 import { STRIPE_RECOVERY_SCHEMA } from './stripeRecoverySchemaDescriptor.js';
+import { GENERATION_BATCH_SCHEMA } from './generationBatchSchemaDescriptor.js';
 
 export const CANONICAL_RUNTIME_MIGRATIONS = [
   '001_initial_schema.sql',
@@ -65,6 +66,10 @@ export const EPISODE_PRODUCTION_NOTES_RUNTIME_MIGRATIONS = [
   ...GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS,
   '053_add_episode_production_notes.sql',
   '054_add_episode_production_note_list.sql',
+] as const;
+export const GENERATION_BATCH_RUNTIME_MIGRATIONS = [
+  ...EPISODE_PRODUCTION_NOTES_RUNTIME_MIGRATIONS,
+  '055_add_generation_batches.sql',
 ] as const;
 
 export interface RuntimeSchemaCatalog {
@@ -233,6 +238,9 @@ const POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM = 180000;
 const runtimeSchemaPostgresVersions = new WeakMap<RuntimeSchemaCatalog, number>();
 
 export function describeRuntimeSchema(catalog: RuntimeSchemaCatalog): RuntimeSchemaDescription {
+  const batches = projectGenerationBatches(catalog);
+  if (batches === null) return { kind: 'unsupported', failures: ['GENERATION_BATCH_SCHEMA_MISMATCH'] };
+  catalog = batches.catalog;
   const notes = projectEpisodeProductionNotes(catalog);
   if (notes === null) return { kind: 'unsupported', failures: ['EPISODE_PRODUCTION_NOTES_SCHEMA_MISMATCH'] };
   catalog = notes.catalog;
@@ -573,17 +581,21 @@ export interface AttestedCanonicalRuntime {
 export type AttestedRuntime = Readonly<{
   descriptor: 'canonical_fresh_v1';
   repositoryProfile: 'canonical';
-  capabilities: Readonly<{ entityStateMonotonicRevision: boolean; stripeCreditRecovery?: boolean; workDeletion?: boolean; googleIdentityRecovery?: boolean; productionNotes?: boolean }>;
+  capabilities: Readonly<{ entityStateMonotonicRevision: boolean; stripeCreditRecovery?: boolean; workDeletion?: boolean; googleIdentityRecovery?: boolean; productionNotes?: boolean; generationBatches?: boolean }>;
 } | {
   descriptor: 'production44_expanded_pg18_v1';
   repositoryProfile: 'production44_expanded_pg18_v1';
-  capabilities: Readonly<{ entityStateMonotonicRevision: true; stripeCreditRecovery?: boolean; workDeletion?: boolean; googleIdentityRecovery?: boolean; productionNotes?: boolean }>;
+  capabilities: Readonly<{ entityStateMonotonicRevision: true; stripeCreditRecovery?: boolean; workDeletion?: boolean; googleIdentityRecovery?: boolean; productionNotes?: boolean; generationBatches?: boolean }>;
 }>;
 
 const verifiedRuntimeProofs = new WeakSet<object>();
 
 /** The frozen proof is issued from catalog evidence, never an environment selection. */
 function runtimeProof(catalog: RuntimeSchemaCatalog): AttestedRuntime | null {
+  const batches = projectGenerationBatches(catalog);
+  if (batches === null) return null;
+  catalog = batches.catalog;
+  const batchCapability = batches.enabled ? { generationBatches: true } : {};
   const notes = projectEpisodeProductionNotes(catalog);
   if (notes === null) return null;
   catalog = notes.catalog;
@@ -598,8 +610,8 @@ function runtimeProof(catalog: RuntimeSchemaCatalog): AttestedRuntime | null {
   const canonical = describeRuntimeSchema(catalog).kind === 'canonical_fresh_v1';
   if (!canonical && describeProduction44ExpansionCheckpoint(catalog) !== PRODUCTION44_EXPANSION_MIGRATIONS.length) return null;
   const proof: AttestedRuntime = canonical
-    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql'), stripeCreditRecovery: catalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql'), workDeletion: catalog.migrationFilenames.includes('050_add_work_deletion.sql'), ...recoveryCapability, ...notesCapability }) })
-    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true, stripeCreditRecovery: true, workDeletion: true, ...recoveryCapability, ...notesCapability }) });
+    ? Object.freeze({ descriptor: 'canonical_fresh_v1', repositoryProfile: 'canonical', capabilities: Object.freeze({ entityStateMonotonicRevision: catalog.migrationFilenames.includes('048_advance_entity_state_revision_for_legacy_writers.sql'), stripeCreditRecovery: catalog.migrationFilenames.includes('049_add_stripe_credit_recovery.sql'), workDeletion: catalog.migrationFilenames.includes('050_add_work_deletion.sql'), ...recoveryCapability, ...notesCapability, ...batchCapability }) })
+    : Object.freeze({ descriptor: 'production44_expanded_pg18_v1', repositoryProfile: 'production44_expanded_pg18_v1', capabilities: Object.freeze({ entityStateMonotonicRevision: true, stripeCreditRecovery: true, workDeletion: true, ...recoveryCapability, ...notesCapability, ...batchCapability }) });
   verifiedRuntimeProofs.add(proof);
   return proof;
 }
@@ -842,6 +854,40 @@ const EPISODE_PRODUCTION_NOTES_MIGRATION = '053_add_episode_production_notes.sql
 const EPISODE_PRODUCTION_NOTE_LIST_MIGRATION = '054_add_episode_production_note_list.sql';
 const PRODUCTION_NOTES_COLUMN = 'production_notes_enabled';
 const PRODUCTION_NOTE_LIST_COLUMN = 'production_notes';
+
+/** Validate every additive table object before projecting onto the existing
+ * pre-055 proof. Unknown/partial DDL and missing idempotency indexes fail closed. */
+function projectGenerationBatches(catalog: RuntimeSchemaCatalog): { catalog: RuntimeSchemaCatalog; enabled: boolean } | null {
+  const migration = '055_add_generation_batches.sql';
+  const tables: readonly string[] = ['generation_batches', 'generation_batch_items'];
+  const owns = (row: { relation: string }): boolean => tables.includes(row.relation);
+  const occurrences = catalog.migrationFilenames.filter(file => file === migration).length;
+  const relations = catalog.relations.filter(row => tables.includes(row.name));
+  if (occurrences === 0) {
+    return relations.length > 0 || catalog.columns.some(owns) || catalog.constraints.some(owns)
+      || catalog.indexes.some(owns) || catalog.triggers.some(owns) ? null : { catalog, enabled: false };
+  }
+  const version = runtimeSchemaPostgresVersions.get(catalog);
+  if (occurrences !== 1 || version === undefined || version < MIN_SUPPORTED_POSTGRES_VERSION_NUM
+    || !catalog.migrationFilenames.includes(EPISODE_PRODUCTION_NOTE_LIST_MIGRATION)) return null;
+  const constraints = version < POSTGRES_NATIVE_NOT_NULL_CONSTRAINT_VERSION_NUM
+    ? GENERATION_BATCH_SCHEMA.constraints.filter(row => row.type !== 'n') : GENERATION_BATCH_SCHEMA.constraints;
+  if (!sameCatalogRows(relations, GENERATION_BATCH_SCHEMA.relations)
+    || !sameCatalogRows(catalog.columns.filter(owns), GENERATION_BATCH_SCHEMA.columns)
+    || !sameCatalogRows(catalog.constraints.filter(owns), constraints)
+    || !sameCatalogRows(catalog.indexes.filter(owns), GENERATION_BATCH_SCHEMA.indexes)
+    || catalog.triggers.some(owns)) return null;
+  const baseline: RuntimeSchemaCatalog = {
+    ...catalog,
+    migrationFilenames: catalog.migrationFilenames.filter(file => file !== migration),
+    relations: catalog.relations.filter(row => !tables.includes(row.name)),
+    columns: catalog.columns.filter(row => !owns(row)),
+    constraints: catalog.constraints.filter(row => !owns(row)),
+    indexes: catalog.indexes.filter(row => !owns(row)),
+  };
+  runtimeSchemaPostgresVersions.set(baseline, version);
+  return { catalog: baseline, enabled: true };
+}
 
 /** Check the additive footprint before comparing it with the pre-053 proof. */
 function projectEpisodeProductionNotes(catalog: RuntimeSchemaCatalog): { catalog: RuntimeSchemaCatalog; enabled: boolean } | null {
