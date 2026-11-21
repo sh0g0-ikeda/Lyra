@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ConflictError } from '../../../../src/domain/errors/index.js';
 import type { GenerationBatchItemRecord, GenerationBatchRecord } from '../../../../src/domain/types/generationBatch.js';
 import type { EntityImageStoragePort } from '../../../../src/infrastructure/aws/S3EntityImageStorage.js';
 import type { GenerationBatchBaseConfirmation, GenerationBatchConfirmationRepositoryPort } from '../../../../src/repositories/GenerationBatchConfirmationRepository.js';
+import { StateReferenceRecoveryPendingError } from '../../../../src/services/entity/FencedStateReferenceConfirmationService.js';
 import { GenerationBatchConfirmationService, type BatchStateReferenceConfirmationPort } from '../../../../src/services/generation/batch/GenerationBatchConfirmationService.js';
 
 describe('GenerationBatchConfirmationService',()=>{
@@ -41,6 +42,28 @@ describe('GenerationBatchConfirmationService',()=>{
     const service=new GenerationBatchConfirmationService(repository,storage(async()=>({s3Key:'dest',cdnUrl:'cdn'})),stateConfirmation(async()=>{confirms+=1;throw new Error('must not run');}));
     await expect(service.confirm(batch(),item('entity_state'),job())).resolves.toBe('in_progress');
     expect(confirms).toBe(0);
+  });
+
+  it('fenced state copyの回復待ちはneeds_reviewにせず同じ生成jobの確認を継続する',async()=>{
+    let commits=0;const repository:GenerationBatchConfirmationRepositoryPort={prepareBase:async()=>intent(),commitBase:async()=>undefined,
+      prepareState:async()=>stateClaim(),commitState:async()=>{commits+=1;}};
+    const state=stateConfirmation(async()=>{throw new StateReferenceRecoveryPendingError('image_create','access_denied');});
+    const service=new GenerationBatchConfirmationService(repository,storage(async()=>({s3Key:'dest',cdnUrl:'cdn'})),state);
+    const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+    await expect(service.confirm(batch(),item('entity_state'),job())).resolves.toBe('in_progress');
+    expect(commits).toBe(0);
+    expect(warn).toHaveBeenCalledWith('generation_batch_state_reference_recovery_pending',{
+      batchId:'batch',itemId:'item',jobId:'job',stage:'image_create',classification:'access_denied',
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('redacted');
+    warn.mockRestore();
+  });
+
+  it('通常のstate confirmation競合は回復待ちと誤認しない',async()=>{
+    const service=new GenerationBatchConfirmationService({prepareBase:async()=>intent(),commitBase:async()=>undefined,
+      prepareState:async()=>stateClaim(),commitState:async()=>undefined},storage(async()=>({s3Key:'dest',cdnUrl:'cdn'})),
+    stateConfirmation(async()=>{throw new ConflictError('Entity state changed after the preview was generated');}));
+    await expect(service.confirm(batch(),item('entity_state'),job())).rejects.toThrow('Entity state changed after the preview was generated');
   });
 });
 function intent():GenerationBatchBaseConfirmation{return{itemId:'item',userId:'user',organizationId:null,entityId:'entity',jobId:'job',sourceS3Key:'candidate.png',refId:'ref',expectedRevision:'entity-rev',imageModel:'gpt-image-2.5-sunburst',providerModelId:'gpt-image-2.5-sunburst-2026-09-08',provider:'openai',newlyPrepared:true,committed:false,inProgress:false,claimToken:'claim'};}

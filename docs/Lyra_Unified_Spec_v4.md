@@ -320,12 +320,23 @@ The worker advances bounded batches under its existing task protection, keeps
 the shared twenty-minute warm lease, and distributes progress across concurrent
 batches. Confirmation claims are fenced against duplicate coordinators and
 recheck ownership, cancellation and the approved input before committing.
+An indeterminate state-reference copy or settlement remains a recoverable
+confirmation, not a new image job. Expired confirmation leases may reclaim the
+same item/job under a new token, with at most three recovery claims; stale tokens cannot
+publish. Authorization, input changes and exhausted recovery require review.
 
 Deploy pre/post-055-compatible code to all services with batches disabled before
 applying migration 055. Enable only after exact schema attestation; retain a
 compatible flag-OFF rollback image. Existing single-generation APIs and released
 frontend clients keep their existing contracts. Old backends may report no batch
 capability, in which case the new frontend retains the existing controls.
+Before enabling batches, prove that the generation worker can assume both exact
+state-reference image-create and recovery roles, and that the image-create role
+trusts that worker. Keep conditional-write storage policy and permissions
+boundaries intact. The staging patch builder is
+`ops/staging/state-reference-batch-permissions.mjs`; it makes no AWS writes.
+The same permission preflight is a production release gate, not authorization
+to change production infrastructure from a staging rollout.
 
 Mobile page quote preparation and acceptance acknowledge the exact editor revision
 whose save completed. A delayed React commit cannot require a second tap; edits or

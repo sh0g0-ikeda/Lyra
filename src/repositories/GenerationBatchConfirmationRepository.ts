@@ -29,6 +29,8 @@ export interface GenerationBatchConfirmationRepositoryPort {
   commitState(claim:GenerationBatchStateConfirmationClaim):Promise<void>;
 }
 
+const STATE_CONFIRMATION_MAX_RECOVERY_CLAIMS=3;
+
 export class PostgresGenerationBatchConfirmationRepository implements GenerationBatchConfirmationRepositoryPort {
   public constructor(private readonly database: DatabaseClient & TransactionRunner) {}
 
@@ -115,10 +117,25 @@ export class PostgresGenerationBatchConfirmationRepository implements Generation
       if(batch.status!=='running')throw new ConflictError('Generation batch is no longer running');
       if(row.confirmation?.state==='committed')return{itemId,claimToken:readString(row.confirmation.claim_token,'claim_token'),newlyPrepared:false,committed:true,inProgress:false};
       if(row.confirmation?.state==='confirming'&&future(row.confirmation.lease_until))return{itemId,claimToken:readString(row.confirmation.claim_token,'claim_token'),newlyPrepared:false,committed:false,inProgress:true};
+      if(row.confirmation?.state==='confirming'){
+        if(row.status!=='confirming')throw new ConflictError('State reference confirmation outcome requires review');
+        await requireConfirmationScope(client,batch.userId,batch.organizationId,row.entity_id);
+        const previousToken=readString(row.confirmation.claim_token,'claim_token');
+        const recoveryCount=readRecoveryCount(row.confirmation.recovery_count);
+        if(recoveryCount>=STATE_CONFIRMATION_MAX_RECOVERY_CLAIMS)throw new ConflictError('State reference confirmation recovery limit was reached');
+        const claimToken=randomUUID();const confirmation={...row.confirmation,claim_token:claimToken,
+          lease_until:new Date(Date.now()+5*60_000).toISOString(),recovery_count:recoveryCount+1};
+        const claimed=await client.query(
+          `UPDATE generation_batch_items SET confirmation=$2::jsonb,updated_at=NOW()
+           WHERE id=$1::uuid AND status='confirming' AND confirmation->>'state'='confirming'
+             AND confirmation->>'claim_token'=$3 RETURNING id`,[itemId,JSON.stringify(confirmation),previousToken]);
+        if(claimed.rows.length!==1)throw new ConflictError('State reference confirmation was concurrently reclaimed');
+        return{itemId,claimToken,newlyPrepared:true,committed:false,inProgress:false};
+      }
       if(row.confirmation!==null)throw new ConflictError('State reference confirmation outcome requires review');
       if(row.status!=='active')throw new ConflictError('State batch item is not active');
       await requireConfirmationScope(client,batch.userId,batch.organizationId,row.entity_id);
-      const claimToken=randomUUID();const confirmation={state:'confirming',claim_token:claimToken,lease_until:new Date(Date.now()+5*60_000).toISOString()};
+      const claimToken=randomUUID();const confirmation={state:'confirming',claim_token:claimToken,lease_until:new Date(Date.now()+5*60_000).toISOString(),recovery_count:0};
       await client.query("UPDATE generation_batch_items SET status='confirming',confirmation=$2::jsonb,updated_at=NOW() WHERE id=$1::uuid",[itemId,JSON.stringify(confirmation)]);
       return{itemId,claimToken,newlyPrepared:true,committed:false,inProgress:false};
     });
@@ -150,6 +167,7 @@ function parseConfirmation(row:{id:string;target_id:string;job_id:string|null;ap
 function readFirstCandidate(result:Record<string,unknown>):{s3Key:string}{const candidates=result.candidates;if(!Array.isArray(candidates)||candidates.length===0)throw new ConflictError('Entity preview candidate is missing');
   const first=candidates[0];if(typeof first!=='object'||first===null)throw new ConflictError('Entity preview candidate is invalid');return{s3Key:readString((first as Record<string,unknown>).s3_key,'candidate s3_key')};}
 function readString(value:unknown,name:string):string{if(typeof value!=='string'||value.length===0)throw new ConflictError(`${name} is unavailable`);return value;}
+function readRecoveryCount(value:unknown):number{if(value===undefined)return 0;if(!Number.isSafeInteger(value)||Number(value)<0)throw new ConflictError('State confirmation recovery count is invalid');return Number(value);}
 function future(value:unknown):boolean{return typeof value==='string'&&Number.isFinite(Date.parse(value))&&Date.parse(value)>Date.now();}
 async function lockBatchForItem(client:DatabaseClient,itemId:string):Promise<{status:string;userId:string;organizationId:string|null}>{
   const result=await client.query<{status:string;user_id:string;organization_id:string|null} & QueryResultRow>(

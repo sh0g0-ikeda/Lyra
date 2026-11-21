@@ -8,9 +8,12 @@ import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresEntityStateReferenceRepository } from '../../src/repositories/EntityStateReferenceRepository.js';
 import { PostgresFencedStateReferenceRepository } from '../../src/repositories/FencedStateReferenceRepository.js';
+import { PostgresGenerationBatchConfirmationRepository } from '../../src/repositories/GenerationBatchConfirmationRepository.js';
+import { PostgresGenerationBatchRepository } from '../../src/repositories/GenerationBatchRepository.js';
 import { PostgresGenerationJobRepository } from '../../src/repositories/GenerationJobRepository.js';
 import { EntityStateReferenceService } from '../../src/services/entity/EntityStateReferenceService.js';
 import { FencedStateReferenceConfirmationService } from '../../src/services/entity/FencedStateReferenceConfirmationService.js';
+import { GenerationBatchConfirmationService } from '../../src/services/generation/batch/GenerationBatchConfirmationService.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
 import { rejectionOf, throwingRejectionOf } from './asyncPostgresAssertions.js';
 
@@ -79,8 +82,55 @@ describePostgres('public state confirmation recovers durable stale copies', () =
       'SELECT * FROM state_reference_copy_attempts WHERE entity_id=$1 AND state_id=$2 ORDER BY created_at,attempt_token',
       [input.entityId, input.stateId],
     )).rows;
-    return { journal, imageCreator, recovery, objects, controls, confirm, rows, legacyCopy };
+    return { journal, imageCreator, recovery, objects, controls, confirm, rows, legacyCopy, service };
   }
+
+  it.each([
+    { label: 'DB commit前', commitBeforeLostAcknowledgement: false, expectedObservations: 1 },
+    { label: 'DB commit後', commitBeforeLostAcknowledgement: true, expectedObservations: 0 },
+  ])('batch claim期限後も同じ完了jobとfenced attemptを$label応答不明から確定する', async ({
+    commitBeforeLostAcknowledgement, expectedObservations,
+  }) => {
+    const f = fixture(); const input = await seed(pool); const batchIds = await seedBatch(pool, input);
+    f.controls.loseNextResponse = false;
+    const batches = new PostgresGenerationBatchRepository();
+    const confirmations = new PostgresGenerationBatchConfirmationRepository(database);
+    const unusedStorage = async (): Promise<never> => { throw new Error('Unexpected batch base storage call'); };
+    const service = new GenerationBatchConfirmationService(confirmations, {
+      storeImportedImage: unusedStorage,
+      storeGeneratedCandidate: unusedStorage,
+      finalizeReferenceImage: unusedStorage,
+    }, f.service());
+    const initial = await batches.find(database, input.userId, input.organizationId, batchIds.batchId);
+    const job = await batches.findJob(database, input.jobId);
+    if (job === null) throw new Error('Missing completed state generation job');
+    const confirmObservedImage = f.journal.confirmObservedImage.bind(f.journal);
+    const adoption = vi.spyOn(f.journal, 'confirmObservedImage');
+    if (commitBeforeLostAcknowledgement) {
+      adoption.mockImplementationOnce(async (attempt, receipt) => {
+        await confirmObservedImage(attempt, receipt);
+        throw new Error('commit acknowledgement lost');
+      });
+    } else {
+      adoption.mockRejectedValueOnce(new Error('commit acknowledgement lost'));
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(await service.confirm(initial.batch, initial.items[0]!, job)).toBe('in_progress');
+    warn.mockRestore();
+    expect(f.imageCreator.createImage).toHaveBeenCalledOnce();
+    await pool.query(`UPDATE generation_batch_items SET confirmation=jsonb_set(confirmation,'{lease_until}',
+      to_jsonb((NOW()-INTERVAL '1 minute')::text)) WHERE id=$1`, [batchIds.itemId]);
+
+    const retry = await batches.find(database, input.userId, input.organizationId, batchIds.batchId);
+    expect(await service.confirm(retry.batch, retry.items[0]!, job)).toBe('confirmed');
+    expect(f.imageCreator.createImage).toHaveBeenCalledOnce();
+    expect(f.recovery.observe).toHaveBeenCalledTimes(expectedObservations);
+    expect((await f.rows(input))[0]).toMatchObject({ state: 'confirmed', job_id: input.jobId });
+    expect((await pool.query('SELECT status,job_id FROM generation_batch_items WHERE id=$1', [batchIds.itemId])).rows[0])
+      .toEqual({ status: 'completed', job_id: input.jobId });
+    expect((await pool.query('SELECT COUNT(*)::int AS count FROM generation_jobs WHERE id=$1', [input.jobId])).rows[0].count).toBe(1);
+  });
 
   it('recovers a lost PUT response before rejecting the original stale candidate, then accepts a current candidate', async () => {
     const f = fixture(); const input = await seed(pool);
@@ -349,6 +399,25 @@ async function seedCandidate(pool: Pool, scope: Pick<ConfirmEntityStateReference
     state_revision: revision, state_input_fingerprint: input.descriptor.inputFingerprint, image_model: 'gpt-image-2' }),
   JSON.stringify({ candidates: [{ ref_id: input.descriptor.refId, s3_key: input.candidateS3Key }] })]);
   return input;
+}
+async function seedBatch(pool: Pool, input: ConfirmEntityStateReferenceInput): Promise<{batchId:string;itemId:string}> {
+  const batchId = randomUUID(); const itemId = randomUUID();
+  const work = await pool.query<{work_id:string}>('SELECT work_id FROM entities WHERE id=$1', [input.entityId]);
+  const workId = work.rows[0]?.work_id;
+  if (workId === undefined) throw new Error('Missing batch work');
+  await pool.query(`INSERT INTO generation_batches (
+      id,user_id,organization_id,work_id,kind,status,selection,render_style,image_model,pricing_version,
+      maximum_credits,auto_confirm,approved_plan,expires_at,request_key,accepted_at
+    ) VALUES ($1,$2,$3,$4,'character_references','running','missing_only','color','gpt-image-2.5-sunburst',
+      'v1',1,TRUE,'{}'::jsonb,NOW()+INTERVAL '5 minutes',$5,NOW())`,
+  [batchId,input.userId,input.organizationId,workId,randomUUID()]);
+  await pool.query(`INSERT INTO generation_batch_items (
+      id,batch_id,position,kind,label,target_id,entity_id,status,approved_request,approved_input,input_revision,
+      operation,image_model,provider_model_id,amount_credits,pricing_version,job_id
+    ) VALUES ($1,$2,0,'entity_state','負傷',$3,$4,'active','{}'::jsonb,$5::jsonb,$6,
+      'entity_state_preview','gpt-image-2.5-sunburst','gpt-image-2.5-sunburst-2026-09-08',1,'v1',$7)`,
+  [itemId,batchId,input.stateId,input.entityId,JSON.stringify({state_revision:input.expectedStateRevision}),input.expectedStateRevision,input.jobId]);
+  return { batchId, itemId };
 }
 class TestDatabase implements DatabaseClient, TransactionRunner {
   public constructor(private readonly pool: Pool) {}

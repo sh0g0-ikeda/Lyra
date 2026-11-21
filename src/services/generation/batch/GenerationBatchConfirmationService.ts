@@ -4,6 +4,7 @@ import type { ConfirmedEntityStateReference } from '../../../domain/types/entity
 import type { EntityImageStoragePort } from '../../../infrastructure/aws/S3EntityImageStorage.js';
 import type { GenerationBatchConfirmationRepositoryPort } from '../../../repositories/GenerationBatchConfirmationRepository.js';
 import type { GenerationBatchJobSnapshot } from '../../../repositories/GenerationBatchRepository.js';
+import { StateReferenceRecoveryPendingError } from '../../entity/FencedStateReferenceConfirmationService.js';
 
 export interface BatchStateReferenceConfirmationPort {
   confirmReference(userId:string,entityId:string,stateId:string,input:{jobId:string;candidateS3Key:string;expectedStateRevision:string},organizationId?:string|null):Promise<ConfirmedEntityStateReference>;
@@ -48,9 +49,22 @@ export class GenerationBatchConfirmationService implements GenerationBatchConfir
       throw new ConflictError('State reference confirmation outcome requires review');
     }
     const source=firstCandidate(job.result);
-    await this.stateConfirmation.confirmReference(batch.userId,item.entityId,item.targetId,{
-      jobId:job.id,candidateS3Key:source,expectedStateRevision:readString(item.approvedInput.state_revision,'state_revision'),
-    },batch.organizationId);
+    try{
+      await this.stateConfirmation.confirmReference(batch.userId,item.entityId,item.targetId,{
+        jobId:job.id,candidateS3Key:source,expectedStateRevision:readString(item.approvedInput.state_revision,'state_revision'),
+      },batch.organizationId);
+    }catch(error){
+      // The fenced state-reference journal owns the only storage attempt. Its
+      // recovery signal must retain this batch claim so a later reconcile can
+      // observe the same intent; every other conflict remains a hard failure.
+      if(isStateReferenceRecoveryPending(error)){
+        console.warn('generation_batch_state_reference_recovery_pending',{
+          batchId:batch.id,itemId:item.id,jobId:job.id,stage:error.stage,classification:error.classification,
+        });
+        return 'in_progress';
+      }
+      throw error;
+    }
     await this.repository.commitState(claim);
     return 'confirmed';
   }
@@ -58,3 +72,4 @@ export class GenerationBatchConfirmationService implements GenerationBatchConfir
 function firstCandidate(result:Record<string,unknown>):string{const candidates=result.candidates;if(!Array.isArray(candidates)||candidates.length===0)throw new ConflictError('Generated reference candidate is missing');
   const first=candidates[0];if(typeof first!=='object'||first===null)throw new ConflictError('Generated reference candidate is invalid');return readString((first as Record<string,unknown>).s3_key,'candidate s3_key');}
 function readString(value:unknown,name:string):string{if(typeof value!=='string'||value.length===0)throw new ConflictError(`${name} is unavailable`);return value;}
+function isStateReferenceRecoveryPending(error:unknown):error is StateReferenceRecoveryPendingError{return error instanceof StateReferenceRecoveryPendingError;}

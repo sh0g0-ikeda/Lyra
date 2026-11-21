@@ -1576,8 +1576,12 @@ and keep a compatible flag-OFF rollback image after the migration.
 Workers are on demand at every hour; retain the shared twenty-minute idle lease
 and active-job/task protection when changing warm control.
 
-Bulk image generation follows Unified Spec §6: deploy pre/post-055-compatible
-code with GENERATION_BATCHES_ENABLED off before migration 055, then enable only
+Bulk image generation follows Unified Spec §6: verify the worker's exact
+state-reference image-create/recovery
+role assumption and trust before enabling automatic confirmation. Preserve
+conditional-write storage guards and reuse completed jobs during confirmation recovery.
+Deploy pre/post-055-compatible code with GENERATION_BATCHES_ENABLED off before
+migration 055, then enable only
 after schema attestation. Keep compatible flag-OFF rollback code. Bulk acceptance
 preserves existing images and explicitly authorizes base/state auto-confirmation;
 each child retains existing quote, authorization, cancellation and credit fences.

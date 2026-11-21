@@ -37,6 +37,33 @@ suite('generation batch confirmation concurrency',()=>{
     await expect(new PostgresGenerationBatchRepository().requestCancel(database,fixture.batchId)).rejects.toMatchObject({code:'CONFLICT'});
   });
 
+  it('期限切れstate claimは同じitemと生成jobのまま再claimし旧claimの遅延commitを拒否する',async()=>{
+    const fixture=await seed('entity_state');const confirmations=new PostgresGenerationBatchConfirmationRepository(database);
+    const first=await confirmations.prepareState(fixture.itemId);
+    await expireStateClaim(fixture.itemId);
+    const recovered=await confirmations.prepareState(fixture.itemId);
+    expect(recovered.newlyPrepared).toBe(true);
+    expect(recovered.claimToken).not.toBe(first.claimToken);
+    const concurrent=await confirmations.prepareState(fixture.itemId);
+    expect(concurrent.inProgress).toBe(true);
+    expect(concurrent.claimToken).toBe(recovered.claimToken);
+    await expect(confirmations.commitState(first)).rejects.toMatchObject({code:'CONFLICT'});
+    const unchanged=await database.query<{job_id:string;status:string}>(
+      'SELECT job_id,status FROM generation_batch_items WHERE id=$1::uuid',[fixture.itemId]);
+    expect(unchanged.rows[0]).toEqual({job_id:fixture.jobId,status:'confirming'});
+    expect((await database.query<{count:string}>('SELECT COUNT(*)::text AS count FROM generation_jobs WHERE id=$1::uuid',[fixture.jobId])).rows[0]?.count).toBe('1');
+    await confirmations.commitState(recovered);
+    expect((await database.query<{status:string}>('SELECT status FROM generation_batch_items WHERE id=$1::uuid',[fixture.itemId])).rows[0]?.status).toBe('completed');
+  });
+
+  it('state confirmation回復claimは永続障害時も上限を超えて再発行しない',async()=>{
+    const fixture=await seed('entity_state');const confirmations=new PostgresGenerationBatchConfirmationRepository(database);
+    await confirmations.prepareState(fixture.itemId);
+    for(let retry=0;retry<3;retry+=1){await expireStateClaim(fixture.itemId);await confirmations.prepareState(fixture.itemId);}
+    await expireStateClaim(fixture.itemId);
+    await expect(confirmations.prepareState(fixture.itemId)).rejects.toMatchObject({code:'CONFLICT'});
+  });
+
   it('cancelが先に確定したbatchはcopy intentもstorage publishも開始しない',async()=>{
     const fixture=await seed('entity_base');await new PostgresGenerationBatchRepository().requestCancel(database,fixture.batchId);
     await expect(new PostgresGenerationBatchConfirmationRepository(database).prepareBase(fixture.itemId)).rejects.toMatchObject({code:'CONFLICT'});
@@ -75,5 +102,10 @@ suite('generation batch confirmation concurrency',()=>{
       VALUES($1,$2,0,$3,'対象',$4,$5,'active','{}'::jsonb,$6::jsonb,'revision',$7,'gpt-image-2.5-sunburst','gpt-image-2.5-sunburst-2026-09-08',1,'v1',$8)`,
       [itemId,batchId,kind,kind==='entity_state'?stateId:entityId,entityId,JSON.stringify(kind==='entity_state'?{state_revision:'revision'}:{entity_revision:revision}),kind==='entity_state'?'entity_state_preview':'entity_preview',jobId]);
     return{userId,workId,entityId,batchId,itemId,jobId};
+  }
+
+  async function expireStateClaim(itemId:string):Promise<void>{
+    await database.query(`UPDATE generation_batch_items SET confirmation=jsonb_set(confirmation,'{lease_until}',
+      to_jsonb((NOW()-INTERVAL '1 minute')::text)) WHERE id=$1::uuid`,[itemId]);
   }
 });

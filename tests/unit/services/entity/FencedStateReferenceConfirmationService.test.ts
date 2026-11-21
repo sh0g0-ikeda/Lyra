@@ -4,7 +4,7 @@ import { buildFencedStateReferenceKey, STATE_REFERENCE_COPY_V2_PROTOCOL } from '
 import type { ConfirmEntityStateReferenceInput } from '../../../../src/domain/types/entityStateReference.js';
 import type { FencedImageReceipt, FencedStateReferenceImageCreatePort, FencedStateReferenceRecoveryPort } from '../../../../src/infrastructure/aws/FencedStateReferenceStorage.js';
 import type { FencedStateReferenceAttempt, FencedStateReferenceRepository } from '../../../../src/repositories/FencedStateReferenceRepository.js';
-import { FencedStateReferenceConfirmationService } from '../../../../src/services/entity/FencedStateReferenceConfirmationService.js';
+import { FencedStateReferenceConfirmationService, StateReferenceRecoveryPendingError } from '../../../../src/services/entity/FencedStateReferenceConfirmationService.js';
 
 function fixture(enabled = true) {
   const userId = '11111111-1111-4111-8111-111111111111';
@@ -83,11 +83,32 @@ describe('FencedStateReferenceConfirmationService', () => {
     expect(f.repository.completeFencing).toHaveBeenCalledWith(expect.objectContaining({ state: 'fencing' }), f.erased);
   });
   it('元PUTの失敗は未確定のままにし自動再送や終了推定をしない', async () => {
-    const f = fixture(); vi.spyOn(f.imageCreator, 'createImage').mockRejectedValue(new Error('response lost'));
-    await expect(f.service.tryConfirmReference(f.input)).rejects.toMatchObject({ code: 'CONFLICT' });
+    const f = fixture(); const denied = new Error('redacted'); denied.name = 'AccessDenied';
+    vi.spyOn(f.imageCreator, 'createImage').mockRejectedValue(denied);
+    const confirmation=f.service.tryConfirmReference(f.input);
+    await expect(confirmation).rejects.toBeInstanceOf(StateReferenceRecoveryPendingError);
+    await expect(confirmation).rejects.toMatchObject({ code: 'CONFLICT', statusCode: 409,
+      stage: 'image_create', classification: 'access_denied' });
     expect(f.imageCreator.createImage).toHaveBeenCalledTimes(1);
     expect(f.repository.claimFencing).not.toHaveBeenCalled();
     expect(f.repository.confirmObservedImage).not.toHaveBeenCalled();
+  });
+  it('画像receipt後のDB応答不明は回復待ちとして同じattemptを保持する', async () => {
+    const f = fixture(); vi.spyOn(f.repository, 'confirmObservedImage').mockRejectedValueOnce(new Error('commit acknowledgement lost'));
+    await expect(f.service.tryConfirmReference(f.input)).rejects.toBeInstanceOf(StateReferenceRecoveryPendingError);
+    expect(f.imageCreator.createImage).toHaveBeenCalledOnce();
+    expect(f.repository.claimFencing).not.toHaveBeenCalled();
+  });
+  it('fenceの外部応答またはsettlement応答が不明なら同じattemptの回復待ちにする', async () => {
+    const storage = fixture(); vi.spyOn(storage.repository, 'findActiveAttempt').mockResolvedValue(storage.attempt);
+    vi.spyOn(storage.recovery, 'observe').mockResolvedValue({ kind: 'absent' });
+    vi.spyOn(storage.recovery, 'fenceAndErase').mockRejectedValueOnce(new Error('marker response lost'));
+    await expect(storage.service.tryConfirmReference(storage.input)).rejects.toBeInstanceOf(StateReferenceRecoveryPendingError);
+
+    const settlement = fixture(); vi.spyOn(settlement.repository, 'findActiveAttempt').mockResolvedValue(settlement.attempt);
+    vi.spyOn(settlement.recovery, 'observe').mockResolvedValue({ kind: 'absent' });
+    vi.spyOn(settlement.repository, 'completeFencing').mockRejectedValueOnce(new Error('fence acknowledgement lost'));
+    await expect(settlement.service.tryConfirmReference(settlement.input)).rejects.toBeInstanceOf(StateReferenceRecoveryPendingError);
   });
   it('観測不明はmarkerを上書きせず保留する', async () => {
     const f = fixture(); vi.spyOn(f.repository, 'findActiveAttempt').mockResolvedValue(f.attempt);
