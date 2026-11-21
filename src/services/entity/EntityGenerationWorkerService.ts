@@ -2,7 +2,7 @@ import { ENTITY_REFERENCE_GENERATION } from '../../domain/constants/entityRefere
 import { GPT_IMAGE_25_SUNBURST_SNAPSHOT } from '../../domain/constants/openAIImageModel.js';
 import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import { OPENAI_INPUT_IMAGE_MAX_BYTES } from '../../domain/constants/imageInput.js';
-import { ConfigurationError } from '../../domain/errors/index.js';
+import { ConfigurationError, ValidationError } from '../../domain/errors/index.js';
 import {
   requireOpenAIEntityInputCompatible,
   requireOpenAIEntityJobCompatible,
@@ -43,6 +43,9 @@ import type {
 import { ensureAllowedReferenceSourceKey } from './EntityReferenceSourceKeyPolicy.js';
 import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPolicy.js';
 import { resolveEntityImageProvenance } from './EntityImageProvenance.js';
+import { runImageProviderAttempts } from '../generation/ImageProviderAttempts.js';
+import { assertRasterImageInput } from '../../domain/generation/RasterImageInput.js';
+import { generationFailureDiagnostic } from '../generation/GenerationFailureDiagnostic.js';
 
 export interface ProcessEntityGenerationJobResult {
   status: 'processed' | 'skipped';
@@ -92,6 +95,7 @@ export class EntityGenerationWorkerService {
       }
 
       let workIdForAudit: string | null = null;
+      let currentStage = 'prepare_inputs';
       try {
         const providerModelId = resolveQuotedOpenAIImageModel(job.params, this.imageModel);
         requireOpenAIEntityJobCompatible(job.params, providerModelId);
@@ -156,27 +160,37 @@ export class EntityGenerationWorkerService {
             entity.entityType,
           );
         }
-      const generated = await this.generator.generateCandidates({
-        prompt: generationPrompt,
-        inputImages,
-        ...(quoted !== null && providerModelId !== undefined && providerModelId !== this.imageModel
-          ? { providerModelId } : {}),
+      currentStage = 'rendering';
+      const generationAttempt = await runImageProviderAttempts({
+        jobId: job.id,
+        stage: 'entity_render',
+        finalizeCancellation: () => this.finalizeCancellationIfRequested(job.id),
+        attempt: () => this.generator.generateCandidates({
+          prompt: generationPrompt,
+          inputImages,
+          ...(quoted !== null && providerModelId !== undefined && providerModelId !== this.imageModel
+            ? { providerModelId } : {}),
+        }),
+        validate: (result) => {
+          assertGeneratedCandidates(result.candidates);
+          if (providerModelId !== undefined
+            && (providerModelId !== this.imageModel || providerModelId === GPT_IMAGE_25_SUNBURST_SNAPSHOT)
+            && result.providerModelId !== providerModelId) {
+            throw new ValidationError('Entity preview did not return the quoted model');
+          }
+        },
       });
-      assertGeneratedCandidates(generated.candidates);
-      if (providerModelId !== undefined
-        && (providerModelId !== this.imageModel || providerModelId === GPT_IMAGE_25_SUNBURST_SNAPSHOT)
-        && generated.providerModelId !== providerModelId) {
-        throw new ConfigurationError('Entity preview did not return the quoted model');
-      }
-
-      if (await this.finalizeCancellationIfRequested(job.id)) {
+      if (generationAttempt.status === 'cancelled') {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
+      const generated = generationAttempt.value;
+      currentStage = 'commit_gate';
       if (!(await this.beginCommit(job.id))) {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
 
       const storedCandidates = [];
+      currentStage = 'storage';
 
       for (let index = 0; index < generated.candidates.length; index += 1) {
         const candidate = generated.candidates[index];
@@ -196,6 +210,7 @@ export class EntityGenerationWorkerService {
         });
       }
 
+      currentStage = 'persist_result';
       const completed = await this.executionRepository.completeEntityGeneration({
         jobId: job.id,
         userId: job.userId,
@@ -230,6 +245,7 @@ export class EntityGenerationWorkerService {
         if (await this.finalizeCancellationIfRequested(job.id)) {
           return { status: 'processed', jobStatus: 'cancelled' };
         }
+        console.error('entity_generation_failed', { jobId: job.id, stage: currentStage, ...generationFailureDiagnostic(error) });
         await this.failJob(job, sanitizePersistedErrorMessage(error, 'Entity generation failed'), workIdForAudit);
         return { status: 'processed', jobStatus: 'failed' };
       }
@@ -434,6 +450,9 @@ function assertGeneratedCandidates(
 
   if (candidates.some((candidate) => candidate.imageData.length === 0)) {
     throw new ConfigurationError('Entity reference generator returned empty image data');
+  }
+  for (const candidate of candidates) {
+    assertRasterImageInput(candidate.imageData, candidate.mimeType);
   }
 }
 

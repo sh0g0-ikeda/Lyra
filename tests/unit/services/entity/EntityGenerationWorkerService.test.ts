@@ -48,6 +48,7 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
   public job: GenerationJob | null = buildJob();
   public completed: CompleteEntityGenerationInput | null = null;
   public failed: { jobId: string; userId: string; errorMessage: string } | null = null;
+  public completionResult = true;
   public failureResult = true;
   public progressTouches: Array<{ jobId: string; userId: string; message: string; updatedAt: string }> = [];
 
@@ -67,7 +68,7 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
 
   public async completeEntityGeneration(input: CompleteEntityGenerationInput): Promise<boolean> {
     this.completed = input;
-    return true;
+    return this.completionResult;
   }
 
   public async failEntityGeneration(input: {
@@ -204,10 +205,12 @@ class FakePromptCompiler implements EntityReferencePromptCompilerPort {
 
 class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
   public input: GenerateEntityReferenceCandidatesInput | null = null;
+  public calls = 0;
   public shouldThrow = false;
+  public failuresRemaining = 0;
   public onGenerate: () => void = () => undefined;
   public candidates: Array<{ imageData: Buffer; mimeType: string }> = [
-    { imageData: Buffer.from('a'), mimeType: 'image/png' },
+    { imageData: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), mimeType: 'image/png' },
   ];
   public imageModel: string | undefined;
   public providerModelId: string | undefined;
@@ -218,9 +221,14 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
     openaiRequestId: string | null;
     costUsd: number | null;
   }> {
+    this.calls += 1;
     this.input = input;
     this.onGenerate();
 
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1;
+      throw new Error('generation temporarily failed');
+    }
     if (this.shouldThrow) {
       throw new Error('generation failed');
     }
@@ -727,6 +735,35 @@ describe('EntityGenerationWorkerService', () => {
       amount: 8,
       jobId: 'job-1',
     });
+    expect(referenceGenerator.calls).toBe(2);
+  });
+
+  it('最初の画像provider失敗だけを同じjob内で一度再試行して候補を一度だけ保存する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.failuresRemaining = 1;
+    const imageStorage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
+    const service = buildService({ executionRepository, referenceGenerator, imageStorage, creditService });
+
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(referenceGenerator.calls).toBe(2);
+    expect(imageStorage.generatedCandidateCalls).toHaveLength(1);
+    expect(executionRepository.failed).toBeNull();
+    expect(creditService.refunded).toBeNull();
+  });
+
+  it('画像取得成功後の完了保存失敗ではproviderを再実行しない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.completionResult = false;
+    const referenceGenerator = new FakeReferenceGenerator();
+    const creditService = new FakeCreditService();
+    const service = buildService({ executionRepository, referenceGenerator, creditService });
+
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(referenceGenerator.calls).toBe(1);
+    expect(executionRepository.failed?.errorMessage).toBe('Failed to persist entity generation job result');
+    expect(creditService.refunded).toMatchObject({ jobId: 'job-1' });
   });
 
   it('configured image model を完了メタデータに記録する', async () => {
@@ -884,6 +921,7 @@ describe('EntityGenerationWorkerService', () => {
       amount: 8,
       jobId: 'job-1',
     });
+    expect(referenceGenerator.calls).toBe(2);
   });
 
   it('法人キャラ生成は組織スコープで読み込み、完了を組織利用履歴へ記録する', async () => {
@@ -978,6 +1016,7 @@ describe('EntityGenerationWorkerService', () => {
     const result = await service.processJob('job-1');
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'cancelled' });
+    expect(referenceGenerator.calls).toBe(1);
     expect(imageStorage.generatedCandidateCalls).toEqual([]);
     expect(executionRepository.completed).toBeNull();
     expect(executionRepository.failed).toBeNull();

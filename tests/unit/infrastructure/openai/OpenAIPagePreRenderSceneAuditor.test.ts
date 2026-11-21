@@ -7,9 +7,7 @@ import { OpenAIPagePreRenderSceneAuditor } from '../../../../src/infrastructure/
 describe('OpenAIPagePreRenderSceneAuditor', () => {
   it('同じ順序のdata URL画像をlabel付きで構造化監査へ送る', async () => {
     const postJson = vi.fn().mockResolvedValue({ requestId: 'request-1', body: {
-      status: 'completed', output_text: JSON.stringify({ verdict: 'guidance', directives: [
-        { panel_order: 1, kind: 'appearance', entity_ids: ['67b758f1-b11d-456c-8025-d6c18dc33c9e'] },
-      ] }),
+      status: 'completed', output_text: JSON.stringify({ assessment: 'clear', directive_ids: ['d0'] }),
     } });
     const auditor = new OpenAIPagePreRenderSceneAuditor({ postJson } as unknown as OpenAIClient);
     const result = await auditor.audit({
@@ -39,6 +37,8 @@ describe('OpenAIPagePreRenderSceneAuditor', () => {
     expect(userText).toContain('"stateId":"2685f36d-9d44-45ef-a7f3-401d6815106c"');
     expect(userText).not.toContain('not-forwarded');
     expect(userText).toContain('"version":"page_layout_v1"');
+    expect(userText).toContain('"id":"d0","panelOrder":1,"kind":"appearance","entityNames":["Ishii"]');
+    expect(request).toMatchObject({ reasoning: { effort: 'low' } });
   });
 
   it('画像以外のdata URLはprovider呼出し前に拒否する', async () => {
@@ -66,7 +66,7 @@ describe('OpenAIPagePreRenderSceneAuditor', () => {
 
   it('2人物のbase/state参照を元の順序と対応表のまま送る', async () => {
     const postJson = vi.fn().mockResolvedValue({ requestId: 'request-2', body: {
-      status: 'completed', output_text: JSON.stringify({ verdict: 'pass', directives: [] }),
+      status: 'completed', output_text: JSON.stringify({ assessment: 'clear', directive_ids: [] }),
     } });
     const auditor = new OpenAIPagePreRenderSceneAuditor({ postJson } as unknown as OpenAIClient);
     await auditor.audit({
@@ -104,11 +104,9 @@ describe('OpenAIPagePreRenderSceneAuditor', () => {
     expect(postJson).toHaveBeenCalledTimes(1);
   });
 
-  it('schema上は合法でもruntime契約違反のdirectiveを拒否する', async () => {
+  it('同じpanelの割当済み人物だけを短いdirective ID候補としてschemaに固定する', async () => {
     const postJson = vi.fn().mockResolvedValue({ requestId: 'request-contract', body: {
-      status: 'completed', output_text: JSON.stringify({ verdict: 'guidance', directives: [
-        { panel_order: 1, kind: 'appearance', entity_ids: ['a1111111-1111-4111-8111-111111111111', 'b2222222-2222-4222-8222-222222222222'] },
-      ] }),
+      status: 'completed', output_text: JSON.stringify({ assessment: 'clear', directive_ids: ['d8'] }),
     } });
     const auditor = new OpenAIPagePreRenderSceneAuditor({ postJson } as unknown as OpenAIClient);
     await expect(auditor.audit({
@@ -117,8 +115,69 @@ describe('OpenAIPagePreRenderSceneAuditor', () => {
         pageId: 'page', requestKind: 'initial', generationMode: 'standard', panelCount: 1,
         panels: [{ panelId: 'panel', order: 1, entityIds: ['a1111111-1111-4111-8111-111111111111', 'b2222222-2222-4222-8222-222222222222'], entityNames: ['A', 'B'], dialogue: [] }],
       }, inputImages: [],
-    })).rejects.toThrow();
+    })).resolves.toEqual({ verdict: 'guidance', directives: [{
+      panelOrder: 1, kind: 'interaction',
+      entityIds: ['a1111111-1111-4111-8111-111111111111', 'b2222222-2222-4222-8222-222222222222'],
+    }] });
     expect(postJson).toHaveBeenCalledTimes(1);
+    const request = postJson.mock.calls[0]?.[1] as {
+      text: { format: { schema: { properties: { directive_ids: { items: { enum: string[] } } } } } };
+    };
+    expect(request.text.format.schema.properties.directive_ids.items.enum).toEqual([
+      'd0', 'd1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8',
+    ]);
+    expect(JSON.stringify(request.text.format.schema)).not.toMatch(/panel_order|entity_ids/u);
+  });
+
+  it('同じdirective IDが重複しても同じ意味の1指示に正規化する', async () => {
+    const postJson = vi.fn().mockResolvedValue({ requestId: 'request-duplicate', body: {
+      status: 'completed', output_text: JSON.stringify({ assessment: 'uncertain', directive_ids: ['d0', 'd0'] }),
+    } });
+    const auditor = new OpenAIPagePreRenderSceneAuditor({ postJson } as unknown as OpenAIClient);
+    await expect(auditor.audit({
+      prompt: 'scene', compilerBrief: 'brief', internalPlan: null,
+      inputSnapshot: {
+        pageId: 'page', requestKind: 'initial', generationMode: 'standard', panelCount: 1,
+        panels: [{ panelId: 'panel', order: 1, entityIds: ['a1111111-1111-4111-8111-111111111111'], entityNames: ['A'], dialogue: [] }],
+      }, inputImages: [],
+    })).resolves.toEqual({ verdict: 'guidance', directives: [{
+      panelOrder: 1, kind: 'appearance', entityIds: ['a1111111-1111-4111-8111-111111111111'],
+    }] });
+  });
+
+  it('schema外のdirective IDはpassへ変換せずhard validationで拒否する', async () => {
+    const postJson = vi.fn().mockResolvedValue({ requestId: 'request-unknown', body: {
+      status: 'completed', output_text: JSON.stringify({ assessment: 'clear', directive_ids: ['unknown'] }),
+    } });
+    const auditor = new OpenAIPagePreRenderSceneAuditor({ postJson } as unknown as OpenAIClient);
+    await expect(auditor.audit({
+      prompt: 'scene', compilerBrief: 'brief', internalPlan: null,
+      inputSnapshot: {
+        pageId: 'page', requestKind: 'initial', generationMode: 'standard', panelCount: 1,
+        panels: [{ panelId: 'panel', order: 1, entityIds: ['a1111111-1111-4111-8111-111111111111'], entityNames: ['A'], dialogue: [] }],
+      }, inputImages: [],
+    })).rejects.toThrow('unknown directive option');
+    expect(postJson).toHaveBeenCalledTimes(1);
+  });
+
+  it('候補0件ではdirective_idsをmaxItems 0に固定してuncertainだけを返せる', async () => {
+    const postJson = vi.fn().mockResolvedValue({ requestId: 'request-empty', body: {
+      status: 'completed', output_text: JSON.stringify({ assessment: 'uncertain', directive_ids: [] }),
+    } });
+    const auditor = new OpenAIPagePreRenderSceneAuditor({ postJson } as unknown as OpenAIClient);
+    await expect(auditor.audit({
+      prompt: 'scene', compilerBrief: 'brief', internalPlan: null,
+      inputSnapshot: {
+        pageId: 'page', requestKind: 'initial', generationMode: 'standard', panelCount: 1,
+        panels: [{ panelId: 'panel', order: 1, entityIds: [], entityNames: [], dialogue: [] }],
+      }, inputImages: [],
+    })).resolves.toEqual({ verdict: 'uncertain', directives: [] });
+    const request = postJson.mock.calls[0]?.[1] as {
+      text: { format: { schema: { properties: { directive_ids: { maxItems: number; items: Record<string, unknown> } } } } };
+    };
+    expect(request.text.format.schema.properties.directive_ids).toMatchObject({
+      type: 'array', maxItems: 0, items: { type: 'string' },
+    });
   });
 
   it('transport失敗は監査を失敗させて後続生成へ進めない', async () => {
@@ -133,7 +192,7 @@ describe('OpenAIPagePreRenderSceneAuditor', () => {
 
   it('Unicode astral文字のpromptが32k code point以内なら送信する', async () => {
     const postJson = vi.fn().mockResolvedValue({ requestId: 'request-unicode', body: {
-      status: 'completed', output_text: JSON.stringify({ verdict: 'pass', directives: [] }),
+      status: 'completed', output_text: JSON.stringify({ assessment: 'clear', directive_ids: [] }),
     } });
     const auditor = new OpenAIPagePreRenderSceneAuditor({ postJson } as unknown as OpenAIClient);
     await expect(auditor.audit({

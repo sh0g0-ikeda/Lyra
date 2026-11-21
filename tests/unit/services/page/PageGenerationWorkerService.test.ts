@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import sharp from 'sharp';
 import { ConfigurationError } from '../../../../src/domain/errors/index.js';
 import type { CreditBalanceSnapshot } from '../../../../src/domain/types/credit.js';
@@ -189,6 +189,7 @@ class FakeInputImageBuilder implements PageGenerationInputImageBuilderPort {
 class FakeRenderer implements PageImageRendererPort {
   public calls: RenderPageImageInput[] = [];
   public shouldFail = false;
+  public failuresRemaining = 0;
   public imageData = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   public mimeType = 'image/png';
   public onRender: () => void = () => undefined;
@@ -201,6 +202,10 @@ class FakeRenderer implements PageImageRendererPort {
   public async render(input: RenderPageImageInput): Promise<RenderPageImageResult> {
     this.calls.push(input);
     this.onRender();
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1;
+      throw new Error('renderer temporarily unavailable');
+    }
     if (this.shouldFail) {
       throw new Error('renderer unavailable');
     }
@@ -944,6 +949,25 @@ describe('PageGenerationWorkerService', () => {
       description: 'Refund for failed page generation job',
       jobId: 'job-1',
     });
+    expect(renderer.calls).toHaveLength(2);
+  });
+
+  it('最初の画像provider失敗だけを同じjob内で一度再試行して単一課金のまま完了する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const renderer = new FakeRenderer();
+    renderer.failuresRemaining = 1;
+    const storage = new FakeStorage();
+    const creditService = new FakeCreditService();
+    const service = new PageGenerationWorkerService(
+      executionRepository, new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, storage, creditService,
+    );
+
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(renderer.calls).toHaveLength(2);
+    expect(storage.calls).toHaveLength(1);
+    expect(executionRepository.failureInput).toBeNull();
+    expect(creditService.refunds).toEqual([]);
   });
 
   it('creditCost が 0 の failed job は refund を呼ばない', async () => {
@@ -974,13 +998,14 @@ describe('PageGenerationWorkerService', () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.shouldFailCompletion = true;
     const creditService = new FakeCreditService();
+    const renderer = new FakeRenderer();
     const service = new PageGenerationWorkerService(
       executionRepository,
       new FakePromptBuilder(),
       new FakePromptCompiler(),
       new FakeInputImageBuilder(),
       new FakePlanner(),
-      new FakeRenderer(),
+      renderer,
       new FakeStorage(),
       creditService,
     );
@@ -990,6 +1015,7 @@ describe('PageGenerationWorkerService', () => {
     expect(result).toEqual({ status: 'processed', jobStatus: 'failed' });
     expect(executionRepository.failureInput?.errorMessage).toBe('Failed to persist generated page image');
     expect(creditService.refunds).toHaveLength(1);
+    expect(renderer.calls).toHaveLength(1);
   });
 
   it('compiler の設定系失敗時は draft prompt に fallback する', async () => {
@@ -1390,6 +1416,7 @@ describe('PageGenerationWorkerService', () => {
     const result = await service.processJob('job-1');
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'cancelled' });
+    expect(renderer.calls).toHaveLength(1);
     expect(storage.calls).toEqual([]);
     expect(executionRepository.failureInput).toBeNull();
     expect(creditService.refunds).toEqual([]);
@@ -1449,6 +1476,39 @@ function buildInputSnapshot(): PageGenerationInputSnapshot {
 }
 
 describe('生成前の場面整合性監査', () => {
+  it.each([false, true])('監査出力不正の後に再監査し描画が失敗=%sでも合計2試行を超えない', async (imageFails) => {
+    const auditor = new FakeSceneAuditor();
+    auditor.onAudit = () => {
+      auditor.result = auditor.inputs.length === 1
+        ? { verdict: 'guidance', directives: [{ panelOrder: 1, kind: 'appearance', entityIds: ['foreign-entity'] }] }
+        : { verdict: 'pass', directives: [] };
+    };
+    const renderer = new FakeRenderer();
+    renderer.failuresRemaining = imageFails ? 1 : 0;
+    const credits = new FakeCreditService();
+    const storage = new FakeStorage();
+    const service = new PageGenerationWorkerService(new FakeExecutionRepository(), new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, storage, credits, true,
+      undefined, undefined, undefined, undefined, auditor);
+    expect((await service.processJob('job-1')).jobStatus).toBe(imageFails ? 'failed' : 'completed');
+    expect(auditor.inputs).toHaveLength(2);
+    expect(renderer.calls).toHaveLength(1);
+    expect(storage.calls).toHaveLength(imageFails ? 0 : 1);
+    expect(credits.refunds).toHaveLength(imageFails ? 1 : 0);
+  });
+
+  it('描画だけ失敗した場合は成功済み監査を再実行せず2回目の描画へ使う', async () => {
+    const auditor = new FakeSceneAuditor();
+    const renderer = new FakeRenderer(); renderer.failuresRemaining = 1;
+    const credits = new FakeCreditService();
+    const service = new PageGenerationWorkerService(new FakeExecutionRepository(), new FakePromptBuilder(), new FakePromptCompiler(),
+      new FakeInputImageBuilder(), new FakePlanner(), renderer, new FakeStorage(), credits, true,
+      undefined, undefined, undefined, undefined, auditor);
+    expect((await service.processJob('job-1')).jobStatus).toBe('completed');
+    expect(auditor.inputs).toHaveLength(1);
+    expect(renderer.calls).toHaveLength(2);
+    expect(credits.refunds).toHaveLength(0);
+  });
   it.each([false, true])('planner指定が%sの場合にも描画前に一度だけ監査し完成画像を渡さない', async (requiresPlanner) => {
     const repository = new FakeExecutionRepository();
     repository.claimedJob = buildJob({ params: { ...buildJob().params, requires_planner: requiresPlanner } });
@@ -1489,6 +1549,7 @@ describe('生成前の場面整合性監査', () => {
   });
 
   it('監査が未割当の人物を対象に返した場合に描画前に拒否する', async () => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const auditor = new FakeSceneAuditor();
     auditor.result = { verdict: 'guidance', directives: [{ panelOrder: 1, kind: 'appearance', entityIds: ['foreign-entity'] }] };
     const renderer = new FakeRenderer(); const credits = new FakeCreditService();
@@ -1497,6 +1558,10 @@ describe('生成前の場面整合性監査', () => {
       undefined, undefined, undefined, undefined, auditor);
     expect((await service.processJob('job-1')).jobStatus).toBe('failed');
     expect(renderer.calls).toHaveLength(0); expect(credits.refunds).toHaveLength(1);
+    expect(diagnostic).toHaveBeenCalledWith('page_generation_failed', {
+      jobId: 'job-1', stage: 'scene_audit', reason: 'scene_audit_unassigned_entity', errorType: 'validation',
+    });
+    diagnostic.mockRestore();
   });
 
   it('監査中に取消された場合に描画も二重返金もしない', async () => {
