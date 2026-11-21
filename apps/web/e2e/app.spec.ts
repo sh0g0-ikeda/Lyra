@@ -910,7 +910,30 @@ test('shows auth screen without token', async ({ page }) => {
 test('renders the console with mocked api responses', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
-  await page.route('**/api/**', (route) => mockApi(route));
+  await page.route('**/api/**', (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/generation-batch-capabilities') {
+      return route.fulfill({ json: {
+        enabled: true, image_model: 'gpt-image-2.5-sunburst', selections: ['missing_only'],
+        render_styles: ['color', 'monochrome'], max_items: 20, quote_ttl_seconds: 600,
+      } });
+    }
+    if (pathname === '/api/generation-batches' && request.method() === 'GET') {
+      return route.fulfill({ json: { batches: [{
+        batch_id: '11111111-1111-4111-8111-111111111111',
+        work_id: '22222222-2222-4222-8222-222222222222',
+        kind: 'pages', episode_id: '33333333-3333-4333-8333-333333333333', status: 'running',
+        selection: 'missing_only', render_style: 'color', image_model: 'gpt-image-2.5-sunburst',
+        pricing_version: 'v1', maximum_credits: 7.5, auto_confirm: true,
+        expires_at: '2026-11-22T00:10:00.000Z', accepted_at: '2026-11-22T00:01:00.000Z',
+        created_at: '2026-11-22T00:00:00.000Z', updated_at: '2026-11-22T00:01:00.000Z',
+        progress: { total: 3, completed: 1, skipped: 0, failed: 0, active: 1, pending: 1 },
+        items: [], blockers: [], active_job_ids: [],
+      }] } });
+    }
+    return mockApi(route);
+  });
 
   await page.goto('/');
 
@@ -930,8 +953,10 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Generate full-body preview' })).toBeVisible();
 
   await openMangaStep(page, '3. Pages');
+  await expect(page.getByTestId('generation-batch-pages')).toContainText('Batch: running · 1/3');
   await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
+  await page.screenshot({ path: '../../.tmp/web-generation-batch-progress.png', fullPage: true });
 });
 
 test('回収保留の場合に有料画像生成を止めて無料の話編集を維持する', async ({ page }) => {
@@ -2105,7 +2130,8 @@ test('ページ設計とページ生成の操作をページ編集の保存導�
   await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
 });
 
-test('単一のページ設計操作は骨格完了後にだけ自動入力を一度開始し生成画像を保護する', async ({ page }) => {
+for (const inlineCommands of [false, true]) {
+test(`単一のページ設計操作は骨格完了後にだけ自動入力を一度開始し生成画像を保護する（本文コマンド=${inlineCommands}）`, async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
   const skeletonJobId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -2117,6 +2143,20 @@ test('単一のページ設計操作は骨格完了後にだけ自動入力を�
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
+    if (inlineCommands && pathname === '/api/story/production-notes-capabilities') {
+      await route.fulfill({ json: { enabled: true } });
+      return;
+    }
+    if (inlineCommands && pathname === `/api/chapters/${chapter.id}/episodes`) {
+      await route.fulfill({ json: { episodes: [{ ...episode, story_input_mode: 'full', story_full_draft: '前のコマ\n---\n今回のシーン\n---\n次のコマ', production_notes_enabled: false, production_notes: [] }] } });
+      return;
+    }
+    if (inlineCommands && pathname === `/api/episodes/${episode.id}` && request.method() === 'PUT') {
+      const saved = request.postDataJSON() as Record<string, unknown>;
+      expect(saved.production_notes_enabled).toBe(false);
+      await route.fulfill({ json: { ...episode, ...saved } });
+      return;
+    }
     if (pathname === `/api/episodes/${episode.id}/generate-page-skeleton` && request.method() === 'POST') {
       skeletonRequests += 1;
       skeletonPayload = request.postDataJSON() as Record<string, unknown>;
@@ -2135,7 +2175,7 @@ test('単一のページ設計操作は骨格完了後にだけ自動入力を�
     }
     if (pathname === `/api/episodes/${episode.id}/autofill-pages-from-story` && request.method() === 'POST') {
       autofillRequests += 1;
-      expect(request.postDataJSON()).toEqual({ language: 'en' });
+      expect(request.postDataJSON()).toEqual({ language: 'en', ...(inlineCommands ? { production_notes_version: 'v1' } : {}) });
       await route.fulfill({ json: { job_id: autofillJobId } });
       return;
     }
@@ -2165,9 +2205,11 @@ test('単一のページ設計操作は骨格完了後にだけ自動入力を�
     preserve_generated_images: true,
     apply_story_plan: false,
     language: 'en',
+    ...(inlineCommands ? { production_notes_version: 'v1' } : {}),
   });
   expect(pageGenerationRequests).toBe(0);
 });
+}
 
 test('骨格jobが失敗した場合は自動入力せず単一操作から再試行できる', async ({ page }) => {
   await seedEnglishUi(page);

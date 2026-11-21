@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { editableEpisodePageLimit } from '@/domain/episodePageLimits';
+import { hasStoryManuscriptCommands } from '@/domain/storyManuscriptContract';
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
 import { EpisodeImprovementPanel } from '@/components/EpisodeImprovementPanel';
@@ -197,6 +198,9 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     productionNotesEnabled,
     selectedEpisode?.production_notes ?? [],
   );
+  // Inline commands express their own intent; keep the sidecar opt-in independent
+  // so old, disabled notes do not become active when a delimiter is added.
+  const hasInlineCommands = hasStoryManuscriptCommands(separatedProductionNotes.body);
   const productionNotesPending = selectedEpisode !== null && productionNotesV2 && (
     productionNotesEnabled !== (selectedEpisode.production_notes_enabled === true)
     || !sameStringArray(separatedProductionNotes.notes, selectedEpisode.production_notes ?? [])
@@ -1030,6 +1034,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
                   {t(language, 'screen.story.productionNotes.hint')}
                 </Text>
                 <Text style={styles.productionNotesHint}>{editorMessage(language, 'productionSyntaxHelp')}</Text>
+                {hasInlineCommands ? <Text style={styles.productionNotesHint}>{editorMessage(language, 'productionCommandsAutomatic')}</Text> : null}
                 {separatedProductionNotes.notes.map((note) => <Text key={note} style={styles.productionNotesHint}># {note}</Text>)}
               </View>
             ) : null}

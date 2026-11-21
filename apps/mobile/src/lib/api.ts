@@ -18,6 +18,20 @@ import type { InsertPanelAfterPayload, PanelStructurePayload, PanelStructureResu
 import type { EpisodeStateAutofillRequestOptions } from '@/domain/episodeStateAutofillPolicy';
 import { onlineManager } from '@tanstack/react-query';
 import { storyPageEstimateSchema, type StoryPageEstimate } from '@/domain/storyPageEstimateContract';
+import {
+  generationBatchAcceptRequestSchema,
+  generationBatchCancelResponseSchema,
+  generationBatchCapabilitiesSchema,
+  generationBatchQuoteRequestSchema,
+  generationBatchResumeRequestSchema,
+  generationBatchSchema,
+  generationBatchesSchema,
+  type GenerationBatch,
+  type GenerationBatchAcceptRequest,
+  type GenerationBatchCapabilities,
+  type GenerationBatchQuoteRequest,
+  type GenerationBatchResumeRequest,
+} from '@/domain/generationBatchContract';
 
 import {
   generationQuoteRequestSchema, generationQuoteAcceptanceSchema, generationQuoteResponseSchema, generationQuoteReceiptSchema,
@@ -316,6 +330,19 @@ const organizationQuery = (organizationId?: string | null): string => {
     return '';
   }
   return `?organization_id=${encodeURIComponent(organizationId)}`;
+};
+
+const generationBatchListQuery = (
+  workId: string,
+  episodeId?: string | null,
+  organizationId?: string | null,
+): string => {
+  const params = new URLSearchParams({ work_id: workId });
+  if (episodeId !== undefined && episodeId !== null) params.set('episode_id', episodeId);
+  if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
+    params.set('organization_id', organizationId);
+  }
+  return `?${params.toString()}`;
 };
 
 const episodeContractQuery = (organizationId: string | null | undefined, version2: boolean): string => {
@@ -1349,6 +1376,50 @@ export class LyraMobileApiClient {
       `/api/pages/${encodeURIComponent(pageId)}${organizationQuery(organizationId)}`,
       pageSchema
     );
+  }
+
+  public async getGenerationBatchCapabilities(organizationId?: string | null): Promise<GenerationBatchCapabilities | null> {
+    try {
+      return await this.request(
+        `/api/generation-batch-capabilities${organizationQuery(organizationId)}`,
+        generationBatchCapabilitiesSchema,
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  public createGenerationBatchQuote(input: GenerationBatchQuoteRequest, organizationId?: string | null): Promise<GenerationBatch> {
+    return this.request(`/api/generation-batch-quotes${organizationQuery(organizationId)}`, generationBatchSchema, {
+      method: 'POST', body: generationBatchQuoteRequestSchema.parse(input),
+    });
+  }
+
+  public acceptGenerationBatch(batchId: string, input: GenerationBatchAcceptRequest, organizationId?: string | null): Promise<GenerationBatch> {
+    return this.request(`/api/generation-batches/${encodeURIComponent(batchId)}/accept${organizationQuery(organizationId)}`, generationBatchSchema, {
+      method: 'POST', body: generationBatchAcceptRequestSchema.parse(input),
+    });
+  }
+
+  public async listGenerationBatches(workId: string, episodeId?: string | null, organizationId?: string | null): Promise<GenerationBatch[]> {
+    const response = await this.request(`/api/generation-batches${generationBatchListQuery(workId, episodeId, organizationId)}`, generationBatchesSchema);
+    return response.batches;
+  }
+
+  public getGenerationBatch(batchId: string, organizationId?: string | null): Promise<GenerationBatch> {
+    return this.request(`/api/generation-batches/${encodeURIComponent(batchId)}${organizationQuery(organizationId)}`, generationBatchSchema);
+  }
+
+  public async cancelGenerationBatch(batchId: string, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request(`/api/generation-batches/${encodeURIComponent(batchId)}/cancel${organizationQuery(organizationId)}`, generationBatchCancelResponseSchema, { method: 'POST' });
+    return response.batch;
+  }
+
+  public resumeGenerationBatch(batchId: string, input: GenerationBatchResumeRequest, organizationId?: string | null): Promise<GenerationBatch> {
+    return this.request(`/api/generation-batches/${encodeURIComponent(batchId)}/resume${organizationQuery(organizationId)}`, generationBatchSchema, {
+      method: 'POST', body: generationBatchResumeRequestSchema.parse(input),
+    });
   }
 
   public createEpisodeExport(

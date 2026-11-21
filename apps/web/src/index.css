@@ -787,6 +787,36 @@ a {
   gap: 8px;
 }
 
+.batch-generation {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.batch-generation-actions > .secondary-button {
+  min-height: 38px;
+  white-space: normal;
+}
+
+.batch-generation .notice {
+  margin: 0;
+}
+
+.batch-generation-status,
+.batch-generation-error {
+  display: grid;
+  gap: 8px;
+}
+
+.batch-generation-status p,
+.batch-generation-error p {
+  margin: 0;
+}
+
+.batch-generation-item-error {
+  color: #ff9e96;
+}
+
 .page-estimate-field { display: flex; flex-direction: column; gap: 8px; }
 .page-estimate-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(64px, 100px); align-items: stretch; gap: 8px; }
 .page-estimate-controls > .secondary-button { min-width: 0; white-space: normal; line-height: 1.35; padding: 10px 8px; }

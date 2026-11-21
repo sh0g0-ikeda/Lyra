@@ -12,6 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
+import { GenerationBatchControls } from '@/components/GenerationBatchControls';
 import { CharacterChoiceField as ChoiceField } from '@/components/CharacterChoiceField';
 import { CharacterThumbnailPicker } from '@/components/CharacterThumbnailPicker';
 import { editorMessage } from '@/lib/editorUiMessages';
@@ -2235,6 +2236,27 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
         </Section>
       ) : null}
       <Section collapsible persistKey="characters:list" title={editorMessage(language, 'characterList')}>
+        <GenerationBatchControls
+          api={api}
+          beforeQuote={async () => {
+            if (!await saveDirtyEditors()) return false;
+            if (entityStateDirty) {
+              if (selectedEntityStateId === null) await createEntityStateMutation.mutateAsync();
+              else await updateEntityStateMutation.mutateAsync();
+            }
+            return true;
+          }}
+          canGenerate={canGenerate}
+          kind="character_references"
+          language={language}
+          onCompleted={async () => {
+            await Promise.all([invalidateEntities(), invalidateReference(), invalidateEntityStates()]);
+          }}
+          organizationId={organizationId}
+          renderStyles={['color']}
+          sessionKey={sessionKey}
+          workId={activeWorkId}
+        />
         <CharacterThumbnailPicker
           characters={entities}
           hasNextPage={entitiesQuery.hasNextPage}

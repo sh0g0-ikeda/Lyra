@@ -63,7 +63,22 @@ export const sharedTranslations = {
     'shared.storeProduct.premium.description': '毎月350クレジット',
     'shared.storeProduct.credits200.title': '10クレジット追加',
     'shared.storeProduct.credits1000.title': '50クレジット追加',
-    'shared.storeProduct.credits3000.title': '150クレジット追加'
+    'shared.storeProduct.credits3000.title': '150クレジット追加',
+    'shared.generationBatch.acceptUnknown': '一括生成の開始結果を確認できませんでした。',
+    'shared.generationBatch.characterAutoConfirm': 'キャラクター本体と状態変化の画像は生成後に自動確定されます。',
+    'shared.generationBatch.pagesMissingOnly': '未生成ページのみを生成します。',
+    'shared.generationBatch.confirmTitle': '一括生成を確認',
+    'shared.generationBatch.confirmSummary': '{count}件 / 最大 {credits} credits',
+    'shared.generationBatch.cancel': 'キャンセル',
+    'shared.generationBatch.start': '開始',
+    'shared.generationBatch.resumeKeyMissing': 'この端末では再開キーを確認できません。新しい一括生成を見積もってください。',
+    'shared.generationBatch.charactersAction': '未確定キャラ・状態変化を一括生成して確定',
+    'shared.generationBatch.pagesColorAction': '未生成を一括生成（カラー）',
+    'shared.generationBatch.pagesMonochromeAction': '未生成を一括生成（白黒）',
+    'shared.generationBatch.status': '一括生成',
+    'shared.generationBatch.resume': '再開',
+    'shared.generationBatch.stop': '停止',
+    'shared.generationBatch.checkAgain': '開始結果を再確認'
   },
   en: {
     'shared.app.loading': 'Loading...',
@@ -129,7 +144,22 @@ export const sharedTranslations = {
     'shared.storeProduct.premium.description': '350 credits each month',
     'shared.storeProduct.credits200.title': 'Add 10 credits',
     'shared.storeProduct.credits1000.title': 'Add 50 credits',
-    'shared.storeProduct.credits3000.title': 'Add 150 credits'
+    'shared.storeProduct.credits3000.title': 'Add 150 credits',
+    'shared.generationBatch.acceptUnknown': 'Could not confirm whether batch generation started.',
+    'shared.generationBatch.characterAutoConfirm': 'Character base and state images will be confirmed automatically.',
+    'shared.generationBatch.pagesMissingOnly': 'Only pages without generated images will be generated.',
+    'shared.generationBatch.confirmTitle': 'Confirm batch generation',
+    'shared.generationBatch.confirmSummary': '{count} items / up to {credits} credits',
+    'shared.generationBatch.cancel': 'Cancel',
+    'shared.generationBatch.start': 'Start',
+    'shared.generationBatch.resumeKeyMissing': 'The resume key is unavailable on this device. Request a new batch quote.',
+    'shared.generationBatch.charactersAction': 'Generate and confirm missing character images',
+    'shared.generationBatch.pagesColorAction': 'Generate missing pages (color)',
+    'shared.generationBatch.pagesMonochromeAction': 'Generate missing pages (monochrome)',
+    'shared.generationBatch.status': 'Batch',
+    'shared.generationBatch.resume': 'Resume',
+    'shared.generationBatch.stop': 'Stop',
+    'shared.generationBatch.checkAgain': 'Check start result again'
   }
 } as const;
 

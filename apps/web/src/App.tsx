@@ -4,9 +4,11 @@ import type { CharacterAppearanceSuggestion, CharacterAutofillResult } from '../
 import { humanAppearanceChoices } from '../../../packages/api-contract/src/characterAppearanceCatalog.ts';
 import type { EpisodeCharacterSuggestion } from '../../../packages/api-contract/src/characterSuggestions.ts';
 import type { StoryPageEstimate } from '../../../packages/api-contract/src/storyPageEstimate.ts';
+import { hasStoryManuscriptCommands } from '../../../packages/api-contract/src/storyManuscript.ts';
 import { useRetainedSelection } from './hooks/useRetainedSelection';
 import { reconcileSavedStoryDraft, sameStoryDraft } from './domain/storyDraftSave';
 import { GoogleSignInButton, GoogleIdentityLinkPanel } from './components/GoogleAuthControls';
+import { GenerationBatchControls } from './components/GenerationBatchControls';
 import { canReadWebImage, imageDeliveryNotice, mergeImageDeliveryMetadata, type ImageDeliveryMetadata } from './domain/imageDelivery';
 import { createContext, useCallback, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import {
@@ -2973,6 +2975,10 @@ function StudioShell(props: {
     selectedEpisode?.production_notes ?? [],
   );
   const episodeProseDraft = { ...episodeDraft, story_full_draft: separatedProductionNotes.body };
+  // Authored inline commands are independent of the saved sidecar-note switch.
+  // This keeps disabled old notes disabled while honoring explicit delimiters.
+  const inlineProductionCommands = hasStoryManuscriptCommands(separatedProductionNotes.body);
+  const applyProductionCommands = productionNotesV2 && (productionNotesRequested || inlineProductionCommands);
   const episodeProductionNotePayload = productionNotesV2 ? {
     production_notes_enabled: productionNotesRequested,
     production_notes: separatedProductionNotes.notes,
@@ -4170,7 +4176,7 @@ function StudioShell(props: {
   };
 
   const saveCurrentPageGenerationContext = async (): Promise<void> => {
-    if (isFramesDraftDirty()) throw new Error(pickUiText(uiLanguage, 'Save frame geometry before generating.', '生成する前に枠の編集を保存してください。'));
+    if (isFramesDraftDirty()) await persistCurrentFrames();
     await persistCurrentPage();
     await persistCurrentPanel();
   };
@@ -5723,19 +5729,22 @@ function StudioShell(props: {
     const intent: PendingPageDesign = {
       scope: pageDesignScope, episodeId: selectedEpisode.id, organizationId: activeOrganizationId,
       language: uiLanguage, skeletonJobId: '', synchronous: false,
-      applyProductionNotes: productionNotesRequested,
+      applyProductionNotes: applyProductionCommands,
     };
     pageDesignIntentRef.current = intent;
     setPageDesignStage('skeleton');
     void runAction('Generate page skeleton', async () => {
       try {
         const submittedEditors = structuredClone(currentPageEditorRef.current);
+        const commandCapabilities = await api.getStoryProductionNoteCapabilities();
+        if (pageDesignScopeRef.current !== intent.scope) return;
+        intent.applyProductionNotes = commandCapabilities.enabled === true && (productionNotesRequested || inlineProductionCommands);
         await saveCurrentEpisodeContext();
         if (pageDesignScopeRef.current !== intent.scope) return;
         const result = await api.generatePageSkeleton(intent.episodeId, {
           overwrite_existing: overwriteExisting,
           ...(overwriteExisting ? { preserve_generated_images: true } : {}),
-          ...(storyProductionNoteCapabilities.data?.enabled === true && selectedEpisode?.production_notes_enabled === true
+          ...(intent.applyProductionNotes
             ? { production_notes_version: 'v1' as const } : {}),
           apply_story_plan: false, language: intent.language,
         }, intent.organizationId);
@@ -6445,7 +6454,8 @@ function StudioShell(props: {
                         {productionNotesRequested ? <small>{pickUiText(uiLanguage,
                           'Examples: #「A」と「B」は同じコマ / 別のコマ, #「A」のコマから「ミオ」は「雨ぬれ」状態, #「B」のコマで「ミオ」は通常に戻る',
                           '書き方例: #「A」と「B」は同じコマ / 別のコマ、#「A」のコマから「ミオ」は「雨ぬれ」状態、#「B」のコマで「ミオ」は通常に戻る')}</small> : null}
-                        {productionNotesRequested ? <small>{pickUiText(uiLanguage, 'Place --- or === on its own line. Text between --- lines is one panel; text between === lines is one page. Combine ===/--- for a fixed panel. Unmarked regions are allocated automatically.', '--- または === はそれだけの行に書きます。--- で挟んだ部分は1コマ、=== で挟んだ部分は1ページ。=== と --- の組合せでも1コマに指定でき、区切りのない部分は自動配分します。')}</small> : null}
+                        <small>{pickUiText(uiLanguage, 'Inline ＃…＃, --- and === commands apply automatically. Place --- or === on its own line. Text between delimiters fixes a panel or page; unmarked regions are allocated automatically.', '本文の＃…＃、---、=== は自動で適用します。--- または === はそれだけの行に書きます。区切りの間を1コマ／1ページに固定し、区切りのない部分は自動配分します。')}</small>
+                        {inlineProductionCommands ? <small>{pickUiText(uiLanguage, 'Inline commands detected. Saved production notes keep their existing enabled or disabled setting.', '本文の特殊コマンドを検出しました。保存済みの演出メモの有効・無効は変更しません。')}</small> : null}
                       </div>
                     ) : null}
                     <div className="episode-save-mobile">
@@ -6478,7 +6488,7 @@ function StudioShell(props: {
                                 setStoryBusy(true);
                                 await saveCurrentEpisodeContext();
                                 const result = await api.improveEpisodeDraft({
-                                  ...(productionNotesRequested ? { include_production_notes: true } : {}),
+                                  ...(applyProductionCommands ? { include_production_notes: true } : {}),
                                   episode_id: selectedEpisode.id,
                                   instruction: storyInstruction,
                                   language: uiLanguage,
@@ -6743,6 +6753,33 @@ function StudioShell(props: {
                       </button>
                     }
                   >
+                    <GenerationBatchControls
+                      api={api}
+                      beforeQuote={async () => {
+                        if (isEntityDraftDirty()) {
+                          if (selectedEntity === null) {
+                            throw new Error(pickUiText(uiLanguage, 'Save the new character before batch generation.', '一括生成の前に新しいキャラクターを保存してください。'));
+                          }
+                          await saveCurrentEntityGenerationContext();
+                        }
+                      }}
+                      canGenerate={canCreateActiveOrganizationWorks && !paidGenerationBlocked}
+                      kind="character_references"
+                      language={uiLanguage}
+                      onCompleted={async () => {
+                        await invalidateScopedQuery(['entities', selectedWork.id]);
+                        if (selectedEntity !== null) {
+                          await Promise.all([
+                            invalidateScopedQuery(['entity-reference-set', selectedEntity.id]),
+                            invalidateScopedQuery(['entity-states', selectedEntity.id]),
+                          ]);
+                        }
+                      }}
+                      organizationId={activeOrganizationId}
+                      renderStyles={['color']}
+                      sessionKey={props.authSessionKey}
+                      workId={selectedWork.id}
+                    />
                     <CharacterPortraitPicker
                       key={JSON.stringify([props.authSessionKey, activeOrganizationId, selectedWork.id])}
                       api={api}
@@ -7390,6 +7427,24 @@ function StudioShell(props: {
                   </PanelSection>
                   <fieldset className="page-editing-content" disabled={pageDesignStage !== null}>
                   <PanelSection title="Pages" className="page-section-pages" collapsible>
+                    <GenerationBatchControls
+                      api={api}
+                      beforeQuote={saveCurrentPageGenerationContext}
+                      canGenerate={canCreateActiveOrganizationWorks && !paidGenerationBlocked}
+                      episodeId={selectedEpisode.id}
+                      kind="pages"
+                      language={uiLanguage}
+                      onCompleted={async () => {
+                        await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                        if (selectedPage !== null) {
+                          await invalidateScopedQuery(['page', selectedPage.id]);
+                        }
+                      }}
+                      organizationId={activeOrganizationId}
+                      renderStyles={['color', 'monochrome']}
+                      sessionKey={props.authSessionKey}
+                      workId={selectedWork?.id ?? null}
+                    />
                     <div className="page-grid">
                       {pages.map((page) => (
                         <button

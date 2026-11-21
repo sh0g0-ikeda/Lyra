@@ -2,6 +2,20 @@ import { googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkSt
 import type { CharacterAppearanceSuggestion, CharacterAutofillResult } from '../../../../packages/api-contract/src/characterAutofill.ts';
 import type { EpisodeCharacterSuggestion } from '../../../../packages/api-contract/src/characterSuggestions.ts';
 import { storyPageEstimateSchema, type StoryPageEstimate } from '../../../../packages/api-contract/src/storyPageEstimate.ts';
+import {
+  generationBatchAcceptRequestSchema,
+  generationBatchCancelResponseSchema,
+  generationBatchCapabilitiesSchema,
+  generationBatchQuoteRequestSchema,
+  generationBatchResumeRequestSchema,
+  generationBatchSchema,
+  generationBatchesSchema,
+  type GenerationBatch,
+  type GenerationBatchAcceptRequest,
+  type GenerationBatchCapabilities,
+  type GenerationBatchQuoteRequest,
+  type GenerationBatchResumeRequest,
+} from '../../../../packages/api-contract/src/generationBatch.ts';
 import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
 import { pageImageDeliveryPath, entityReferenceImageDeliveryPath, entityReferenceCandidateDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
 import type {
@@ -611,6 +625,52 @@ export class LyraApiClient {
     return this.request(`/api/episodes/${episodeId}/pages${organizationQuery(organizationId)}`);
   }
 
+  public async getGenerationBatchCapabilities(organizationId?: string | null): Promise<GenerationBatchCapabilities | null> {
+    try {
+      const response = await this.request<unknown>(`/api/generation-batch-capabilities${organizationQuery(organizationId)}`);
+      return generationBatchCapabilitiesSchema.parse(response);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  public async createGenerationBatchQuote(input: GenerationBatchQuoteRequest, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request<unknown>(`/api/generation-batch-quotes${organizationQuery(organizationId)}`, {
+      method: 'POST', body: generationBatchQuoteRequestSchema.parse(input),
+    });
+    return generationBatchSchema.parse(response);
+  }
+
+  public async acceptGenerationBatch(batchId: string, input: GenerationBatchAcceptRequest, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request<unknown>(`/api/generation-batches/${encodeURIComponent(batchId)}/accept${organizationQuery(organizationId)}`, {
+      method: 'POST', body: generationBatchAcceptRequestSchema.parse(input),
+    });
+    return generationBatchSchema.parse(response);
+  }
+
+  public async listGenerationBatches(workId: string, episodeId?: string | null, organizationId?: string | null): Promise<GenerationBatch[]> {
+    const response = await this.request<unknown>(`/api/generation-batches${generationBatchListQuery(workId, episodeId, organizationId)}`);
+    return generationBatchesSchema.parse(response).batches;
+  }
+
+  public async getGenerationBatch(batchId: string, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request<unknown>(`/api/generation-batches/${encodeURIComponent(batchId)}${organizationQuery(organizationId)}`);
+    return generationBatchSchema.parse(response);
+  }
+
+  public async cancelGenerationBatch(batchId: string, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request<unknown>(`/api/generation-batches/${encodeURIComponent(batchId)}/cancel${organizationQuery(organizationId)}`, { method: 'POST' });
+    return generationBatchCancelResponseSchema.parse(response).batch;
+  }
+
+  public async resumeGenerationBatch(batchId: string, input: GenerationBatchResumeRequest, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request<unknown>(`/api/generation-batches/${encodeURIComponent(batchId)}/resume${organizationQuery(organizationId)}`, {
+      method: 'POST', body: generationBatchResumeRequestSchema.parse(input),
+    });
+    return generationBatchSchema.parse(response);
+  }
+
   public updatePage(pageId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<PageRecord> {
     return this.request(`/api/pages/${pageId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
@@ -1104,6 +1164,19 @@ function organizationQuery(organizationId: string | null | undefined): string {
   }
 
   return `?organization_id=${encodeURIComponent(organizationId)}`;
+}
+
+function generationBatchListQuery(
+  workId: string,
+  episodeId: string | null | undefined,
+  organizationId: string | null | undefined,
+): string {
+  const params = new URLSearchParams({ work_id: workId });
+  if (episodeId !== undefined && episodeId !== null) params.set('episode_id', episodeId);
+  if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
+    params.set('organization_id', organizationId);
+  }
+  return `?${params.toString()}`;
 }
 
 function episodeContractQuery(organizationId: string | null | undefined, version2: boolean): string {

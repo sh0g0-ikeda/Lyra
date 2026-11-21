@@ -3,8 +3,10 @@ import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'r
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { hasStoryManuscriptCommands } from '@/domain/storyManuscriptContract';
 
 import { PageErrorRecoveryNotice } from '@/components/PageErrorRecoveryNotice';
+import { GenerationBatchControls } from '@/components/GenerationBatchControls';
 import { ExportJobCard } from '@/components/ExportJobCard';
 import { ExcessPanelDeletionPlan } from '@/components/ExcessPanelDeletionPlan';
 import { EpisodeStartingStatesEditor } from '@/components/EpisodeStartingStatesEditor';
@@ -71,6 +73,11 @@ import { isPanelDialogueSpeakerValid } from '@/domain/panelDialoguePolicy';
 import { canDisplayMobileImage, imageAccessNotice } from '@/domain/imageAccess';
 import { canUseMobilePageImage, mobilePageExportCandidates } from '@/domain/mobilePageImageAccess';
 import { buildEpisodeExportPayload } from '@/domain/pageExport';
+import {
+  acknowledgeSavedPageDraftRevision,
+  isSavedPageDraftRevisionCurrent,
+  type SavedPageDraftRevision,
+} from '@/domain/pageQuoteDraftRevision';
 import { createSafeLayoutTemplatePayload, selectExcessPanels } from '@/domain/pageSafety';
 import { initialPageAndPanel, selectPageForEpisode } from '@/domain/pageSelection';
 import { usePagePanelSelection } from '@/hooks/usePagePanelSelection';
@@ -651,7 +658,7 @@ export function PagesScreen(): React.JSX.Element {
   const confirmationPresented = useConfirmationPresentation();
   const queryClient = useQueryClient();
   const { api, hasCapability, language, logout, selection, session, sessionKey, tokens, trackJob, updateSelection } = useAppState();
-  const { hasDirtyEditors, resolveDirtyEditors } = useDirtyState();
+  const { hasDirtyEditors, resolveDirtyEditors, saveDirtyEditors } = useDirtyState();
   const organizationId = selection.organizationId;
   const canEditWork = hasCapability('edit_work');
   const automaticReopen = session?.capabilities?.automatic_page_reopen_on_write === true;
@@ -1696,10 +1703,17 @@ export function PagesScreen(): React.JSX.Element {
     }
   });
 
-  const latestPageDraft = useRef({ revision: pageEditorRevision, dirty: pageDirty || panelDirty || framesDirty });
-  const quotedPageDraftRevision = useRef<string | null>(null);
+  const latestPageDraftRevision = useRef(pageEditorRevision);
+  const quotedPageDraftRevision = useRef<SavedPageDraftRevision | null>(null);
   const [quoteDraftStale, setQuoteDraftStale] = useState(false);
-  useLayoutEffect(() => { latestPageDraft.current = { revision: pageEditorRevision, dirty: pageDirty || panelDirty || framesDirty }; }, [pageEditorRevision, pageDirty, panelDirty, framesDirty]);
+  useLayoutEffect(() => { latestPageDraftRevision.current = pageEditorRevision; }, [pageEditorRevision]);
+
+  const savePageDraftsForQuote = useCallback(async (
+    submittedRevision: string,
+  ): Promise<SavedPageDraftRevision> => {
+    await saveAllPageDrafts();
+    return acknowledgeSavedPageDraftRevision(submittedRevision);
+  }, [saveAllPageDrafts]);
 
   useDirtyEditorRegistration({
     id: 'pages-editor',
@@ -1725,7 +1739,7 @@ export function PagesScreen(): React.JSX.Element {
       setLocalPageDesignJob(null);
       setPageDesignJobEnqueued(false);
     },
-    mutationFn: async (request: { scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined; overwriteExisting: boolean; preserveGeneratedImages: boolean }) => {
+    mutationFn: async (request: { applyProductionNotes: boolean; scope: string; episodeId: string; options: EpisodeStateAutofillRequestOptions | undefined; overwriteExisting: boolean; preserveGeneratedImages: boolean }) => {
       if (request.overwriteExisting && !request.preserveGeneratedImages) {
         throw new Error('Safe page redesign capability is required');
       }
@@ -1734,13 +1748,29 @@ export function PagesScreen(): React.JSX.Element {
       if (!canSubmit()) throw new Error(t(language, 'shared.error.workspacePermission'));
       await saveAllPageDrafts();
       if (!canSubmit()) throw new Error(t(language, 'shared.error.workspacePermission'));
+      // Resolve command intent after all editors have saved, rather than using a
+      // capability/episode query captured before the save or still loading.
+      const capabilities = await api.getProductionNotesCapabilities();
+      let applyProductionNotes = false;
+      if (capabilities.enabled) {
+        const chapterId = workspaceContext.selectedChapterId ?? startingEpisode?.chapter_id ?? selection.chapterId;
+        if (chapterId === null || chapterId === undefined) throw new Error(t(language, 'shared.error.workspacePermission'));
+        const response = await api.getEpisodes(chapterId, organizationId, true);
+        const savedEpisode = response.episodes.find((episode) => episode.id === request.episodeId);
+        if (savedEpisode === undefined) throw new Error(t(language, 'shared.error.workspacePermission'));
+        const source = savedEpisode.story_input_mode === 'full' ? savedEpisode.story_full_draft ?? ''
+          : [savedEpisode.introduction, savedEpisode.middle, savedEpisode.climax, savedEpisode.ending_hook].filter(Boolean).join('\n\n');
+        applyProductionNotes = savedEpisode.production_notes_enabled === true || hasStoryManuscriptCommands(source);
+      }
+      if (!canSubmit()) throw new Error(t(language, 'shared.error.workspacePermission'));
+      pendingStoryAutofillAfterSkeleton.current = { ...request, applyProductionNotes };
       return api.generatePageSkeleton(
         request.episodeId,
         {
           overwrite_existing: request.overwriteExisting,
           ...(request.preserveGeneratedImages ? { preserve_generated_images: true } : {}),
           apply_story_plan: false,
-          ...(productionNotesCapabilitiesQuery.data?.enabled === true && productionNotesPlanningEnabled
+          ...(applyProductionNotes
             ? { production_notes_version: 'v1' as const } : {}),
           language
         },
@@ -1862,14 +1892,18 @@ export function PagesScreen(): React.JSX.Element {
     api, contextKey: pageWorkflowScope, organizationId, enabled: canGenerate && generationQuotesAvailable && pageCreationFocused,
     prepare: async (target) => {
       setQuoteDraftStale(false);
+      let savedDraftRevision: SavedPageDraftRevision;
       if (target.pageId === selectedPage?.id) {
         if (unsavedNewPanelDraft || panelPayloadInvalid || frameDraftsInvalid) throw new Error('Current page input must be reviewed before generation');
-        await saveAllPageDrafts();
-      } else if (!(await resolveDirtyEditors(language, { includeNonBlocking: true }))) return null;
+        savedDraftRevision = await savePageDraftsForQuote(latestPageDraftRevision.current);
+      } else {
+        if (!(await resolveDirtyEditors(language, { includeNonBlocking: true }))) return null;
+        savedDraftRevision = acknowledgeSavedPageDraftRevision(latestPageDraftRevision.current);
+      }
       const saved = await api.getPage(target.pageId, organizationId);
       if (saved.episode_id !== activeEpisodeId) throw new Error('Page is not in the selected episode');
-      if (latestPageDraft.current.dirty) throw new Error('Input changed while preparing the quote');
-      quotedPageDraftRevision.current = latestPageDraft.current.revision;
+      if (!isSavedPageDraftRevisionCurrent(savedDraftRevision, latestPageDraftRevision.current)) throw new Error('Input changed while preparing the quote');
+      quotedPageDraftRevision.current = savedDraftRevision;
       return { ...target, pageNumber: saved.page_number, operation: saved.generated_image === null ? 'page_generate' : 'page_regenerate' };
     },
     onAccepted: async (receipt, target, originKey) => {
@@ -2496,6 +2530,24 @@ export function PagesScreen(): React.JSX.Element {
       />
 
       <Section collapsible persistKey="pages:list" title={editorMessage(language, 'pageList')} subtitle={editorMessage(language, 'pageListHelp')}>
+        <GenerationBatchControls
+          api={api}
+          beforeQuote={saveDirtyEditors}
+          canGenerate={canGenerate}
+          episodeId={activeEpisodeId}
+          kind="pages"
+          language={language}
+          onCompleted={async () => {
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['pages', sessionKey] }),
+              queryClient.invalidateQueries({ queryKey: ['page', sessionKey] }),
+            ]);
+          }}
+          organizationId={organizationId}
+          renderStyles={['color', 'monochrome']}
+          sessionKey={sessionKey}
+          workId={activeWorkId}
+        />
         <PageThumbnailPicker
           emptyLabel={t(language, 'emptyPages')}
           hasNextPage={pagesQuery.hasNextPage}
@@ -3234,7 +3286,7 @@ export function PagesScreen(): React.JSX.Element {
       <PageGenerationQuoteDialog
         state={{ ...generationQuote.state, phase: quoteDraftStale ? 'stale' : generationQuote.state.phase, visible: generationQuote.state.visible && pageCreationFocused }} language={language}
         canAccept={!quoteDraftStale && generationQuote.controller.canAccept()} onAccept={() => {
-          if (quotedPageDraftRevision.current !== latestPageDraft.current.revision || latestPageDraft.current.dirty) { setQuoteDraftStale(true); return; }
+          if (!isSavedPageDraftRevisionCurrent(quotedPageDraftRevision.current, latestPageDraftRevision.current)) { setQuoteDraftStale(true); return; }
           void generationQuote.controller.accept();
         }}
         onClose={closeGenerationQuote} onReconcile={() => { void generationQuote.controller.reconcile(); }}
