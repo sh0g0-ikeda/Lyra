@@ -262,10 +262,10 @@ class FakeStoryAiClient implements StoryAiClientPort {
 }
 
 describe('PageSkeletonService', () => {
-  it('新しい明示opt-inの場合に囲まれた2コマを1ページへ保存する', async () => {
+  it('新しい明示opt-inは保存flagが無効でも本文の明示commandに従う1ページを保存する', async () => {
     const repository = new FakeStoryRepository();
     const source = '===\nAki reaches the rooftop.\n---\nRin blocks the path.\n===';
-    repository.skeletonContext = { ...repository.skeletonContext!, storyFullDraft: source, productionNotesEnabled: true };
+    repository.skeletonContext = { ...repository.skeletonContext!, storyFullDraft: source, productionNotesEnabled: false };
     const client = new FakeStoryAiClient();
     const preparation = await new PageSkeletonService(repository, client).prepareForEpisode(
       'user-1', repository.skeletonContext.episodeId, { applyProductionNotes: true });
@@ -277,13 +277,13 @@ describe('PageSkeletonService', () => {
     expect(client.lastRequest).toBeNull();
   });
 
-  it('手動区切りがあっても旧要求や保存flag無効の場合に従来経路を使う', async () => {
-    for (const [savedFlag, options] of [[true, undefined], [false, { applyProductionNotes: true }]] as const) {
+  it('手動区切りがあってもversionのない旧要求は保存flagに関係なく従来経路を使う', async () => {
+    for (const savedFlag of [true, false]) {
       const repository = new FakeStoryRepository();
       repository.skeletonContext = { ...repository.skeletonContext!, storyFullDraft: '===\nA\n---\nB\n===', productionNotesEnabled: savedFlag };
       const client = new FakeStoryAiClient();
       const preparation = await new PageSkeletonService(repository, client).prepareForEpisode('user-1',
-        repository.skeletonContext.episodeId, options);
+        repository.skeletonContext.episodeId);
       expect(preparation.pages).toHaveLength(2);
       expect(preparation.pages.every(page => page.manuscriptSource === undefined)).toBe(true);
       expect(client.lastRequest).not.toBeNull();

@@ -38,6 +38,7 @@ import type { StoryRepository } from '../../repositories/StoryRepository.js';
 import type { StoryEpisodeImprovementPlannerPort } from './StoryEpisodeImprovementPlanner.js';
 import type { StoryAiClientPort, StoryEpisodeDraftWriterOutput } from './StoryAiClientPort.js';
 import type { StoryPageEstimateInput, StoryPageEstimateResult } from './StoryPageEstimate.js';
+import { resolveStoryManuscriptCommandPolicy } from './StoryManuscriptCommandPolicy.js';
 import {
   buildStoryManuscriptImprovementPlan,
   type StoryManuscriptImprovementPlan,
@@ -97,9 +98,14 @@ export class StoryCollaborationService implements StoryCollaborationServicePort 
     const rawNarrative = input.baseDraft.storyInputMode === 'full'
       ? input.baseDraft.storyFullDraft
       : buildFullStoryDraftFromStructuredSections(input.baseDraft);
+    const commandPolicy = resolveStoryManuscriptCommandPolicy({
+      versioned: true,
+      savedEnabled: input.productionNotesEnabled,
+      source: rawNarrative ?? '',
+    });
     let manuscript: ReturnType<typeof parseStoryManuscript>;
     try {
-      manuscript = parseStoryManuscript(rawNarrative ?? '', input.productionNotesEnabled);
+      manuscript = parseStoryManuscript(rawNarrative ?? '', commandPolicy.interpretCommands);
     } catch (error) {
       if (error instanceof StoryManuscriptError) throw new ValidationError(error.message);
       throw error;

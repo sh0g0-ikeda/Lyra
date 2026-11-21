@@ -59,6 +59,10 @@ import type { PanelRepository } from '../../repositories/PanelRepository.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { StyleReferenceCompilerPort } from '../style/StyleReferenceCompiler.js';
 import { resolveStyleReferenceForPersistence } from '../style/styleReferencePersistence.js';
+import {
+  episodeStoryManuscriptSource,
+  resolveStoryManuscriptCommandPolicy,
+} from '../story/StoryManuscriptCommandPolicy.js';
 import type { PanelEntityAssignmentServicePort } from './PanelEntityAssignmentService.js';
 import type { PageAutofillCompilerPort } from './PageAutofillCompiler.js';
 import { validateAndPlaceProductionDirectives } from './EpisodeProductionPlan.js';
@@ -539,17 +543,34 @@ export class PageService implements PageServicePort {
       this.episodePlanContinuityV3Enabled || shouldUseAtomicPersistence
       ? initialContextFingerprint ?? fingerprintEpisodePlanningContext(context)
       : null;
-    const production = productionNoteOptions?.applyProductionNotes === true
-      && context.episode.productionNotesEnabled === true
-      ? readEpisodeProductionNotes(context.episode, context.episode.productionNotes ?? [])
+    const commandPolicy = resolveStoryManuscriptCommandPolicy({
+      versioned: productionNoteOptions?.applyProductionNotes === true,
+      savedEnabled: context.episode.productionNotesEnabled === true,
+      source: episodeStoryManuscriptSource(context.episode),
+    });
+    const production = commandPolicy.interpretCommands
+      ? readEpisodeProductionNotes(
+          context.episode,
+          commandPolicy.includeSavedSidecarNotes
+            ? context.episode.productionNotes ?? []
+            : [],
+        )
       : null;
     const productionContext = production === null ? context : {
       ...context,
-      episode: { ...context.episode, ...production.prose },
+      episode: {
+        ...context.episode,
+        ...production.prose,
+        productionNotesEnabled: commandPolicy.interpretCommands,
+      },
       strictStateEvidenceSources: buildStrictStateEvidenceSources(context),
       productionDirectives: production.directives,
       manuscriptPlan: prepareEpisodeManuscriptPlan(context),
     };
+    const strictStateValidationContext = withStoryManuscriptParsingPolicy(
+      context,
+      commandPolicy.interpretCommands,
+    );
     const finalDraftStateMode = stateOptions?.allowVisualStateFallback === true
       && productionContext.stateDraftPersistenceSupported !== false;
     const compilationContext = finalDraftStateMode
@@ -616,7 +637,7 @@ export class PageService implements PageServicePort {
       validateEpisodePlanAgainstContext(context, normalized);
       validateManuscriptPlan(compilationContext.manuscriptPlan, normalized);
       if (finalDraftStateMode) {
-        resolveEpisodeStateTransitionPlan(context, {
+        resolveEpisodeStateTransitionPlan(strictStateValidationContext, {
           transitions: strictModelStateTransitions,
           unresolved: stateChangesToPersist,
         }, {
@@ -688,7 +709,10 @@ export class PageService implements PageServicePort {
             validateEpisodePlanAgainstContext(lockedContext, normalized);
             validateManuscriptPlan(compilationContext.manuscriptPlan, normalized);
             if (finalDraftStateMode) {
-              resolveEpisodeStateTransitionPlan(lockedContext, {
+              resolveEpisodeStateTransitionPlan(withStoryManuscriptParsingPolicy(
+                lockedContext,
+                commandPolicy.interpretCommands,
+              ), {
                 transitions: strictModelStateTransitions,
                 unresolved: stateChangesToPersist,
               }, {
@@ -2467,6 +2491,17 @@ function withStrictStateEvidenceSources(
   return {
     ...context,
     episode: { ...context.episode, ...sources },
+  };
+}
+
+function withStoryManuscriptParsingPolicy(
+  context: EpisodePagePlanContext,
+  enabled: boolean,
+): EpisodePagePlanContext {
+  if (!enabled || context.episode.productionNotesEnabled === true) return context;
+  return {
+    ...context,
+    episode: { ...context.episode, productionNotesEnabled: true },
   };
 }
 

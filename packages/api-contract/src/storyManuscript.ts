@@ -31,6 +31,19 @@ export interface StoryManuscript {
 
 export class StoryManuscriptError extends Error {}
 
+/** New clients treat authored commands as intent without a second opt-in.
+ * Detection stays safe while typing; malformed commands remain enabled so the
+ * normal validation path can explain them instead of silently ignoring them.
+ * Legacy consumers still explicitly control parseStoryManuscript's enabled flag. */
+export function hasStoryManuscriptCommands(text: string): boolean {
+  try {
+    return parseStoryManuscript(text, true).hasCommands;
+  } catch (error) {
+    if (error instanceof StoryManuscriptError) return true;
+    throw error;
+  }
+}
+
 const quoted = '「[^」\\r\\n]{1,160}」';
 const legacyNote = new RegExp(`^[ \\t]*[#＃][ \\t]*(?:${quoted}と${quoted}は(?:同じコマ|別(?:の)?コマ)(?:にする)?|${quoted}のコマから${quoted}は${quoted}(?:状態)?|${quoted}のコマ(?:で|から)${quoted}は通常に戻(?:す|る))[。.]?[ \\t]*$`, 'u');
 const separator = /^[ \t]*(===|＝＝＝|---|ーーー)[ \t]*$/u;

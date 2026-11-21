@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeStoryManuscript, parseStoryManuscript, splitStoryManuscriptForEditing } from '../../../packages/api-contract/src/storyManuscript.js';
+import { analyzeStoryManuscript, hasStoryManuscriptCommands, parseStoryManuscript, splitStoryManuscriptForEditing } from '../../../packages/api-contract/src/storyManuscript.js';
 
 describe('story manuscript commands', () => {
+  it.each(['前\n---\n場面\n---\n後', '前\n===\n場面\n===\n後', '前\n＝＝＝\n場面\nーーー\n後', '＃引きで＃場面'])('明示コマンドがある場合はスイッチなしで指示の意図を検出する: %s', (text) => {
+    expect(hasStoryManuscriptCommands(text)).toBe(true);
+  });
+  it.each(['普通の文章', '# 第一話 #\n本文', '前\n\\---\n後', 'a---b', '＃ 第一話\n本文'])('通常本文やエスケープの場合は指示を自動有効化しない: %s', (text) => {
+    expect(hasStoryManuscriptCommands(text)).toBe(false);
+  });
+  it.each(['＃引きで', '＃＃場面', '＃引きで＃\n---\n場面'])('入力途中・不正なコマンドも黙って通常本文へ戻さず検出する: %s', (text) => {
+    expect(hasStoryManuscriptCommands(text)).toBe(true);
+    expect(() => parseStoryManuscript(text, true)).toThrow();
+  });
   it('AI改善用の分離と再結合で記号と改行を変更しない', () => {
     const raw = '前\r\n---\r\n＃引きで＃場面\r\n＝＝＝\r\n後';
     const parts = splitStoryManuscriptForEditing(raw);

@@ -528,14 +528,14 @@ describe('StoryCollaborationService', () => {
     });
   });
 
-  it('単独行のページ区切りがある場合は明示ページ数を最終見積もりに使う', async () => {
+  it('保存flagが無効でも単独行のページ区切りは明示ページ数を最終見積もりに使う', async () => {
     const client = new FakeStoryAiClient();
     client.estimatedPanelCounts = [2, 2, 1];
     const service = new StoryCollaborationService(new FakeStoryRepository(), client);
 
     await expect(service.estimateEpisodePages('user-1', {
       episodeId: '33333333-3333-4333-8333-333333333333',
-      productionNotesEnabled: true,
+      productionNotesEnabled: false,
       language: 'ja',
       baseDraft: {
         title: null, purpose: null, storyInputMode: 'full',
@@ -638,11 +638,11 @@ describe('StoryCollaborationService', () => {
     };
 
     await expect(service.estimateEpisodePages('user-1', {
-      episodeId: '33333333-3333-4333-8333-333333333333', productionNotesEnabled: true,
+      episodeId: '33333333-3333-4333-8333-333333333333', productionNotesEnabled: false,
       language: 'ja', baseDraft,
     })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     await expect(service.estimateEpisodePages('user-1', {
-      episodeId: '33333333-3333-4333-8333-333333333333', productionNotesEnabled: true,
+      episodeId: '33333333-3333-4333-8333-333333333333', productionNotesEnabled: false,
       language: 'ja', baseDraft: { ...baseDraft, storyFullDraft: '本文＃閉じていない指示' },
     })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     expect(client.estimateCalls).toBe(0);

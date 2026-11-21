@@ -24,6 +24,10 @@ import type { StoryAiClientPort } from './StoryAiClientPort.js';
 import { MAX_NEW_EPISODE_PAGES } from '../../../packages/api-contract/src/episodePageLimits.js';
 import { parseStoryManuscript, StoryManuscriptError, type StoryManuscript } from '../../../packages/api-contract/src/storyManuscript.js';
 import { buildStoryManuscriptSkeleton, resolveManuscriptPageGroups } from './StoryManuscriptSkeleton.js';
+import {
+  episodeStoryManuscriptSource,
+  resolveStoryManuscriptCommandPolicy,
+} from './StoryManuscriptCommandPolicy.js';
 
 export type PageSkeletonPageLimitPolicy = 'current' | 'legacy_accepted_job';
 
@@ -128,12 +132,15 @@ export class PageSkeletonService implements PageSkeletonServicePort {
     if (!overwriteExisting && context.existingPageCount > 0) {
       throw new ConflictError('Episode already has pages');
     }
-    const source = context.storyFullDraft ?? [context.introduction, context.middle, context.climax, context.endingHook]
-      .filter((part): part is string => part !== null).join('\n\n');
+    const source = episodeStoryManuscriptSource(context);
+    const commandPolicy = resolveStoryManuscriptCommandPolicy({
+      versioned: options?.applyProductionNotes === true,
+      savedEnabled: context.productionNotesEnabled === true,
+      source,
+    });
     let manuscript: StoryManuscript;
     try {
-      manuscript = parseStoryManuscript(source,
-        options?.applyProductionNotes === true && context.productionNotesEnabled === true);
+      manuscript = parseStoryManuscript(source, commandPolicy.interpretCommands);
     } catch (error) {
       if (error instanceof StoryManuscriptError) throw new ValidationError(error.message);
       throw error;

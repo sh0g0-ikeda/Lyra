@@ -1271,6 +1271,51 @@ describe('PageService', () => {
     expect(compiler.lastInput?.compilerBrief).toContain('AUTHOR PRODUCTION CONSTRAINTS');
   });
 
+  it('versioned全話プランは保存flag無効でもinline commandの固定割当を使いsidecarは復活させない', async () => {
+    const context = buildManuscriptAuditContext();
+    context.episode.productionNotesEnabled = false;
+    context.episode.productionNotes = ['「消えた出来事」と「別の出来事」は別のコマにする。'];
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const compiler = new ChunkAwareEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      undefined, compiler, undefined, new FakeEpisodeBeatPlanCompiler(),
+      new FakeEpisodePlanAuditCompiler(), true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+    );
+
+    const result = await service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null, undefined, undefined,
+      { applyProductionNotes: true },
+    );
+
+    expect(result.compilerUsed).toBe(true);
+    expect(compiler.inputs[0]?.compilerBrief).toContain('AUTHOR MANUSCRIPT ALLOCATION');
+    expect(compiler.inputs[0]?.compilerBrief).not.toContain('消えた出来事');
+    expect(context.episode.productionNotesEnabled).toBe(false);
+  });
+
+  it('versionのない旧全話プランは保存flag無効のinline commandを従来どおり本文として扱う', async () => {
+    const context = buildManuscriptAuditContext();
+    context.episode.productionNotesEnabled = false;
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const compiler = new ChunkAwareEpisodePagePlanCompiler();
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      undefined, compiler, undefined, new FakeEpisodeBeatPlanCompiler(),
+      new FakeEpisodePlanAuditCompiler(), true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true },
+    );
+
+    const result = await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(result.compilerUsed).toBe(true);
+    expect(compiler.inputs[0]?.compilerBrief).not.toContain('AUTHOR MANUSCRIPT ALLOCATION');
+    expect(context.episode.productionNotesEnabled).toBe(false);
+  });
+
   it('stale sidecar引用は全話プランだけをreview待ちにして書き込まない', async () => {
     const context = buildEpisodePlanningContext();
     context.episode.storyFullDraft = '新しい本文。';
@@ -4367,6 +4412,8 @@ describe('PageService', () => {
     expect(stateCompilerInput?.context.episode.middle).toBeNull();
     expect(stateCompilerInput?.context.episode.climax).toBeNull();
     expect(stateCompilerInput?.context.episode.endingHook).toBeNull();
+    expect(stateCompilerInput?.context.episode.productionNotesEnabled).toBe(true);
+    expect(context.episode.productionNotesEnabled).toBe(false);
     expect(persistedChanges).toEqual([expect.objectContaining({
       sourceField: 'story_full_draft', sourceQuote: productionStateSourceQuote,
     })]);
@@ -4471,6 +4518,62 @@ describe('PageService', () => {
       },
       { applyProductionNotes: true },
     )).rejects.toMatchObject({ code: 'STATE_PLAN_INVALID' });
+    expect(persistence.calls).toHaveLength(0);
+    expect(transactionPanels.updatedPanels).toHaveLength(0);
+  });
+
+  it.each([
+    { label: '指示内', sourceQuote: 'ミオの右頬を寄りで描く', description: '右頬を寄りで描く' },
+    { label: '指示を跨ぐ', sourceQuote: 'ミオが港に立つ。カイの投げた小石', description: 'ミオが港に立つ' },
+  ])('保存flag無効でもversioned strict状態抽出は$labelquoteを全書き込み前に拒否する', async ({ sourceQuote, description }) => {
+    const context = buildProductionStateEvidenceContext();
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const transactionPanels = new FakePanelRepository();
+    const persistence = new FakeEpisodePlanPersistence(context, {
+      pageRepository: new FakePageRepository(), panelRepository: transactionPanels,
+      panelEntityAssignmentService: new FakePanelEntityAssignmentService(),
+      persistStateChanges: async () => {
+        throw new Error('指示由来の状態を保存しました');
+      },
+      completeStoryAutofillJob: async () => true,
+    });
+    let effectiveParsingEnabled = false;
+    const stateCompiler = {
+      compileStateTransitions: async (input: CompileEpisodeStateTransitionInput) => {
+        effectiveParsingEnabled = input.context.episode.productionNotesEnabled === true;
+        return {
+          plan: { transitions: [], unresolved: [{
+            entityId: '11111111-1111-4111-8111-111111111111', candidateStateId: null,
+            startsAtPanelId: 'panel-1', suggestedName: '不正な状態',
+            suggestedDescription: description, sourceSceneId: null,
+            sourceField: 'story_full_draft' as const, sourceQuote,
+            panelEvidenceQuote: productionStateSourceQuote, replacesDeltas: [],
+            reason: 'missing_reference' as const,
+          }] },
+          compilerProvider: 'openai' as const, compilerModel: 'test',
+          compilerPromptVersion: 'episode_state_transition_v7',
+        };
+      },
+    };
+    const service = new PageService(
+      pageRepository, new FakePanelRepository(), new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(), productionStateEvidencePageCompiler(), undefined,
+      new FakeEpisodeBeatPlanCompiler(), new FakeEpisodePlanAuditCompiler(), true,
+      { inlineRepairEnabled: true }, persistence, stateCompiler,
+    );
+
+    await expect(service.autofillEpisodeFromStory(
+      'user-1', 'episode-1', 'ja', undefined, null,
+      { jobId: `job-${sourceQuote.length}`, checkpoint: async () => undefined, beginCommit: async () => undefined },
+      {
+        statePlanVersion: 'episode_state_plan_v1', stateAssignmentPolicy: 'overwrite_existing',
+        allowVisualStateFallback: true,
+      },
+      { applyProductionNotes: true },
+    )).rejects.toMatchObject({ code: 'STATE_PLAN_INVALID' });
+    expect(effectiveParsingEnabled).toBe(true);
+    expect(context.episode.productionNotesEnabled).toBe(false);
     expect(persistence.calls).toHaveLength(0);
     expect(transactionPanels.updatedPanels).toHaveLength(0);
   });
@@ -6895,7 +6998,7 @@ function buildProductionStateEvidenceContext(): EpisodePagePlanContext {
   const context = buildEpisodePlanningContext();
   context.episode = {
     ...context.episode,
-    productionNotesEnabled: true,
+    productionNotesEnabled: false,
     storyFullDraft: `ミオが港に立つ。＃ミオの右頬を寄りで描く＃${productionStateSourceQuote}`,
     introduction: 'ミオが港に立つ。',
     middle: 'その切り傷はこの後も残り続ける。',
