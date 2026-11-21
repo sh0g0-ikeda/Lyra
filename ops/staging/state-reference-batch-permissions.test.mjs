@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildStateReferenceBatchPermissions } from './state-reference-batch-permissions.mjs';
+import { buildStateReferenceBatchPermissions, buildStateReferenceRecoveryReadPolicy } from './state-reference-batch-permissions.mjs';
 
 const accountId = '123456789012';
 const resourcePrefix = 'lyra-staging-20261003';
@@ -44,4 +44,20 @@ test('本番prefixや他環境のroleおよび想定外のtrust拡大を拒否�
   const extraTrust = fixture();
   extraTrust.imageCreateTrust.Statement.push({ Effect: 'Allow', Principal: '*', Action: 'sts:AssumeRole' });
   assert.throws(() => buildStateReferenceBatchPermissions(extraTrust));
+});
+
+test('存在しない画像を404で識別するListBucketだけを同じ検証bucketへ許可する', () => {
+  const bucketName = `${resourcePrefix}-images-${accountId}`;
+  const recoveryPolicy = { Version: '2012-10-17', Statement: [{
+    Sid: 'ExistingObjectAccess', Effect: 'Allow', Action: 's3:GetObject',
+    Resource: `arn:aws:s3:::${bucketName}/state-reference-v2/*`,
+  }] };
+  const input = { accountId, resourcePrefix, bucketName, recoveryPolicy };
+  const output = buildStateReferenceRecoveryReadPolicy(input);
+  assert.equal(recoveryPolicy.Statement.length, 1);
+  assert.deepEqual(output.Statement[0], recoveryPolicy.Statement[0]);
+  assert.deepEqual(output.Statement[1], { Sid: 'ObserveMissingStateReferenceObjects', Effect: 'Allow',
+    Action: 's3:ListBucket', Resource: `arn:aws:s3:::${bucketName}` });
+  assert.deepEqual(buildStateReferenceRecoveryReadPolicy({ ...input, recoveryPolicy: output }), output);
+  assert.throws(() => buildStateReferenceRecoveryReadPolicy({ ...input, bucketName: 'lyra-prod-images' }));
 });

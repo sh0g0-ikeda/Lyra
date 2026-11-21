@@ -335,6 +335,9 @@ state-reference image-create and recovery roles, and that the image-create role
 trusts that worker. Keep conditional-write storage policy and permissions
 boundaries intact. The staging patch builder is
 `ops/staging/state-reference-batch-permissions.mjs`; it makes no AWS writes.
+The recovery role also needs `s3:ListBucket` on the exact assets bucket to
+distinguish an absent object (404) from inaccessible storage (403); this grants
+metadata inspection and does not expand object read/write/delete permissions.
 The same permission preflight is a production release gate, not authorization
 to change production infrastructure from a staging rollout.
 

@@ -37,3 +37,24 @@ export function buildStateReferenceBatchPermissions(input) {
   trust.Principal.AWS = [arn('api-task'), arn('worker-task')];
   return { workerPolicy, imageCreateTrust };
 }
+
+// S3 returns 403 for an absent GetObject without ListBucket. Recovery must
+// distinguish absence from an unknown write outcome before creating its fence.
+// This grants bucket metadata inspection only; object read/write/delete scope
+// and all conditional-write guards remain exactly as supplied.
+export function buildStateReferenceRecoveryReadPolicy(input) {
+  const { accountId, resourcePrefix, bucketName } = input;
+  assert.match(accountId, /^\d{12}$/u);
+  assert.match(resourcePrefix, /^lyra-staging-\d{8}$/u);
+  assert.equal(bucketName, `${resourcePrefix}-images-${accountId}`);
+  const policy = structuredClone(input.recoveryPolicy);
+  assert.equal(policy.Version, '2012-10-17');
+  assert.ok(Array.isArray(policy.Statement));
+  const grant = { Sid: 'ObserveMissingStateReferenceObjects', Effect: 'Allow',
+    Action: 's3:ListBucket', Resource: `arn:aws:s3:::${bucketName}` };
+  const existing = policy.Statement.filter(statement => statement.Sid === grant.Sid);
+  assert.ok(existing.length <= 1);
+  if (existing.length === 1) assert.deepEqual(existing[0], grant);
+  else policy.Statement.push(grant);
+  return policy;
+}
