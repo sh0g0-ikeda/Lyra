@@ -158,9 +158,9 @@ export function storyManuscriptEvidence(text: string, enabled: boolean): string[
 }
 
 /** Immutable command tokens stay between the same editable prose fragments. */
-export function splitStoryManuscriptForEditing(text: string): Array<{ kind: 'prose' | 'command'; text: string }> {
+export function splitStoryManuscriptForEditing(text: string): { kind: 'prose' | 'command'; text: string }[] {
   parseStoryManuscript(text, true);
-  const parts: Array<{ kind: 'prose' | 'command'; text: string }> = [];
+  const parts: { kind: 'prose' | 'command'; text: string }[] = [];
   let prose = '';
   const command = (value: string): void => {
     if (prose.length > 0) { parts.push({ kind: 'prose', text: prose }); prose = ''; }
