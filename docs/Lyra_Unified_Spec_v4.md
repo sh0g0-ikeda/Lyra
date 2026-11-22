@@ -310,6 +310,14 @@ of each generated base and state reference. Character bases precede dependent
 states; existing confirmed references and generated page images are preserved.
 Page batches offer color and monochrome for missing pages only.
 
+Image generation controls belong to the selected page's generation area, not
+the page thumbnail list. Show single-page color and monochrome generation first,
+labelled as the recommended action, followed by missing-image batch generation
+in both styles. Keep single-page confirmation/reopen controls separate. Moving
+the controls does not change either quote path, draft saving, authorization,
+credit acceptance or batch recovery; a selected page's readiness does not replace
+the batch's own admission checks. The page list retains selection and image zoom.
+
 Each child retains the existing immutable quote, authorization, capacity,
 transactional credit and refund checks. Acceptance uses a stable idempotency key;
 lost responses are recovered by reading the same batch. Progress survives screen
@@ -1411,6 +1419,14 @@ Unmentioned fields stay empty. The returned character IDs open their ordinary
 editors, including after reloading the work. The user can review each character
 and separately request an image preview under the existing credit contract.
 
+The autofill description reads "入力されたストーリーから新規キャラクターを抽出します".
+Saved characters appear in the ordinary selectable character list only; autofill
+must not add a second result-card list. Keep operation failures visible. Skipped
+names, source-backed appearance suggestions and unresolved quotations remain
+available in an explicitly openable review-details area, collapsed initially and
+shown only when there is information to review. Explicit field acceptance and
+revision checks remain required for existing characters.
+
 Saved episode cast autofill uses `gpt-6-luna` with low reasoning for extraction
 and a second reconciliation against the full original manuscript. Keep literal
 evidence separate from editor option IDs and validate both before persistence.
@@ -1510,6 +1526,14 @@ previous path. Clients resolve the saved command intent after pending editor sav
 and use the same intent for both skeleton and subsequent autofill, including cold
 capability loads. Page estimation also honors explicit commands independently of
 the saved flag.
+
+Current Web and Mobile editors explain `===` page boundaries, `---` panel
+boundaries and paired `#要望の内容#` instructions directly below the story input.
+They do not offer a separate production-note enable/save checkbox. Removing that
+UI must preserve the episode's saved sidecar flag and notes; it neither enables
+disabled sidecars nor clears existing ones. Explicit inline commands continue
+to use the capability-checked versioned path without a manual switch.
+
 Generated layout metadata records the raw manuscript and each source block's
 assigned panel slots. Detail, audit and final validation use the same ownership;
 editing the source or losing the mapping requires rebuilding the structure.

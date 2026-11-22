@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PanelDialogueEditor } from '@/components/PanelDialogueEditor';
 import { PagesScreen } from '@/screens/PagesScreen';
@@ -61,7 +61,7 @@ vi.mock('@tanstack/react-query', () => ({
 vi.mock('@/state/appState', () => ({ useAppState: () => ({ api, hasCapability: () => true, language: 'ja', logout: action, selection: screenSelection, session: { capabilities: { generation_quotes: true, automatic_page_reopen_on_write: automaticReopen, episode_state_autofill_v1: startingAvailable } }, sessionKey: currentSessionKey, tokens: null, trackJob: action, updateSelection }) }));
 vi.mock('@/state/dirtyState', () => ({ useDirtyEditorRegistration: dirtyRegistration, useDirtyState: () => ({ resolveDirtyEditors: vi.fn().mockResolvedValue(true), hasDirtyEditors: false }) }));
 vi.mock('@/state/mangaWorkflow', () => ({ useMangaWorkflow: () => ({ activeStep: 'pages' }) }));
-vi.mock('@/components/GenerationBatchControls', () => ({ GenerationBatchControls: () => null }));
+vi.mock('@/components/GenerationBatchControls', () => ({ GenerationBatchControls: (props: Record<string, unknown>) => React.createElement('GenerationBatchControls', props) }));
 vi.mock('@/hooks/usePageGenerationQuote', () => ({ usePageGenerationQuote: (input: { prepare: typeof quoteHarness.prepare }) => {
   quoteHarness.prepare = input.prepare;
   return { state: { phase: 'closed', visible: false, target: null, quote: null }, controller: { open: quoteOpen, close: vi.fn(), accept: quoteAccept, reconcile: vi.fn(), canAccept: () => false } };
@@ -82,7 +82,7 @@ vi.mock('@/lib/download', () => ({ appendOrganizationQuery: vi.fn(), downloadAut
 vi.mock('@/components/WorkspaceContextPicker', () => ({ useWorkspaceContextSelection: () => ({ ...workspaceSelection, episodes: startingEpisode === undefined ? [] : [startingEpisode] }) }));
 vi.mock('@/components/EpisodeStartingStatesEditor', () => ({ EpisodeStartingStatesEditor: (props: Record<string, unknown> & { children?: React.ReactNode }) => React.createElement('starting-states', props, props.children) }));
 vi.mock('@/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => children }));
-vi.mock('@/components/Section', () => ({ Section: ({ children }: { children: React.ReactNode }) => children }));
+vi.mock('@/components/Section', () => ({ Section: ({ children, ...props }: { children: React.ReactNode }) => React.createElement('Section', props, children) }));
 vi.mock('@/components/FormField', () => ({ FormField: (props: Record<string, unknown>) => React.createElement('field', props) }));
 vi.mock('@/components/PrimaryButton', () => ({ PrimaryButton: (props: Record<string, unknown>) => React.createElement('button', props) }));
 vi.mock('@/components/RecordPicker', () => ({ RecordPicker: (props: Record<string, unknown>) => React.createElement('picker', props) }));
@@ -137,6 +137,25 @@ describe('実際のPagesScreenの工程構成', () => {
     expect(root!.root.findAllByProps({ testID: 'page-reopen-action' })).toHaveLength(0);
     expect(root!.root.findAllByProps({ testID: 'page-swipe-navigation' })).toHaveLength(0);
     expect(root!.root.findByType('PageThumbnailPicker').props.hideStatus).toBe(true);
+  });
+
+  it('一括生成はページ一覧ではなく選択ページの生成操作直後にあり、単ページの準備状態とは独立する', async () => {
+    queryData.frames = { frames: [] };
+    await act(async () => { root = create(<PagesScreen />); });
+
+    const batch = root!.root.findByType('GenerationBatchControls');
+    const ancestors: ReactTestInstance[] = [];
+    for (let current = batch.parent; current !== null; current = current.parent) ancestors.push(current);
+    expect(ancestors.some((node) => node.type === 'Section' && node.props.persistKey === 'pages:list')).toBe(false);
+    const closestSection = (node: ReactTestInstance): ReactTestInstance | undefined => {
+      for (let current: ReactTestInstance | null = node.parent; current !== null; current = current.parent) {
+        if (current.type === 'Section') return current;
+      }
+      return undefined;
+    };
+    expect(closestSection(batch)).toBe(closestSection(root!.root.findByProps({ testID: 'page-generation-action' })));
+    expect(batch.props.canGenerate).toBe(true);
+    expect(root!.root.findByProps({ testID: 'page-generation-action' }).props.disabled).toBe(true);
   });
 
   it('新serverの確定済みページは確定解除を要求せず編集できる', async () => {

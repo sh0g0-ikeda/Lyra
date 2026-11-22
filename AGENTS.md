@@ -1641,3 +1641,11 @@ Page estimation gives authored === / ＝＝＝ sections precedence without a mod
 call, including nonempty outer sections. The manual result displays page count
 only; its legacy panel_count is the authored lower bound. Without page boundaries,
 Luna counts readable compositions rather than each action or dialogue turn (§6).
+
+Editor action placement follows Unified Spec §6: character autofill uses the
+ordinary portrait list, with review evidence in initially collapsed details.
+Single-page and missing-image batch generation belong together in the selected
+page generation area, never in the page thumbnail list; preserve both admission
+and recovery contracts when moving controls.
+Story editors show the manuscript-command instructions without a production-note
+toggle; preserve existing sidecar flags/data and automatic inline-command intent.

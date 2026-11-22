@@ -43,7 +43,7 @@ export function PageGenerationActions({
       <PrimaryButton
         disabled={generateDisabled}
         disabledReason={generateDisabledReason}
-        label={t(language, 'generate')}
+        label={t(language, 'screen.pages.generate.colorRecommended')}
         loading={generateLoading}
         onPress={onGenerate}
         testID="page-generation-action"
@@ -51,7 +51,7 @@ export function PageGenerationActions({
       <PrimaryButton
         disabled={generateDisabled}
         disabledReason={generateDisabledReason}
-        label={t(language, 'generateMonochrome')}
+        label={t(language, 'screen.pages.generate.monochromeRecommended')}
         loading={generateMonochromeLoading}
         onPress={onGenerateMonochrome}
         testID="page-monochrome-generation-action"
@@ -84,8 +84,7 @@ export function PageGenerationActions({
 
 const styles = StyleSheet.create({
   actions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'stretch',
     gap: spacing.sm
   }
 });

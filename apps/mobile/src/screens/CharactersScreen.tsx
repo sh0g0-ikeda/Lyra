@@ -1495,11 +1495,6 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
     setSelectedCharacterSuggestion(suggestion);
   };
 
-  const editAutofilledCharacter = async (entityId: string): Promise<void> => {
-    if (!await saveDirtyEditors()) return;
-    await updateSelection({ entityId }, { skipDirtyCheck: true });
-  };
-
   const suggestedExistingCharacters = useMemo(
     () => entities.filter((entity) => characterSuggestions.some(
       (suggestion) => suggestion.status === 'existing' &&
@@ -2112,25 +2107,17 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
           {characterAutofillMutation.error === null ? null : (
             <Notice message={t(language, 'screen.characters.autofill.failed')} tone="warning" />
           )}
-          {characterAutofillResult === null ? null : (
-            <View style={styles.buttonRow} testID="character-autofill-results">
-              {characterAutofillResult.characters.map((character) => (
-                <Pressable
-                  accessibilityLabel={t(language, 'screen.characters.autofill.edit', { name: character.name })}
-                  accessibilityRole="button"
-                  key={character.entity_id}
-                  onPress={() => { void editAutofilledCharacter(character.entity_id); }}
-                  style={styles.suggestionCard}
-                  testID={`character-autofill-edit-${character.entity_id}`}
-                >
-                  <Text style={styles.groupTitle}>{character.name}</Text>
-                  <Text style={styles.caption}>{t(
-                    language,
-                    character.created ? 'screen.characters.autofill.created' : 'screen.characters.autofill.existing',
-                    { count: character.states_added },
-                  )}</Text>
-                </Pressable>
-              ))}
+          {/* Saved characters remain in the normal portrait grid; this collapsed area only retains reviewable evidence. */}
+          {characterAutofillResult === null || (
+            characterAutofillResult.skipped_names.length === 0 &&
+            (characterAutofillResult.appearance_review?.suggestions.length ?? 0) === 0 &&
+            (characterAutofillResult.appearance_review?.unresolved.length ?? 0) === 0
+          ) ? null : (
+            <Section
+              collapsible
+              defaultCollapsed
+              title={t(language, 'screen.characters.autofill.reviewDetails')}
+            >
               {characterAutofillResult.skipped_names.length === 0 ? null : (
                 <Text style={styles.caption}>{t(language, 'screen.characters.autofill.skipped', {
                   names: characterAutofillResult.skipped_names.join(language === 'ja' ? '、' : ', '),
@@ -2165,7 +2152,7 @@ export function CharactersScreen({ initialStateCandidate, onReturnToPages, secon
                   ? 'screen.characters.autofill.reviewConflict'
                   : 'screen.characters.autofill.reviewFailed')} tone="warning" />
               )}
-            </View>
+            </Section>
           )}
         </Section>
       ) : characterSuggestionCapabilitiesQuery.data?.enabled === true ? (

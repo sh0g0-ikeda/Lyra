@@ -2530,24 +2530,6 @@ export function PagesScreen(): React.JSX.Element {
       />
 
       <Section collapsible persistKey="pages:list" title={editorMessage(language, 'pageList')} subtitle={editorMessage(language, 'pageListHelp')}>
-        <GenerationBatchControls
-          api={api}
-          beforeQuote={saveDirtyEditors}
-          canGenerate={canGenerate}
-          episodeId={activeEpisodeId}
-          kind="pages"
-          language={language}
-          onCompleted={async () => {
-            await Promise.all([
-              queryClient.invalidateQueries({ queryKey: ['pages', sessionKey] }),
-              queryClient.invalidateQueries({ queryKey: ['page', sessionKey] }),
-            ]);
-          }}
-          organizationId={organizationId}
-          renderStyles={['color', 'monochrome']}
-          sessionKey={sessionKey}
-          workId={activeWorkId}
-        />
         <PageThumbnailPicker
           emptyLabel={t(language, 'emptyPages')}
           hasNextPage={pagesQuery.hasNextPage}
@@ -3162,6 +3144,25 @@ export function PagesScreen(): React.JSX.Element {
           language={language}
           onGenerate={confirmGeneratePage}
           onGenerateMonochrome={confirmGenerateMonochromePage}
+        />
+        {/* Batch controls intentionally keep their own quote and capability gates: eligible missing pages need not match the selected page's readiness. */}
+        <GenerationBatchControls
+          api={api}
+          beforeQuote={saveDirtyEditors}
+          canGenerate={canGenerate}
+          episodeId={activeEpisodeId}
+          kind="pages"
+          language={language}
+          onCompleted={async () => {
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['pages', sessionKey] }),
+              queryClient.invalidateQueries({ queryKey: ['page', sessionKey] }),
+            ]);
+          }}
+          organizationId={organizationId}
+          renderStyles={['color', 'monochrome']}
+          sessionKey={sessionKey}
+          workId={activeWorkId}
         />
         <Text style={styles.caption}>{t(language, 'component.jobStatusCard.imageDurationEstimate')}</Text>
         {nextPageLookup?.scope === pageWorkflowScope && nextPageLookup.loading ? <Notice message={pageWorkflowMessage(language, 'morePages')} tone="info" /> : null}

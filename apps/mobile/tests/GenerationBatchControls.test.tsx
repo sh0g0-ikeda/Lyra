@@ -72,8 +72,8 @@ describe('GenerationBatchControls', () => {
         onCompleted={vi.fn()} renderStyles={['color']} sessionKey="session" workId={workId}
       /></QueryClientProvider>);
     });
-    await vi.waitFor(() => expect(renderer.root.findByProps({ label: '未生成を一括生成（カラー）' })).toBeDefined());
-    const press = renderer.root.findByProps({ label: '未生成を一括生成（カラー）' }).props.onPress as () => void;
+    await vi.waitFor(() => expect(renderer.root.findByProps({ label: '未生成の画像を一括生成（カラー）' })).toBeDefined());
+    const press = renderer.root.findByProps({ label: '未生成の画像を一括生成（カラー）' }).props.onPress as () => void;
     await act(async () => { press(); press(); });
 
     expect(beforeQuote).toHaveBeenCalledTimes(1);

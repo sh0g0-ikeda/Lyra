@@ -25,10 +25,11 @@ export function PageCompletionActions({
 
 interface PageGenerationStartActionsProps { buttonRef?: RefObject<View | null>; canGenerate: boolean; disabledReason?: string; generateLoading?: boolean; generateMonochromeLoading?: boolean; language: UiLanguage; onGenerate: () => void; onGenerateMonochrome: () => void; }
 
+// Keep page-generation wording local to this flow; generic generation labels are shared by character workflows.
 export function PageGenerationStartActions({ buttonRef, canGenerate, disabledReason, generateLoading = false, generateMonochromeLoading = false, language, onGenerate, onGenerateMonochrome }: PageGenerationStartActionsProps): React.JSX.Element {
   return <View style={styles.actions}>
-    <PrimaryButton buttonRef={buttonRef} disabled={!canGenerate} disabledReason={disabledReason} label={t(language, 'generate')} loading={generateLoading} onPress={onGenerate} testID="page-generation-action" />
-    <PrimaryButton disabled={!canGenerate} disabledReason={disabledReason} label={t(language, 'generateMonochrome')} loading={generateMonochromeLoading} onPress={onGenerateMonochrome} testID="page-monochrome-generation-action" variant="secondary" />
+    <PrimaryButton buttonRef={buttonRef} disabled={!canGenerate} disabledReason={disabledReason} label={t(language, 'screen.pages.generate.colorRecommended')} loading={generateLoading} onPress={onGenerate} testID="page-generation-action" />
+    <PrimaryButton disabled={!canGenerate} disabledReason={disabledReason} label={t(language, 'screen.pages.generate.monochromeRecommended')} loading={generateMonochromeLoading} onPress={onGenerateMonochrome} testID="page-monochrome-generation-action" variant="secondary" />
   </View>;
 }
 
@@ -40,4 +41,4 @@ export function PageConfirmationAction({ buttonRef, canConfirm, confirmed, disab
     : <PrimaryButton buttonRef={buttonRef} disabled={!canConfirm} disabledReason={disabledReason} label={t(language, 'confirmPage')} loading={confirmLoading} onPress={onConfirm} testID="page-confirm-action" variant="secondary" />;
 }
 
-const styles = StyleSheet.create({ actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm } });
+const styles = StyleSheet.create({ actions: { alignItems: 'stretch', gap: spacing.sm } });

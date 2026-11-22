@@ -49,7 +49,13 @@ vi.mock('@/lib/download',()=>({appendOrganizationQuery:vi.fn(),downloadAuthentic
 vi.mock('@/lib/confirm',()=>({confirmAction:vi.fn(),confirmDestructiveAction:vi.fn()}));
 vi.mock('@/lib/confirmStaleDraftReload',()=>({confirmStaleDraftReload:vi.fn()}));
 vi.mock('@/components/Screen',()=>({Screen:({children}:{children:React.ReactNode})=>children}));
-vi.mock('@/components/Section',()=>({Section:({children,...props}:{children:React.ReactNode})=>React.createElement('Section',props,children)}));
+vi.mock('@/components/Section',()=>({Section:({children,collapsible=false,defaultCollapsed=false,...props}:{children:React.ReactNode;collapsible?:boolean;defaultCollapsed?:boolean;title:string})=>{
+  const [collapsed,setCollapsed]=React.useState(defaultCollapsed);
+  return React.createElement('Section',props,
+    collapsible ? React.createElement('button',{accessibilityLabel:props.title,onClick:()=>setCollapsed((current)=>!current)},props.title) : null,
+    collapsed ? null : children,
+  );
+}}));
 vi.mock('@/components/ActionableErrorNotice',()=>({ActionableErrorNotice:(props:Record<string,unknown>)=>React.createElement('ActionableErrorNotice',props)}));
 vi.mock('@/components/CharacterChoiceField',()=>({CharacterChoiceField:(props:Record<string,unknown>)=>React.createElement('CharacterChoiceField',props)}));
 vi.mock('@/components/CharacterThumbnailPicker',()=>({CharacterThumbnailPicker:(props:Record<string,unknown>)=>React.createElement('CharacterThumbnailPicker',props)}));
@@ -119,6 +125,9 @@ const changeType = async (value: string): Promise<void> => {
 const openNew = async (): Promise<void> => {
   await act(async () => root!.root.findByType('RecordPicker').props.onSelect('new-entity'));
   await rerender();
+};
+const openAutofillReview = async (): Promise<void> => {
+  await act(async () => root!.root.findByProps({ accessibilityLabel: '確認が必要な詳細' }).props.onClick());
 };
 
 describe('新規人物だけの編集可能な初期値', () => {
@@ -476,7 +485,7 @@ describe('新規人物だけの編集可能な初期値', () => {
     expect(root!.root.findByType('JobStatusCard').props.jobId).toBeNull();
   });
 
-  it('新しい保存型autofillは全員の結果を表示し、各人物を一度で編集できる', async () => {
+  it('保存型autofillは保存済み人物を重複表示せず、スキップ情報だけをレビュー詳細に残す', async () => {
     characterAutofillEnabled = true;
     const autofilledEntity = {
       ...entity,
@@ -499,10 +508,14 @@ describe('新規人物だけの編集可能な初期値', () => {
     expect(getEpisodes).toHaveBeenCalledWith('chapter', null);
     expect(autofillEpisodeCharacters).toHaveBeenCalledWith('episode', { version: 3 }, null);
     expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['entities', sessionKey, 'work', 'personal'] });
-    expect(root!.root.findByProps({ testID: 'character-autofill-results' })).toBeDefined();
+    expect(root!.root.findAllByType('Section').some((node) => node.props.title === '確認が必要な詳細')).toBe(true);
+    expect(JSON.stringify(root!.toJSON())).not.toContain('通行人');
+    expect(root!.root.findAllByProps({ testID: `character-autofill-edit-${autofilledEntity.id}` })).toHaveLength(0);
+    expect(JSON.stringify(root!.toJSON())).not.toContain('新規保存・状態を1件追加');
+    await openAutofillReview();
     expect(JSON.stringify(root!.toJSON())).toContain('通行人');
 
-    await act(async () => root!.root.findByProps({ testID: `character-autofill-edit-${autofilledEntity.id}` }).props.onPress());
+    await act(async () => root!.root.findByType('CharacterThumbnailPicker').props.onSelect(autofilledEntity.id));
     await rerender();
     expect(updateSelection).toHaveBeenCalledWith({ entityId: autofilledEntity.id }, { skipDirtyCheck: true });
     expect(choice('性別表現').props.value).toBe('');
@@ -547,6 +560,8 @@ describe('新規人物だけの編集可能な初期値', () => {
     await render();
     await act(async () => root!.root.findByProps({ testID: 'character-autofill-save-all' }).props.onPress());
 
+    expect(root!.root.findAllByProps({ testID: 'appearance-review-unresolved' })).toHaveLength(0);
+    await openAutofillReview();
     expect(JSON.stringify(root!.toJSON())).toContain('髪の色');
     expect(JSON.stringify(root!.toJSON())).toContain('候補: 黒');
     expect(JSON.stringify(root!.toJSON())).toContain('本文: 「黒髪が風になびいた。」');

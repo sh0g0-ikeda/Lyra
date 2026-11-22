@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { editableEpisodePageLimit } from '@/domain/episodePageLimits';
-import { hasStoryManuscriptCommands } from '@/domain/storyManuscriptContract';
 
 import { ActionableErrorNotice } from '@/components/ActionableErrorNotice';
 import { EpisodeImprovementPanel } from '@/components/EpisodeImprovementPanel';
@@ -198,9 +197,11 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
     productionNotesEnabled,
     selectedEpisode?.production_notes ?? [],
   );
-  // Inline commands express their own intent; keep the sidecar opt-in independent
-  // so old, disabled notes do not become active when a delimiter is added.
-  const hasInlineCommands = hasStoryManuscriptCommands(separatedProductionNotes.body);
+  // With the manual toggle removed, an existing sidecar remains durable even if its rendered line is not in the edited text.
+  const productionNotesForSave = [...new Set([
+    ...(selectedEpisode?.production_notes ?? []),
+    ...separatedProductionNotes.notes,
+  ])];
   const productionNotesPending = selectedEpisode !== null && productionNotesV2 && (
     productionNotesEnabled !== (selectedEpisode.production_notes_enabled === true)
     || !sameStringArray(separatedProductionNotes.notes, selectedEpisode.production_notes ?? [])
@@ -381,7 +382,7 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
         {
           ...payload,
           production_notes_enabled: productionNotesEnabled,
-          production_notes: separatedProductionNotes.notes,
+          production_notes: productionNotesForSave,
         },
         organizationId,
         true,
@@ -1013,29 +1014,9 @@ export function StoryScreen({ onOpenCharacters }: { onOpenCharacters?: () => voi
             <FormField editable={canEdit} label={t(language, 'fullDraft')} placeholder={editorMessage(language, 'storyExample')} help={editorMessage(language, 'storyInputHelp')} helpDisclosureLabel={editorMessage(language, 'fieldHelp')} maxLength={8000} multiline multilineMaxHeight={260} onChangeText={setEpisodeDraft} value={episodeDraft} />
             {productionNotesCapabilitiesQuery.data?.enabled === true ? (
               <View style={styles.productionNotes}>
-                <Pressable
-                  accessibilityLabel={t(language, 'screen.story.productionNotes.enable')}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: productionNotesEnabled, disabled: !canEdit }}
-                  disabled={!canEdit}
-                  onPress={() => setProductionNotesEnabled((current) => !current)}
-                  style={styles.productionNotesToggle}
-                >
-                  <Text style={styles.productionNotesToggleText}>
-                    {t(
-                      language,
-                      productionNotesEnabled
-                        ? 'screen.story.productionNotes.saveEnabled'
-                        : 'screen.story.productionNotes.saveDisabled',
-                    )}
-                  </Text>
-                </Pressable>
                 <Text style={styles.productionNotesHint}>
-                  {t(language, 'screen.story.productionNotes.hint')}
+                  {t(language, 'screen.story.productionNotes.help')}
                 </Text>
-                <Text style={styles.productionNotesHint}>{editorMessage(language, 'productionSyntaxHelp')}</Text>
-                {hasInlineCommands ? <Text style={styles.productionNotesHint}>{editorMessage(language, 'productionCommandsAutomatic')}</Text> : null}
-                {separatedProductionNotes.notes.map((note) => <Text key={note} style={styles.productionNotesHint}># {note}</Text>)}
               </View>
             ) : null}
             <Text style={styles.label}>{t(language, 'estimatedPages')}</Text>
@@ -1203,15 +1184,6 @@ const styles = StyleSheet.create({
   productionNotesHint: {
     ...textStyles.caption,
     color: colors.muted
-  },
-  productionNotesToggle: {
-    justifyContent: 'center',
-    minHeight: 44
-  },
-  productionNotesToggleText: {
-    ...textStyles.body,
-    color: colors.primary,
-    fontWeight: '700'
   },
   result: {
     backgroundColor: 'rgba(16, 16, 16, 0.82)',

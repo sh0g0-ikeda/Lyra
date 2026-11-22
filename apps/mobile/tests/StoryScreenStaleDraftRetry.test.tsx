@@ -119,11 +119,13 @@ describe('Story stale draft retry', () => {
     expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({ estimated_pages: 32, story_full_draft: 'Edited legacy story' }), null);
   });
 
-  it('明示した演出指示オプトインと#付き原稿だけをepisode保存へ送る', async () => {
+  it('保存済みsidecar opt-inと#付き原稿をトグルなしでepisode保存へ維持する', async () => {
     productionNotesEnabled = true;
+    episode = { ...episode, production_notes_enabled: true };
     await render();
+    expect(root!.root.findAllByProps({ accessibilityLabel: '演出指示を有効にする' })).toHaveLength(0);
+    expect(JSON.stringify(root!.toJSON())).toContain('ページは「===」\\nコマは「---」\\nで区切ると自動入力の際に忠実に反映します。\\nその他、特定の要望は「#要望の内容#」といったように「#」で内容を囲って指定してください。');
     await act(async () => body().props.onChangeText('# 「扉を押す」と「のぞく」は同じコマにする。'));
-    await act(async () => root!.root.findByProps({ accessibilityLabel: '演出指示を有効にする' }).props.onPress());
     await act(async () => registration.save());
 
     expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({
@@ -145,9 +147,24 @@ describe('Story stale draft retry', () => {
     expect(root!.root.findAllByProps({ accessibilityLabel: '演出指示を有効にする' })).toHaveLength(0);
   });
 
-  it('演出指示の有効化を保存した後は本文を変えない限り再保存を要求しない', async () => {
+  it('sidecarが無効でも本文の区切り指定を保存し、既存ノートとfalseフラグを保持する', async () => {
     productionNotesEnabled = true;
-    episode = { ...episode, story_full_draft: 'A。B。\n＃ 「A」と「B」は同じコマ。' };
+    const savedNote = '以前の演出指定';
+    episode = { ...episode, production_notes_enabled: false, production_notes: [savedNote] };
+    await render();
+    await act(async () => body().props.onChangeText('===\n---\n#要望の内容#'));
+    await act(async () => registration.save());
+
+    expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({
+      story_full_draft: '===\n---\n#要望の内容#',
+      production_notes_enabled: false,
+      production_notes: [savedNote],
+    }), null, true);
+  });
+
+  it('保存済みsidecar opt-inは本文を変えない限り再保存を要求しない', async () => {
+    productionNotesEnabled = true;
+    episode = { ...episode, story_full_draft: 'A。B。\n＃ 「A」と「B」は同じコマ。', production_notes_enabled: true };
     updateEpisode.mockImplementation(async (_id, bodyPayload) => {
       const body = bodyPayload as Record<string, unknown>;
       episode = {
@@ -161,16 +178,12 @@ describe('Story stale draft retry', () => {
       return episode;
     });
     await render();
-    await act(async () => root!.root.findByProps({ accessibilityLabel: '演出指示を有効にする' }).props.onPress());
-    expect(registration.dirty).toBe(true);
-    await act(async () => registration.save());
     await render();
-    expect(updateEpisode).toHaveBeenCalledTimes(1);
-    expect(registration.dirty).toBe(false);
-    expect(body().props.value).toBe('A。B。\n# 「A」と「B」は同じコマ。');
+    expect(updateEpisode).not.toHaveBeenCalled();
+    expect(body().props.value).toBe('A。B。\n＃ 「A」と「B」は同じコマ。');
   });
 
-  it('演出指示を無効化してもsidecarを消さず旧本文へ#行を混ぜない', async () => {
+  it('保存済みsidecarはトグルなしで保持し、旧本文へ#行を混ぜない', async () => {
     productionNotesEnabled = true;
     const savedNote = '「A」と「B」は別のコマにする。';
     episode = {
@@ -186,12 +199,12 @@ describe('Story stale draft retry', () => {
     await render();
 
     expect(body().props.value).toContain(`# ${savedNote}`);
-    await act(async () => root!.root.findByProps({ accessibilityLabel: '演出指示を有効にする' }).props.onPress());
+    await act(async () => body().props.onChangeText('# 通常のMarkdown見出し\nA。B。\n追記'));
     await act(async () => registration.save());
 
     expect(updateEpisode).toHaveBeenCalledWith('episode', expect.objectContaining({
-      story_full_draft: '# 通常のMarkdown見出し\nA。B。',
-      production_notes_enabled: false,
+      story_full_draft: '# 通常のMarkdown見出し\nA。B。\n追記',
+      production_notes_enabled: true,
       production_notes: [savedNote],
     }), null, true);
   });
