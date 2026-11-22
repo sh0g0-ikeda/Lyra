@@ -4384,3 +4384,10 @@ details.stack summary {
 
 .page-section-planning .section-toggle-actions .toolbar { grid-template-columns: minmax(0, 1fr); width: 100%; }
 .page-section-planning .skeleton-plan-button { width: 100%; min-height: 48px; justify-content: center; }
+
+/* Keep page and batch actions together without squeezing their labels on phones. */
+.page-generation-actions > .batch-generation { width: 100%; grid-column: 1 / -1; margin-bottom: 0; }
+@media (max-width: 760px) {
+  .page-generation-actions,
+  .page-generation-actions .batch-generation-actions { grid-template-columns: minmax(0, 1fr); }
+}

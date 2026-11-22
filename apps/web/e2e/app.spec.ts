@@ -126,7 +126,7 @@ test('キャラ画面を開くと写真と空枠が並び、拡大と人物選�
   await expect(roster.getByRole('button', { name: 'Actor 1 Character', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('話の名前付きキャラを一括保存し、保存済み選択肢を通常の編集画面で再読込できる', async ({ page }) => {
+test('話の名前付きキャラを一括保存し、保存済み選択肢を通常の編集画面で再読込できる', async ({ page }, testInfo) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
   const rin = {
@@ -213,13 +213,31 @@ test('話の名前付きキャラを一括保存し、保存済み選択肢を�
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: 'Autofill and save character details', exact: true }).click();
   await expect.poll(() => autofillRequests).toBe(1);
+  await expect(page.getByText('2 saved characters are available in the character portraits above.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Unknown twin', { exact: true })).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply this field', exact: true })).toHaveCount(0);
+  const reviewDetails = page.locator('details.advanced-disclosure').filter({ hasText: 'Review saved-character details' });
+  await expect(reviewDetails).toHaveCount(1);
+  await expect(reviewDetails).not.toHaveAttribute('open', '');
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
+  await page.getByRole('button', { name: 'アカウントメニュー', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const autofillPanel = page
+    .getByRole('button', { name: 'キャラ情報を自動入力して保存', exact: true })
+    .locator('xpath=ancestor::section[1]');
+  await autofillPanel.evaluate((element) => window.scrollBy(0, element.getBoundingClientRect().top - 230));
+  await page.screenshot({ path: testInfo.outputPath('character-autofill-default-mobile-ja.png') });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole('button', { name: 'アカウントメニュー', exact: true }).click();
+  await page.getByRole('combobox', { name: '言語', exact: true }).selectOption('en');
+  await reviewDetails.locator('summary').click();
   await expect(page.getByText('Unknown twin', { exact: true })).toBeVisible();
   await expect(page.getByText('Hair color', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Rin had black hair.', { exact: false })).toBeVisible();
   await expect(page.getByText('This could not be verified as a character trait.', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Apply this field', exact: true })).toHaveCount(3);
-  await expect(page.getByRole('button', { name: 'Open saved character', exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: 'Open saved character', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Rin Character', exact: true }).click();
   await expect(page.getByLabel('Name', { exact: true }).first()).toHaveValue('Rin');
   await expect(page.getByRole('combobox', { name: 'Gender', exact: true })).toHaveValue('');
   await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('silver');
@@ -243,7 +261,6 @@ test('話の名前付きキャラを一括保存し、保存済み選択肢を�
   await page.getByRole('button', { name: 'Rin Character', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Gender', exact: true })).toHaveValue('');
   await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('black');
-  await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('black');
 });
@@ -907,7 +924,7 @@ test('shows auth screen without token', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Use token' })).toBeVisible();
 });
 
-test('renders the console with mocked api responses', async ({ page }) => {
+test('renders the console with mocked api responses', async ({ page }, testInfo) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
   await page.route('**/api/**', (route) => {
@@ -953,10 +970,23 @@ test('renders the console with mocked api responses', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Generate full-body preview' })).toBeVisible();
 
   await openMangaStep(page, '3. Pages');
-  await expect(page.getByTestId('generation-batch-pages')).toContainText('Batch: running · 1/3');
+  const pageList = page.locator('.page-section-pages');
+  const pageGeneration = page.locator('.page-section-generate');
+  await expect(pageList.getByTestId('generation-batch-pages')).toHaveCount(0);
+  await expect(pageGeneration.getByTestId('generation-batch-pages')).toContainText('Batch: running · 1/3');
   await expect(page.getByRole('heading', { name: 'Page 1' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Situation' })).toHaveValue('Mizuki enters the fort.');
   await page.screenshot({ path: '../../.tmp/web-generation-batch-progress.png', fullPage: true });
+  await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
+  await expect(pageGeneration.getByRole('button', { name: 'このページを生成（推奨）（カラー）', exact: true })).toBeVisible();
+  await expect(pageGeneration.getByRole('button', { name: 'このページを生成（推奨）（モノクロ）', exact: true })).toBeVisible();
+  await expect(pageGeneration.getByRole('button', { name: '未生成の画像を一括生成（カラー）', exact: true })).toBeVisible();
+  await expect(pageGeneration.getByRole('button', { name: '未生成の画像を一括生成（モノクロ）', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'アカウントメニュー', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pageGeneration.evaluate((element) => window.scrollBy(0, element.getBoundingClientRect().top - 230));
+  await page.screenshot({ path: testInfo.outputPath('page-generation-mobile.png') });
 });
 
 test('回収保留の場合に有料画像生成を止めて無料の話編集を維持する', async ({ page }) => {
@@ -2121,16 +2151,116 @@ test('ページ設計とページ生成の操作をページ編集の保存導�
   await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja');
   await expect(page.getByRole('heading', { name: 'ページ設計', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'ページを設計してストーリーから自動入力', exact: true })).toBeVisible();
-  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'カラー生成', exact: true })).toBeVisible();
-  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'このページを生成（推奨）（カラー）', exact: true })).toBeVisible();
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'このページを生成（推奨）（モノクロ）', exact: true })).toBeVisible();
   const flexibleGenerationJa = page.getByRole('region', { name: 'より自由な生成', exact: true });
   await expect(flexibleGenerationJa.getByRole('button', { name: 'カラー生成（Hy4 Preview）', exact: true })).toBeDisabled();
   await expect(flexibleGenerationJa.getByRole('button', { name: '白黒で生成（Hy4 Preview）', exact: true })).toBeDisabled();
 
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: '白黒で生成', exact: true })).toBeVisible();
+  await expect(pageStack.locator('.page-section-generate').getByRole('button', { name: 'このページを生成（推奨）（モノクロ）', exact: true })).toBeVisible();
 });
+
+for (const initiallyEnabled of [false, true]) {
+  // Unified Spec §6: suggestions are requested under v2, but sidecar notes change only through explicit add/apply/save actions.
+  test(`Story AIの演出提案は明示的な追加と保存まで適用せず既存sidecarを保つ（初期有効=${initiallyEnabled}）`, async ({ page }) => {
+    await seedEnglishUi(page);
+    await seedAuthenticatedSession(page);
+    const existingNote = '「Arrival at the fort.」と「A suspicious briefing.」は同じコマにする';
+    const suggestedNote = '「A suspicious briefing.」と「A duel in the rain.」は別のコマにする';
+    const savedEpisode = {
+      ...episode,
+      story_input_mode: 'full',
+      story_full_draft: 'Arrival at the fort.\nA suspicious briefing.\nA duel in the rain.',
+      production_notes_enabled: initiallyEnabled,
+      production_notes: [existingNote],
+    };
+    const episodeSaves: Array<Record<string, unknown>> = [];
+    let improveRequests = 0;
+    await page.route('**/api/**', async (route) => {
+      const request = route.request();
+      const pathname = new URL(request.url()).pathname;
+      if (pathname === '/api/story/production-notes-capabilities') {
+        await route.fulfill({ json: { enabled: true } });
+        return;
+      }
+      if (pathname === `/api/chapters/${chapter.id}/episodes` && request.method() === 'GET') {
+        await route.fulfill({ json: { episodes: [savedEpisode] } });
+        return;
+      }
+      if (pathname === `/api/episodes/${episode.id}` && request.method() === 'PUT') {
+        const body = request.postDataJSON() as Record<string, unknown>;
+        episodeSaves.push(body);
+        await route.fulfill({ json: { ...savedEpisode, ...body } });
+        return;
+      }
+      if (pathname === '/api/story/improve-episode-draft' && request.method() === 'POST') {
+        improveRequests += 1;
+        const body = request.postDataJSON() as Record<string, unknown>;
+        expect(body.include_production_notes).toBe(true);
+        expect(body.episode_id).toBe(episode.id);
+        await route.fulfill({ json: {
+          production_notes: [suggestedNote],
+          draft: {
+            title: savedEpisode.title,
+            purpose: savedEpisode.purpose,
+            story_input_mode: 'full',
+            story_full_draft: 'Arrival at the fort.\nA suspicious briefing.\nA duel in the rain.',
+            introduction: null,
+            middle: null,
+            climax: null,
+            ending_hook: null,
+          },
+          compiler_provider: 'openai',
+          compiler_model: 'gpt-6-luna',
+          compiler_prompt_version: 'test-v1',
+          compiler_error: null,
+        } });
+        return;
+      }
+      await mockApi(route);
+    });
+
+    await page.goto('/');
+    await openMangaStep(page, '1. Story');
+    const storyAiSection = page.getByRole('heading', { name: 'Story AI', exact: true }).locator('xpath=ancestor::section[1]');
+    await storyAiSection.getByRole('textbox', { name: 'Instruction', exact: true }).fill('Improve the scene direction.');
+    await storyAiSection.getByRole('button', { name: 'Improve draft', exact: true }).click();
+
+    await expect.poll(() => improveRequests).toBe(1);
+    await expect.poll(() => episodeSaves).toHaveLength(1);
+    expect(episodeSaves[0]?.production_notes_enabled).toBe(initiallyEnabled);
+    expect(episodeSaves[0]?.production_notes).toEqual([existingNote]);
+    await expect(storyAiSection.getByText(`# ${suggestedNote}`, { exact: true })).toBeVisible();
+    await expect(storyAiSection.getByRole('textbox', { name: 'Improved full story', exact: true })).not.toHaveValue(new RegExp(suggestedNote));
+
+    await storyAiSection.getByRole('button', { name: 'Add to improved draft', exact: true }).click();
+    await expect(storyAiSection.getByRole('textbox', { name: 'Improved full story', exact: true })).toHaveValue(new RegExp(suggestedNote));
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect.poll(() => episodeSaves).toHaveLength(2);
+    expect(episodeSaves[1]?.production_notes_enabled).toBe(initiallyEnabled);
+    expect(episodeSaves[1]?.production_notes).toEqual([existingNote]);
+
+    if (!initiallyEnabled) {
+      const preview = storyAiSection.getByRole('textbox', { name: 'Improved full story', exact: true });
+      await preview.fill((await preview.inputValue()).replace(`\n# ${suggestedNote}`, ''));
+      await storyAiSection.getByRole('button', { name: 'Apply all', exact: true }).click();
+      await page.getByRole('button', { name: 'Save', exact: true }).click();
+      await expect.poll(() => episodeSaves).toHaveLength(3);
+      expect(episodeSaves[2]?.production_notes_enabled).toBe(false);
+      expect(episodeSaves[2]?.production_notes).toEqual([existingNote]);
+      await storyAiSection.getByRole('button', { name: 'Add to improved draft', exact: true }).click();
+    }
+
+    await storyAiSection.getByRole('button', { name: 'Apply all', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+
+    await expect.poll(() => episodeSaves).toHaveLength(initiallyEnabled ? 3 : 4);
+    expect(episodeSaves.at(-1)?.production_notes_enabled).toBe(true);
+    expect(episodeSaves.at(-1)?.production_notes).toEqual([existingNote, suggestedNote]);
+  });
+}
 
 for (const inlineCommands of [false, true]) {
 test(`単一のページ設計操作は骨格完了後にだけ自動入力を一度開始し生成画像を保護する（本文コマンド=${inlineCommands}）`, async ({ page }) => {
@@ -2195,6 +2325,11 @@ test(`単一のページ設計操作は骨格完了後にだけ自動入力を�
   });
 
   await page.goto('/');
+  if (inlineCommands) {
+    await openMangaStep(page, '1. Story');
+    await expect(page.getByRole('checkbox')).toHaveCount(0);
+    await expect(page.getByText('Use === for page breaks and --- for panel breaks. Wrap a specific request in # characters, for example #request#.', { exact: true })).toBeVisible();
+  }
   await openMangaStep(page, '3. Pages');
   page.once('dialog', (dialog) => dialog.accept());
   const designPages = page.getByRole('button', { name: 'Design pages and autofill from story', exact: true });

@@ -174,8 +174,8 @@ export function GenerationBatchControls(props: Props): React.JSX.Element | null 
         {props.kind === 'character_references'
           ? (props.language === 'ja' ? '未確定キャラ・状態変化を一括生成して確定' : 'Generate and confirm missing character images')
           : style === 'color'
-            ? (props.language === 'ja' ? '未生成を一括生成（カラー）' : 'Generate missing pages (color)')
-            : (props.language === 'ja' ? '未生成を一括生成（白黒）' : 'Generate missing pages (monochrome)')}
+            ? (props.language === 'ja' ? '未生成の画像を一括生成（カラー）' : 'Generate missing pages (color)')
+            : (props.language === 'ja' ? '未生成の画像を一括生成（モノクロ）' : 'Generate missing pages (monochrome)')}
       </button>)}
     </div>
     {batch === null ? null : <div className="notice info batch-generation-status">

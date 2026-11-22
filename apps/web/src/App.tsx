@@ -522,6 +522,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Confirmed references': '確定済みレファレンス',
   'Character list': 'キャラ一覧',
   'Character editor': 'キャラ編集',
+  'Autofill character details': 'キャラ情報の自動入力',
   'Story context': 'ストーリー文脈',
   'Target episode': '対象の話',
   'Chapter / Episode': '章と話',
@@ -2435,10 +2436,12 @@ function StudioShell(props: {
   const readerScope = JSON.stringify([activeOrganizationId, selectedEpisodeId]);
   const readerScopeRef = useRef(readerScope);
   useLayoutEffect(() => { readerScopeRef.current = readerScope; }, [readerScope]);
+  // UI guidance must not overwrite the independently saved production-note setting.
   const [productionNoteScope, setProductionNoteScope] = useState<string | null>(null);
   const [storyProductionNoteSuggestions, setStoryProductionNoteSuggestions] = useState<{
     scope: string;
     notes: string[];
+    selectedNotes: string[];
   } | null>(null);
   const [readerPosition, setReaderPosition] = useState({ scope: readerScope, index: 0 });
   const readerPage = readerPosition.scope === readerScope ? readerPosition.index : 0;
@@ -2968,7 +2971,9 @@ function StudioShell(props: {
     retry: false,
   });
   const productionNotesRequested = storyProductionNoteCapabilities.data?.enabled === true &&
-    productionNoteScope === readerScope;
+    // Initial episode hydration may precede selection; a saved enabled setting
+    // must survive that render even before the local selection scope catches up.
+    (productionNoteScope === readerScope || selectedEpisode?.production_notes_enabled === true);
   const separatedProductionNotes = separateWebProductionNoteLines(
     episodeDraft.story_full_draft,
     productionNotesRequested,
@@ -4601,6 +4606,23 @@ function StudioShell(props: {
   };
 
   // Estimation is deliberately draft-only; a response may change the page input only when its editor context is unchanged.
+  // Selecting a proposal changes only the preview. Enable saved notes only when
+  // an explicitly selected note still exists in the text applied to the episode.
+  const applyStoryImprovement = (field?: 'ending_hook'): void => {
+    if (storyImprovementDraft === null) return;
+    const appliedText = field === 'ending_hook'
+      ? storyImprovementDraft.ending_hook ?? ''
+      : buildFullEpisodeStoryText(storyImprovementDraft);
+    const appliedLines = appliedText.split(/\r?\n/u);
+    if (storyProductionNoteSuggestions?.scope === readerScope
+      && storyProductionNoteSuggestions.selectedNotes.some((note) => appliedLines.includes(`# ${note}`))) {
+      setProductionNoteScope(readerScope);
+    }
+    setEpisodeDraft((current) => field === 'ending_hook'
+      ? { ...current, ending_hook: storyImprovementDraft.ending_hook ?? current.ending_hook }
+      : applyStoryImprovementDraftToEpisodeDraft(current, storyImprovementDraft));
+  };
+
   const estimateSelectedEpisodePages = async (): Promise<void> => {
     if (selectedEpisode === null || !canCreateActiveOrganizationWorks || episodeProseDraft.story_full_draft.trim().length === 0 || estimatingPages) return;
     const submittedRevision = pageEstimateRevision;
@@ -6445,17 +6467,10 @@ function StudioShell(props: {
                     />
                     {storyProductionNoteCapabilities.data?.enabled === true ? (
                       <div className="stack">
-                        <label>
-                          <input type="checkbox" checked={productionNotesRequested}
-                            onChange={(event) => setProductionNoteScope(event.target.checked ? readerScope : null)} />
-                          {pickUiText(uiLanguage, 'Use production notes', '漫画の演出指示を使う')}
-                        </label>
-                        {separatedProductionNotes.notes.map((note) => <small key={note}># {note}</small>)}
-                        {productionNotesRequested ? <small>{pickUiText(uiLanguage,
-                          'Examples: #「A」と「B」は同じコマ / 別のコマ, #「A」のコマから「ミオ」は「雨ぬれ」状態, #「B」のコマで「ミオ」は通常に戻る',
-                          '書き方例: #「A」と「B」は同じコマ / 別のコマ、#「A」のコマから「ミオ」は「雨ぬれ」状態、#「B」のコマで「ミオ」は通常に戻る')}</small> : null}
-                        <small>{pickUiText(uiLanguage, 'Inline ＃…＃, --- and === commands apply automatically. Place --- or === on its own line. Text between delimiters fixes a panel or page; unmarked regions are allocated automatically.', '本文の＃…＃、---、=== は自動で適用します。--- または === はそれだけの行に書きます。区切りの間を1コマ／1ページに固定し、区切りのない部分は自動配分します。')}</small>
-                        {inlineProductionCommands ? <small>{pickUiText(uiLanguage, 'Inline commands detected. Saved production notes keep their existing enabled or disabled setting.', '本文の特殊コマンドを検出しました。保存済みの演出メモの有効・無効は変更しません。')}</small> : null}
+                        {/* Design: this is guidance only. Existing saved-note scope and sidecar data stay untouched. */}
+                        <small style={{ whiteSpace: 'pre-line' }}>{pickUiText(uiLanguage,
+                          'Use === for page breaks and --- for panel breaks. Wrap a specific request in # characters, for example #request#.',
+                          'ページは「===」\nコマは「---」\nで区切ると自動入力の際に忠実に反映します。\nその他、特定の要望は「#要望の内容#」といったように「#」で内容を囲って指定してください。')}</small>
                       </div>
                     ) : null}
                     <div className="episode-save-mobile">
@@ -6488,7 +6503,8 @@ function StudioShell(props: {
                                 setStoryBusy(true);
                                 await saveCurrentEpisodeContext();
                                 const result = await api.improveEpisodeDraft({
-                                  ...(applyProductionCommands ? { include_production_notes: true } : {}),
+                                  // Suggestions remain available without the removed UI toggle; applying one still uses the existing explicit action below.
+                                  ...(productionNotesV2 ? { include_production_notes: true } : {}),
                                   episode_id: selectedEpisode.id,
                                   instruction: storyInstruction,
                                   language: uiLanguage,
@@ -6497,7 +6513,7 @@ function StudioShell(props: {
                                   },
                                 }, activeOrganizationId);
                                 setStoryImprovementDraft(result.draft);
-                                setStoryProductionNoteSuggestions({ scope: readerScope, notes: result.production_notes ?? [] });
+                                setStoryProductionNoteSuggestions({ scope: readerScope, notes: result.production_notes ?? [], selectedNotes: [] });
                                 setStoryImprovementMeta({
                                   compiler_provider: result.compiler_provider,
                                   compiler_model: result.compiler_model,
@@ -6519,13 +6535,7 @@ function StudioShell(props: {
                         <button
                           className="ghost-button"
                           disabled={storyImprovementDraft === null}
-                          onClick={() =>
-                            setEpisodeDraft((current) =>
-                              storyImprovementDraft === null
-                                ? current
-                                : applyStoryImprovementDraftToEpisodeDraft(current, storyImprovementDraft),
-                            )
-                          }
+                          onClick={() => applyStoryImprovement()}
                           type="button"
                         >
                           <Save size={16} />
@@ -6547,7 +6557,10 @@ function StudioShell(props: {
                             disabled={current.split(/\r?\n/u).includes(line) || revised.length > (field === 'story_full_draft' ? 8_000 : 2_000)}
                             onClick={() => {
                               setStoryImprovementDraft({ ...storyImprovementDraft, [field]: revised });
-                              setProductionNoteScope(readerScope);
+                              setStoryProductionNoteSuggestions({
+                                ...storyProductionNoteSuggestions,
+                                selectedNotes: [...new Set([...storyProductionNoteSuggestions.selectedNotes, note])],
+                              });
                             }}>
                             {pickUiText(uiLanguage, 'Add to improved draft', '改善案にこの指示を追加')}
                           </button>
@@ -6577,11 +6590,7 @@ function StudioShell(props: {
                           />
                           <button
                             className="secondary-button"
-                            onClick={() =>
-                              setEpisodeDraft((current) => storyImprovementDraft === null
-                                ? current
-                                : applyStoryImprovementDraftToEpisodeDraft(current, storyImprovementDraft))
-                            }
+                            onClick={() => applyStoryImprovement()}
                             type="button"
                           >
                             <Save size={16} />
@@ -6657,7 +6666,7 @@ function StudioShell(props: {
                                 }))
                               }
                             />
-                            <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, ending_hook: storyImprovementDraft?.ending_hook ?? current.ending_hook }))} type="button">
+                            <button className="secondary-button" onClick={() => applyStoryImprovement('ending_hook')} type="button">
                               <Save size={16} />
                               {translateUiString(uiLanguage, 'Apply ending hook')}
                             </button>
@@ -6799,43 +6808,42 @@ function StudioShell(props: {
                     if (isEntityDraftDirty()) discardEntityDraft();
                     void runAction('Save named characters from this episode', runEpisodeCharacterAutofill);
                   }} type="button"><Save size={16} />{pickUiText(uiLanguage, 'Autofill and save character details', 'キャラ情報を自動入力して保存')}</button>}>
-                    <p className="muted small">{pickUiText(uiLanguage, 'Saves unambiguous named characters and states. No image preview is generated.', '名前付きキャラと状態を自動入力して保存します。画像は生成しません。')}</p>
+                    <p className="muted small">{pickUiText(uiLanguage, 'Extracts new characters from the entered story.', '入力されたストーリーから新規キャラクターを抽出します')}</p>
                     {characterAutofillResult?.scope === readerScope && characterAutofillResult.result.version === selectedEpisode.version ? <div className="stack">
                       {characterAutofillResult.result.characters.length === 0 && characterAutofillResult.result.skipped_names.length === 0 ? <div className="notice notice-info">
                         {pickUiText(uiLanguage, 'No named characters were found to save from this episode.', 'この話には保存する名前付きキャラクターが見つかりませんでした。')}
                       </div> : null}
-                      {characterAutofillResult.result.characters.map((character) => (
-                        <div className="mini-card" key={character.entity_id}>
-                          <strong>{character.name}</strong>
-                          <p className="muted small">{character.created
-                            ? pickUiText(uiLanguage, 'New character saved.', '新しいキャラクターを保存しました。')
-                            : pickUiText(uiLanguage, 'Existing character updated with saved episode states.', '既存キャラクターに話の状態を保存しました。')}
-                            {' '}{pickUiText(uiLanguage, `${character.states_added} state${character.states_added === 1 ? '' : 's'} added.`, `状態を${character.states_added}件追加しました。`)}</p>
-                          <button className="ghost-button" type="button" onClick={() => selectSuggestedExistingEntity(character.entity_id)}>
-                            {pickUiText(uiLanguage, 'Open saved character', '保存したキャラクターを開く')}
-                          </button>
-                        </div>
-                      ))}
-                      {characterAutofillResult.result.skipped_names.length > 0 ? <div className="notice notice-info">
-                        {pickUiText(uiLanguage, 'Skipped because the name was ambiguous or did not match:', '名前が曖昧、または一致しなかったため保存しなかった項目:')}
-                        <ul>{characterAutofillResult.result.skipped_names.map((name) => <li key={name}>{name}</li>)}</ul>
+                      {characterAutofillResult.result.characters.length > 0 ? <div className="notice notice-success">
+                        {pickUiText(uiLanguage,
+                          `${characterAutofillResult.result.characters.length} saved character${characterAutofillResult.result.characters.length === 1 ? '' : 's'} are available in the character portraits above.`,
+                          `${characterAutofillResult.result.characters.length}件の保存済みキャラクターを上のキャラクター一覧から選択できます。`)}
                       </div> : null}
-                      {characterAutofillResult.result.appearance_review?.suggestions.map((suggestion, index) => (
-                        <div className="mini-card" key={`${suggestion.entity_id}:${suggestion.field}:${suggestion.value}:${suggestion.quote}:${index}`}>
-                          <strong>{suggestion.name}</strong>
-                          <p><strong>{appearanceReviewFieldLabel(uiLanguage, suggestion.field)}</strong>: {appearanceReviewValueLabel(uiLanguage, suggestion.field, suggestion.value)}</p>
-                          <p className="muted small">{pickUiText(uiLanguage, 'Source', '本文')}: 「{suggestion.quote}」</p>
-                          <button className="secondary-button" disabled={busyAction !== null} onClick={() => void runAction('Apply character appearance', () => approveCharacterAppearance(suggestion))} type="button">
-                            <Check size={16} />{pickUiText(uiLanguage, 'Apply this field', 'この項目を反映')}
-                          </button>
-                        </div>
-                      ))}
-                      {characterAutofillResult.result.appearance_review?.unresolved.map((issue, index) => (
-                        <div className="notice notice-info" key={`${issue.reason}:${index}`}>
-                          <strong>{appearanceReviewReasonLabel(uiLanguage, issue.reason)}</strong>
-                          <p className="muted small">{pickUiText(uiLanguage, 'Source', '本文')}: 「{issue.quote}」</p>
-                        </div>
-                      ))}
+                      {/* Design: saved characters remain in the portrait picker; only actionable source-backed review evidence is disclosed here. */}
+                      {(characterAutofillResult.result.skipped_names.length > 0
+                        || (characterAutofillResult.result.appearance_review?.suggestions.length ?? 0) > 0
+                        || (characterAutofillResult.result.appearance_review?.unresolved.length ?? 0) > 0) ? <details className="advanced-disclosure">
+                        <summary>{pickUiText(uiLanguage, 'Review saved-character details', '保存内容と要確認の根拠を確認')}</summary>
+                        {characterAutofillResult.result.skipped_names.length > 0 ? <div className="notice notice-info">
+                          {pickUiText(uiLanguage, 'Skipped because the name was ambiguous or did not match:', '名前が曖昧、または一致しなかったため保存しなかった項目:')}
+                          <ul>{characterAutofillResult.result.skipped_names.map((name) => <li key={name}>{name}</li>)}</ul>
+                        </div> : null}
+                        {characterAutofillResult.result.appearance_review?.suggestions.map((suggestion, index) => (
+                          <div className="mini-card" key={`${suggestion.entity_id}:${suggestion.field}:${suggestion.value}:${suggestion.quote}:${index}`}>
+                            <strong>{suggestion.name}</strong>
+                            <p><strong>{appearanceReviewFieldLabel(uiLanguage, suggestion.field)}</strong>: {appearanceReviewValueLabel(uiLanguage, suggestion.field, suggestion.value)}</p>
+                            <p className="muted small">{pickUiText(uiLanguage, 'Source', '本文')}: 「{suggestion.quote}」</p>
+                            <button className="secondary-button" disabled={busyAction !== null} onClick={() => void runAction('Apply character appearance', () => approveCharacterAppearance(suggestion))} type="button">
+                              <Check size={16} />{pickUiText(uiLanguage, 'Apply this field', 'この項目を反映')}
+                            </button>
+                          </div>
+                        ))}
+                        {characterAutofillResult.result.appearance_review?.unresolved.map((issue, index) => (
+                          <div className="notice notice-info" key={`${issue.reason}:${index}`}>
+                            <strong>{appearanceReviewReasonLabel(uiLanguage, issue.reason)}</strong>
+                            <p className="muted small">{pickUiText(uiLanguage, 'Source', '本文')}: 「{issue.quote}」</p>
+                          </div>
+                        ))}
+                      </details> : null}
                     </div> : null}
                   </PanelSection> : null}
 
@@ -7427,24 +7435,6 @@ function StudioShell(props: {
                   </PanelSection>
                   <fieldset className="page-editing-content" disabled={pageDesignStage !== null}>
                   <PanelSection title="Pages" className="page-section-pages" collapsible>
-                    <GenerationBatchControls
-                      api={api}
-                      beforeQuote={saveCurrentPageGenerationContext}
-                      canGenerate={canCreateActiveOrganizationWorks && !paidGenerationBlocked}
-                      episodeId={selectedEpisode.id}
-                      kind="pages"
-                      language={uiLanguage}
-                      onCompleted={async () => {
-                        await invalidateScopedQuery(['pages', selectedEpisode.id]);
-                        if (selectedPage !== null) {
-                          await invalidateScopedQuery(['page', selectedPage.id]);
-                        }
-                      }}
-                      organizationId={activeOrganizationId}
-                      renderStyles={['color', 'monochrome']}
-                      sessionKey={props.authSessionKey}
-                      workId={selectedWork?.id ?? null}
-                    />
                     <div className="page-grid">
                       {pages.map((page) => (
                         <button
@@ -7957,7 +7947,7 @@ function StudioShell(props: {
                         className="page-section-generate"
                         collapsible
                         actions={
-                          <div className="toolbar">
+                          <div className="toolbar page-generation-actions">
                             <button
                               className="primary-button"
                               disabled={generatePageDisabled}
@@ -7977,7 +7967,7 @@ function StudioShell(props: {
                               type="button"
                             >
                               <Play size={16} />
-                              {translateUiString(uiLanguage, 'Generate in color')}
+                              {pickUiText(uiLanguage, 'Generate in color', 'このページを生成（推奨）（カラー）')}
                             </button>
                             <button
                               className="secondary-button"
@@ -7998,8 +7988,26 @@ function StudioShell(props: {
                               type="button"
                             >
                               <Play size={16} />
-                              {translateUiString(uiLanguage, 'Generate monochrome page')}
+                              {pickUiText(uiLanguage, 'Generate monochrome page', 'このページを生成（推奨）（モノクロ）')}
                             </button>
+                            <GenerationBatchControls
+                              api={api}
+                              beforeQuote={saveCurrentPageGenerationContext}
+                              canGenerate={canCreateActiveOrganizationWorks && !paidGenerationBlocked}
+                              episodeId={selectedEpisode.id}
+                              kind="pages"
+                              language={uiLanguage}
+                              onCompleted={async () => {
+                                await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                                if (selectedPage !== null) {
+                                  await invalidateScopedQuery(['page', selectedPage.id]);
+                                }
+                              }}
+                              organizationId={activeOrganizationId}
+                              renderStyles={['color', 'monochrome']}
+                              sessionKey={props.authSessionKey}
+                              workId={selectedWork?.id ?? null}
+                            />
                             <button
                               className="ghost-button"
                               onClick={() =>
