@@ -1636,3 +1636,8 @@ Discard an invalid audit repair as a whole; only a fully revalidated unchanged
 draft may survive. Never restore source anchors to bypass manuscript checks.
 Strict state extraction in production-note flows uses the original active source
 fields and separate literal evidence spans, never re-derived story sections (§6).
+
+Page estimation gives authored === / ＝＝＝ sections precedence without a model
+call, including nonempty outer sections. The manual result displays page count
+only; its legacy panel_count is the authored lower bound. Without page boundaries,
+Luna counts readable compositions rather than each action or dialogue turn (§6).

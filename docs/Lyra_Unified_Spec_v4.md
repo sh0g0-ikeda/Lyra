@@ -1533,11 +1533,23 @@ retains each saved section's identity. The compiler sees separate literal eviden
 spans and uses the same source authority as final and transaction-locked validation.
 Do not repair a field mismatch by remapping a quote or weakening evidence checks.
 
-“話の長さから推定” uses GPT-6 Luna / low with validated block IDs and panel counts
-to estimate the current unsaved narrative. Without page constraints, the server
-computes `ceil(total panels / 4)`. Manual one-panel blocks count as one; a fixed
-page counts as one page, and each free region separated by page markers is
-estimated independently at four panels per page. The API is authenticated,
+“話の長さから推定” counts nonempty authored page sections directly when standalone
+`===` / `＝＝＝` boundaries are present, including the leading and trailing sections.
+It returns that count as both `estimated_pages` and `explicit_page_count` without
+calling the model. Empty edge sections do not add pages. For this manual estimate,
+`panel_count` retains the known lower bound from authored blocks and
+`calculated_pages` retains its ceiling divided by four for response compatibility;
+clients show only the explicit page count, not an inferred panel total. More than
+eight authored panel blocks within one such page is rejected. This estimate does
+not change the sparse-boundary interpretation of generation or force unmarked
+leading/trailing prose into fixed panels.
+Without page boundaries, GPT-6 Luna / low estimates the current unsaved narrative
+using validated block IDs and panel counts; the server computes
+`ceil(total panels / 4)`. Count readable manga compositions, not individual verbs,
+sentences or dialogue turns: short exchanges, related actions and accompanying
+reactions may share one panel. Distinct times, locations and incompatible visual
+states still need separate panels. Manual one-panel blocks count as one.
+The API is authenticated,
 organization-scoped and read-only: it does not save drafts or spend image credits.
 Clients update the page-count field for review and normal saving, discard stale
 results after scope/draft/count changes, and show an over-limit result without

@@ -528,7 +528,7 @@ describe('StoryCollaborationService', () => {
     });
   });
 
-  it('保存flagが無効でも単独行のページ区切りは明示ページ数を最終見積もりに使う', async () => {
+  it('保存flagが無効でも単独行のページ区切りはAIを呼ばずページ数を決定する', async () => {
     const client = new FakeStoryAiClient();
     client.estimatedPanelCounts = [2, 2, 1];
     const service = new StoryCollaborationService(new FakeStoryRepository(), client);
@@ -543,16 +543,16 @@ describe('StoryCollaborationService', () => {
         introduction: null, middle: null, climax: null, endingHook: null,
       },
     })).resolves.toEqual({
-      panel_count: 5,
-      calculated_pages: 2,
+      panel_count: 3,
+      calculated_pages: 1,
       estimated_pages: 3,
       explicit_page_count: 3,
     });
+    expect(client.estimateCalls).toBe(0);
   });
 
-  it('固定ページの推定が8コマを超える場合は1ページとして返さない', async () => {
+  it('ページ内に明示されたコマが8コマを超える場合はAIを呼ぶ前に拒否する', async () => {
     const client = new FakeStoryAiClient();
-    client.estimatedPanelCounts = [9];
     const service = new StoryCollaborationService(new FakeStoryRepository(), client);
 
     await expect(service.estimateEpisodePages('user-1', {
@@ -561,12 +561,11 @@ describe('StoryCollaborationService', () => {
       language: 'ja',
       baseDraft: {
         title: null, purpose: null, storyInputMode: 'full',
-        storyFullDraft: '===\n長い固定ページ。\n===',
+        storyFullDraft: `===\n${Array.from({ length: 9 }, (_value, index) => `コマ${index + 1}`).join('\n---\n')}\n===`,
         introduction: null, middle: null, climax: null, endingHook: null,
       },
     })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
-    expect(client.lastRequest?.userPrompt).toContain('"fixed_page":true');
-    expect(client.lastRequest?.userPrompt).toContain('"page_index":1');
+    expect(client.estimateCalls).toBe(0);
   });
 
   it('演出指示を本文としてモデルへ送らず、区切り由来の最低コマ数を下回らない', async () => {
@@ -589,7 +588,7 @@ describe('StoryCollaborationService', () => {
     expect(client.lastRequest?.userPrompt).not.toContain('別のコマにする');
   });
 
-  it('部分的なページ指定は固定ページと前後の自由領域を別々に切り上げる', async () => {
+  it('部分的なページ指定は前後の非空領域もページと数える', async () => {
     const client = new FakeStoryAiClient();
     client.estimatedPanelCounts = [5, 4, 5];
     const service = new StoryCollaborationService(new FakeStoryRepository(), client);
@@ -604,11 +603,39 @@ describe('StoryCollaborationService', () => {
         introduction: null, middle: null, climax: null, endingHook: null,
       },
     })).resolves.toEqual({
-      panel_count: 14,
-      calculated_pages: 4,
-      estimated_pages: 5,
-      explicit_page_count: null,
+      panel_count: 3,
+      calculated_pages: 1,
+      estimated_pages: 3,
+      explicit_page_count: 3,
     });
+    expect(client.estimateCalls).toBe(0);
+  });
+
+  it.each([
+    ['先頭だけの区切り', '===\n本文', 1],
+    ['末尾だけの区切り', '本文\n===', 1],
+    ['中間の区切り', '前半\n===\n後半', 2],
+    ['先頭末尾の空領域', '===\n本文\n===', 1],
+    ['連続する空の区間', '===\n===\n本文\n===\n===', 1],
+    ['全角の区切り', '前半\n＝＝＝\n後半', 2],
+    ['9か所の区切り', Array.from({ length: 10 }, (_value, index) => `場面${index + 1}`).join('\n===\n'), 10],
+  ])('%sでは非空ページ数を手動指定とする', async (_label, storyFullDraft, expectedPages) => {
+    const client = new FakeStoryAiClient();
+    const service = new StoryCollaborationService(new FakeStoryRepository(), client);
+
+    await expect(service.estimateEpisodePages('user-1', {
+      episodeId: '33333333-3333-4333-8333-333333333333',
+      productionNotesEnabled: false,
+      language: 'ja',
+      baseDraft: {
+        title: null, purpose: null, storyInputMode: 'full', storyFullDraft,
+        introduction: null, middle: null, climax: null, endingHook: null,
+      },
+    })).resolves.toMatchObject({
+      estimated_pages: expectedPages,
+      explicit_page_count: expectedPages,
+    });
+    expect(client.estimateCalls).toBe(0);
   });
 
   it('所有対象が見つからない場合はモデルを呼ばない', async () => {
@@ -653,6 +680,31 @@ describe('StoryCollaborationService', () => {
       public override async estimateEpisodePanelCount(): Promise<Array<{ blockId: string; panelCount: number }>> {
         this.estimateCalls += 1;
         return [{ blockId: 'unknown-block', panelCount: 1 }];
+      }
+    }();
+    const service = new StoryCollaborationService(new FakeStoryRepository(), client);
+
+    await expect(service.estimateEpisodePages('user-1', {
+      episodeId: '33333333-3333-4333-8333-333333333333', productionNotesEnabled: false,
+      language: 'ja',
+      baseDraft: {
+        title: null, purpose: null, storyInputMode: 'full', storyFullDraft: '本文',
+        introduction: null, middle: null, climax: null, endingHook: null,
+      },
+    })).rejects.toMatchObject({ code: 'CONFIGURATION_ERROR' });
+  });
+
+  it.each([
+    ['0', 0],
+    ['小数', 1.5],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['上限超過', 1001],
+  ])('providerが不正なコマ数(%s)を返した場合は受け入れない', async (_label, panelCount) => {
+    const client = new class extends FakeStoryAiClient {
+      public override async estimateEpisodePanelCount(): Promise<Array<{ blockId: string; panelCount: number }>> {
+        this.estimateCalls += 1;
+        return [{ blockId: 'segment-1', panelCount }];
       }
     }();
     const service = new StoryCollaborationService(new FakeStoryRepository(), client);
