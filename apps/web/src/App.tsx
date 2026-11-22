@@ -4636,7 +4636,7 @@ function StudioShell(props: {
       const hasManualBounds = result.explicit_page_count !== null || result.estimated_pages !== result.calculated_pages;
       const resultText = !hasManualBounds
         ? pickUiText(uiLanguage, `${result.panel_count} panels → ${nextPages} pages`, `${result.panel_count}コマ→${nextPages}ページ`)
-        : pickUiText(uiLanguage, `${result.panel_count} panels → ${nextPages} pages (manual delimiters take priority)`, `${result.panel_count}コマ→${nextPages}ページ（手動の区切りを優先）`);
+        : pickUiText(uiLanguage, `${nextPages} pages from manual page boundaries`, `ページ区切りから${nextPages}ページ`);
       setPageEstimateState({ error: null, summary: resultText });
     } catch (error) {
       if (pageEstimateRevisionRef.current === submittedRevision) {

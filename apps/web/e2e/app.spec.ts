@@ -1074,7 +1074,7 @@ test('未保存本文からページ数を推定し、古い推定結果では�
         await route.fulfill({ json: { panel_count: 36, calculated_pages: 9, estimated_pages: 9, explicit_page_count: null } });
         return;
       }
-      await route.fulfill({ json: { panel_count: 28, calculated_pages: 7, estimated_pages: 6, explicit_page_count: null } });
+      await route.fulfill({ json: { panel_count: 6, calculated_pages: 2, estimated_pages: 6, explicit_page_count: 6 } });
       return;
     }
     await mockStoryNavigationApi(route, fixtures);
@@ -1084,12 +1084,14 @@ test('未保存本文からページ数を推定し、古い推定結果では�
   const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
   const estimate = page.getByRole('button', { name: 'Estimate pages from story length', exact: true });
   const pages = page.getByRole('spinbutton', { name: 'Estimated pages', exact: true });
-  await draft.fill('Current unsaved story used only for the estimate.');
+  const manualDraft = Array.from({ length: 6 }, (_value, index) => `Unsaved scene ${index + 1}`).join('\n===\n');
+  await draft.fill(manualDraft);
   await estimate.click();
   await expect.poll(() => requests.length).toBe(1);
-  expect((requests[0].base_draft as Record<string, unknown>).story_full_draft).toBe('Current unsaved story used only for the estimate.');
+  expect((requests[0].base_draft as Record<string, unknown>).story_full_draft).toBe(manualDraft);
   await expect(pages).toHaveValue('6');
-  await expect(page.getByRole('status').filter({ hasText: 'manual delimiters take priority' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: '6 pages from manual page boundaries' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: '6 panels' })).toHaveCount(0);
   await expect(page.locator('.splash-overlay')).toHaveCount(0);
 
   await page.setViewportSize({ width: 1440, height: 900 });
