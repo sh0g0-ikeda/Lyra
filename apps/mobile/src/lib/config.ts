@@ -238,6 +238,7 @@ const baseConfig: Omit<MobileConfig, 'webEditorUrl'> = {
 export const config: MobileConfig = {
   ...baseConfig,
   webEditorUrl: process.env.EXPO_PUBLIC_APP_VARIANT === 'staging'
+    || process.env.EXPO_PUBLIC_APP_VARIANT === 'testflight'
     ? `${baseConfig.apiBaseUrl.replace(/\/+$/, '')}/`
     : PRODUCTION_WEB_EDITOR_URL
 };

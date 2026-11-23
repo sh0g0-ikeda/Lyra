@@ -6,11 +6,13 @@ const require = createRequire(import.meta.url);
 const createExpoConfig = require('../app.config.js') as (input: {
   config: {
     name: string;
+    version?: string;
     ios?: Record<string, unknown>;
     android?: Record<string, unknown>;
   };
 }) => {
   name: string;
+  version?: string;
   ios?: Record<string, unknown>;
   android?: Record<string, unknown>;
 };
@@ -25,10 +27,12 @@ const originalEnvironment = {
   cognitoRedirectUri: process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI,
   cognitoLogoutRedirectUri: process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI,
   iosAssociatedDomainsEnabled: process.env.EXPO_PUBLIC_IOS_ASSOCIATED_DOMAINS_ENABLED,
+  testflightAppVersion: process.env.LYRA_TESTFLIGHT_APP_VERSION,
 };
 
 const baseConfig = {
   name: 'Lyra Mobile',
+  version: '1.0.11',
   ios: {
     bundleIdentifier: 'jp.lyra.mobile',
     associatedDomains: ['applinks:app.lyra-editor.com'],
@@ -52,6 +56,7 @@ describe('Expo app config', () => {
       EXPO_PUBLIC_COGNITO_REDIRECT_URI: originalEnvironment.cognitoRedirectUri,
       EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI: originalEnvironment.cognitoLogoutRedirectUri,
       EXPO_PUBLIC_IOS_ASSOCIATED_DOMAINS_ENABLED: originalEnvironment.iosAssociatedDomainsEnabled,
+      LYRA_TESTFLIGHT_APP_VERSION: originalEnvironment.testflightAppVersion,
     })) {
       if (value === undefined) {
         delete process.env[key];
@@ -200,13 +205,55 @@ describe('Expo app config', () => {
     process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID = 'stagingclientid123';
     process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/callback';
     process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/logout';
+    process.env.LYRA_TESTFLIGHT_APP_VERSION = '1.0.12';
 
     expect(createExpoConfig({ config: baseConfig })).toMatchObject({
       name: 'Lyra Mobile Staging',
       scheme: 'lyra-mobile-staging',
+      version: '1.0.12',
       ios: { bundleIdentifier: 'jp.lyra.mobile' },
       android: { package: 'com.lyra.mobile.staging' },
     });
+  });
+
+  it.each([undefined, '', '1.0', '1.0.12-beta', '01.0.12', ' 1.0.12 '])(
+    'testflightは無効な専用version %jをfail-fastで拒否する',
+    (version) => {
+      process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
+      process.env.EXPO_PUBLIC_APP_VARIANT = 'testflight';
+      process.env.EXPO_PUBLIC_APP_LINK_HOST = 'staging.lyra-editor.test';
+      process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.staging.lyra-editor.test';
+      process.env.EXPO_PUBLIC_COGNITO_DOMAIN = 'https://staging.auth.example.com';
+      process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID = 'stagingclientid123';
+      process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/callback';
+      process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/logout';
+      if (version === undefined) delete process.env.LYRA_TESTFLIGHT_APP_VERSION;
+      else process.env.LYRA_TESTFLIGHT_APP_VERSION = version;
+
+      expect(() => createExpoConfig({ config: baseConfig })).toThrow(
+        'LYRA_TESTFLIGHT_APP_VERSION must be an x.y.z version for testflight',
+      );
+    },
+  );
+
+  it('testflight専用versionは通常・staging・production設定を変更しない', () => {
+    process.env.LYRA_TESTFLIGHT_APP_VERSION = '1.0.12';
+
+    expect(createExpoConfig({ config: baseConfig }).version).toBe('1.0.11');
+
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'production';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'app.lyra-editor.com';
+    expect(createExpoConfig({ config: baseConfig }).version).toBe('1.0.11');
+
+    process.env.EXPO_PUBLIC_BUILD_ENVIRONMENT = 'preview';
+    process.env.EXPO_PUBLIC_APP_VARIANT = 'staging';
+    process.env.EXPO_PUBLIC_APP_LINK_HOST = 'staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.staging.lyra-editor.test';
+    process.env.EXPO_PUBLIC_COGNITO_DOMAIN = 'https://staging.auth.example.com';
+    process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID = 'stagingclientid123';
+    process.env.EXPO_PUBLIC_COGNITO_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/callback';
+    process.env.EXPO_PUBLIC_COGNITO_LOGOUT_REDIRECT_URI = 'lyra-mobile-staging://auth/mobile/logout';
+    expect(createExpoConfig({ config: baseConfig }).version).toBe('1.0.11');
   });
 
   it.each([
@@ -238,7 +285,10 @@ describe('Expo app config', () => {
     });
     expect(eas.build.testflight).toMatchObject({
       extends: 'staging', distribution: 'store', channel: 'ux-review', autoIncrement: true,
-      environment: 'preview', env: { EXPO_PUBLIC_APP_VARIANT: 'testflight' },
+      environment: 'preview', env: {
+        EXPO_PUBLIC_APP_VARIANT: 'testflight',
+        LYRA_TESTFLIGHT_APP_VERSION: '1.0.12',
+      },
     });
     expect(eas.submit.testflight).toEqual({ ios: { ascAppId: '6797564060' } });
   });

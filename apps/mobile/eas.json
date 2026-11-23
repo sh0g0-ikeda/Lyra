@@ -75,7 +75,8 @@
       "channel": "ux-review",
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_APP_VARIANT": "testflight"
+        "EXPO_PUBLIC_APP_VARIANT": "testflight",
+        "LYRA_TESTFLIGHT_APP_VERSION": "1.0.12"
       }
     },
     "ios-simulator": {

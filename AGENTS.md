@@ -1637,6 +1637,11 @@ draft may survive. Never restore source anchors to bypass manuscript checks.
 Strict state extraction in production-note flows uses the original active source
 fields and separate literal evidence spans, never re-derived story sections (§6).
 
+TestFlight staging builds follow Unified Spec §6: use staging API, login and Web
+editor destinations, the existing App Store identity and a separate validated
+beta marketing/runtime version. Preserve other build profiles and production OTA;
+uploading to TestFlight does not authorize submitting an App Review version.
+
 Paired frame-size/shape directions are resolved against final manuscript slots by
 GPT-6 Luna. Build geometry on the server and save existing custom-frame format in
 the skeleton transaction; preserve counts, RTL order, source ownership, subsequent

@@ -51,7 +51,17 @@ describe('mobile configuration validation', () => {
     expect(config.webEditorUrl).toBe('https://staging.example.test/');
   });
 
-  it('staging以外では既存のproduction Web editor URLを保つ', async () => {
+  it('testflight variantでも検証済みAPI originをWeb editor URLにする', async () => {
+    vi.stubEnv('EXPO_PUBLIC_APP_VARIANT', 'testflight');
+    vi.stubEnv('EXPO_PUBLIC_API_BASE_URL', 'https://staging.example.test');
+    vi.resetModules();
+
+    const { config } = await import('@/lib/config');
+
+    expect(config.webEditorUrl).toBe('https://staging.example.test/');
+  });
+
+  it('stagingとtestflight以外では既存のproduction Web editor URLを保つ', async () => {
     vi.stubEnv('EXPO_PUBLIC_APP_VARIANT', 'preview');
     vi.stubEnv('EXPO_PUBLIC_API_BASE_URL', 'https://preview.example.test');
     vi.resetModules();

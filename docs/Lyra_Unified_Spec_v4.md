@@ -1231,8 +1231,12 @@ credits or redirects to a different environment. The staging Android package and
 iOS internal-build bundle identifier are separate from production, so those test
 apps can coexist with published apps. The dedicated TestFlight profile instead
 uses the existing `jp.lyra.mobile` App Store identity, staging API/Cognito/scheme,
-and `ux-review` channel. It does not publish production OTA updates or submit an
-App Review version. Internal iOS builds target registered physical devices.
+and `ux-review` channel. Its Web editor links also use the staging API origin.
+The TestFlight profile supplies a separate validated marketing version, which
+also determines its app-version OTA runtime, so an already published production
+version does not block the new beta upload. Other profiles retain their existing
+version. It does not publish production OTA updates or submit an App Review
+version. Internal iOS builds target registered physical devices.
 Staging needs its own store testing configuration before a real native checkout
 can be accepted.
 Tutorial content follows the same persisted language without resetting progress.

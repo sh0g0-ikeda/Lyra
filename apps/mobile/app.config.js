@@ -18,6 +18,7 @@ const STAGING_IOS_BUNDLE_IDENTIFIER = 'com.lyra.mobile.staging';
 const STAGING_SCHEME = 'lyra-mobile-staging';
 const STAGING_COGNITO_REDIRECT_URI = `${STAGING_SCHEME}://auth/mobile/callback`;
 const STAGING_COGNITO_LOGOUT_REDIRECT_URI = `${STAGING_SCHEME}://auth/mobile/logout`;
+const APP_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const HOSTNAME_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 function getBuildEnvironment() {
@@ -59,6 +60,16 @@ function getAppLinkHost(environment, variant) {
 
 function isStagingVariant(variant) {
   return variant === 'staging' || variant === 'testflight';
+}
+
+function getTestflightAppVersion() {
+  // TestFlight shares the App Store bundle identity, so its marketing/runtime version must
+  // advance independently without changing the production or independently installed staging app.
+  const version = process.env.LYRA_TESTFLIGHT_APP_VERSION;
+  if (!version || !APP_VERSION_PATTERN.test(version)) {
+    throw new Error('LYRA_TESTFLIGHT_APP_VERSION must be an x.y.z version for testflight');
+  }
+  return version;
 }
 
 function getRequiredStagingEnvironmentValue(name) {
@@ -128,6 +139,7 @@ module.exports = ({ config }) => {
   return {
     ...config,
     ...(isStagingVariant(variant) ? { name: STAGING_APP_NAME, scheme: STAGING_SCHEME } : {}),
+    ...(variant === 'testflight' ? { version: getTestflightAppVersion() } : {}),
     ios: {
       ...ios,
       ...(variant === 'staging' ? { bundleIdentifier: STAGING_IOS_BUNDLE_IDENTIFIER } : {}),
