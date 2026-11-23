@@ -932,7 +932,7 @@ describe('PageService', () => {
     pageRepository.autofillContext = {
       ...pageRepository.autofillContext!,
       layoutConfig: { type: 'custom', manuscript_frame_layout_version: 1 },
-      panels: [{ ...buildAutofillPanelContext(), panelSize: 'small' }],
+      panels: [{ ...buildAutofillPanelContext(), panelSize: 'standard' }],
     };
     const panelRepository = new FakePanelRepository();
     const service = new PageService(
@@ -945,7 +945,7 @@ describe('PageService', () => {
     await service.autofillFromScenes('user-1', 'page-1', 'ja');
 
     expect(panelRepository.updatedPanels[0]?.input).not.toHaveProperty('panelSize');
-    expect(pageRepository.autofillContext.panels[0]?.panelSize).toBe('small');
+    expect(pageRepository.autofillContext?.panels[0]?.panelSize).toBe('standard');
   });
 
   it('scene autofill compiler brief compacts long story context', async () => {
