@@ -35,6 +35,7 @@ vi.mock('@/components/Screen',()=>({Screen:({children}:{children:React.ReactNode
 vi.mock('@/components/Section',()=>({Section:({children}:{children:React.ReactNode})=>children}));
 vi.mock('@/components/ActionableErrorNotice',()=>({ActionableErrorNotice:(props:Record<string,unknown>)=>React.createElement('ActionableErrorNotice',props)}));
 vi.mock('@/components/CharacterChoiceField',()=>({CharacterChoiceField:(props:Record<string,unknown>)=>React.createElement('CharacterChoiceField',props)}));
+vi.mock('@/components/CharacterThumbnailPicker',()=>({CharacterThumbnailPicker:(props:Record<string,unknown>)=>React.createElement('CharacterThumbnailPicker',props)}));
 vi.mock('@/components/CharacterOutfitField',()=>({CharacterOutfitField:(props:Record<string,unknown>)=>React.createElement('CharacterOutfitField',props)}));
 vi.mock('@/components/EntityGenerationBlockers',()=>({EntityGenerationBlockers:(props:Record<string,unknown>)=>React.createElement('EntityGenerationBlockers',props)}));
 vi.mock('@/components/AssetGenerationQuoteDialog',()=>({AssetGenerationQuoteDialog:(props:Record<string,unknown>)=>React.createElement('AssetGenerationQuoteDialog',props)}));

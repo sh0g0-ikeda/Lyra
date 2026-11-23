@@ -25,6 +25,103 @@ const validPageSkeletonPayload = {
 };
 
 describe('OpenAIStoryAiClient', () => {
+  it('コマ割り指示をLunaの厳格な構造出力でサイズと形に分けて返す', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const payload = { directions: [{ direction_index: 0,
+      targets: [{ page_number: 8, order: 2, size: 'largest', shape: 'wide' }] }] };
+    const client = { postJson: async (_path: string, body: Record<string, unknown>) => {
+      requests.push(body);
+      return { body: { output_text: JSON.stringify(payload) }, requestId: 'req-layout' };
+    } } as unknown as OpenAIClient;
+    expect(await new OpenAIStoryAiClient(client).planManuscriptLayouts({ systemPrompt: 'system', userPrompt: 'user' }))
+      .toEqual(payload);
+    expect(requests[0]).toMatchObject({ model: 'gpt-6-luna', reasoning: { effort: 'low' },
+      max_output_tokens: 12000, text: { format: { name: 'manuscript_frame_layout', strict: true } } });
+  });
+
+  it('コマ割り指示の不正なサイズや範囲外の対象をprovider境界で拒否する', async () => {
+    for (const target of [
+      { page_number: 1, order: 0, size: 'largest', shape: null },
+      { page_number: 1, order: 2, size: 'invented', shape: null },
+      { page_number: 1, order: 2, size: null, shape: 'square' },
+    ]) {
+      const client = { postJson: async () => ({ body: { output_text: JSON.stringify({
+        directions: [{ direction_index: 0, targets: [target] }],
+      }) }, requestId: 'req-invalid-layout' }) } as unknown as OpenAIClient;
+      await expect(new OpenAIStoryAiClient(client).planManuscriptLayouts({ systemPrompt: 'system', userPrompt: 'user' }))
+        .rejects.toThrow();
+    }
+  });
+  it('指示保持本文改善をID付きstrict structured outputで返す', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return {
+          body: { output_text: '{"fragments":[{"id":"introduction-1","text":"改善本文"}]}' },
+          requestId: 'req-manuscript-improvement',
+        };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIStoryAiClient(client).improveEpisodeManuscript({
+      systemPrompt: 'system', userPrompt: 'user',
+    })).resolves.toEqual([{ id: 'introduction-1', text: '改善本文' }]);
+    expect(requests[0]).toMatchObject({
+      max_output_tokens: 16000,
+      text: { format: { name: 'episode_manuscript_improvement', strict: true } },
+    });
+  });
+
+  it('指示保持本文改善の空・型不一致provider payloadを拒否する', async () => {
+    for (const output_text of ['', '{"fragments":[]}', '{"fragments":[{"id":"x","text":3}]}']) {
+      const client = {
+        postJson: async () => ({ body: { output_text }, requestId: 'req-invalid-manuscript' }),
+      } as unknown as OpenAIClient;
+      await expect(new OpenAIStoryAiClient(client).improveEpisodeManuscript({
+        systemPrompt: 'system', userPrompt: 'user',
+      })).rejects.toThrow();
+    }
+  });
+
+  it('ページ見積もりをgpt-6-luna lowのbounded structured outputで返す', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const client = {
+      postJson: async (_path: string, payload: Record<string, unknown>) => {
+        requests.push(payload);
+        return { body: { output_text: '{"blocks":[{"block_id":"segment-1","panel_count":8}]}' }, requestId: 'req-estimate' };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIStoryAiClient(client).estimateEpisodePanelCount({
+      systemPrompt: 'system', userPrompt: 'user',
+    });
+
+    expect(result).toEqual([{ blockId: 'segment-1', panelCount: 8 }]);
+    expect(requests[0]).toMatchObject({
+      model: 'gpt-6-luna',
+      reasoning: { effort: 'low' },
+      max_output_tokens: 8192,
+      text: { format: { name: 'episode_panel_count_estimate', strict: true } },
+    });
+  });
+
+  it('ページ見積もりの空または不正なprovider payloadを受理しない', async () => {
+    for (const output_text of [
+      '',
+      '{"blocks":[{"block_id":"segment-1","panel_count":0}]}',
+      '{"blocks":[{"block_id":"segment-1","panel_count":1001}]}',
+      '{"blocks":[{"block_id":"segment-1","panel_count":"8"}]}',
+    ]) {
+      const client = {
+        postJson: async () => ({ body: { output_text }, requestId: 'req-invalid-estimate' }),
+      } as unknown as OpenAIClient;
+      await expect(new OpenAIStoryAiClient(client).estimateEpisodePanelCount({
+        systemPrompt: 'system', userPrompt: 'user',
+      })).rejects.toThrow();
+    }
+  });
+
   it('page skeleton を strict structured output で返す', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {

@@ -21,6 +21,7 @@ import type {
 } from '../../../src/services/story/PageSkeletonService.js';
 import type { EpisodePageSkeletonServicePort } from '../../../src/services/story/EpisodePageSkeletonService.js';
 import type { StoryCollaborationServicePort } from '../../../src/services/story/StoryCollaborationService.js';
+import type { CharacterAutofillServicePort } from '../../../src/services/story/CharacterAutofillService.js';
 import type { PageServicePort } from '../../../src/services/page/PageService.js';
 import type {
   EnqueueEpisodeStoryAutofillResult,
@@ -218,6 +219,17 @@ class FakeStoryService implements StoryServicePort {
 class FakeStoryCollaborationService implements StoryCollaborationServicePort {
   public lastInput: Record<string, unknown> | null = null;
   public lastImproveInput: Record<string, unknown> | null = null;
+  public estimateCalls = 0;
+
+  public async estimateEpisodePages(
+    userId: string,
+    input: Parameters<NonNullable<StoryCollaborationServicePort['estimateEpisodePages']>>[1],
+    organizationId?: string | null,
+  ) {
+    this.estimateCalls += 1;
+    this.lastInput = { userId, ...input, organizationId };
+    return { panel_count: 5, calculated_pages: 2, estimated_pages: 2, explicit_page_count: null };
+  }
 
   public async collaborate(
     userId: string,
@@ -295,15 +307,35 @@ class FakeStoryCollaborationService implements StoryCollaborationServicePort {
     };
   }
 }
+
+class FakeCharacterAutofillService implements CharacterAutofillServicePort {
+  public calls: Array<{ userId: string; episodeId: string; version: number; organizationId: string | null }> = [];
+
+  public async autofillEpisodeCharacters(
+    userId: string,
+    requestedEpisodeId: string,
+    version: number,
+    organizationId: string | null = null,
+  ) {
+    this.calls.push({ userId, episodeId: requestedEpisodeId, version, organizationId });
+    return {
+      version,
+      characters: [{ entity_id: workId, name: 'ミオ', created: true, states_added: 1 }],
+      skipped_names: ['正体不明'],
+      appearance_review: { unresolved: [], suggestions: [] },
+    };
+  }
+}
 class FakePageSkeletonService implements PageSkeletonServicePort {
   public requestedEpisodeId: string | null = null;
   public overwriteExisting = false;
   public preserveGeneratedImages = false;
+  public lastOptions: Record<string, unknown> | null = null;
 
   public async generateForEpisode(
     userId: string,
     requestedEpisodeId: string,
-    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean },
+    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean; applyProductionNotes?: boolean },
   ): Promise<{
     pagesCreated: number;
     panelsCreated: number;
@@ -316,8 +348,9 @@ class FakePageSkeletonService implements PageSkeletonServicePort {
   public async prepareForEpisode(
     userId: string,
     requestedEpisodeId: string,
-    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean },
+    options?: { overwriteExisting?: boolean; preserveGeneratedImages?: boolean; applyProductionNotes?: boolean },
   ): Promise<PageSkeletonPreparation> {
+    this.lastOptions = options ?? null;
     this.requestedEpisodeId = requestedEpisodeId;
     this.overwriteExisting = options?.overwriteExisting === true;
     this.preserveGeneratedImages = options?.preserveGeneratedImages === true;
@@ -796,12 +829,147 @@ describe('story routes', () => {
     expect(episodesPayload.episodes[0]).not.toHaveProperty('edit_history');
   });
 
+  it('旧Episode GETは本文だけを返しv2 GETだけが明示ノートと無効化状態を返す', async () => {
+    const storyService = new FakeStoryService();
+    storyService.listEpisodes = async () => [buildEpisode({
+      storyFullDraft: '# 既存のMarkdown見出し\n本文',
+      productionNotesEnabled: false,
+      productionNotes: ['「本文」のコマで「ミオ」は通常に戻る。'],
+    })];
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const legacy = await app.request(`/api/chapters/${chapterId}/episodes`, { headers });
+    const versioned = await app.request(`/api/chapters/${chapterId}/episodes?version=2`, { headers });
+    const legacyEpisode = ((await legacy.json()) as { episodes: Array<Record<string, unknown>> }).episodes[0];
+    const versionedEpisode = ((await versioned.json()) as { episodes: Array<Record<string, unknown>> }).episodes[0];
+
+    expect(legacy.status).toBe(200);
+    expect(legacyEpisode).toMatchObject({ story_full_draft: '# 既存のMarkdown見出し\n本文' });
+    expect(legacyEpisode).not.toHaveProperty('production_notes_enabled');
+    expect(legacyEpisode).not.toHaveProperty('production_notes');
+    expect(versioned.status).toBe(200);
+    expect(versionedEpisode).toMatchObject({
+      story_full_draft: '# 既存のMarkdown見出し\n本文',
+      production_notes_enabled: false,
+      production_notes: ['「本文」のコマで「ミオ」は通常に戻る。'],
+    });
+  });
+
+  it('旧Episode PUTは保存済みノートに触れずv2 PUTは明示ノートと無効化を更新する', async () => {
+    const storyService = new FakeStoryService();
+    const app = createTestApp({ storyService });
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const legacy = await app.request(`/api/episodes/${episodeId}`, {
+      method: 'PUT', headers, body: JSON.stringify({ story_full_draft: '# 見出し\n更新本文' }),
+    });
+    expect(legacy.status).toBe(200);
+    expect(storyService.lastEpisodeUpdate).not.toHaveProperty('productionNotesEnabled');
+    expect(storyService.lastEpisodeUpdate).not.toHaveProperty('productionNotes');
+
+    const versioned = await app.request(`/api/episodes/${episodeId}?version=2`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        production_notes_enabled: false,
+        production_notes: ['「更新本文」のコマで「ミオ」は通常に戻る。'],
+      }),
+    });
+    expect(versioned.status).toBe(200);
+    expect(storyService.lastEpisodeUpdate).toMatchObject({
+      productionNotesEnabled: false,
+      productionNotes: ['「更新本文」のコマで「ミオ」は通常に戻る。'],
+    });
+  });
+
+  it('Episode HTTP versionは省略または2だけを受け付ける', async () => {
+    const app = createTestApp();
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}` };
+    const responses = await Promise.all([
+      app.request(`/api/chapters/${chapterId}/episodes?version=1`, { headers }),
+      app.request(`/api/chapters/${chapterId}/episodes?version=2&version=2`, { headers }),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([422, 422]);
+  });
+
   it('returns 401 when authentication is missing', async () => {
     const app = createTestApp();
 
     const response = await app.request(`/api/chapters/${chapterId}/episodes`);
 
     expect(response.status).toBe(401);
+  });
+
+  it('キャラクター自動入力の能力を公開し、strictなversionで保存サービスを呼ぶ', async () => {
+    const characterAutofillService = new FakeCharacterAutofillService();
+    const app = createTestApp({ characterAutofillService });
+    const token = await createToken();
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const capabilities = await app.request('/api/story/character-autofill-capabilities', { headers });
+    expect(capabilities.status).toBe(200);
+    await expect(capabilities.json()).resolves.toEqual({ enabled: true });
+
+    const enhanced = await app.request(`/api/episodes/${episodeId}/character-autofill?appearance_review=1`, {
+      method: 'POST', headers, body: JSON.stringify({ version: 2 }),
+    });
+    expect(enhanced.status).toBe(200);
+    await expect(enhanced.json()).resolves.toMatchObject({ appearance_review: { unresolved: [], suggestions: [] } });
+    characterAutofillService.calls.length = 0;
+
+    const response = await app.request(`/api/episodes/${episodeId}/character-autofill`, {
+      method: 'POST', headers, body: JSON.stringify({ version: 7 }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      version: 7,
+      characters: [{ entity_id: workId, name: 'ミオ', created: true, states_added: 1 }],
+      skipped_names: ['正体不明'],
+    });
+    expect(characterAutofillService.calls).toEqual([{
+      userId: user.id, episodeId, version: 7, organizationId: null,
+    }]);
+
+    const invalid = await app.request(`/api/episodes/${episodeId}/character-autofill`, {
+      method: 'POST', headers, body: JSON.stringify({ version: 7, overwrite: true }),
+    });
+    expect(invalid.status).toBe(422);
+    expect(characterAutofillService.calls).toHaveLength(1);
+  });
+
+  it('組織のキャラクター自動入力はedit_work権限を要求して保存結果を監査する', async () => {
+    const organizationId = '550e8400-e29b-41d4-a716-446655440000';
+    const organizationService = new FakeOrganizationService();
+    const characterAutofillService = new FakeCharacterAutofillService();
+    const app = createTestApp({
+      organizationService: organizationService as unknown as OrganizationServicePort,
+      characterAutofillService,
+    });
+    const token = await createToken();
+    const response = await app.request(
+      `/api/episodes/${episodeId}/character-autofill?organization_id=${organizationId}`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: 2 }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(organizationService.requiredMemberships).toContainEqual({
+      organizationId, userId: user.id, capability: 'edit_work',
+    });
+    expect(characterAutofillService.calls[0]).toMatchObject({ organizationId });
+    expect(organizationService.auditEvents).toContainEqual(expect.objectContaining({
+      action: 'episode.character_autofill_completed',
+      targetType: 'episode',
+      targetId: episodeId,
+      metadata: { characters: 1, created: 1, states_added: 1, skipped: 1 },
+    }));
   });
 
   it('streams story collaboration events', async () => {
@@ -835,6 +1003,49 @@ describe('story routes', () => {
       layer: 'episode',
       targetId: episodeId,
     });
+  });
+
+  it('現在の未保存本文をページ見積もりServiceへ渡す', async () => {
+    const collaborationService = new FakeStoryCollaborationService();
+    const app = createTestApp(collaborationService);
+    const token = await createToken();
+
+    const response = await app.request('/api/story/estimate-pages', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        episode_id: episodeId,
+        production_notes_enabled: true,
+        language: 'ja',
+        base_draft: {
+          story_input_mode: 'full', story_full_draft: '扉を開ける。',
+          title: null, purpose: null, introduction: null, middle: null, climax: null, ending_hook: null,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      panel_count: 5, calculated_pages: 2, estimated_pages: 2, explicit_page_count: null,
+    });
+    expect(collaborationService.lastInput).toMatchObject({
+      userId: user.id, episodeId, productionNotesEnabled: true,
+      baseDraft: { storyInputMode: 'full', storyFullDraft: '扉を開ける。' },
+    });
+  });
+
+  it('ページ見積もりは未認証リクエストでServiceを呼ばない', async () => {
+    const collaborationService = new FakeStoryCollaborationService();
+    const app = createTestApp(collaborationService);
+
+    const response = await app.request('/api/story/estimate-pages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ episode_id: episodeId, base_draft: { story_input_mode: 'full', story_full_draft: '本文' } }),
+    });
+
+    expect(response.status).toBe(401);
+    expect(collaborationService.estimateCalls).toBe(0);
   });
 
   it('story collaborate returns 422 for unknown keys', async () => {
@@ -1329,7 +1540,32 @@ describe('story routes', () => {
     });
     expect(response.status).toBe(202);
     expect(received).toMatchObject({overwriteExisting:true,preserveGeneratedImages:true,applyStoryPlan:false});
+    expect(received).not.toHaveProperty('applyProductionNotes');
     await expect(response.json()).resolves.toMatchObject({story_plan_applied:false});
+  });
+
+  it('production notes v1を明示したskeletonだけ解釈フラグを転送する', async () => {
+    const skeleton = new FakeEpisodePageSkeletonService();
+    let received: unknown;
+    skeleton.enqueueEpisodePageSkeleton = async (...args: unknown[]) => { received = args[2]; return {jobId: skeleton.jobId}; };
+    const app = createTestApp({episodePageSkeletonService:skeleton});
+    const token = await createToken();
+    const response = await app.request(`/api/episodes/${episodeId}/generate-page-skeleton`, {
+      method:'POST', headers: {Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({production_notes_version:'v1'}),
+    });
+    expect(response.status).toBe(202);
+    expect(received).toMatchObject({applyProductionNotes:true,applyStoryPlan:false});
+
+    const sync = new FakePageSkeletonService();
+    const syncResponse = await createTestApp({pageSkeletonService:sync}).request(
+      `/api/episodes/${episodeId}/generate-page-skeleton`, {
+        method:'POST', headers: {Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+        body:JSON.stringify({production_notes_version:'v1'}),
+      },
+    );
+    expect(syncResponse.status).toBe(201);
+    expect(sync.lastOptions).toMatchObject({applyProductionNotes:true});
   });
 
   it('episode PUTの開始状態をsnake caseでServiceへ渡し、responseへ返す', async () => {
@@ -1358,6 +1594,7 @@ describe('story routes', () => {
 });
 
 interface CreateStoryTestAppOptions {
+  characterAutofillService?: CharacterAutofillServicePort;
   storyCollaborationService?: StoryCollaborationServicePort;
   pageSkeletonService?: PageSkeletonServicePort;
   pageService?: PageServicePort;
@@ -1391,6 +1628,7 @@ function createTestApp(
     pageService: options.pageService ?? new FakePageService(),
     pageSkeletonService: options.pageSkeletonService ?? new FakePageSkeletonService(),
     storyCollaborationService: options.storyCollaborationService ?? new FakeStoryCollaborationService(),
+    characterAutofillService: options.characterAutofillService,
     storyService: options.storyService ?? new FakeStoryService(),
     userProvisioningService: new FakeUserProvisioningService(),
     jwtSecret,

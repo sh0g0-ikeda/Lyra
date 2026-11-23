@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { Pool, type QueryResultRow } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
-import { runPendingMigrations } from '../../src/lib/migrations.js';
+import { runPendingMigrations, runProduction44Expansion } from '../../src/lib/migrations.js';
 import {
   attestCanonicalRuntimeSchema,
   attestRuntimeSchema,
@@ -20,6 +20,16 @@ const databaseUrl = process.env.DATABASE_URL;
 const describePostgres = process.env.APP_ENV === 'test' && databaseUrl !== undefined
   ? describe
   : describe.skip;
+// Register the PG18-only historical profile without callback-context skips,
+// preserving both Vitest and the repository's Bun test entrypoint.
+const postgresVersion = process.env.APP_ENV === 'test' && databaseUrl !== undefined
+  ? await (async (): Promise<number> => {
+    const probe = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5_000 });
+    try {
+      const result = await probe.query<{ version: string }>("SELECT current_setting('server_version_num') AS version");
+      return Number(result.rows[0]?.version);
+    } finally { await probe.end(); }
+  })() : 0;
 
 describePostgres('runtime schema attestation PostgreSQL boundary', () => {
   let admin: Pool;
@@ -32,6 +42,27 @@ describePostgres('runtime schema attestation PostgreSQL boundary', () => {
     for (const schema of schemas) await admin.query(`DROP SCHEMA ${schema} CASCADE`);
     await admin.end();
   });
+
+  it('055の前後で旧機能を起動でき一括生成は正確な追加schemaがある場合のみ許可する', async () => {
+    const { database, pool } = await isolatedDatabase('batch55');
+    const directory = await mkdtemp(join(tmpdir(), 'lyra-pre-batch-'));
+    try {
+      for (const filename of await readdir(join(process.cwd(), 'migrations'))) {
+        if (/^0(?:0[1-9]|[1-4][0-9]|5[0-4])_.+\.sql$/u.test(filename)) await copyFile(join(process.cwd(), 'migrations', filename), join(directory, filename));
+      }
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      const before = await attestRuntimeSchema(database);
+      expect(() => assertAttestedRuntimeCapabilities(before, {})).not.toThrow();
+      expect(() => assertAttestedRuntimeCapabilities(before, { GENERATION_BATCHES_ENABLED: true })).toThrow('055');
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database));
+      const after = await attestRuntimeSchema(database);
+      expect(after.capabilities.generationBatches).toBe(true);
+      expect(() => assertAttestedRuntimeCapabilities(after, {})).not.toThrow();
+      expect(() => assertAttestedRuntimeCapabilities(after, { GENERATION_BATCHES_ENABLED: true })).not.toThrow();
+      await pool.query('DROP INDEX generation_batches_request_key');
+      await expect(attestRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  }, 120_000);
 
   it('fresh canonical schemaはactive jobが存在しても許可し物理story metadata列を要求しない', async () => {
     const { pool, database } = await isolatedDatabase('canonical');
@@ -59,6 +90,32 @@ describePostgres('runtime schema attestation PostgreSQL boundary', () => {
     `);
     expect(physical.rows).toEqual([]);
     expect(() => assertAttestedRuntimeCapabilities(attestedSecurityRuntime, {})).not.toThrow();
+  }, 120_000);
+
+  (postgresVersion >= 180000 ? it : it.skip)('旧配信のproduction44拡張schemaでも055追加後に既存writerと一括生成を許可する', async () => {
+    const { database, pool } = await isolatedDatabase('expanded_batch55');
+    const directory = await mkdtemp(join(tmpdir(), 'lyra-batch-only-'));
+    try {
+      await withPostgresTestMigrationLock(admin, async () => {
+        await runPendingMigrations(database, { migrationsDir: join(process.cwd(), 'tests/fixtures/production44-pg18') });
+        await runProduction44Expansion(pool);
+      });
+      for (const filename of await readdir(join(process.cwd(), 'migrations'))) {
+        if (/^05[1-4]_.+\.sql$/u.test(filename)) await copyFile(join(process.cwd(), 'migrations', filename), join(directory, filename));
+      }
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      const before = await attestRuntimeSchema(database);
+      expect(before.repositoryProfile).toBe('production44_expanded_pg18_v1');
+      expect(() => assertAttestedRuntimeCapabilities(before, {})).not.toThrow();
+      const filename = '055_add_generation_batches.sql';
+      await copyFile(join(process.cwd(), 'migrations', filename), join(directory, filename));
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      const after = await attestRuntimeSchema(database);
+      expect(after.repositoryProfile).toBe(before.repositoryProfile);
+      expect(after.capabilities.generationBatches).toBe(true);
+      expect(() => assertAttestedRuntimeCapabilities(after, {})).not.toThrow();
+      expect(() => assertAttestedRuntimeCapabilities(after, { GENERATION_BATCHES_ENABLED: true })).not.toThrow();
+    } finally { await rm(directory, { recursive: true, force: true }); }
   }, 120_000);
 
   it('049までの別schemaは履歴として認識するが050なしでは起動を拒否する', async () => {

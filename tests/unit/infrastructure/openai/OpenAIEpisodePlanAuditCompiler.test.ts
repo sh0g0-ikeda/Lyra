@@ -11,6 +11,7 @@ const CHARACTER_REFERENCES = [
   { ref: 'E1', entityId: ENTITY_A, name: '鍵', entityType: 'object' as const },
   { ref: 'E2', entityId: ENTITY_B, name: 'ミナ', entityType: 'character' as const },
 ] as const;
+const STATE_A = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -53,6 +54,83 @@ function readArray(value: unknown): unknown[] {
 }
 
 describe('OpenAIEpisodePlanAuditCompiler', () => {
+  it('audit repairもstate catalogの誤所有者を既存retry内で拒否して正しい組だけを返す', async () => {
+    const requests: JsonRecord[] = [];
+    let checkpointCount = 0;
+    const client = {
+      postJson: async (_path: string, payload: JsonRecord) => {
+        requests.push(payload);
+        return { body: { output_text: JSON.stringify(buildAcceptedAudit({
+          accepted: false,
+          issues: [{ code: 'visible_entity_mismatch', severity: 'error', page_ids: [PAGE_ID], message: '修正。', repair_instruction: '修正する。' }],
+          panel_repairs: [{ page_id: PAGE_ID, panel_order: 1, changed_fields: ['entities'], patch: buildEmptyPanelPatch({
+            entities: [{ entity_id: requests.length === 1 ? 'E2' : 'E1', role: 'primary', expression: 'calm', custom_expression: null,
+              action: 'standing_firm', custom_action: null, position: 'center', facing_direction: null,
+              effect_note: null, state_id: STATE_A }],
+          }) }],
+        })) } };
+      },
+    } as unknown as OpenAIClient;
+
+    const result = await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: 'fixture', language: 'ja', pageIds: [PAGE_ID],
+      characterReferences: CHARACTER_REFERENCES,
+      stateReferences: [{ entityId: ENTITY_A, stateId: STATE_A, name: '雨具', description: '赤いレインコート' }],
+      beforeRetry: async () => { checkpointCount += 1; },
+    });
+
+    expect(requests).toHaveLength(2);
+    expect(checkpointCount).toBe(1);
+    expect(result.audit.panelRepairs?.[0]?.patch.entities?.[0]).toMatchObject({
+      entityId: ENTITY_A, stateId: STATE_A,
+    });
+    expect(JSON.stringify(requests[1]?.input)).toContain('STATE REFERENCE CORRECTION');
+  });
+
+  it('auditの明示空state catalogはrepair state_idをnull-onlyにする', async () => {
+    let request: JsonRecord | undefined;
+    const client = {
+      postJson: async (_path: string, payload: JsonRecord) => {
+        request = payload;
+        return { body: { output_text: JSON.stringify(buildAcceptedAudit()) } };
+      },
+    } as unknown as OpenAIClient;
+
+    await new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: 'fixture', language: 'ja', pageIds: [PAGE_ID], stateReferences: [],
+    });
+
+    const schema = readObject(readObject(readObject(request?.text).format).schema);
+    const repairs = readObject(readObject(schema.properties).panel_repairs);
+    const patch = readObject(readObject(readObject(repairs.items).properties).patch);
+    const entities = readObject(readArray(readObject(readObject(patch.properties).entities).anyOf)[0]);
+    expect(readObject(readObject(entities.items).properties).state_id).toEqual({ type: 'null' });
+  });
+
+  it('auditもstate_id省略を黙示nullにせず2回とも省略なら有限retryで失敗する', async () => {
+    let requestCount = 0;
+    let checkpointCount = 0;
+    const client = {
+      postJson: async () => {
+        requestCount += 1;
+        return { body: { output_text: JSON.stringify(buildAcceptedAudit({
+          accepted: false,
+          issues: [{ code: 'visible_entity_mismatch', severity: 'error', page_ids: [PAGE_ID], message: '修正。', repair_instruction: '修正する。' }],
+          panel_repairs: [{ page_id: PAGE_ID, panel_order: 1, changed_fields: ['entities'], patch: buildEmptyPanelPatch({
+            entities: [{ entity_id: ENTITY_A, role: 'primary', expression: 'calm', custom_expression: null,
+              action: 'standing_firm', custom_action: null, position: 'center', facing_direction: null, effect_note: null }],
+          }) }],
+        })) } };
+      },
+    } as unknown as OpenAIClient;
+
+    await expect(new OpenAIEpisodePlanAuditCompiler(client).auditPlan({
+      compilerBrief: 'fixture', language: 'ja', pageIds: [PAGE_ID], stateReferences: [],
+      beforeRetry: async () => { checkpointCount += 1; },
+    })).rejects.toMatchObject({ reason: 'invalid_payload' });
+    expect(requestCount).toBe(2);
+    expect(checkpointCount).toBe(1);
+  });
   it('local character refsをaudit schemaへ固定しdialogue patchだけを安全に復元する', async () => {
     let request: JsonRecord | undefined;
     const client = {

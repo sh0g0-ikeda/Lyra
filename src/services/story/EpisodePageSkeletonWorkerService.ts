@@ -80,6 +80,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
         language,
         allowCompilerFallback: false,
         pageLimitPolicy,
+        ...(job.params.production_notes_version === 'v1' ? { applyProductionNotes: true } : {}),
       }, job.organizationId);
       if (await this.finalizeCancellationIfRequested(job.id)) {
         return { status: 'processed', jobStatus: 'cancelled' };
@@ -147,6 +148,7 @@ export class EpisodePageSkeletonWorkerService implements EpisodePageSkeletonWork
       // Provider, repair and schema validation finish before the DB transaction.
       const preparation = await this.pageSkeletonService.prepareForEpisode(job.userId, episodeId, {
         overwriteExisting, preserveGeneratedImages, language, allowCompilerFallback: false, pageLimitPolicy,
+        ...(job.params.production_notes_version === 'v1' ? { applyProductionNotes: true } : {}),
       }, job.organizationId);
       await commit.commitPreparedEpisodePageSkeleton(job, preparation);
       return { status: 'processed', jobStatus: 'completed' };

@@ -612,6 +612,25 @@ describe('page generation routes', () => {
     });
   });
 
+  it('episode story autofillは新版の演出指示opt-inをserviceへ渡し旧版省略は適用しない', async () => {
+    const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
+    const app = createTestApp(
+      new FakePageGenerationService(), new FakePageFinalizeService(), new FakeJobService(),
+      new FakePageQueryService(), new FakePageService(), new FakePageExportService(), episodeStoryAutofillService,
+    );
+    const token = await createToken();
+    const path = '/api/episodes/33333333-3333-4333-8333-333333333333/autofill-pages-from-story';
+
+    const response = await app.request(path, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ production_notes_version: 'v1' }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(episodeStoryAutofillService.options).toEqual({ productionNotesVersion: 'v1' });
+  });
+
   it('episode story autofillはversionなしのstate assignment policyを422で拒否する', async () => {
     const episodeStoryAutofillService = new FakeEpisodeStoryAutofillService();
     const app = createTestApp(
@@ -1276,6 +1295,12 @@ describe('page generation routes', () => {
       params: { episode_id: '44444444-4444-4444-8444-444444444444', language: 'ja' },
       result: {
         state_plan_version: 'episode_state_plan_v1', state_assignment_policy: 'preserve_existing',
+        saved_state_changes: [{
+          entity_id: '11111111-1111-4111-8111-111111111111',
+          state_id: '55555555-5555-4555-8555-555555555555',
+          starts_at_panel_id: '22222222-2222-4222-8222-222222222222',
+          source_field: 'middle', source_quote: '腕を負傷した', created: true,
+        }],
         state_transitions: [{
           entity_id: '11111111-1111-4111-8111-111111111111', state_id: null,
           starts_at_panel_id: '22222222-2222-4222-8222-222222222222', source_scene_id: null,
@@ -1303,6 +1328,7 @@ describe('page generation routes', () => {
     expect(response.status).toBe(200);
     const result = ((await response.json()) as { result: Record<string, unknown> }).result;
     expect(result.state_plan_version).toBe('episode_state_plan_v1');
+    expect(result).not.toHaveProperty('saved_state_changes');
     expect(result.state_transitions).toEqual([{
       entity_id: '11111111-1111-4111-8111-111111111111', state_id: null,
       starts_at_panel_id: '22222222-2222-4222-8222-222222222222', source_scene_id: null,

@@ -121,6 +121,29 @@ class FakeEpisodePageSkeletonWorkerService {
 }
 
 describe('GenerationQueuePoller', () => {
+  it('キューが空でも保護取得後にだけ一括生成を進め解除前に完了する', async () => {
+    const protection = new FakeTaskScaleInProtection();
+    const client = new FakeSqsPollerClient([]);
+    const advance = vi.fn(async () => {
+      expect(protection.calls).toEqual(['protect:120']);
+      expect(client.receiveInputs).toHaveLength(0);
+    });
+    const poller = new GenerationQueuePoller(client, buildDependencies(new FakePageGenerationWorkerService(), new FakeEntityGenerationWorkerService()),
+      { queueUrl: 'https://queue.test', onProtectedPoll: advance }, protection);
+    await poller.pollOnce();
+    expect(advance).toHaveBeenCalledOnce();
+    expect(protection.calls).toEqual(['protect:120', 'unprotect']);
+  });
+
+  it('一括生成の復旧処理が失敗しても既存キューの受信と保護解除を続ける', async () => {
+    const protection = new FakeTaskScaleInProtection();
+    const client = new FakeSqsPollerClient([]);
+    const poller = new GenerationQueuePoller(client, buildDependencies(new FakePageGenerationWorkerService(), new FakeEntityGenerationWorkerService()),
+      { queueUrl: 'https://queue.test', onProtectedPoll: async () => { throw new Error('private error'); } }, protection);
+    await expect(poller.pollOnce()).resolves.toMatchObject({ receivedCount: 0 });
+    expect(client.receiveInputs).toHaveLength(1);
+    expect(protection.calls).toEqual(['protect:120', 'unprotect']);
+  });
   it('warm制御有効時は既存task protectionの有効化を必須にする', () => {
     expect(() => assertWarmWorkerProtectionEnabled(true, {
       ECS_TASK_SCALE_IN_PROTECTION_ENABLED: 'false',

@@ -35,6 +35,7 @@
           "ネーム",
           "コマ割り"
         ],
+        "releaseNotes": "ストーリーから登場人物の設定を抽出する機能、キャラ画像のグリッド選択、ページ・コマ構成指示の反映、画像生成操作の安定性を改善しました。",
         "promoText": "あなたの頭の中にある物語を、Lyra で漫画に。",
         "marketingUrl": "https://app.lyra-editor.com/",
         "supportUrl": "https://app.lyra-editor.com/support.html",
@@ -54,6 +55,7 @@
           "storyboard",
           "panels"
         ],
+        "releaseNotes": "Improved story-based character setup, character image grid selection, page and panel direction handling, and the reliability of image generation actions.",
         "promoText": "Turn the story in your head into manga with Lyra.",
         "marketingUrl": "https://app.lyra-editor.com/",
         "supportUrl": "https://app.lyra-editor.com/support-en.html",
@@ -62,7 +64,7 @@
       }
     },
     "release": {
-      "automaticRelease": false,
+      "automaticRelease": true,
       "phasedRelease": false
     }
   }

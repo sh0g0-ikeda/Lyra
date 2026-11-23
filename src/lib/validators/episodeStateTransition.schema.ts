@@ -22,6 +22,7 @@ const sourceFieldsSchema = z.object({
   source_scene_id: z.string().uuid().nullable(),
   source_field: z.enum(episodeStateTransitionSourceFields),
   source_quote: z.string().trim().min(1).max(MAX_EPISODE_STATE_SOURCE_QUOTE_CHARS),
+  panel_evidence_quote: z.string().trim().min(1).max(2_000).optional(),
 }).strict();
 
 const transitionSchema = sourceFieldsSchema.extend({
@@ -33,6 +34,12 @@ const unresolvedSchema = sourceFieldsSchema.extend({
   suggested_name: z.string().trim().min(1).max(100),
   suggested_description: z.string().trim().min(1).max(2_000),
   reason: z.enum(['missing_reference', 'ambiguous_mapping']),
+  replaces_deltas: z.array(
+    z.object({
+      source_quote: z.string().trim().min(1).max(MAX_EPISODE_STATE_SOURCE_QUOTE_CHARS),
+      description: z.string().trim().min(1).max(2_000),
+    }).strict(),
+  ).max(MAX_EPISODE_STATE_TRANSITIONS).optional(),
 }).strict();
 
 export const episodeStateTransitionPlanSchema = z.object({
@@ -57,6 +64,9 @@ export function toEpisodeStateTransitionPlan(
       sourceSceneId: entry.source_scene_id,
       sourceField: entry.source_field,
       sourceQuote: entry.source_quote,
+      ...(entry.panel_evidence_quote === undefined
+        ? {}
+        : { panelEvidenceQuote: entry.panel_evidence_quote }),
     })),
     unresolved: payload.unresolved_state_transitions.map((entry) => ({
       entityId: entry.entity_id,
@@ -67,6 +77,17 @@ export function toEpisodeStateTransitionPlan(
       sourceSceneId: entry.source_scene_id,
       sourceField: entry.source_field,
       sourceQuote: entry.source_quote,
+      ...(entry.panel_evidence_quote === undefined
+        ? {}
+        : { panelEvidenceQuote: entry.panel_evidence_quote }),
+      ...(entry.replaces_deltas === undefined
+        ? {}
+        : {
+            replacesDeltas: entry.replaces_deltas.map((delta) => ({
+              sourceQuote: delta.source_quote,
+              description: delta.description,
+            })),
+          }),
       reason: entry.reason,
     })),
   };

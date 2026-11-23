@@ -1,8 +1,14 @@
 import { isOlderEditorRevision, reconcileSavedEditorDraft } from './domain/editorDraftSave';
 import { MAX_NEW_EPISODE_PAGES, editableEpisodePageLimit } from '../../../packages/api-contract/src/episodePageLimits.js';
+import type { CharacterAppearanceSuggestion, CharacterAutofillResult } from '../../../packages/api-contract/src/characterAutofill.ts';
+import { humanAppearanceChoices } from '../../../packages/api-contract/src/characterAppearanceCatalog.ts';
+import type { EpisodeCharacterSuggestion } from '../../../packages/api-contract/src/characterSuggestions.ts';
+import type { StoryPageEstimate } from '../../../packages/api-contract/src/storyPageEstimate.ts';
+import { hasStoryManuscriptCommands } from '../../../packages/api-contract/src/storyManuscript.ts';
 import { useRetainedSelection } from './hooks/useRetainedSelection';
 import { reconcileSavedStoryDraft, sameStoryDraft } from './domain/storyDraftSave';
 import { GoogleSignInButton, GoogleIdentityLinkPanel } from './components/GoogleAuthControls';
+import { GenerationBatchControls } from './components/GenerationBatchControls';
 import { canReadWebImage, imageDeliveryNotice, mergeImageDeliveryMetadata, type ImageDeliveryMetadata } from './domain/imageDelivery';
 import { createContext, useCallback, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import {
@@ -31,6 +37,7 @@ import {
   Trash2,
   Users,
   Wand2,
+  ZoomIn,
 } from 'lucide-react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
@@ -44,6 +51,7 @@ import {
   LyraApiClient,
   runBestEffortPageGenerationWarmup,
   type BlobResponse,
+  type EntityStateEditorRecord,
 } from './lib/api';
 import { shouldAllowManualTokenAuth } from './lib/authMode';
 import {
@@ -99,6 +107,7 @@ import type {
 type WorkspaceTab = WebWorkspaceView;
 type UiLanguage = 'ja' | 'en';
 type PendingPageDesign = PageDesignIntent & {
+  applyProductionNotes: boolean;
   organizationId: string | null;
   language: UiLanguage;
   synchronous: boolean;
@@ -309,6 +318,12 @@ interface CharacterStructuredFieldsDraft {
   art_style: string;
 }
 
+interface SuggestedStateDraft {
+  entityId: string;
+  label: string;
+  description: string;
+}
+
 interface SavedEditorDraft<TDraft extends object> {
   key: string;
   draft: TDraft;
@@ -507,6 +522,7 @@ const UI_JA_DICTIONARY: Record<string, string> = {
   'Confirmed references': '確定済みレファレンス',
   'Character list': 'キャラ一覧',
   'Character editor': 'キャラ編集',
+  'Autofill character details': 'キャラ情報の自動入力',
   'Story context': 'ストーリー文脈',
   'Target episode': '対象の話',
   'Chapter / Episode': '章と話',
@@ -1433,6 +1449,45 @@ function formatActionSuccessMessage(language: UiLanguage, actionLabel: string, t
 
 function pickUiText(language: UiLanguage, english: string, japanese: string): string {
   return language === 'en' ? english : japanese;
+}
+
+const APPEARANCE_REVIEW_FIELD_LABELS: Record<string, string> = {
+  gender_expression: 'Gender', age_range: 'Age range', skin_tone: 'Skin tone', first_impression: 'First impression',
+  standing_style: 'Standing style', default_expression: 'Default expression', height: 'Height', build: 'Body type',
+  art_style: 'Art style', face_shape: 'Face shape', eyebrow_shape: 'Eyebrow shape', nose_shape: 'Nose shape',
+  mouth_shape: 'Mouth shape', 'eyes.color': 'Eye color', 'eyes.shape': 'Eye shape', 'eyes.eyelid_type': 'Eyelid type',
+  'face_detail.eye_size': 'Eye size', 'face_detail.eye_angle': 'Eye angle', 'face_detail.pupil_style': 'Pupil style',
+  'face_detail.under_eye_detail': 'Under-eye detail', 'face_detail.mouth_default': 'Mouth default',
+  'hair.color': 'Hair color', 'hair.length': 'Hair length', 'hair.style': 'Hair style', 'hair.arrangement': 'Hair arrangement',
+  'hair.bangs': 'Bangs', 'hair_detail.front_shape': 'Front shape', 'hair_detail.side_hair': 'Side hair',
+  'hair_detail.back_shape': 'Back shape',
+  'clothing.category': 'Category', 'clothing.main_color': 'Main color', 'clothing.impression': 'Impression',
+  'outfit_detail.collar_shape': 'Collar shape', 'outfit_detail.sleeve_length': 'Sleeve length',
+  'outfit_detail.skirt_or_pants_shape': 'Skirt or pants', 'outfit_detail.shoes': 'Shoes',
+  'outfit_detail.socks_or_legwear': 'Legwear',
+};
+
+function appearanceReviewFieldLabel(language: UiLanguage, field: string): string {
+  return translateUiString(language, APPEARANCE_REVIEW_FIELD_LABELS[field] ?? field.replace(/[._]/g, ' '));
+}
+
+function appearanceReviewValueLabel(language: UiLanguage, field: string, value: string): string {
+  const choices = (humanAppearanceChoices as Record<string, readonly { value: string; labelJa: string; labelEn: string }[]>)[field];
+  const choice = choices?.find((item) => item.value === value);
+  return choice === undefined ? value.replace(/_/g, ' ') : language === 'ja' ? choice.labelJa : choice.labelEn;
+}
+
+function appearanceReviewReasonLabel(language: UiLanguage, reason: 'ambiguous_character' | 'conflicting_traits' | 'unverified_trait'): string {
+  const labels = {
+    ambiguous_character: ['The character could not be identified.', '人物を特定できない記述です。'],
+    conflicting_traits: ['The source contains conflicting traits.', '特徴が矛盾している記述です。'],
+    unverified_trait: ['This could not be verified as a character trait.', '人物の特徴と確認できない記述です。'],
+  } as const;
+  return pickUiText(language, labels[reason][0], labels[reason][1]);
+}
+
+function isResourceStaleApiError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'RESOURCE_STALE';
 }
 
 function formatJpy(value: number): string {
@@ -2379,6 +2434,15 @@ function StudioShell(props: {
   const [pageDesignJobId, setPageDesignJobId] = useState<string | null>(null);
   const [readerLayout, setReaderLayout] = useState<'rtl' | 'vertical'>('rtl');
   const readerScope = JSON.stringify([activeOrganizationId, selectedEpisodeId]);
+  const readerScopeRef = useRef(readerScope);
+  useLayoutEffect(() => { readerScopeRef.current = readerScope; }, [readerScope]);
+  // UI guidance must not overwrite the independently saved production-note setting.
+  const [productionNoteScope, setProductionNoteScope] = useState<string | null>(null);
+  const [storyProductionNoteSuggestions, setStoryProductionNoteSuggestions] = useState<{
+    scope: string;
+    notes: string[];
+    selectedNotes: string[];
+  } | null>(null);
   const [readerPosition, setReaderPosition] = useState({ scope: readerScope, index: 0 });
   const readerPage = readerPosition.scope === readerScope ? readerPosition.index : 0;
   const setReaderPage = (index: number): void => setReaderPosition({ scope: readerScope, index });
@@ -2401,6 +2465,8 @@ function StudioShell(props: {
   const hydratedEpisodeVersionRef = useRef<string | null>(null);
   const [storyInstruction, setStoryInstruction] = useState('');
   const [storyBusy, setStoryBusy] = useState(false);
+  const [pageEstimateState, setPageEstimateState] = useState<{ error: string | null; summary: string | null }>({ error: null, summary: null });
+  const [estimatingPages, setEstimatingPages] = useState(false);
   const [storyImprovementDraft, setStoryImprovementDraft] = useState<StoryEpisodeImprovementRecord['draft'] | null>(null);
   const [storyImprovementMeta, setStoryImprovementMeta] = useState<{
     compiler_provider: StoryEpisodeImprovementRecord['compiler_provider'];
@@ -2411,6 +2477,14 @@ function StudioShell(props: {
   const [entityDraft, setEntityDraft] = useState<EntityDraft>(createEmptyEntityDraft());
   const [entityEditorMode, setEntityEditorMode] = useState<'edit' | 'create'>('edit');
   const [selectedEntityId, setSelectedEntityId] = useState('');
+  const [characterSuggestionResult, setCharacterSuggestionResult] = useState<{
+    scope: string; version: number; characters: EpisodeCharacterSuggestion[];
+  } | null>(null);
+  const [characterAutofillResult, setCharacterAutofillResult] = useState<{
+    scope: string; result: CharacterAutofillResult;
+  } | null>(null);
+  const [storedSuggestedStateDraft, setSuggestedStateDraft] = useState<(SuggestedStateDraft & { scope: string }) | null>(null);
+  const suggestedStateDraft = storedSuggestedStateDraft?.scope === readerScope ? storedSuggestedStateDraft : null;
   const savedEntityDraftRef = useRef<{ scope: string; workId: string; id: string; draft: EntityDraft; updatedAt: string } | null>(null);
   const hydratedEntityRevisionRef = useRef<string | null>(null);
   const entityOperationPendingRef = useRef(false);
@@ -2847,9 +2921,16 @@ function StudioShell(props: {
   const chapters = useMemo(() => chaptersQuery.data?.chapters ?? [], [chaptersQuery.data?.chapters]);
   const selectedChapter = useRetainedSelection(chapters, selectedChapterId, JSON.stringify([activeOrganizationId, selectedWorkId]));
 
+  const storyProductionNoteCapabilities = useQuery({
+    queryKey: scopedQueryKey(['story-production-note-capabilities']),
+    queryFn: () => api.getStoryProductionNoteCapabilities(),
+    enabled: selectedChapter !== null,
+    retry: false,
+  });
+  const productionNotesV2 = storyProductionNoteCapabilities.data?.enabled === true;
   const episodesQuery = useQuery({
-    queryKey: scopedQueryKey(['episodes', selectedChapter?.id ?? '']),
-    queryFn: () => api.getEpisodes(selectedChapter?.id ?? '', activeOrganizationId),
+    queryKey: scopedQueryKey(['episodes', selectedChapter?.id ?? '', productionNotesV2 ? 'v2' : 'v1']),
+    queryFn: () => api.getEpisodes(selectedChapter?.id ?? '', activeOrganizationId, productionNotesV2),
     enabled: selectedChapter !== null,
   });
   const episodes = useMemo(() => episodesQuery.data?.episodes ?? [], [episodesQuery.data?.episodes]);
@@ -2875,6 +2956,54 @@ function StudioShell(props: {
     queryKey: scopedQueryKey(['entity-reference-set', selectedEntity?.id ?? '']),
     queryFn: () => api.getEntityReferenceSet(selectedEntity?.id ?? '', activeOrganizationId),
     enabled: selectedEntity !== null,
+  });
+
+  const characterSuggestionCapabilitiesQuery = useQuery({
+    queryKey: scopedQueryKey(['character-suggestion-capabilities']),
+    queryFn: () => api.getCharacterSuggestionCapabilities(),
+    enabled: activeTab === 'entities' && selectedWork !== null && selectedEpisode !== null,
+    retry: false,
+  });
+  const characterAutofillCapabilitiesQuery = useQuery({
+    queryKey: scopedQueryKey(['character-autofill-capabilities']),
+    queryFn: () => api.getCharacterAutofillCapabilities(),
+    enabled: activeTab === 'entities' && selectedWork !== null && selectedEpisode !== null,
+    retry: false,
+  });
+  const productionNotesRequested = storyProductionNoteCapabilities.data?.enabled === true &&
+    // Initial episode hydration may precede selection; a saved enabled setting
+    // must survive that render even before the local selection scope catches up.
+    (productionNoteScope === readerScope || selectedEpisode?.production_notes_enabled === true);
+  const separatedProductionNotes = separateWebProductionNoteLines(
+    episodeDraft.story_full_draft,
+    productionNotesRequested,
+    selectedEpisode?.production_notes ?? [],
+  );
+  const episodeProseDraft = { ...episodeDraft, story_full_draft: separatedProductionNotes.body };
+  // Authored inline commands are independent of the saved sidecar-note switch.
+  // This keeps disabled old notes disabled while honoring explicit delimiters.
+  const inlineProductionCommands = hasStoryManuscriptCommands(separatedProductionNotes.body);
+  const applyProductionCommands = productionNotesV2 && (productionNotesRequested || inlineProductionCommands);
+  const episodeProductionNotePayload = productionNotesV2 ? {
+    production_notes_enabled: productionNotesRequested,
+    production_notes: separatedProductionNotes.notes,
+  } : {};
+  const pageEstimateRevision = JSON.stringify({
+    session: props.authSessionKey,
+    organization: activeOrganizationId,
+    episode: selectedEpisode?.id ?? null,
+    draft: episodeProseDraft,
+    rawStoryDraft: episodeDraft.story_full_draft,
+    productionNotes: separatedProductionNotes.notes,
+    estimatedPages: episodeDraft.estimated_pages,
+    productionNotesRequested,
+  });
+  const pageEstimateRevisionRef = useRef(pageEstimateRevision);
+  useLayoutEffect(() => { pageEstimateRevisionRef.current = pageEstimateRevision; }, [pageEstimateRevision]);
+  const suggestedEntityStatesQuery = useQuery({
+    queryKey: scopedQueryKey(['entity-states', suggestedStateDraft?.entityId ?? '']),
+    queryFn: () => api.getEntityStates(suggestedStateDraft?.entityId ?? '', activeOrganizationId),
+    enabled: suggestedStateDraft !== null,
   });
 
   const scenesQuery = useQuery({
@@ -3503,12 +3632,13 @@ function StudioShell(props: {
     }
     savedEpisodeDraftRef.current = { scope: activeOrganizationId ?? 'personal', id: selectedEpisode.id, draft: savedDraft };
     hydratedEpisodeVersionRef.current = hydrationKey;
+    setProductionNoteScope(selectedEpisode.production_notes_enabled === true ? readerScope : null);
     setEpisodeDraft((current) =>
       previous?.scope === (activeOrganizationId ?? 'personal') && previous.id === selectedEpisode.id && !sameStoryDraft(current, previous.draft)
         ? current
         : savedDraft,
     );
-  }, [activeOrganizationId, selectedEpisode]);
+  }, [activeOrganizationId, readerScope, selectedEpisode]);
 
   useEffect(() => {
     savedEntityDraftRef.current = null;
@@ -4031,7 +4161,10 @@ function StudioShell(props: {
 
   const saveCurrentEpisodeContext = async (): Promise<void> => {
     if (selectedEpisode !== null) {
-      const saved = await api.updateEpisode(selectedEpisode.id, toEpisodeAutosavePayload(episodeDraft, selectedEpisode.estimated_pages), activeOrganizationId);
+      const saved = await api.updateEpisode(selectedEpisode.id, {
+        ...toEpisodeAutosavePayload(episodeProseDraft, selectedEpisode.estimated_pages),
+        ...episodeProductionNotePayload,
+      }, activeOrganizationId, productionNotesV2);
       acceptSavedEpisode(saved, episodeDraft, false);
     }
 
@@ -4048,7 +4181,7 @@ function StudioShell(props: {
   };
 
   const saveCurrentPageGenerationContext = async (): Promise<void> => {
-    if (isFramesDraftDirty()) throw new Error(pickUiText(uiLanguage, 'Save frame geometry before generating.', '生成する前に枠の編集を保存してください。'));
+    if (isFramesDraftDirty()) await persistCurrentFrames();
     await persistCurrentPage();
     await persistCurrentPanel();
   };
@@ -4075,6 +4208,110 @@ function StudioShell(props: {
     setEntityDraft(createEmptyEntityDraft());
     setReferenceSelection([]);
     setReferencePrimaryKey('');
+  };
+
+  const applySuggestedNewEntity = (suggestion: EpisodeCharacterSuggestion): void => {
+    if (!confirmEntityNavigation()) return;
+    // Use the same field format as manual entry so quoted traits remain editable.
+    const appearance = parseCharacterStructuredFieldsDraft('{}');
+    for (const item of suggestion.appearance) {
+      const field = item.field === 'clothing' ? 'clothing_description'
+        : item.field === 'features' ? 'distinguishing_features' : item.field;
+      appearance[field] = [appearance[field], item.value].filter(Boolean).join(' / ');
+    }
+    storeDraftImportedReference(null);
+    savedEntityDraftRef.current = null;
+    hydratedEntityRevisionRef.current = null;
+    setEntityEditorMode('create');
+    setSelectedEntityId('');
+    setEntityDraft({
+      ...createEmptyEntityDraft(),
+      name: suggestion.name,
+      entity_type: suggestion.entity_type === 'nonhuman' ? 'nonhuman' : 'character',
+      structured_fields: serializeCharacterStructuredFieldsDraft(appearance),
+    });
+    setReferenceSelection([]);
+    setReferencePrimaryKey('');
+  };
+
+  const selectSuggestedExistingEntity = (entityId: string): void => {
+    selectEntityForEditing(entityId);
+  };
+
+  const runEpisodeCharacterAutofill = async (): Promise<string> => {
+    if (selectedEpisode === null || selectedWork === null) {
+      throw new Error(pickUiText(uiLanguage, 'Choose an episode before saving characters.', 'キャラクターを保存する前に話を選択してください。'));
+    }
+    const episodeId = selectedEpisode.id;
+    const version = selectedEpisode.version;
+    const result = await api.autofillEpisodeCharacters(episodeId, { version }, activeOrganizationId);
+    if (result.version !== version) {
+      throw new Error(pickUiText(uiLanguage, 'The episode changed. Please try again.', '話の内容が変わりました。もう一度お試しください。'));
+    }
+    await entitiesQuery.refetch();
+    setCharacterAutofillResult({ scope: readerScope, result });
+    const savedCount = result.characters.length;
+    return pickUiText(
+      uiLanguage,
+      `${savedCount} named character${savedCount === 1 ? '' : 's'} saved. No image preview was generated.`,
+      `${savedCount}人の名前付きキャラクターを保存しました。画像プレビューは生成していません。`,
+    );
+  };
+
+  const approveCharacterAppearance = async (suggestion: CharacterAppearanceSuggestion): Promise<string> => {
+    const originScope = readerScope;
+    const updateRemainingRevisions = (updatedAt: string, removeAccepted: boolean): void => {
+      setCharacterAutofillResult((current) => current?.scope !== originScope || current.result.appearance_review === undefined
+        ? current
+        : {
+            ...current,
+            result: {
+              ...current.result,
+              appearance_review: {
+                ...current.result.appearance_review,
+                suggestions: current.result.appearance_review.suggestions
+                  .filter((item) => !removeAccepted || item.entity_id !== suggestion.entity_id || item.field !== suggestion.field)
+                  .map((item) => item.entity_id === suggestion.entity_id
+                    ? { ...item, expected_updated_at: updatedAt }
+                    : item),
+              },
+            },
+          });
+    };
+
+    try {
+      const saved = await api.approveCharacterAppearance(suggestion, activeOrganizationId);
+      if (readerScopeRef.current !== originScope) return '';
+      cacheEntityRecord(saved);
+      updateRemainingRevisions(saved.updated_at, true);
+      await invalidateScopedQuery(['entities', saved.work_id]);
+    } catch (error) {
+      if (!isResourceStaleApiError(error)) throw error;
+      const fresh = await api.getEntity(suggestion.entity_id, activeOrganizationId);
+      if (readerScopeRef.current !== originScope) throw error;
+      cacheEntityRecord(fresh);
+      updateRemainingRevisions(fresh.updated_at, false);
+      await invalidateScopedQuery(['entities', fresh.work_id]);
+      throw new Error(pickUiText(uiLanguage,
+        'This character changed elsewhere. The latest character was loaded; review and apply again.',
+        '別の変更があったため、最新のキャラ情報を読み込みました。内容を確認してもう一度反映してください。'), { cause: error });
+    }
+    return pickUiText(uiLanguage, 'The selected field was applied.', '選んだ項目を反映しました。');
+  };
+
+  const saveSuggestedState = async (): Promise<void> => {
+    if (suggestedStateDraft === null) return;
+    const states = await api.getEntityStates(suggestedStateDraft.entityId, activeOrganizationId);
+    const name = suggestedStateDraft.label.trim();
+    const description = suggestedStateDraft.description.trim();
+    const existing = states.entity_states.find((state) => state.name === name);
+    if (existing === undefined) {
+      await api.saveNamedEntityState(suggestedStateDraft.entityId, null, { name, description }, activeOrganizationId);
+    } else if (existing.description !== description) {
+      throw new Error(pickUiText(uiLanguage, 'A state with this name already exists.', '同じ名前の状態がすでにあります。'));
+    }
+    await invalidateScopedQuery(['entity-states', suggestedStateDraft.entityId]);
+    setNotice({ type: 'success', message: pickUiText(uiLanguage, 'Character state saved.', 'キャラクター状態を保存しました。') });
   };
 
   const resetEntityDraft = (): void => {
@@ -4359,12 +4596,77 @@ function StudioShell(props: {
     void runAction('Save episode', async () => {
       const saved = await api.updateEpisode(
         selectedEpisode.id,
-        toEpisodePayload(episodeDraft, loadedSelectedWorkEntityIds, selectedEpisode.estimated_pages),
+        { ...toEpisodePayload(episodeProseDraft, loadedSelectedWorkEntityIds, selectedEpisode.estimated_pages), ...episodeProductionNotePayload },
         activeOrganizationId,
+        productionNotesV2,
       );
       acceptSavedEpisode(saved, episodeDraft);
       await invalidateScopedQuery(['episodes', selectedChapter?.id ?? '']);
     });
+  };
+
+  // Estimation is deliberately draft-only; a response may change the page input only when its editor context is unchanged.
+  // Selecting a proposal changes only the preview. Enable saved notes only when
+  // an explicitly selected note still exists in the text applied to the episode.
+  const applyStoryImprovement = (field?: 'ending_hook'): void => {
+    if (storyImprovementDraft === null) return;
+    const appliedText = field === 'ending_hook'
+      ? storyImprovementDraft.ending_hook ?? ''
+      : buildFullEpisodeStoryText(storyImprovementDraft);
+    const appliedLines = appliedText.split(/\r?\n/u);
+    if (storyProductionNoteSuggestions?.scope === readerScope
+      && storyProductionNoteSuggestions.selectedNotes.some((note) => appliedLines.includes(`# ${note}`))) {
+      setProductionNoteScope(readerScope);
+    }
+    setEpisodeDraft((current) => field === 'ending_hook'
+      ? { ...current, ending_hook: storyImprovementDraft.ending_hook ?? current.ending_hook }
+      : applyStoryImprovementDraftToEpisodeDraft(current, storyImprovementDraft));
+  };
+
+  const estimateSelectedEpisodePages = async (): Promise<void> => {
+    if (selectedEpisode === null || !canCreateActiveOrganizationWorks || episodeProseDraft.story_full_draft.trim().length === 0 || estimatingPages) return;
+    const submittedRevision = pageEstimateRevision;
+    setEstimatingPages(true);
+    setPageEstimateState({ error: null, summary: null });
+    try {
+      const result: StoryPageEstimate = await api.estimateStoryPages({
+        episode_id: selectedEpisode.id,
+        production_notes_enabled: productionNotesRequested,
+        language: uiLanguage,
+        base_draft: {
+          title: nullableString(episodeDraft.title),
+          purpose: nullableString(episodeDraft.purpose),
+          story_input_mode: 'full',
+          story_full_draft: nullableString(episodeProseDraft.story_full_draft),
+          introduction: null,
+          middle: null,
+          climax: null,
+          ending_hook: null,
+        },
+      }, activeOrganizationId);
+      if (pageEstimateRevisionRef.current !== submittedRevision) return;
+      const nextPages = result.explicit_page_count ?? result.estimated_pages;
+      const pageLimit = editableEpisodePageLimit(selectedEpisode.estimated_pages);
+      if (nextPages > pageLimit) {
+        setPageEstimateState({
+          error: pickUiText(uiLanguage, `The estimate is ${nextPages} pages, which exceeds this episode's ${pageLimit}-page limit. Split the story into episodes; the current page count was not changed.`, `推定は${nextPages}ページで、この話の上限${pageLimit}ページを超えています。話を分割してください。現在のページ数は変更していません。`),
+          summary: null,
+        });
+        return;
+      }
+      setEpisodeDraft((current) => ({ ...current, estimated_pages: String(nextPages) }));
+      const hasManualBounds = result.explicit_page_count !== null || result.estimated_pages !== result.calculated_pages;
+      const resultText = !hasManualBounds
+        ? pickUiText(uiLanguage, `${result.panel_count} panels → ${nextPages} pages`, `${result.panel_count}コマ→${nextPages}ページ`)
+        : pickUiText(uiLanguage, `${nextPages} pages from manual page boundaries`, `ページ区切りから${nextPages}ページ`);
+      setPageEstimateState({ error: null, summary: resultText });
+    } catch (error) {
+      if (pageEstimateRevisionRef.current === submittedRevision) {
+        setPageEstimateState({ error: toMessage(error, uiLanguage), summary: null });
+      }
+    } finally {
+      setEstimatingPages(false);
+    }
   };
 
   const workspacePanel = (
@@ -5398,7 +5700,12 @@ function StudioShell(props: {
     void runAction('Apply story plan', async () => {
       try {
         if (pageDesignScopeRef.current !== intent.scope) return;
-        const result = await api.autofillEpisodePagesFromStory(intent.episodeId, intent.language, intent.organizationId);
+        const result = await api.autofillEpisodePagesFromStory(
+          intent.episodeId,
+          intent.language,
+          intent.organizationId,
+          intent.applyProductionNotes,
+        );
         if (pageDesignScopeRef.current !== intent.scope) return;
         setPageDesignJobId(result.job_id);
         trackJob(result.job_id);
@@ -5444,17 +5751,23 @@ function StudioShell(props: {
     const intent: PendingPageDesign = {
       scope: pageDesignScope, episodeId: selectedEpisode.id, organizationId: activeOrganizationId,
       language: uiLanguage, skeletonJobId: '', synchronous: false,
+      applyProductionNotes: applyProductionCommands,
     };
     pageDesignIntentRef.current = intent;
     setPageDesignStage('skeleton');
     void runAction('Generate page skeleton', async () => {
       try {
         const submittedEditors = structuredClone(currentPageEditorRef.current);
+        const commandCapabilities = await api.getStoryProductionNoteCapabilities();
+        if (pageDesignScopeRef.current !== intent.scope) return;
+        intent.applyProductionNotes = commandCapabilities.enabled === true && (productionNotesRequested || inlineProductionCommands);
         await saveCurrentEpisodeContext();
         if (pageDesignScopeRef.current !== intent.scope) return;
         const result = await api.generatePageSkeleton(intent.episodeId, {
           overwrite_existing: overwriteExisting,
           ...(overwriteExisting ? { preserve_generated_images: true } : {}),
+          ...(intent.applyProductionNotes
+            ? { production_notes_version: 'v1' as const } : {}),
           apply_story_plan: false, language: intent.language,
         }, intent.organizationId);
         if (pageDesignScopeRef.current !== intent.scope) return;
@@ -6133,14 +6446,18 @@ function StudioShell(props: {
                   >
                     <div className="form-grid two">
                       <InputField label="Title" value={episodeDraft.title} onChange={(value) => setEpisodeDraft({ ...episodeDraft, title: value })} />
-                      <InputField
-                        label="Estimated pages"
-                        value={episodeDraft.estimated_pages}
-                        onChange={(value) => setEpisodeDraft({ ...episodeDraft, estimated_pages: value })}
-                        type="number"
-                        min={1}
-                        max={editableEpisodePageLimit(selectedEpisode?.estimated_pages)}
-                      />
+                      <div className="field page-estimate-field">
+                        <span>{pickUiText(uiLanguage, 'Estimated pages', '想定ページ数')}</span>
+                        <div className="page-estimate-controls">
+                          <button aria-label={pickUiText(uiLanguage, 'Estimate pages from story length', '話の長さから推定')} className="secondary-button" disabled={!canCreateActiveOrganizationWorks || episodeProseDraft.story_full_draft.trim().length === 0 || estimatingPages} onClick={() => { void estimateSelectedEpisodePages(); }} type="button">
+                            {estimatingPages ? <LoaderCircle className="spin" size={16} /> : null}
+                            {pickUiText(uiLanguage, estimatingPages ? 'Estimating…' : 'Estimate from story length', estimatingPages ? '推定中…' : '話の長さから推定')}
+                          </button>
+                          <input aria-label={pickUiText(uiLanguage, 'Estimated pages', '想定ページ数')} max={editableEpisodePageLimit(selectedEpisode?.estimated_pages)} min={1} onChange={(event) => setEpisodeDraft({ ...episodeDraft, estimated_pages: event.target.value })} type="number" value={episodeDraft.estimated_pages} />
+                        </div>
+                        {pageEstimateState.error === null ? null : <small className="page-estimate-error" role="alert">{pageEstimateState.error}</small>}
+                        {pageEstimateState.summary === null ? null : <small className="page-estimate-summary" role="status">{pageEstimateState.summary}</small>}
+                      </div>
                     </div>
                     <TextAreaField
                       label="Whole story draft"
@@ -6148,6 +6465,14 @@ function StudioShell(props: {
                       value={episodeDraft.story_full_draft}
                       onChange={(value) => setEpisodeDraft({ ...episodeDraft, story_input_mode: 'full', story_full_draft: value })}
                     />
+                    {storyProductionNoteCapabilities.data?.enabled === true ? (
+                      <div className="stack">
+                        {/* Design: this is guidance only. Existing saved-note scope and sidecar data stay untouched. */}
+                        <small style={{ whiteSpace: 'pre-line' }}>{pickUiText(uiLanguage,
+                          'Use === for page breaks and --- for panel breaks. Wrap a specific request in # characters, for example #request#.',
+                          'ページは「===」\nコマは「---」\nで区切ると自動入力の際に忠実に反映します。\nその他、特定の要望は「#要望の内容#」といったように「#」で内容を囲って指定してください。')}</small>
+                      </div>
+                    ) : null}
                     <div className="episode-save-mobile">
                       <button
                         className="secondary-button"
@@ -6178,14 +6503,17 @@ function StudioShell(props: {
                                 setStoryBusy(true);
                                 await saveCurrentEpisodeContext();
                                 const result = await api.improveEpisodeDraft({
+                                  // Suggestions remain available without the removed UI toggle; applying one still uses the existing explicit action below.
+                                  ...(productionNotesV2 ? { include_production_notes: true } : {}),
                                   episode_id: selectedEpisode.id,
                                   instruction: storyInstruction,
                                   language: uiLanguage,
                                   base_draft: {
-                                    ...toEpisodeBaseDraftPayload(episodeDraft),
+                                    ...toEpisodeBaseDraftPayload(episodeProseDraft),
                                   },
                                 }, activeOrganizationId);
                                 setStoryImprovementDraft(result.draft);
+                                setStoryProductionNoteSuggestions({ scope: readerScope, notes: result.production_notes ?? [], selectedNotes: [] });
                                 setStoryImprovementMeta({
                                   compiler_provider: result.compiler_provider,
                                   compiler_model: result.compiler_model,
@@ -6207,13 +6535,7 @@ function StudioShell(props: {
                         <button
                           className="ghost-button"
                           disabled={storyImprovementDraft === null}
-                          onClick={() =>
-                            setEpisodeDraft((current) =>
-                              storyImprovementDraft === null
-                                ? current
-                                : applyStoryImprovementDraftToEpisodeDraft(current, storyImprovementDraft),
-                            )
-                          }
+                          onClick={() => applyStoryImprovement()}
                           type="button"
                         >
                           <Save size={16} />
@@ -6223,6 +6545,27 @@ function StudioShell(props: {
                     }
                   >
                     <TextAreaField label="Instruction" rows={4} value={storyInstruction} onChange={setStoryInstruction} />
+                    {storyProductionNoteSuggestions?.scope === readerScope && storyImprovementDraft !== null
+                      ? storyProductionNoteSuggestions.notes.map((note) => {
+                        const field = storyImprovementDraft.story_input_mode === 'full' ? 'story_full_draft' : 'ending_hook';
+                        const current = storyImprovementDraft[field] ?? '';
+                        const line = `# ${note}`;
+                        const revised = [current.trimEnd(), line].filter(Boolean).join('\n');
+                        return <div className="stack" key={note}>
+                          <small>{line}</small>
+                          <button className="ghost-button" type="button"
+                            disabled={current.split(/\r?\n/u).includes(line) || revised.length > (field === 'story_full_draft' ? 8_000 : 2_000)}
+                            onClick={() => {
+                              setStoryImprovementDraft({ ...storyImprovementDraft, [field]: revised });
+                              setStoryProductionNoteSuggestions({
+                                ...storyProductionNoteSuggestions,
+                                selectedNotes: [...new Set([...storyProductionNoteSuggestions.selectedNotes, note])],
+                              });
+                            }}>
+                            {pickUiText(uiLanguage, 'Add to improved draft', '改善案にこの指示を追加')}
+                          </button>
+                        </div>;
+                      }) : null}
                     {storyImprovementMeta !== null && storyImprovementMeta.compiler_provider !== 'fallback' ? (
                           <div className="muted small">{`${translateUiString(uiLanguage, 'AI improved')} / ${storyImprovementMeta.compiler_model ?? translateUiString(uiLanguage, 'Story AI')}`}</div>
                     ) : null}
@@ -6247,17 +6590,7 @@ function StudioShell(props: {
                           />
                           <button
                             className="secondary-button"
-                            onClick={() =>
-                              setEpisodeDraft((current) => ({
-                                ...current,
-                                story_input_mode: 'full',
-                                story_full_draft: storyImprovementDraft?.story_full_draft ?? current.story_full_draft,
-                                introduction: '',
-                                middle: '',
-                                climax: '',
-                                ending_hook: '',
-                              }))
-                            }
+                            onClick={() => applyStoryImprovement()}
                             type="button"
                           >
                             <Save size={16} />
@@ -6333,7 +6666,7 @@ function StudioShell(props: {
                                 }))
                               }
                             />
-                            <button className="secondary-button" onClick={() => setEpisodeDraft((current) => ({ ...current, ending_hook: storyImprovementDraft?.ending_hook ?? current.ending_hook }))} type="button">
+                            <button className="secondary-button" onClick={() => applyStoryImprovement('ending_hook')} type="button">
                               <Save size={16} />
                               {translateUiString(uiLanguage, 'Apply ending hook')}
                             </button>
@@ -6429,20 +6762,154 @@ function StudioShell(props: {
                       </button>
                     }
                   >
-                    <div className="list-grid">
-                      {entities.map((entity) => (
-                        <button
-                          key={entity.id}
-                          className={`mini-card ${selectedEntity?.id === entity.id ? 'active' : ''}`}
-                          onClick={() => selectEntityForEditing(entity.id)}
-                          type="button"
-                        >
-                          <strong>{entity.name}</strong>
-                          <span>{formatEntityTypeLabel(uiLanguage, entity.entity_type)}</span>
-                        </button>
-                      ))}
-                    </div>
+                    <GenerationBatchControls
+                      api={api}
+                      beforeQuote={async () => {
+                        if (isEntityDraftDirty()) {
+                          if (selectedEntity === null) {
+                            throw new Error(pickUiText(uiLanguage, 'Save the new character before batch generation.', '一括生成の前に新しいキャラクターを保存してください。'));
+                          }
+                          await saveCurrentEntityGenerationContext();
+                        }
+                      }}
+                      canGenerate={canCreateActiveOrganizationWorks && !paidGenerationBlocked}
+                      kind="character_references"
+                      language={uiLanguage}
+                      onCompleted={async () => {
+                        await invalidateScopedQuery(['entities', selectedWork.id]);
+                        if (selectedEntity !== null) {
+                          await Promise.all([
+                            invalidateScopedQuery(['entity-reference-set', selectedEntity.id]),
+                            invalidateScopedQuery(['entity-states', selectedEntity.id]),
+                          ]);
+                        }
+                      }}
+                      organizationId={activeOrganizationId}
+                      renderStyles={['color']}
+                      sessionKey={props.authSessionKey}
+                      workId={selectedWork.id}
+                    />
+                    <CharacterPortraitPicker
+                      key={JSON.stringify([props.authSessionKey, activeOrganizationId, selectedWork.id])}
+                      api={api}
+                      entities={entities}
+                      selectedId={entityEditorMode === 'edit' ? selectedEntity?.id ?? '' : ''}
+                      organizationId={activeOrganizationId}
+                      scopedQueryKey={scopedQueryKey}
+                      webImageDeliveryEnabled={webImageDeliveryEnabled}
+                      onSelect={selectEntityForEditing}
+                      onPreview={openImageLightbox}
+                    />
                   </PanelSection>
+
+                  {selectedEpisode !== null && characterAutofillCapabilitiesQuery.data?.enabled === true ? <PanelSection title="Autofill character details" collapsible actions={<button className="secondary-button" disabled={busyAction !== null} onClick={() => {
+                    // The confirmation must happen before the server transaction writes any character or state.
+                    if (!confirmEntityNavigation()) return;
+                    if (isEntityDraftDirty()) discardEntityDraft();
+                    void runAction('Save named characters from this episode', runEpisodeCharacterAutofill);
+                  }} type="button"><Save size={16} />{pickUiText(uiLanguage, 'Autofill and save character details', 'キャラ情報を自動入力して保存')}</button>}>
+                    <p className="muted small">{pickUiText(uiLanguage, 'Extracts new characters from the entered story.', '入力されたストーリーから新規キャラクターを抽出します')}</p>
+                    {characterAutofillResult?.scope === readerScope && characterAutofillResult.result.version === selectedEpisode.version ? <div className="stack">
+                      {characterAutofillResult.result.characters.length === 0 && characterAutofillResult.result.skipped_names.length === 0 ? <div className="notice notice-info">
+                        {pickUiText(uiLanguage, 'No named characters were found to save from this episode.', 'この話には保存する名前付きキャラクターが見つかりませんでした。')}
+                      </div> : null}
+                      {characterAutofillResult.result.characters.length > 0 ? <div className="notice notice-success">
+                        {pickUiText(uiLanguage,
+                          `${characterAutofillResult.result.characters.length} saved character${characterAutofillResult.result.characters.length === 1 ? '' : 's'} are available in the character portraits above.`,
+                          `${characterAutofillResult.result.characters.length}件の保存済みキャラクターを上のキャラクター一覧から選択できます。`)}
+                      </div> : null}
+                      {/* Design: saved characters remain in the portrait picker; only actionable source-backed review evidence is disclosed here. */}
+                      {(characterAutofillResult.result.skipped_names.length > 0
+                        || (characterAutofillResult.result.appearance_review?.suggestions.length ?? 0) > 0
+                        || (characterAutofillResult.result.appearance_review?.unresolved.length ?? 0) > 0) ? <details className="advanced-disclosure">
+                        <summary>{pickUiText(uiLanguage, 'Review saved-character details', '保存内容と要確認の根拠を確認')}</summary>
+                        {characterAutofillResult.result.skipped_names.length > 0 ? <div className="notice notice-info">
+                          {pickUiText(uiLanguage, 'Skipped because the name was ambiguous or did not match:', '名前が曖昧、または一致しなかったため保存しなかった項目:')}
+                          <ul>{characterAutofillResult.result.skipped_names.map((name) => <li key={name}>{name}</li>)}</ul>
+                        </div> : null}
+                        {characterAutofillResult.result.appearance_review?.suggestions.map((suggestion, index) => (
+                          <div className="mini-card" key={`${suggestion.entity_id}:${suggestion.field}:${suggestion.value}:${suggestion.quote}:${index}`}>
+                            <strong>{suggestion.name}</strong>
+                            <p><strong>{appearanceReviewFieldLabel(uiLanguage, suggestion.field)}</strong>: {appearanceReviewValueLabel(uiLanguage, suggestion.field, suggestion.value)}</p>
+                            <p className="muted small">{pickUiText(uiLanguage, 'Source', '本文')}: 「{suggestion.quote}」</p>
+                            <button className="secondary-button" disabled={busyAction !== null} onClick={() => void runAction('Apply character appearance', () => approveCharacterAppearance(suggestion))} type="button">
+                              <Check size={16} />{pickUiText(uiLanguage, 'Apply this field', 'この項目を反映')}
+                            </button>
+                          </div>
+                        ))}
+                        {characterAutofillResult.result.appearance_review?.unresolved.map((issue, index) => (
+                          <div className="notice notice-info" key={`${issue.reason}:${index}`}>
+                            <strong>{appearanceReviewReasonLabel(uiLanguage, issue.reason)}</strong>
+                            <p className="muted small">{pickUiText(uiLanguage, 'Source', '本文')}: 「{issue.quote}」</p>
+                          </div>
+                        ))}
+                      </details> : null}
+                    </div> : null}
+                  </PanelSection> : null}
+
+                  {selectedEpisode !== null && characterAutofillCapabilitiesQuery.data?.enabled !== true && characterSuggestionCapabilitiesQuery.data?.enabled === true ? <PanelSection title="Character suggestions (legacy)" collapsible actions={<button className="secondary-button" disabled={busyAction !== null} onClick={() => void runAction('Find character suggestions', async () => {
+                    const result = await api.getEpisodeCharacterSuggestions(selectedEpisode.id, { version: selectedEpisode.version }, activeOrganizationId);
+                    if (result.version !== selectedEpisode.version) throw new Error(pickUiText(uiLanguage, 'The episode changed. Please try again.', '話の内容が変わりました。もう一度お試しください。'));
+                    setCharacterSuggestionResult({ scope: readerScope, version: result.version, characters: result.characters });
+                  })} type="button"><Sparkles size={16} />{pickUiText(uiLanguage, 'Find from this episode', 'この話から探す')}</button>}>
+                    <p className="muted small">{pickUiText(uiLanguage, 'Suggestions do not save records or generate images.', '候補の表示だけでは保存・画像生成は行いません。')}</p>
+                    {characterSuggestionResult?.scope === readerScope && characterSuggestionResult.version === selectedEpisode.version
+                      ? characterSuggestionResult.characters.map((suggestion) => {
+                        const existingId = suggestion.status === 'existing' && suggestion.entity_ids.length === 1
+                          ? suggestion.entity_ids[0] : undefined;
+                        return (
+                          <div className="mini-card" key={`${suggestion.name}:${suggestion.name_quote}`}>
+                            <strong>{suggestion.name}</strong>
+                            <p className="muted small">{suggestion.name_quote}</p>
+                            {suggestion.appearance.map((item) => (
+                              <p className="muted small" key={`${item.field}:${item.value}`}>
+                                {item.value}（{item.quote}）
+                              </p>
+                            ))}
+                            {suggestion.status === 'new' ? (
+                              <button className="ghost-button" onClick={() => applySuggestedNewEntity(suggestion)} type="button">
+                                {pickUiText(uiLanguage, 'Open new draft', '新規下書きを開く')}
+                              </button>
+                            ) : null}
+                            {existingId === undefined ? null : (
+                              <button className="ghost-button" onClick={() => selectSuggestedExistingEntity(existingId)} type="button">
+                                {pickUiText(uiLanguage, 'Open existing character', '既存キャラを開く')}
+                              </button>
+                            )}
+                            {suggestion.changes.map((change) => (
+                              <div className="muted small" key={`${change.label}:${change.quote}`}>
+                                <p>{change.label} · {change.description}（{change.quote}）</p>
+                                {existingId === undefined ? null : (
+                                  <button className="ghost-button" type="button"
+                                    onClick={() => setSuggestedStateDraft({
+                                      scope: readerScope, entityId: existingId, label: change.label, description: change.description,
+                                    })}>
+                                    {pickUiText(uiLanguage, 'Edit state', '状態を編集')}
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }) : null}
+                    {suggestedStateDraft === null ? null : (
+                      <div className="stack">
+                        <InputField label="State name" value={suggestedStateDraft.label}
+                          onChange={(label) => setSuggestedStateDraft({ ...suggestedStateDraft, label })} />
+                        <TextAreaField label="State description" rows={2} value={suggestedStateDraft.description}
+                          onChange={(description) => setSuggestedStateDraft({ ...suggestedStateDraft, description })} />
+                        {(suggestedEntityStatesQuery.data?.entity_states ?? []).map((state: EntityStateEditorRecord) => (
+                          <p className="muted small" key={state.id}>{state.name} · {state.description}</p>
+                        ))}
+                        <button className="secondary-button" type="button"
+                          disabled={busyAction !== null || suggestedStateDraft.label.trim().length === 0 || suggestedStateDraft.description.trim().length === 0}
+                          onClick={() => void runAction('Save suggested character state', saveSuggestedState)}>
+                          <Save size={16} />
+                          {pickUiText(uiLanguage, 'Save state', '状態を保存')}
+                        </button>
+                      </div>
+                    )}
+                  </PanelSection> : null}
 
                   <PanelSection
                     title="Character editor"
@@ -6533,16 +7000,10 @@ function StudioShell(props: {
                         <span>{importingImage ? translateUiString(uiLanguage, 'Importing image...') : translateUiString(uiLanguage, 'Drop or choose image')}</span>
                       </label>
                     </div>
-                    <TextAreaField
-                      label="Free description"
-                      rows={3}
-                      value={entityDraft.free_description}
-                      onChange={(value) => setEntityDraft({ ...entityDraft, free_description: value })}
-                      helpText="Use this box for details not covered by the choices, or for special instructions you want Lyra to follow."
-                    />
                     {entityDraft.entity_type === 'character' ? (
                       <CharacterStructuredFieldsEditor
                         key={selectedEntity?.id ?? 'new-character'}
+                        savedFields={selectedEntity?.structured_fields}
                         value={characterStructuredFields}
                         onChange={(nextValue) =>
                           setEntityDraft((current) => ({
@@ -6557,6 +7018,13 @@ function StudioShell(props: {
                         onChange={(value) => setEntityDraft({ ...entityDraft, structured_fields: value })}
                       />
                     )}
+                    <TextAreaField
+                      label="Free description"
+                      rows={3}
+                      value={entityDraft.free_description}
+                      onChange={(value) => setEntityDraft({ ...entityDraft, free_description: value })}
+                      helpText="Use this box for details not covered by the choices, or for special instructions you want Lyra to follow."
+                    />
                     <div className="state-pill-row">
                       <span className={`state-pill ${entityEditorMode === 'create' ? 'state-pill-info' : 'state-pill-neutral'}`}>
                         {translateUiString(
@@ -6656,9 +7124,9 @@ function StudioShell(props: {
                               setReferenceSelection([]);
                               setReferencePrimaryKey('');
                               const sourceCandidateToken = uploadedReferenceSourceByEntityId[selectedEntity.id];
-                              const result = await api.generateEntityReference(
+                              const result = await api.generatePreferredEntityReference(
                                 selectedEntity.id,
-                                sourceCandidateToken === undefined ? undefined : { source_candidate_token: sourceCandidateToken },
+                                sourceCandidateToken,
                                 activeOrganizationId,
                               );
                               trackJob(result.job_id);
@@ -6822,7 +7290,7 @@ function StudioShell(props: {
                             <div className="muted small">{translateUiString(uiLanguage, 'Delete with the button only. Clicking the image will not delete it.')}</div>
                           </div>
                         </div>
-                        {entityReferenceSetQuery.data !== undefined && entityReferenceSetQuery.data.reference_images.length > 0 ? (
+                        {entityReferenceSetQuery.data?.reference_images?.length ? (
                           <div className="reference-grid reference-grid-portrait">
                             {entityReferenceSetQuery.data.reference_images.map((image) => (
                               <div key={image.ref_id} className="reference-card reference-card-portrait">
@@ -7479,7 +7947,7 @@ function StudioShell(props: {
                         className="page-section-generate"
                         collapsible
                         actions={
-                          <div className="toolbar">
+                          <div className="toolbar page-generation-actions">
                             <button
                               className="primary-button"
                               disabled={generatePageDisabled}
@@ -7492,14 +7960,14 @@ function StudioShell(props: {
                                     async () => api.warmPageGeneration(selectedPage.id, activeOrganizationId),
                                   );
                                   await saveCurrentPageGenerationContext();
-                                  const result = await api.generatePage(selectedPage.id, activeOrganizationId);
+                                  const result = await api.generatePreferredPage(selectedPage.id, selectedPage.generated_image !== null, activeOrganizationId);
                                   trackJob(result.job_id);
                                 })
                               }
                               type="button"
                             >
                               <Play size={16} />
-                              {translateUiString(uiLanguage, 'Generate in color')}
+                              {pickUiText(uiLanguage, 'Generate in color', 'このページを生成（推奨）（カラー）')}
                             </button>
                             <button
                               className="secondary-button"
@@ -7513,15 +7981,33 @@ function StudioShell(props: {
                                     async () => api.warmPageGeneration(selectedPage.id, activeOrganizationId),
                                   );
                                   await saveCurrentPageGenerationContext();
-                                  const result = await api.generatePage(selectedPage.id, activeOrganizationId, 'monochrome');
+                                  const result = await api.generatePreferredPage(selectedPage.id, selectedPage.generated_image !== null, activeOrganizationId, 'monochrome');
                                   trackJob(result.job_id);
                                 })
                               }
                               type="button"
                             >
                               <Play size={16} />
-                              {translateUiString(uiLanguage, 'Generate monochrome page')}
+                              {pickUiText(uiLanguage, 'Generate monochrome page', 'このページを生成（推奨）（モノクロ）')}
                             </button>
+                            <GenerationBatchControls
+                              api={api}
+                              beforeQuote={saveCurrentPageGenerationContext}
+                              canGenerate={canCreateActiveOrganizationWorks && !paidGenerationBlocked}
+                              episodeId={selectedEpisode.id}
+                              kind="pages"
+                              language={uiLanguage}
+                              onCompleted={async () => {
+                                await invalidateScopedQuery(['pages', selectedEpisode.id]);
+                                if (selectedPage !== null) {
+                                  await invalidateScopedQuery(['page', selectedPage.id]);
+                                }
+                              }}
+                              organizationId={activeOrganizationId}
+                              renderStyles={['color', 'monochrome']}
+                              sessionKey={props.authSessionKey}
+                              workId={selectedWork?.id ?? null}
+                            />
                             <button
                               className="ghost-button"
                               onClick={() =>
@@ -7748,18 +8234,97 @@ function StudioShell(props: {
   );
 }
 
-function AuthenticatedImage(props: {
-  alt?: string;
-  className?: string;
-  enabled?: boolean;
-  errorLabel?: string;
-  loadImage: () => Promise<BlobResponse>;
-  loading?: 'eager' | 'lazy';
-  onClick?: (url: string) => void;
-  onDoubleClick?: (url: string) => void;
-  placeholderClassName?: string;
-  queryKey: readonly unknown[];
+const CHARACTERS_PER_PAGE = 8;
+
+interface CharacterPhotoSource {
+  api: LyraApiClient;
+  organizationId: string | null;
+  scopedQueryKey: (key: readonly unknown[]) => readonly unknown[];
+  webImageDeliveryEnabled: boolean;
+}
+
+function CharacterPortraitPicker(props: CharacterPhotoSource & {
+  entities: readonly EntityRecord[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onPreview: (url: string, name: string) => void;
+}): React.JSX.Element | null {
+  const language = useContext(UiLanguageContext);
+  const [browsing, setBrowsing] = useState<{ page: number; selection: string } | null>(null);
+  if (!props.entities.length) return null;
+  const selectedIndex = Math.max(0, props.entities.findIndex(entity => entity.id === props.selectedId));
+  const lastPage = Math.ceil(props.entities.length / CHARACTERS_PER_PAGE) - 1;
+  const page = browsing?.selection === props.selectedId
+    ? Math.min(browsing.page, lastPage) : Math.floor(selectedIndex / CHARACTERS_PER_PAGE);
+  const offset = page * CHARACTERS_PER_PAGE;
+  const label = pickUiText(language, 'Select character', 'キャラを選択');
+  return <div className="stack">
+    <label className="field"><span>{label}</span>
+      <select aria-label={label} value={props.selectedId} onChange={event => props.onSelect(event.target.value)}>
+        {props.selectedId === '' ? <option value="">{label}</option> : null}
+        {props.entities.map(entity => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+      </select>
+    </label>
+    <div className="page-grid character-photo-grid" role="group" aria-label={pickUiText(language, 'Character portraits', 'キャラの写真一覧')}>
+      {props.entities.slice(offset, offset + CHARACTERS_PER_PAGE).map(entity =>
+        <CharacterThumbnailCard key={entity.id} api={props.api} entity={entity}
+          selected={props.selectedId === entity.id} organizationId={props.organizationId}
+          scopedQueryKey={props.scopedQueryKey} webImageDeliveryEnabled={props.webImageDeliveryEnabled}
+          onSelect={() => props.onSelect(entity.id)} onPreview={url => props.onPreview(url, entity.name)} />,
+      )}
+    </div>
+    {lastPage > 0 ? <div className="toolbar">
+      <button type="button" className="ghost-button" disabled={page === 0}
+        aria-label={pickUiText(language, 'Previous characters', '前のキャラ一覧')}
+        onClick={() => setBrowsing({ page: page - 1, selection: props.selectedId })}>{pickUiText(language, 'Previous', '前へ')}</button>
+      <span>{page + 1} / {lastPage + 1}</span>
+      <button type="button" className="ghost-button" disabled={page === lastPage}
+        aria-label={pickUiText(language, 'Next characters', '次のキャラ一覧')}
+        onClick={() => setBrowsing({ page: page + 1, selection: props.selectedId })}>{pickUiText(language, 'Next', '次へ')}</button>
+    </div> : null}
+  </div>;
+}
+
+function CharacterThumbnailCard(props: CharacterPhotoSource & {
+  entity: EntityRecord;
+  selected: boolean;
+  onSelect: () => void;
+  onPreview: (url: string) => void;
 }) {
+  const language = useContext(UiLanguageContext);
+  const { id, name, entity_type } = props.entity;
+  const reference = useQuery({
+    queryKey: props.scopedQueryKey(['entity-reference-set', id]),
+    queryFn: () => props.api.getEntityReferenceSet(id, props.organizationId),
+    staleTime: 30_000,
+  });
+  const available = reference.data?.reference_images?.filter(image => canReadWebImage(image, props.webImageDeliveryEnabled));
+  const photo = available?.find(image => image.ref_id === reference.data?.primary_ref_id) ?? available?.[0];
+  const { objectUrl } = useAuthenticatedImage({
+    enabled: photo !== undefined,
+    queryKey: props.scopedQueryKey(['entity-reference-image', id, photo?.ref_id, photo?.created_at, photo?.image_model, props.webImageDeliveryEnabled]),
+    loadImage: () => props.api.exportEntityReferenceImage(id, photo?.ref_id ?? '', props.organizationId, photo, props.webImageDeliveryEnabled),
+  });
+  return <div className="character-photo-card">
+    <button className={`page-card ${props.selected ? 'active' : ''}`} type="button"
+      aria-pressed={props.selected} onClick={props.onSelect}>
+      <span className="character-photo-frame">{objectUrl ? <img src={objectUrl} alt="" decoding="async" /> : null}</span>
+      <strong>{name}</strong>
+      <span className="muted small">{formatEntityTypeLabel(language, entity_type)}</span>
+    </button>
+    {!objectUrl ? null : <button className="icon-button character-photo-zoom" type="button"
+      aria-label={pickUiText(language, `Enlarge image of ${name}`, `${name}の画像を拡大`)} onClick={() => props.onPreview(objectUrl)}>
+      <ZoomIn size={16} />
+    </button>}
+  </div>;
+}
+
+interface AuthenticatedImageSource {
+  enabled?: boolean;
+  loadImage: () => Promise<BlobResponse>;
+  queryKey: readonly unknown[];
+}
+function useAuthenticatedImage(props: AuthenticatedImageSource) {
   const imageQuery = useQuery({
     queryKey: props.queryKey,
     queryFn: async () => {
@@ -7785,6 +8350,19 @@ function AuthenticatedImage(props: {
     };
   }, [imageQuery.data]);
 
+  return { imageQuery, objectUrl };
+}
+
+function AuthenticatedImage(props: AuthenticatedImageSource & {
+  alt?: string;
+  className?: string;
+  errorLabel?: string;
+  loading?: 'eager' | 'lazy';
+  onClick?: (url: string) => void;
+  onDoubleClick?: (url: string) => void;
+  placeholderClassName?: string;
+}) {
+  const { imageQuery, objectUrl } = useAuthenticatedImage(props);
   if (objectUrl === null) {
     const placeholderClassName = `${props.placeholderClassName ?? 'thumb-placeholder'} image-loading-placeholder`.trim();
     return (
@@ -8582,6 +9160,7 @@ function CharacterFieldsGroup(props: {
 }
 
 function CharacterStructuredFieldsEditor(props: {
+  savedFields?: Record<string, unknown>;
   value: CharacterStructuredFieldsDraft;
   onChange: (nextValue: CharacterStructuredFieldsDraft) => void;
 }) {
@@ -8591,10 +9170,16 @@ function CharacterStructuredFieldsEditor(props: {
       ...patch,
     });
   };
+  // Base the initial disclosure on the saved record so editing a field cannot collapse its own group.
+  const hasSavedValues = (...keys: string[]): boolean => keys.some(key => {
+    const value = props.savedFields?.[key];
+    if (typeof value === 'string') return value.trim().length > 0;
+    return value !== null && typeof value === 'object' && Object.values(value).some(item => typeof item === 'string' && item.trim().length > 0);
+  });
 
   return (
     <div className="character-fields-stack">
-      <CharacterFieldsGroup title="Identity">
+      <CharacterFieldsGroup title="Identity" mobileDefaultOpen={hasSavedValues('gender_expression', 'age_range', 'skin_tone', 'first_impression', 'standing_style', 'default_expression', 'height', 'build', 'art_style')}>
         <div className="form-grid three compact-grid">
           <SelectOrCustomField label="Gender" value={props.value.gender_expression} onChange={(value) => update({ gender_expression: value })} options={CHARACTER_GENDER_OPTIONS} />
           <SelectOrCustomField label="Age range" value={props.value.age_range} onChange={(value) => update({ age_range: value })} options={CHARACTER_AGE_RANGE_OPTIONS} />
@@ -8616,7 +9201,7 @@ function CharacterStructuredFieldsEditor(props: {
         />
       </CharacterFieldsGroup>
 
-      <CharacterFieldsGroup title="Face">
+      <CharacterFieldsGroup title="Face" mobileDefaultOpen={hasSavedValues('eyes', 'face_detail', 'face_shape', 'eyebrow_shape', 'nose_shape', 'mouth_shape')}>
         <div className="form-grid four compact-grid">
           <SelectOrCustomField label="Face shape" value={props.value.face_shape} onChange={(value) => update({ face_shape: value })} options={CHARACTER_FACE_SHAPE_OPTIONS} />
           <SelectOrCustomField label="Eyebrow shape" value={props.value.eyebrow_shape} onChange={(value) => update({ eyebrow_shape: value })} options={CHARACTER_EYEBROW_SHAPE_OPTIONS} />
@@ -8633,7 +9218,7 @@ function CharacterStructuredFieldsEditor(props: {
         </div>
       </CharacterFieldsGroup>
 
-      <CharacterFieldsGroup title="Hair">
+      <CharacterFieldsGroup title="Hair" mobileDefaultOpen={hasSavedValues('hair', 'hair_detail')}>
         <div className="form-grid five compact-grid">
           <SelectOrCustomField label="Hair color" value={props.value.hair_color} onChange={(value) => update({ hair_color: value })} options={CHARACTER_HAIR_COLOR_OPTIONS} />
           <SelectOrCustomField label="Hair length" value={props.value.hair_length} onChange={(value) => update({ hair_length: value })} options={CHARACTER_HAIR_LENGTH_OPTIONS} />
@@ -8648,7 +9233,7 @@ function CharacterStructuredFieldsEditor(props: {
         </div>
       </CharacterFieldsGroup>
 
-      <CharacterFieldsGroup title="Outfit">
+      <CharacterFieldsGroup title="Outfit" mobileDefaultOpen={hasSavedValues('clothing', 'outfit_detail')}>
         <div className="form-grid three compact-grid">
           <SelectOrCustomField label="Category" value={props.value.clothing_category} onChange={(value) => update({ clothing_category: value })} options={CHARACTER_CLOTHING_CATEGORY_OPTIONS} />
           <SelectOrCustomField label="Main color" value={props.value.clothing_main_color} onChange={(value) => update({ clothing_main_color: value })} options={CHARACTER_CLOTHING_COLOR_OPTIONS} />
@@ -9006,13 +9591,16 @@ function toChapterDraft(chapter: ChapterRecord): ChapterDraft {
 }
 
 function toEpisodeDraft(episode: EpisodeRecord): EpisodeDraft {
-  const storyFullDraft = buildFullEpisodeStoryText({
+  const prose = buildFullEpisodeStoryText({
     story_full_draft: episode.story_full_draft,
     introduction: episode.introduction,
     middle: episode.middle,
     climax: episode.climax,
     ending_hook: episode.ending_hook,
   });
+  const storyFullDraft = [prose, ...(episode.production_notes ?? []).map((note) => `# ${note}`)]
+    .filter((part) => part.length > 0)
+    .join('\n');
   return {
     order: String(episode.order),
     title: episode.title ?? '',
@@ -9027,6 +9615,38 @@ function toEpisodeDraft(episode: EpisodeRecord): EpisodeDraft {
     entities_involved: episode.entities_involved.join(', '),
     status: episode.status,
   };
+}
+
+const webProductionNoteQuoted = '「[^」\\r\\n]{1,160}」';
+const webProductionPairNote = new RegExp(
+  `^${webProductionNoteQuoted}と${webProductionNoteQuoted}は(?:同じコマ|別(?:の)?コマ)(?:にする)?[。.]?$`,
+  'u',
+);
+const webProductionStateStartNote = new RegExp(
+  `^${webProductionNoteQuoted}のコマから${webProductionNoteQuoted}は${webProductionNoteQuoted}(?:状態)?[。.]?$`,
+  'u',
+);
+const webProductionStateEndNote = new RegExp(
+  `^${webProductionNoteQuoted}のコマ(?:で|から)${webProductionNoteQuoted}は通常に戻(?:す|る)[。.]?$`,
+  'u',
+);
+
+function separateWebProductionNoteLines(
+  draft: string,
+  enabled: boolean,
+  preservedNotes: readonly string[] = [],
+): { body: string; notes: string[] } {
+  const body: string[] = [];
+  const notes: string[] = [];
+  const preserved = new Set(preservedNotes);
+  for (const line of draft.split(/\r?\n/u)) {
+    const note = /^[ \t]*[#＃][ \t]*(\S.*)$/u.exec(line)?.[1]?.trimEnd();
+    if (note !== undefined && ((enabled && (webProductionPairNote.test(note)
+      || webProductionStateStartNote.test(note) || webProductionStateEndNote.test(note)))
+      || (!enabled && preserved.has(note)))) notes.push(note);
+    else body.push(line);
+  }
+  return { body: body.join('\n'), notes: [...new Set(notes)] };
 }
 
 function buildFullEpisodeStoryText(parts: {
@@ -9300,10 +9920,15 @@ function applyStoryImprovementDraftToEpisodeDraft(
     climax: improvement.climax ?? draft.climax,
     ending_hook: improvement.ending_hook ?? draft.ending_hook,
   });
+  const existingNotes = separateWebProductionNoteLines(draft.story_full_draft, true).notes;
+  const improved = separateWebProductionNoteLines(storyFullDraft, true);
+  const productionNotes = [...new Set([...existingNotes, ...improved.notes])];
   return {
     ...draft,
     story_input_mode: 'full',
-    story_full_draft: storyFullDraft,
+    story_full_draft: [improved.body, ...productionNotes.map((note) => `# ${note}`)]
+      .filter(Boolean)
+      .join('\n'),
     introduction: '',
     middle: '',
     climax: '',

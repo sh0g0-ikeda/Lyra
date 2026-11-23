@@ -1,4 +1,5 @@
-import { ConfigurationError, NotFoundError, ResourceStaleError } from '../../domain/errors/index.js';
+import { ConfigurationError, NotFoundError, ResourceStaleError, ValidationError } from '../../domain/errors/index.js';
+import { applyAppearanceChoice, isCharacterAppearanceChoice, readCharacterAppearanceChoice } from './CharacterAppearanceReview.js';
 import type {
   CreateEntityInput,
   Entity,
@@ -29,6 +30,8 @@ export interface CreateEntityRequest {
 
 export interface UpdateEntityRequest {
   expectedUpdatedAt?: string;
+  /** Internal to the explicit single-choice approval endpoint. */
+  appearanceReview?: { field: string; value: string };
   entityType?: EntityType;
   name?: string;
   freeDescription?: string | null;
@@ -135,6 +138,25 @@ export class EntityService implements EntityServicePort {
     organizationId: string | null = null,
   ): Promise<Entity> {
     const currentEntity = await this.getEntity(userId, entityId, organizationId);
+    if (input.appearanceReview !== undefined) {
+      const { field, value } = input.appearanceReview;
+      if (currentEntity.entityType !== 'character'
+        || !input.expectedUpdatedAt
+        || !isCharacterAppearanceChoice(field, value)) {
+        throw new ValidationError('Invalid character appearance review');
+      }
+      if (readCharacterAppearanceChoice(currentEntity.structuredFields, field) === value) return currentEntity;
+      if (Date.parse(input.expectedUpdatedAt) !== currentEntity.updatedAt.getTime()) throw new ResourceStaleError();
+      // Keep historical/custom siblings byte-for-byte at the JSON-value level.
+      // The repository compares the same revision in its UPDATE to cover concurrent edits.
+      const structuredFields = applyAppearanceChoice(currentEntity.structuredFields, field, value);
+      const saved = await this.entityRepository.update(entityId, userId, {
+        expectedUpdatedAt: input.expectedUpdatedAt,
+        structuredFields,
+      }, organizationId);
+      if (!saved) throw new ResourceStaleError();
+      return saved;
+    }
     const nextEntityType = input.entityType ?? currentEntity.entityType;
     const entityTypeChanged =
       input.entityType !== undefined && input.entityType !== currentEntity.entityType;

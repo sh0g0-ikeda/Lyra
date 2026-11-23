@@ -349,7 +349,9 @@ class FakeEntityStateReferenceService implements EntityStateReferenceServicePort
         refId: `${input.jobId}-1`,
         s3Key: `saved/${userId}/entities/${requestedEntityId}/states/${requestedStateId}/${input.jobId}-1.png`,
         storageOwnerUserId: userId,
-        imageModel: 'gpt-image-2',
+        imageModel: 'gpt-image-2.5-sunburst',
+        providerModelId: 'gpt-image-2.5-sunburst-2026-09-08',
+        provider: 'openai',
         baseRefId: 'base-ref-1',
         createdAt: '2026-04-22T00:00:01.000Z',
         inputFingerprint: 'a'.repeat(64),
@@ -452,6 +454,11 @@ describe('entity routes', () => {
     const payload = await response.json() as Record<string, unknown>;
     expect(JSON.stringify(payload)).not.toContain('s3_key');
     expect(JSON.stringify(payload)).not.toContain('storage_owner_user_id');
+    expect(payload).toMatchObject({ reference_image: {
+      image_model: 'gpt-image-2.5-sunburst',
+      provider_model_id: 'gpt-image-2.5-sunburst-2026-09-08',
+      provider: 'openai',
+    }});
     expect(stateReferences.confirmInput).toMatchObject({ jobId, candidateS3Key, stateId });
   });
   it('JWTが正しい場合にエンティティを作成できる', async () => {
@@ -1182,6 +1189,18 @@ describe('entity routes', () => {
 });
 
 describe('entity shipped timestamp contract', () => {
+  it('選んだ外見候補だけを版指定付きで渡し、未定義の選択値を拒否する', async () => {
+    const service = new FakeEntityService();
+    const app = createTestApp(undefined, undefined, service);
+    const token = await createToken();
+    const request = (value: string) => app.request(`/api/entities/${entityId}/appearance-review`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field: 'eyes.color', value, expected_updated_at: now.toISOString() }),
+    });
+    expect((await request('not_an_eye_color')).status).toBe(422);
+    expect((await request('green')).status).toBe(200);
+    expect(service.lastUpdate).toMatchObject({ expectedUpdatedAt: now.toISOString(), appearanceReview: {field: 'eyes.color', value: 'green'} });
+  });
   it('PUTはtimestampをServiceへ渡しstaleを409のまま返す', async () => {
     const service = new FakeEntityService();
     const app = createTestApp(undefined,undefined,service);

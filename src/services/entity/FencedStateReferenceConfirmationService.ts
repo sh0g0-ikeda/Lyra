@@ -2,7 +2,7 @@ import type { WorkDeletionRecord } from '../work/WorkDeletionService.js';
 import { ConfigurationError, ConflictError } from '../../domain/errors/index.js';
 import type { ConfirmedEntityStateReference, ConfirmEntityStateReferenceInput } from '../../domain/types/entityStateReference.js';
 import type {
-  FencedImageReceipt, FencedStorageOperationBudget, FencedStateReferenceImageCreatePort,
+  FencedErasureReceipt, FencedImageReceipt, FencedStorageOperationBudget, FencedStateReferenceImageCreatePort,
   FencedStateReferenceRecoveryPort,
 } from '../../infrastructure/aws/FencedStateReferenceStorage.js';
 import type {
@@ -22,6 +22,22 @@ export interface FencedStateReferenceConfirmationDependencies {
   imageCreator?: FencedStateReferenceImageCreatePort;
   recovery?: FencedStateReferenceRecoveryPort;
   admissionEnabled?: boolean;
+}
+
+export type StateReferenceRecoveryStage = 'unknown' | 'image_create' | 'image_observe' | 'image_adopt'
+  | 'fence_claim' | 'fence_write' | 'fence_settle';
+export type StateReferenceRecoveryClassification = 'access_denied' | 'timeout' | 'unknown';
+
+/** Publicly remains a 409 CONFLICT, while trusted coordinators can distinguish
+ * an unresolved durable storage attempt from an edit/authorization conflict. */
+export class StateReferenceRecoveryPendingError extends ConflictError {
+  public constructor(
+    public readonly stage: StateReferenceRecoveryStage = 'unknown',
+    public readonly classification: StateReferenceRecoveryClassification = 'unknown',
+  ) {
+    super('State reference copy outcome requires recovery; no new copy was started');
+    this.name = 'StateReferenceRecoveryPendingError';
+  }
 }
 
 /** Admission OFF does not disable recovery of already-issued v2 operations.
@@ -66,9 +82,9 @@ implements FencedStateReferenceConfirmationPort, PersonalStateReferenceFencingPo
     let receipt: FencedImageReceipt;
     try {
       receipt = await creator.createImage({ intent: attempt.intent, imageData });
-    } catch {
+    } catch (error) {
       // The remote operation may still complete. Keep its exact durable intent.
-      throw pending();
+      rethrowUnknownOutcome('image_create', error);
     }
     return await this.adoptObservedImage(attempt, receipt) ?? discard();
   }
@@ -123,9 +139,9 @@ implements FencedStateReferenceConfirmationPort, PersonalStateReferenceFencingPo
     let observation;
     try {
       observation = await this.requireRecovery().observe(attempt.intent);
-    } catch {
+    } catch (error) {
       // Unknown or foreign object metadata is not permission to overwrite it.
-      throw pending();
+      rethrowUnknownOutcome('image_observe', error);
     }
     if (observation.kind === 'image') return this.adoptObservedImage(attempt, observation);
     await this.fenceUnconfirmed(attempt);
@@ -142,18 +158,35 @@ implements FencedStateReferenceConfirmationPort, PersonalStateReferenceFencingPo
         await this.fenceUnconfirmed(attempt);
         return null;
       }
-      throw error;
+      if (error instanceof ConflictError) throw error;
+      // The transaction may have committed even when its acknowledgement was
+      // lost. A later claim must inspect the same durable attempt and receipt.
+      throw pending('image_adopt', error);
     }
   }
 
   private async fenceUnconfirmed(attempt: FencedStateReferenceAttempt, recoveryUserId?: string): Promise<void> {
     const recovery = this.dependencies.recovery;
     if (recovery === undefined) throw pending();
-    const claimed = await this.dependencies.repository.claimFencing(attempt, {
-      reason: 'unconfirmed_recovery', ...(recoveryUserId === undefined ? {} : { recoveryUserId }),
-    });
-    const receipt = await recovery.fenceAndErase(claimed.intent);
-    await this.dependencies.repository.completeFencing(claimed, receipt);
+    let claimed: FencedStateReferenceAttempt;
+    try {
+      claimed = await this.dependencies.repository.claimFencing(attempt, {
+        reason: 'unconfirmed_recovery', ...(recoveryUserId === undefined ? {} : { recoveryUserId }),
+      });
+    } catch (error) {
+      rethrowUnknownOutcome('fence_claim', error);
+    }
+    let receipt: FencedErasureReceipt;
+    try {
+      receipt = await recovery.fenceAndErase(claimed.intent);
+    } catch (error) {
+      rethrowUnknownOutcome('fence_write', error);
+    }
+    try {
+      await this.dependencies.repository.completeFencing(claimed, receipt);
+    } catch (error) {
+      rethrowUnknownOutcome('fence_settle', error);
+    }
   }
   private requireCreator(): FencedStateReferenceImageCreatePort {
     if (this.dependencies.imageCreator === undefined) throw new ConfigurationError('Verified state reference image storage is not configured');
@@ -164,7 +197,21 @@ implements FencedStateReferenceConfirmationPort, PersonalStateReferenceFencingPo
     return this.dependencies.recovery;
   }
 }
-function pending(): ConflictError { return new ConflictError('State reference copy outcome requires recovery; no new copy was started'); }
+function pending(stage: StateReferenceRecoveryStage = 'unknown', error?: unknown): StateReferenceRecoveryPendingError {
+  return new StateReferenceRecoveryPendingError(stage, classifyUnknownOutcome(error));
+}
+function rethrowUnknownOutcome(stage: StateReferenceRecoveryStage, error: unknown): never {
+  if (error instanceof ConflictError) throw error;
+  throw pending(stage, error);
+}
+function classifyUnknownOutcome(error: unknown): StateReferenceRecoveryClassification {
+  if (typeof error !== 'object' || error === null) return 'unknown';
+  const record = error as Record<string, unknown>;
+  const identity = [record.name, record.code].filter((value): value is string => typeof value === 'string').join(' ').toLowerCase();
+  if (identity.includes('accessdenied') || identity.includes('access_denied') || identity.includes('forbidden')) return 'access_denied';
+  if (identity.includes('timeout') || identity.includes('timedout') || identity.includes('aborterror')) return 'timeout';
+  return 'unknown';
+}
 function discard(): never { throw new ConflictError('The previous state reference copy was safely discarded; review and retry confirmation'); }
 function sourceMimeType(key: string): 'image/png' | 'image/jpeg' | 'image/webp' {
   if (key.endsWith('.png')) return 'image/png';

@@ -75,9 +75,9 @@ assert.equal(resources.GenerationTaskDefinition.Properties.ContainerDefinitions[
 const stageImageRole = { 'Fn::Sub': 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-image-create' };
 const stageRecoveryRole = { 'Fn::Sub': 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-recovery' };
 const apiStateAssumption = resources.ApiTaskRole.Properties.Policies[0].PolicyDocument.Statement.find(s => s.Sid === 'AssumeExactStageStateV2Roles');
-const workerStateAssumption = resources.WorkerTaskRole.Properties.Policies[0].PolicyDocument.Statement.find(s => s.Sid === 'AssumeExactStageStateV2RecoveryRole');
+const workerStateAssumption = resources.WorkerTaskRole.Properties.Policies[0].PolicyDocument.Statement.find(s => s.Sid === 'AssumeExactStageStateV2Roles');
 assert.deepEqual(apiStateAssumption, { Sid: 'AssumeExactStageStateV2Roles', Effect: 'Allow', Action: 'sts:AssumeRole', Resource: [stageImageRole, stageRecoveryRole] });
-assert.deepEqual(workerStateAssumption, { Sid: 'AssumeExactStageStateV2RecoveryRole', Effect: 'Allow', Action: 'sts:AssumeRole', Resource: stageRecoveryRole });
+assert.deepEqual(workerStateAssumption, { Sid: 'AssumeExactStageStateV2Roles', Effect: 'Allow', Action: 'sts:AssumeRole', Resource: [stageImageRole, stageRecoveryRole] });
 
 
 

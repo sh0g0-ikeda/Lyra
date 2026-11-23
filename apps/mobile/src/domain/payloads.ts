@@ -157,6 +157,7 @@ export interface GeneratePageSkeletonPayload {
   overwrite_existing?: boolean;
   preserve_generated_images?: boolean;
   apply_story_plan?: boolean;
+  production_notes_version?: 'v1';
   language?: 'ja' | 'en';
 }
 

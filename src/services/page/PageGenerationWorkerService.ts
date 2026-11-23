@@ -1,13 +1,15 @@
 import type { PageGenerationLayoutControl } from './PageGenerationLayoutControl.js';
-import { ConfigurationError } from '../../domain/errors/index.js';
+import { ConfigurationError, ValidationError } from '../../domain/errors/index.js';
 import {
   requireOpenAIImageInputCompatible,
   requireOpenAIPageJobCompatible,
+  resolveQuotedOpenAIImageModel,
 } from '../../domain/generation/ImageInputProviderPolicy.js';
 import type { ImageProvenance } from '../../domain/generation/ImageAccessPolicy.js';
 import { hasGenerationQuote, type QuotedGenerationInputsPort } from '../generation/QuotedGenerationInputs.js';
 import sharp from 'sharp';
 import { assertRasterImageInput } from '../../domain/generation/RasterImageInput.js';
+import { GPT_IMAGE_25_SUNBURST_SNAPSHOT } from '../../domain/constants/openAIImageModel.js';
 import { PAGE_GENERATION_INTERNAL_PLAN_MAX_CHARS, PAGE_GENERATION_MONOCHROME_MAX_INPUT_PIXELS } from '../../domain/constants/generation.js';
 import { sanitizePersistedErrorMessage } from '../../lib/errorSanitizer.js';
 import type { GenerationJob } from '../../domain/types/job.js';
@@ -40,6 +42,9 @@ import type {
 import type {
   GenerationJobCancellationControlRepository,
 } from '../../repositories/GenerationJobRepository.js';
+import { runImageProviderAttempts } from '../generation/ImageProviderAttempts.js';
+import { generationFailureDiagnostic } from '../generation/GenerationFailureDiagnostic.js';
+import { StructuredOpenAIResponseError } from '../../infrastructure/openai/StructuredOpenAIResponse.js';
 
 export interface PageGenerationPlanInput {
   jobId: string;
@@ -83,6 +88,7 @@ export interface PageGenerationPlannerPort {
 }
 
 export interface RenderPageImageInput extends PageGenerationPlanInput {
+  providerModelId?: string;
   sceneGuidance?: string | null;
   layoutControl?: PageGenerationLayoutControl | null;
   panelCount?: number;
@@ -179,20 +185,24 @@ export class PageGenerationWorkerService {
       return { status: 'processed', jobStatus: 'failed' };
     }
 
+    let currentStage = 'quoted_inputs';
     try {
-      requireOpenAIPageJobCompatible(job.params, this.configuredImageModel);
+      const providerModelId = resolveQuotedOpenAIImageModel(job.params, this.configuredImageModel);
+      requireOpenAIPageJobCompatible(job.params, providerModelId);
       if (hasGenerationQuote(job) && this.quotedInputs === undefined) {
         throw new ConfigurationError('Quoted page execution is not configured');
       }
       const quoted = hasGenerationQuote(job) ? await this.quotedInputs!.page(job) : null;
       const startedAtMs = Date.now();
       const stageTimingsMs = createEmptyPageGenerationStageTimings();
+      currentStage = 'input_readiness';
       await this.inputImageBuilder.assertRenderableState({
         userId: job.userId,
         organizationId: job.organizationId ?? null,
         pageId: params.page_id,
       });
       await this.touchJobProgress(job, 'Building page prompt.');
+      currentStage = 'prompt_build';
       const builtPrompt = quoted?.prompt ?? await measurePageGenerationStage(stageTimingsMs, 'prompt_build', () =>
         this.promptBuilder.buildPagePrompt({
           userId: job.userId,
@@ -205,11 +215,13 @@ export class PageGenerationWorkerService {
       );
       await this.saveInputSnapshot(job, builtPrompt.inputSnapshot);
       await this.touchJobProgress(job, 'Compiling page prompt.');
+      currentStage = 'prompt_compile';
       const compiledPromptResult = await measurePageGenerationStage(stageTimingsMs, 'prompt_compile', () =>
         compilePromptSafely(this.promptCompiler, builtPrompt),
       );
       const compiledPrompt = compiledPromptResult.compiledPrompt;
       await this.touchJobProgress(job, 'Preparing reference images.');
+      currentStage = 'reference_images';
       const inputImages = quoted?.inputImages ?? await measurePageGenerationStage(stageTimingsMs, 'reference_images', () =>
         this.inputImageBuilder.buildInputImages({
           userId: job.userId,
@@ -218,8 +230,10 @@ export class PageGenerationWorkerService {
           layoutControl: builtPrompt.layoutControl,
         }),
       );
+      currentStage = 'input_snapshot';
       await this.saveInputSnapshot(job, appendInputImageSnapshot(builtPrompt.inputSnapshot, inputImages));
 
+      currentStage = 'planning';
       const internalPlan = params.requires_planner
         ? normalizeOptionalInternalPlan(
             await measurePageGenerationStage(stageTimingsMs, 'planning', () =>
@@ -257,32 +271,43 @@ export class PageGenerationWorkerService {
         layoutControl: builtPrompt.layoutControl,
         internalPlan,
       };
-      const sceneAudit = await measurePageGenerationStage(stageTimingsMs, 'scene_audit', () =>
-        this.withProgressHeartbeat(job, 'Checking page scene consistency before generation.', () =>
-          this.sceneAuditor.audit(sceneAuditInput),
-        ),
-      );
-      const sceneGuidance = buildPageSceneGuidance(sceneAuditInput, sceneAudit);
-      if (await this.finalizeCancellationIfRequested(job.id)) {
-        return { status: 'processed', jobStatus: 'cancelled' };
-      }
-      if (!(this.sceneAuditor instanceof NoopPagePreRenderSceneAuditor)) {
-        await this.saveInputSnapshot(job, {
-          ...appendInputImageSnapshot(builtPrompt.inputSnapshot, inputImages),
-          sceneAudit: {
-            verdict: sceneAudit.verdict,
-            directiveCount: sceneAudit.directives.length,
-            version: PAGE_SCENE_AUDIT_VERSION,
+      // Audit and rendering share two passes. Cache only validated, persisted
+      // guidance, so a renderer retry cannot produce a different scene audit.
+      let auditedScene: { guidance: string | null } | null = null;
+      const renderAttempt = await runImageProviderAttempts({
+          jobId: job.id,
+          stage: () => currentStage,
+          finalizeCancellation: () => this.finalizeCancellationIfRequested(job.id),
+          retryable: (error) => {
+            if (currentStage !== 'scene_audit' && currentStage !== 'rendering') return false;
+            if (error instanceof StructuredOpenAIResponseError) return error.retryable;
+            if (currentStage === 'scene_audit' && error instanceof ValidationError) return true;
+            return undefined;
           },
-        });
-      }
-      if (await this.finalizeCancellationIfRequested(job.id)) {
-        return { status: 'processed', jobStatus: 'cancelled' };
-      }
-
-      const renderResult = await measurePageGenerationStage(stageTimingsMs, 'rendering', () =>
-        this.withProgressHeartbeat(job, 'Requesting page image from image model.', () =>
-          this.renderer.render({
+          attempt: async (checkpoint) => {
+            if (auditedScene === null) {
+              currentStage = 'scene_audit';
+              const sceneAudit = await measurePageGenerationStage(stageTimingsMs, 'scene_audit', () =>
+                this.withProgressHeartbeat(job, 'Checking page scene consistency before generation.', () =>
+                  this.sceneAuditor.audit(sceneAuditInput),
+                ),
+              );
+              const guidance = buildPageSceneGuidance(sceneAuditInput, sceneAudit);
+              await checkpoint();
+              if (!(this.sceneAuditor instanceof NoopPagePreRenderSceneAuditor)) {
+                currentStage = 'audit_snapshot';
+                await this.saveInputSnapshot(job, {
+                  ...appendInputImageSnapshot(builtPrompt.inputSnapshot, inputImages),
+                  sceneAudit: { verdict: sceneAudit.verdict, directiveCount: sceneAudit.directives.length, version: PAGE_SCENE_AUDIT_VERSION },
+                });
+              }
+              auditedScene = { guidance };
+            }
+            await checkpoint();
+            currentStage = 'rendering';
+            return measurePageGenerationStage(stageTimingsMs, 'rendering', () =>
+              this.withProgressHeartbeat(job, 'Requesting page image from image model.', () =>
+            this.renderer.render({
             jobId: job.id,
             userId: job.userId,
             organizationId: job.organizationId ?? null,
@@ -290,21 +315,33 @@ export class PageGenerationWorkerService {
             requestKind: params.request_kind,
             generationMode: params.generation_mode,
             prompt: compiledPrompt.prompt,
+            ...(quoted !== null && providerModelId !== undefined && providerModelId !== this.configuredImageModel
+              ? { providerModelId } : {}),
             quality: params.quality,
             renderStyle: params.render_style,
             internalPlan,
             inputImages,
-            sceneGuidance,
+            sceneGuidance: auditedScene!.guidance,
             layoutControl: builtPrompt.layoutControl,
             panelCount: builtPrompt.layoutControl === undefined ? undefined : builtPrompt.inputSnapshot.panelCount,
-          }),
-        ),
-      );
-      assertRenderedPageImage(renderResult);
-
-      if (await this.finalizeCancellationIfRequested(job.id)) {
+            }),
+              ),
+            );
+          },
+          validate: (result) => {
+            assertRenderedPageImage(result);
+            if (providerModelId !== undefined
+              && (providerModelId !== this.configuredImageModel || providerModelId === GPT_IMAGE_25_SUNBURST_SNAPSHOT)
+              && result.providerModelId !== providerModelId) {
+              throw new ValidationError('Page render did not return the quoted model');
+            }
+          },
+        });
+      if (renderAttempt.status === 'cancelled') {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
+      const renderResult = renderAttempt.value;
+      currentStage = 'image_transform';
       const imageToStore = params.render_style === 'monochrome'
         ? {
             ...renderResult,
@@ -313,10 +350,12 @@ export class PageGenerationWorkerService {
             mimeType: 'image/png',
           }
         : renderResult;
+      currentStage = 'commit_gate';
       if (!(await this.beginCommit(job.id))) {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
 
+      currentStage = 'storage';
       const storedImage = await measurePageGenerationStage(stageTimingsMs, 'storage', () =>
         this.withProgressHeartbeat(job, 'Storing generated page image.', () =>
           this.storage.store({
@@ -332,6 +371,7 @@ export class PageGenerationWorkerService {
       stageTimingsMs.total_before_persist = Date.now() - startedAtMs;
 
       await this.touchJobProgress(job, 'Saving generated page result.');
+      currentStage = 'persist_result';
       const completed = await this.executionRepository.completePageGeneration(
         buildCompletionInput(job, params, storedImage, renderResult, {
           draftPrompt: builtPrompt.draftPrompt,
@@ -355,6 +395,7 @@ export class PageGenerationWorkerService {
       if (await this.finalizeCancellationIfRequested(job.id)) {
         return { status: 'processed', jobStatus: 'cancelled' };
       }
+      console.error('page_generation_failed', { jobId: job.id, stage: currentStage, ...generationFailureDiagnostic(error) });
       await this.failJob(job, toFailureCompensation(params), toErrorMessage(error));
       return { status: 'processed', jobStatus: 'failed' };
     }
@@ -606,7 +647,7 @@ async function measurePageGenerationStage<T>(
   try {
     return await operation();
   } finally {
-    timings[stage] = Date.now() - startedAtMs;
+    timings[stage] = (timings[stage] ?? 0) + Date.now() - startedAtMs;
   }
 }
 

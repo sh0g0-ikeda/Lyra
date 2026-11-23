@@ -49,6 +49,7 @@ const routeMountPrefixes = new Map([
   ['pageGenerationWarmup.ts', '/api'],
   ['pagePanelStructure.ts', '/api'],
   ['generationQuotes.ts', '/api'],
+  ['generationBatches.ts', '/api'],
   ['panelEntityAssignments.ts', '/api'],
   ['panelFrames.ts', '/api'],
   ['panels.ts', '/api'],
@@ -58,6 +59,10 @@ const routeMountPrefixes = new Map([
 ]);
 
 const explicitResponseClassifications = new Map([
+  ['GET /api/generation-quote-capabilities', { response: 'Operational JSON', detail: 'Authenticated preferred image model for compatible clients' }],
+  ['GET /api/story/character-suggestion-capabilities', { response: 'Operational JSON', detail: 'Authenticated character suggestion availability' }],
+  ['GET /api/story/character-autofill-capabilities', { response: 'Operational JSON', detail: 'Authenticated character autofill persistence availability' }],
+  ['GET /api/story/production-notes-capabilities', { response: 'Operational JSON', detail: 'Authenticated opt-in to episode production notes' }],
   ['POST /api/pages/:id/generation-warmup', { response: 'Empty', detail: 'Authenticated saved-input readiness and best-effort capacity warmup (204); no job or charge' }],
   ['GET /api/story/page-skeleton-capabilities', { response: 'Operational JSON', detail: 'Authenticated edit-work capability for generated-image-preserving skeleton overwrite' }],
   ['DELETE /api/works/:id', { response: 'Operational JSON', detail: 'Scoped permanent deletion receipt; durable pending/completed status (202/200)' }],

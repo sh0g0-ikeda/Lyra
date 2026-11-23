@@ -1639,6 +1639,7 @@
                 "HTTPPort": 80,
                 "HTTPSPort": 443,
                 "OriginProtocolPolicy": "https-only",
+                "OriginReadTimeout": 60,
                 "OriginSSLProtocols": [
                   "TLSv1.2"
                 ]

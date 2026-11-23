@@ -90,6 +90,28 @@ describe('story update API contract', () => {
     });
   });
 
+  it('episode v2だけがflagとsidecarをversion=2で往復する', async () => {
+    const versionedEpisode = {
+      ...updatedEpisode,
+      production_notes_enabled: false,
+      production_notes: ['「保存後の本文」のコマで「ミオ」は通常に戻る。'],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(versionedEpisode), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new LyraMobileApiClient(() => 'token');
+
+    await expect(client.updateEpisode(updatedEpisode.id, {
+      production_notes_enabled: false,
+      production_notes: versionedEpisode.production_notes,
+    }, null, true)).resolves.toEqual(versionedEpisode);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/episodes/11111111-1111-4111-8111-111111111111?version=2');
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      production_notes_enabled: false,
+      production_notes: versionedEpisode.production_notes,
+    });
+  });
+
   it.each([
     {
       label: 'work',

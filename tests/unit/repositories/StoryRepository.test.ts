@@ -4,9 +4,12 @@ import type { DatabaseClient, TransactionRunner } from '../../../src/lib/db.js';
 import { computeStateReferenceFingerprint } from '../../../src/domain/state/StateReferenceFingerprint.js';
 import { PostgresStoryRepository } from '../../../src/repositories/StoryRepository.js';
 import { MAX_NEW_EPISODE_PAGES } from '../../../packages/api-contract/src/episodePageLimits.js';
+import { buildStoryLayoutFrames } from '../../../src/domain/storyLayout.js';
+import { resolvePageGenerationLayoutControl } from '../../../src/services/page/PageGenerationLayoutControl.js';
 
 class QueryCapturingClient implements DatabaseClient, TransactionRunner {
   public queries: string[] = [];
+  public calls: Array<{ text: string; values?: readonly unknown[] }> = [];
   public values: readonly unknown[] | undefined;
   public lockRow: Record<string, unknown> = {
     id: '33333333-3333-4333-8333-333333333333',
@@ -21,6 +24,7 @@ class QueryCapturingClient implements DatabaseClient, TransactionRunner {
     values?: readonly unknown[],
   ): Promise<QueryResult<T>> {
     this.queries.push(text);
+    this.calls.push({ text, values });
     this.values = values;
 
     if (text.includes('FROM generation_jobs')) {
@@ -447,6 +451,37 @@ describe('PostgresStoryRepository', () => {
     expect(client.queries.some((query) => query.includes('page_skeleton_generated = TRUE'))).toBe(true);
   });
 
+  it('指示由来の枠をカスタム形式で本文と同時保存し画像生成にも同じ座標を渡す', async () => {
+    const client = new QueryCapturingClient();
+    const repository = new PostgresStoryRepository(client, client);
+    const frames = buildStoryLayoutFrames(Array.from({ length: 4 }, (_value, index) => ({
+      order: index + 1, size: index === 1 ? 'largest' : 'standard', shape: 'auto',
+    })));
+    const manuscriptSource = { version: 1 as const, source: '原稿',
+      panels: frames.map(frame => ({ order: frame.readingOrder, blockId: `segment-${frame.readingOrder}` })) };
+    await repository.createPageSkeleton('33333333-3333-4333-8333-333333333333', 'user-1', [{
+      pageNumber: 1, purpose: '覚醒', suggestedPanelCount: 4, suggestedLayout: 'standard_4',
+      manuscriptFrames: frames, manuscriptSource,
+      panels: frames.map(frame => ({ order: frame.readingOrder, panelRole: 'action', suggestedSize: 'standard',
+        situationHint: `本文${frame.readingOrder}`, suggestedEntities: [], suggestedDialogueHint: null })),
+    }]);
+    const savedPage = client.calls.find(call => call.text.includes('INSERT INTO pages'))!;
+    const layout = JSON.parse(savedPage.values?.[2] as string) as Record<string, unknown>;
+    expect(layout).toEqual({ type: 'custom', manuscript_frame_layout_version: 1,
+      panel_count: 4, frame_definitions: frames, story_manuscript: manuscriptSource });
+    expect(layout.template_id).toBeUndefined();
+    const savedFrames = client.calls.filter(call => call.text.includes('INSERT INTO panel_frames'));
+    expect(savedFrames).toHaveLength(4);
+    savedFrames.forEach((call, index) => {
+      expect(JSON.parse(call.values?.[2] as string)).toEqual(frames[index]?.vertices);
+      expect(call.values?.[1]).toBe('generated-id');
+      expect(call.values?.[7]).toBe(index + 1);
+    });
+    const control = resolvePageGenerationLayoutControl(layout, 4);
+    expect(control?.source).toBe('custom');
+    expect(control?.frames.map(frame => frame.vertices)).toEqual(frames.map(frame => frame.vertices));
+  });
+
   it('generated画像を保持するoverwriteでは既存ページを削除しない', async () => {
     const client = new QueryCapturingClient();
     client.lockRow = {
@@ -653,6 +688,40 @@ describe('PostgresStoryRepository', () => {
     expect(client.updateValues?.[14]).toBeNull();
     expect(client.updateValues?.[16]).toBeNull();
     expect(client.updateValues?.[18]).toBeNull();
+  });
+
+  it('旧episode更新はsidecarを保持しv2更新だけがflagと明示ノートを書き込む', async () => {
+    const client = new EpisodeUpdateCapturingClient({
+      ...episodeRow(),
+      production_notes_enabled: true,
+      production_notes: ['「本文」のコマで「ミオ」は通常に戻る。'],
+    });
+    const repository = new PostgresStoryRepository(client);
+
+    await repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      { title: '旧clientの更新' },
+    );
+    const legacySql = client.queries.filter((sql) => sql.includes('UPDATE episodes')).at(-1) ?? '';
+    expect(legacySql).not.toContain('production_notes =');
+    expect(legacySql).not.toContain('production_notes_enabled =');
+
+    await repository.updateEpisode(
+      '33333333-3333-4333-8333-333333333333',
+      'user-1',
+      {
+        productionNotesEnabled: false,
+        productionNotes: ['「更新本文」のコマで「ミオ」は通常に戻る。'],
+      },
+    );
+    const versionedSql = client.queries.filter((sql) => sql.includes('UPDATE episodes')).at(-1) ?? '';
+    expect(versionedSql).toContain('production_notes_enabled = $28::boolean');
+    expect(versionedSql).toContain('production_notes = $29::jsonb');
+    expect(client.updateValues?.slice(-2)).toEqual([
+      false,
+      '["「更新本文」のコマで「ミオ」は通常に戻る。"]',
+    ]);
   });
 
   it('episode page増加を認可済み現在値とUPDATE条件の両方で拒否する', async () => {

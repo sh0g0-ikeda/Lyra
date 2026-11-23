@@ -65,6 +65,8 @@ export interface EpisodeRecord {
   status: StoryStatus;
   created_at: string;
   updated_at: string;
+  production_notes_enabled?: boolean;
+  production_notes?: string[];
 }
 
 export interface EntityRecord {
@@ -495,6 +497,7 @@ export interface StoryCollaborationInput {
 }
 
 export interface StoryEpisodeImprovementRecord {
+  production_notes?: string[];
   draft: {
     title: string | null;
     purpose: string | null;

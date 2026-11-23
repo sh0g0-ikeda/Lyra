@@ -389,7 +389,7 @@ describePostgres('legacy story autofill atomic commit fence', () => {
         await waitForSignal(acquired.promise, 'normal editor frame lock');
         commit = settle(commitPlan(committer, fixture, job));
         void commit.then(() => { commitSettled = true; });
-        await waitForBlockedOrSettled(pool, committer.pid, () => commitSettled);
+        await waitForBlockedOrSettled(pool, committer.pid, editor.pid, () => commitSettled);
         gate.resolve();
         const edited = await edit;
         const committed = await commit;
@@ -698,11 +698,18 @@ async function waitForBlockedQuery(pool: Pool, pid: number): Promise<void> {
   throw new Error(`Backend ${pid} did not become blocked`);
 }
 
-async function waitForBlockedOrSettled(pool: Pool, pid: number, isSettled: () => boolean): Promise<void> {
+async function waitForBlockedOrSettled(
+  pool: Pool,
+  pid: number,
+  editorPid: number,
+  isSettled: () => boolean,
+): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     if (isSettled()) return;
     const blocked = (await pool.query<{ blocked: boolean }>(
-      'SELECT cardinality(pg_blocking_pids($1)) > 0 AS blocked', [pid],
+      // Parallel suites share the notification-registry advisory lock. Waiting
+      // there is not graph contention and must not release this editor's gate.
+      'SELECT $2::int = ANY(pg_blocking_pids($1)) AS blocked', [pid, editorPid],
     )).rows[0]?.blocked;
     if (blocked === true) return;
     await new Promise<void>((resolve) => setTimeout(resolve, 10));

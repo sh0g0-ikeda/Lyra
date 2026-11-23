@@ -1,4 +1,21 @@
 import { googleAuthCapabilitiesV2Schema, googleLinkStartBodySchema, googleLinkStartSchema, googleLinkStatusSchema, type GoogleAuthCapabilities, type GoogleLinkStart, type GoogleLinkStatus } from './googleIdentityLink';
+import type { CharacterAppearanceSuggestion, CharacterAutofillResult } from '../../../../packages/api-contract/src/characterAutofill.ts';
+import type { EpisodeCharacterSuggestion } from '../../../../packages/api-contract/src/characterSuggestions.ts';
+import { storyPageEstimateSchema, type StoryPageEstimate } from '../../../../packages/api-contract/src/storyPageEstimate.ts';
+import {
+  generationBatchAcceptRequestSchema,
+  generationBatchCancelResponseSchema,
+  generationBatchCapabilitiesSchema,
+  generationBatchQuoteRequestSchema,
+  generationBatchResumeRequestSchema,
+  generationBatchSchema,
+  generationBatchesSchema,
+  type GenerationBatch,
+  type GenerationBatchAcceptRequest,
+  type GenerationBatchCapabilities,
+  type GenerationBatchQuoteRequest,
+  type GenerationBatchResumeRequest,
+} from '../../../../packages/api-contract/src/generationBatch.ts';
 import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
 import { pageImageDeliveryPath, entityReferenceImageDeliveryPath, entityReferenceCandidateDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
 import type {
@@ -102,6 +119,26 @@ interface SseHandlers {
 export interface BlobResponse {
   blob: Blob;
   contentType: string | null;
+}
+
+export interface CharacterSuggestionResponse {
+  version: number;
+  characters: EpisodeCharacterSuggestion[];
+}
+
+export interface EntityStateEditorRecord {
+  id: string;
+  entity_id: string;
+  name: string | null;
+  description: string | null;
+  scene_id: string | null;
+  costume_note: string | null;
+  condition_note: string | null;
+  hair_note: string | null;
+  expression_default: string;
+  extra_note: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export class LyraApiClient {
@@ -317,16 +354,16 @@ export class LyraApiClient {
     return this.requestVoid(`/api/chapters/${chapterId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
   }
 
-  public getEpisodes(chapterId: string, organizationId?: string | null): Promise<{ episodes: EpisodeRecord[] }> {
-    return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`);
+  public getEpisodes(chapterId: string, organizationId?: string | null, version2 = false): Promise<{ episodes: EpisodeRecord[] }> {
+    return this.request(`/api/chapters/${chapterId}/episodes${episodeContractQuery(organizationId, version2)}`);
   }
 
   public createEpisode(chapterId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<EpisodeRecord> {
     return this.request(`/api/chapters/${chapterId}/episodes${organizationQuery(organizationId)}`, { method: 'POST', body });
   }
 
-  public updateEpisode(episodeId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<EpisodeRecord> {
-    return this.request(`/api/episodes/${episodeId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
+  public updateEpisode(episodeId: string, body: Record<string, unknown>, organizationId?: string | null, version2 = false): Promise<EpisodeRecord> {
+    return this.request(`/api/episodes/${episodeId}${episodeContractQuery(organizationId, version2)}`, { method: 'PUT', body });
   }
 
   public moveEpisode(
@@ -351,6 +388,7 @@ export class LyraApiClient {
       overwrite_existing?: boolean;
       preserve_generated_images?: boolean;
       apply_story_plan?: boolean;
+      production_notes_version?: 'v1';
       language?: 'ja' | 'en';
     },
     organizationId?: string | null,
@@ -400,6 +438,7 @@ export class LyraApiClient {
   }
 
   public improveEpisodeDraft(body: {
+    include_production_notes?: true;
     episode_id: string;
     instruction: string;
     language: 'ja' | 'en';
@@ -415,6 +454,78 @@ export class LyraApiClient {
     };
   }, organizationId?: string | null): Promise<StoryEpisodeImprovementRecord> {
     return this.request(`/api/story/improve-episode-draft${organizationQuery(organizationId)}`, { method: 'POST', body });
+  }
+
+  public async estimateStoryPages(body: {
+    episode_id: string;
+    production_notes_enabled: boolean;
+    language: 'ja' | 'en';
+    base_draft: {
+      title?: string | null;
+      purpose?: string | null;
+      story_input_mode: 'structured' | 'full';
+      story_full_draft: string | null;
+      introduction: string | null;
+      middle: string | null;
+      climax: string | null;
+      ending_hook: string | null;
+    };
+  }, organizationId?: string | null): Promise<StoryPageEstimate> {
+    return storyPageEstimateSchema.parse(await this.request(
+      `/api/story/estimate-pages${organizationQuery(organizationId)}`,
+      { method: 'POST', body },
+    ));
+  }
+
+  public getCharacterSuggestionCapabilities(): Promise<{ enabled: boolean }> {
+    return this.request('/api/story/character-suggestion-capabilities');
+  }
+
+  public getCharacterAutofillCapabilities(): Promise<{ enabled: boolean }> {
+    return this.request('/api/story/character-autofill-capabilities');
+  }
+
+  public getStoryProductionNoteCapabilities(): Promise<{ enabled: boolean }> {
+    return this.request('/api/story/production-notes-capabilities');
+  }
+
+  public getEpisodeCharacterSuggestions(
+    episodeId: string,
+    body: { version: number; production_notes_enabled?: boolean },
+    organizationId?: string | null,
+  ): Promise<CharacterSuggestionResponse> {
+    return this.request(`/api/episodes/${episodeId}/character-suggestions${organizationQuery(organizationId)}`, {
+      method: 'POST',
+      body,
+    });
+  }
+
+  public autofillEpisodeCharacters(
+    episodeId: string,
+    body: { version: number },
+    organizationId?: string | null,
+  ): Promise<CharacterAutofillResult> {
+    const params = new URLSearchParams(organizationQuery(organizationId));
+    params.set('appearance_review', '1');
+    return this.request(`/api/episodes/${episodeId}/character-autofill?${params.toString()}`, {
+      method: 'POST',
+      body,
+    });
+  }
+
+  public approveCharacterAppearance(
+    suggestion: Pick<CharacterAppearanceSuggestion, 'entity_id' | 'field' | 'value' | 'expected_updated_at'>,
+    organizationId?: string | null,
+  ): Promise<EntityRecord> {
+    const { entity_id: entityId, field, value, expected_updated_at } = suggestion;
+    return this.request(`/api/entities/${entityId}/appearance-review${organizationQuery(organizationId)}`, {
+      method: 'POST',
+      body: { field, value, expected_updated_at },
+    });
+  }
+
+  public getEntity(entityId: string, organizationId?: string | null): Promise<EntityRecord> {
+    return this.request(`/api/entities/${entityId}${organizationQuery(organizationId)}`);
   }
 
   public getEntities(workId: string, organizationId?: string | null): Promise<{ entities: EntityRecord[] }> {
@@ -454,6 +565,18 @@ export class LyraApiClient {
     });
   }
 
+  public async generatePreferredEntityReference(
+    entityId: string,
+    sourceCandidateToken: string | undefined,
+    organizationId?: string | null,
+  ): Promise<{ job_id: string }> {
+    const quoted = await this.generateSunburstIfAvailable('entity_preview', entityId, organizationId,
+      sourceCandidateToken === undefined ? {} : { source_candidate_token: sourceCandidateToken });
+    return quoted ?? this.generateEntityReference(
+      entityId, sourceCandidateToken === undefined ? undefined : { source_candidate_token: sourceCandidateToken }, organizationId,
+    );
+  }
+
   public getEntityReferenceSet(entityId: string, organizationId?: string | null): Promise<EntityReferenceSetRecord> {
     return this.request(`/api/entities/${entityId}/reference-set${organizationQuery(organizationId)}`);
   }
@@ -468,6 +591,22 @@ export class LyraApiClient {
 
   public deleteEntityReference(entityId: string, refId: string, organizationId?: string | null): Promise<EntityReferenceSetRecord> {
     return this.request(`/api/entities/${entityId}/reference/${refId}${organizationQuery(organizationId)}`, { method: 'DELETE' });
+  }
+
+  public getEntityStates(entityId: string, organizationId?: string | null): Promise<{ entity_states: EntityStateEditorRecord[] }> {
+    return this.request(`/api/entities/${entityId}/states${organizationQuery(organizationId)}`);
+  }
+
+  public saveNamedEntityState(
+    entityId: string,
+    stateId: string | null,
+    body: { name: string; description: string },
+    organizationId?: string | null,
+  ): Promise<EntityStateEditorRecord> {
+    return this.request(
+      `/api/entities/${entityId}/states${stateId === null ? '' : `/${stateId}`}${organizationQuery(organizationId)}`,
+      { method: stateId === null ? 'POST' : 'PUT', body },
+    );
   }
 
   public getScenes(episodeId: string, organizationId?: string | null): Promise<{ scenes: SceneRecord[] }> {
@@ -486,6 +625,52 @@ export class LyraApiClient {
     return this.request(`/api/episodes/${episodeId}/pages${organizationQuery(organizationId)}`);
   }
 
+  public async getGenerationBatchCapabilities(organizationId?: string | null): Promise<GenerationBatchCapabilities | null> {
+    try {
+      const response = await this.request<unknown>(`/api/generation-batch-capabilities${organizationQuery(organizationId)}`);
+      return generationBatchCapabilitiesSchema.parse(response);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  public async createGenerationBatchQuote(input: GenerationBatchQuoteRequest, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request<unknown>(`/api/generation-batch-quotes${organizationQuery(organizationId)}`, {
+      method: 'POST', body: generationBatchQuoteRequestSchema.parse(input),
+    });
+    return generationBatchSchema.parse(response);
+  }
+
+  public async acceptGenerationBatch(batchId: string, input: GenerationBatchAcceptRequest, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request<unknown>(`/api/generation-batches/${encodeURIComponent(batchId)}/accept${organizationQuery(organizationId)}`, {
+      method: 'POST', body: generationBatchAcceptRequestSchema.parse(input),
+    });
+    return generationBatchSchema.parse(response);
+  }
+
+  public async listGenerationBatches(workId: string, episodeId?: string | null, organizationId?: string | null): Promise<GenerationBatch[]> {
+    const response = await this.request<unknown>(`/api/generation-batches${generationBatchListQuery(workId, episodeId, organizationId)}`);
+    return generationBatchesSchema.parse(response).batches;
+  }
+
+  public async getGenerationBatch(batchId: string, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request<unknown>(`/api/generation-batches/${encodeURIComponent(batchId)}${organizationQuery(organizationId)}`);
+    return generationBatchSchema.parse(response);
+  }
+
+  public async cancelGenerationBatch(batchId: string, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request<unknown>(`/api/generation-batches/${encodeURIComponent(batchId)}/cancel${organizationQuery(organizationId)}`, { method: 'POST' });
+    return generationBatchCancelResponseSchema.parse(response).batch;
+  }
+
+  public async resumeGenerationBatch(batchId: string, input: GenerationBatchResumeRequest, organizationId?: string | null): Promise<GenerationBatch> {
+    const response = await this.request<unknown>(`/api/generation-batches/${encodeURIComponent(batchId)}/resume${organizationQuery(organizationId)}`, {
+      method: 'POST', body: generationBatchResumeRequestSchema.parse(input),
+    });
+    return generationBatchSchema.parse(response);
+  }
+
   public updatePage(pageId: string, body: Record<string, unknown>, organizationId?: string | null): Promise<PageRecord> {
     return this.request(`/api/pages/${pageId}${organizationQuery(organizationId)}`, { method: 'PUT', body });
   }
@@ -502,12 +687,17 @@ export class LyraApiClient {
     return this.request(`/api/pages/${pageId}/autofill-from-scenes${organizationQuery(organizationId)}`, { method: 'POST', body: { language } });
   }
 
-  public autofillEpisodePagesFromStory(episodeId: string, language: 'ja' | 'en', organizationId?: string | null): Promise<{
+  public autofillEpisodePagesFromStory(
+    episodeId: string,
+    language: 'ja' | 'en',
+    organizationId?: string | null,
+    applyProductionNotes = false,
+  ): Promise<{
     job_id: string;
   }> {
     return this.request(`/api/episodes/${episodeId}/autofill-pages-from-story${organizationQuery(organizationId)}`, {
       method: 'POST',
-      body: { language },
+      body: { language, ...(applyProductionNotes ? { production_notes_version: 'v1' } : {}) },
     });
   }
 
@@ -536,6 +726,53 @@ export class LyraApiClient {
       method: 'POST',
       body: renderStyle === 'monochrome' ? { render_style: 'monochrome' } : undefined,
     });
+  }
+
+  public async generatePreferredPage(
+    pageId: string,
+    regenerate: boolean,
+    organizationId?: string | null,
+    renderStyle?: 'monochrome',
+  ): Promise<{ job_id: string }> {
+    const quoted = await this.generateSunburstIfAvailable(
+      regenerate ? 'page_regenerate' : 'page_generate', pageId, organizationId, { render_style: renderStyle ?? 'color' },
+    );
+    return quoted ?? this.generatePage(pageId, organizationId, renderStyle);
+  }
+
+  private async generateSunburstIfAvailable(
+    operation: 'page_generate' | 'page_regenerate' | 'entity_preview',
+    targetId: string,
+    organizationId: string | null | undefined,
+    options: { source_candidate_token?: string; render_style?: 'color' | 'monochrome' },
+  ): Promise<{ job_id: string } | null> {
+    const scope = organizationQuery(organizationId);
+    let capability: { image_model: string };
+    try {
+      capability = await this.request(`/api/generation-quote-capabilities${scope}`);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw error;
+    }
+    if (capability.image_model !== 'gpt-image-2.5-sunburst') return null;
+
+    const quote = await this.request<{
+      quote_id: string; quote_token: string; operation: string; target_id: string; image_model: string;
+      billing_scope: { organization_id: string | null };
+    }>(`/api/generation-quotes${scope}`, {
+      method: 'POST',
+      body: { operation, target_id: targetId, image_model: capability.image_model, ...options },
+    });
+    if (quote.image_model !== capability.image_model || quote.operation !== operation || quote.target_id !== targetId ||
+      quote.billing_scope.organization_id !== (organizationId ?? null)) {
+      throw new ApiError('The image quote changed before generation.', 409, 'QUOTE_CHANGED');
+    }
+    const receipt = await this.request<{ job_id: string | null }>(
+      `/api/generation-quotes/${encodeURIComponent(quote.quote_id)}/accept${scope}`,
+      { method: 'POST', body: { quote_token: quote.quote_token, request_key: crypto.randomUUID() } },
+    );
+    if (receipt.job_id === null) throw new ApiError('The image generation was not queued.', 409, 'QUOTE_NOT_ACCEPTED');
+    return { job_id: receipt.job_id };
   }
 
   public confirmPage(pageId: string, organizationId?: string | null): Promise<void> {
@@ -927,4 +1164,27 @@ function organizationQuery(organizationId: string | null | undefined): string {
   }
 
   return `?organization_id=${encodeURIComponent(organizationId)}`;
+}
+
+function generationBatchListQuery(
+  workId: string,
+  episodeId: string | null | undefined,
+  organizationId: string | null | undefined,
+): string {
+  const params = new URLSearchParams({ work_id: workId });
+  if (episodeId !== undefined && episodeId !== null) params.set('episode_id', episodeId);
+  if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
+    params.set('organization_id', organizationId);
+  }
+  return `?${params.toString()}`;
+}
+
+function episodeContractQuery(organizationId: string | null | undefined, version2: boolean): string {
+  const params = new URLSearchParams();
+  if (organizationId !== undefined && organizationId !== null && organizationId.trim().length > 0) {
+    params.set('organization_id', organizationId);
+  }
+  if (version2) params.set('version', '2');
+  const query = params.toString();
+  return query.length === 0 ? '' : `?${query}`;
 }

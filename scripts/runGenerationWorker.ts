@@ -29,6 +29,7 @@ import { PageGenerationRecoveryService } from '../src/services/page/PageGenerati
 import { OrganizationService, type OrganizationServicePort } from '../src/services/organization/OrganizationService.js';
 import { resolveWorkerDependencies } from '../worker/dependencies.js';
 import { resolveGenerationWorkerWarmService } from '../src/infrastructure/aws/GenerationWorkerWarmRuntime.js';
+import { createGenerationBatchRuntime } from '../src/infrastructure/generation/GenerationBatchRuntime.js';
 import { assertWarmWorkerProtectionEnabled, GenerationQueuePoller } from '../worker/sqsPoller.js';
 
 const GENERATION_RECOVERY_INTERVAL_MS = Math.min(
@@ -53,6 +54,7 @@ async function main(): Promise<void> {
 async function startWorkerRuntime(runtime: AttestedRuntime, queueUrl: string): Promise<void> {
   assertAttestedRuntimeCapabilities(runtime, env);
   const warm = resolveGenerationWorkerWarmService();
+  const batches = createGenerationBatchRuntime(env, db, runtime.repositoryProfile);
   assertWarmWorkerProtectionEnabled(warm !== null, process.env);
   const terminalRecovery = await createTerminalGenerationNotificationRecoveryRuntime(db, runtime.repositoryProfile, {
     enabled: env.PUSH_NOTIFICATIONS_ENABLED,
@@ -71,10 +73,15 @@ async function startWorkerRuntime(runtime: AttestedRuntime, queueUrl: string): P
       queueUrl,
       maxNumberOfMessages: env.SQS_GENERATION_MAX_NUMBER_OF_MESSAGES,
       visibilityTimeoutSeconds: env.SQS_GENERATION_VISIBILITY_TIMEOUT_SECONDS,
-      ...(warm === null ? {} : {
+      ...(batches === undefined ? {} : { onProtectedPoll: async (): Promise<void> => { await batches.reconcile({ limit: 2 }); } }),
+      ...(warm === null && batches === undefined ? {} : {
         onWorkSettled: async () => {
+          if (batches !== undefined) {
+            try { await batches.reconcile({ limit: 2 }); }
+            catch { console.warn('[generation-batch] completion reconciliation will retry'); }
+          }
           try {
-            await warm.requestWarm();
+            await warm?.requestWarm();
           } catch {
             console.warn('[generation-worker-warm] completion lease refresh unavailable');
           }

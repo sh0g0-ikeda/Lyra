@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { CREDIT_COSTS } from '../constants/credits.js';
 import { calculatePageGenerationCreditCost, PAGE_GENERATION_INPUT_IMAGE_LIMITS } from '../constants/generation.js';
 import { ENTITY_IMPORT_ANALYSIS_MODEL, ENTITY_REFERENCE_GENERATION } from '../constants/entityReference.js';
+import { GPT_IMAGE_25_SUNBURST, GPT_IMAGE_25_SUNBURST_SNAPSHOT } from '../constants/openAIImageModel.js';
 import { ConflictError, ValidationError } from '../errors/index.js';
 import type { GenerationQuoteOperation, GenerationQuotePlan, GenerationQuoteRequest } from '../types/generationQuote.js';
 
@@ -23,6 +24,7 @@ export function calculateQuotePrice(operation: GenerationQuoteOperation, referen
 export function validateQuoteSelection(
   request: GenerationQuoteRequest,
   configuredImageModel: string,
+  sunburstEnabled = false,
 ): Pick<GenerationQuotePlan, 'imageModel' | 'providerModelId' | 'quality' | 'renderStyle'> {
   if (request.operation === 'entity_import_analysis') {
     if (request.imageModel !== undefined || request.quality !== undefined || request.renderStyle !== undefined) {
@@ -30,7 +32,9 @@ export function validateQuoteSelection(
     }
     return { imageModel: null, providerModelId: ENTITY_IMPORT_ANALYSIS_MODEL, quality: null, renderStyle: null };
   }
-  if ((request.imageModel ?? ENTITY_REFERENCE_GENERATION.MODEL) !== ENTITY_REFERENCE_GENERATION.MODEL) {
+  const imageModel = request.imageModel ?? (sunburstEnabled ? GPT_IMAGE_25_SUNBURST : ENTITY_REFERENCE_GENERATION.MODEL);
+  const requiredModel = sunburstEnabled ? GPT_IMAGE_25_SUNBURST : ENTITY_REFERENCE_GENERATION.MODEL;
+  if (imageModel !== requiredModel) {
     throw new ValidationError('Selected image model is not available');
   }
   if (configuredImageModel !== ENTITY_REFERENCE_GENERATION.MODEL) {
@@ -44,11 +48,30 @@ export function validateQuoteSelection(
     throw new ValidationError('Selected rendering style is not available for this operation');
   }
   return {
-    imageModel: ENTITY_REFERENCE_GENERATION.MODEL,
-    providerModelId: configuredImageModel,
+    imageModel,
+    providerModelId: imageModel === GPT_IMAGE_25_SUNBURST ? GPT_IMAGE_25_SUNBURST_SNAPSHOT : configuredImageModel,
     quality: 'medium',
     renderStyle: isPage ? request.renderStyle ?? 'color' : 'color',
   };
+}
+
+/** Public Mobile quotes must prove 2.5 awareness; internal legacy Web flows use server selection. */
+export function requireExplicitQuoteImageModel(request: GenerationQuoteRequest, requiredImageModel?: string): void {
+  if (request.operation === 'entity_import_analysis' || requiredImageModel === undefined) return;
+  if (request.imageModel !== requiredImageModel) {
+    throw new ValidationError(`This client must explicitly request ${requiredImageModel}`);
+  }
+}
+
+export function assertQuoteMatchesRequiredImageModel(
+  plan: Pick<GenerationQuotePlan, 'operation' | 'imageModel' | 'providerModelId'>,
+  requiredImageModel?: string,
+): void {
+  if (plan.operation === 'entity_import_analysis' || requiredImageModel === undefined) return;
+  if (plan.imageModel !== requiredImageModel
+    || plan.providerModelId !== GPT_IMAGE_25_SUNBURST_SNAPSHOT) {
+    throw new ConflictError('Generation model changed; request a new quote');
+  }
 }
 
 export function fingerprintQuoteInput(value: unknown): string {

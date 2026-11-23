@@ -110,6 +110,15 @@ jobs:
       - name: Run browser smoke tests
         run: npm --prefix apps/web run e2e
 
+      - name: Upload story page estimate visual checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: story-page-estimate-visuals
+          path: apps/web/test-results/**/page-estimate-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
   mobile-verify:
     # Keep browser dependency installation reproducible across runner-image rollouts.
     runs-on: ubuntu-24.04

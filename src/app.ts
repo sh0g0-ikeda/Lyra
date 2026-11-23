@@ -33,6 +33,7 @@ import {
 import {
   ENTITY_REFERENCE_UPLOAD_PRESIGN_TTL_SECONDS,
 } from './domain/constants/entityReferenceUpload.js';
+import { GPT_IMAGE_25_SUNBURST, resolveOpenAIImageRuntimeProvenance } from './domain/constants/openAIImageModel.js';
 import { createPageImageStorageClient } from './infrastructure/aws/S3PageImageStorage.js';
 import { S3FinalPageImageStorage, type FinalPageImageStoragePort } from './infrastructure/aws/S3FinalPageImageStorage.js';
 import { S3EntityImageStorage, createStateReferenceCopyClient, type EntityImageStoragePort } from './infrastructure/aws/S3EntityImageStorage.js';
@@ -106,6 +107,8 @@ import { PostgresAccountDeletionRepository } from './repositories/AccountDeletio
 import { PostgresCompositionGalleryRepository } from './repositories/CompositionGalleryRepository.js';
 import { PostgresCreditRepository } from './repositories/CreditRepository.js';
 import { PostgresEntityRepository } from './repositories/EntityRepository.js';
+import { PostgresCharacterAutofillRepository } from './repositories/CharacterAutofillRepository.js';
+import { hasPreVariantEntitySchema } from './repositories/RepositorySchemaProfile.js';
 import {
   PostgresEntityReferenceUploadTokenRepository,
 } from './repositories/EntityReferenceUploadTokenRepository.js';
@@ -148,6 +151,8 @@ import { createPanelFrameRoutes } from './routes/panelFrames.js';
 import { createPagePanelStructureRoutes } from './routes/pagePanelStructure.js';
 import { createGenerationQuoteRoutes, type GenerationQuoteServicePort } from './routes/generationQuotes.js';
 import { GenerationQuoteService } from './services/generation/GenerationQuoteService.js';
+import { createGenerationBatchRoutes, type GenerationBatchServicePort } from './routes/generationBatches.js';
+import { createGenerationBatchRuntime } from './infrastructure/generation/GenerationBatchRuntime.js';
 import { GenerationQuoteDispatcher } from './services/generation/GenerationQuoteDispatcher.js';
 import { PostgresGenerationQuotePlanResolver } from './repositories/GenerationQuotePlanResolver.js';
 import { PostgresQuotedImportExecutionRepository } from './repositories/QuotedImportExecutionRepository.js';
@@ -319,6 +324,10 @@ import {
   StoryCollaborationService,
   type StoryCollaborationServicePort,
 } from './services/story/StoryCollaborationService.js';
+import {
+  CharacterAutofillService,
+  type CharacterAutofillServicePort,
+} from './services/story/CharacterAutofillService.js';
 import type { StoryAiClientPort } from './services/story/StoryAiClientPort.js';
 import type { StoryEpisodeImprovementPlannerPort } from './services/story/StoryEpisodeImprovementPlanner.js';
 import { StoryService, type StoryServicePort } from './services/story/StoryService.js';
@@ -385,6 +394,7 @@ export interface AppDependencies {
   pageLayoutService?: PageLayoutServicePort;
   pagePanelStructureService?: PagePanelStructureServicePort;
   generationQuoteService?: GenerationQuoteServicePort;
+  generationBatchService?: GenerationBatchServicePort;
   pushTokenRegistryService?: PushTokenRegistryServicePort;
   googleIdentityLinkService?: GoogleIdentityLinkServicePort;
   panelService?: PanelServicePort;
@@ -394,6 +404,7 @@ export interface AppDependencies {
   storyAiClient?: StoryAiClientPort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
   storyCollaborationService?: StoryCollaborationServicePort;
+  characterAutofillService?: CharacterAutofillServicePort;
   stripeWebhookService?: StripeWebhookServicePort;
   storyService?: StoryServicePort;
   userProvisioningService?: UserProvisioningPort;
@@ -612,6 +623,14 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
     generationQuoteService: resolvedDependencies.generationQuoteService,
     organizationService: resolvedDependencies.organizationService,
   }));
+  if (resolvedDependencies.generationBatchService !== undefined) {
+    app.route('/api', createGenerationBatchRoutes({
+      authMiddleware, rateLimitMiddleware,
+      service: resolvedDependencies.generationBatchService,
+      organizationService: resolvedDependencies.organizationService,
+      jobCancellation: resolvedDependencies.jobService,
+    }));
+  }
   if (resolvedDependencies.entityReferenceUploadService !== undefined) {
     app.route(
       '/api',
@@ -722,6 +741,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
   app.route(
     '/api',
     createStoryRoutes({
+      productionNotesAvailable: dependencies.attestedRuntime?.capabilities.productionNotes === true || process.env.NODE_ENV === 'test',
       authMiddleware,
       rateLimitMiddleware,
       pageSkeletonService: resolvedDependencies.pageSkeletonService,
@@ -730,6 +750,7 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       episodeStoryAutofillService: resolvedDependencies.episodeStoryAutofillService,
       organizationService: resolvedDependencies.organizationService,
       storyCollaborationService: resolvedDependencies.storyCollaborationService,
+      characterAutofillService: resolvedDependencies.characterAutofillService,
       storyService: resolvedDependencies.storyService,
     }),
   );
@@ -871,6 +892,8 @@ function resolveDependencies(
       | 'readinessCheck'
       | 'fencedStateReferenceRuntime'
       | 'attestedRuntime'
+      | 'characterAutofillService'
+      | 'generationBatchService'
     >
   >,
   'storyEpisodeImprovementPlanner'
@@ -886,9 +909,12 @@ function resolveDependencies(
   googlePubSubPushVerifier?: Pick<GooglePubSubPushVerifier, 'verifyAuthorization'>;
   pushTokenRegistryService?: PushTokenRegistryServicePort;
   storyEpisodeImprovementPlanner?: StoryEpisodeImprovementPlannerPort;
+  characterAutofillService?: CharacterAutofillServicePort;
+  generationBatchService?: GenerationBatchServicePort;
 } {
   const fencedStateReferenceRuntime = dependencies.fencedStateReferenceRuntime ?? createFencedStateReferenceRuntime(env, db);
   const persistenceProfile = dependencies.attestedRuntime?.repositoryProfile ?? env.LYRA_PERSISTENCE_PROFILE;
+  const generationBatchService = dependencies.generationBatchService ?? createGenerationBatchRuntime(env, db, persistenceProfile);
   const creditRepository = new PostgresCreditRepository(db, db);
   const aiContentReportService =
     dependencies.aiContentReportService ?? new AiContentReportService(new StructuredLogAiContentReportSink());
@@ -941,9 +967,11 @@ function resolveDependencies(
     database: db,
     persistenceProfile,
     enabled: env.GENERATION_QUOTES_ENABLED,
+    requiredImageModel: env.OPENAI_IMAGE_SUNBURST_ENABLED ? GPT_IMAGE_25_SUNBURST : undefined,
     resolver: new PostgresGenerationQuotePlanResolver({
       persistenceProfile,
       imageModel: env.OPENAI_IMAGE_MODEL,
+      sunburstEnabled: env.OPENAI_IMAGE_SUNBURST_ENABLED,
       generationEnabled: env.GENERATION_ENABLED,
       pageGenerationEnabled: env.PAGE_GENERATION_ENABLED,
       entityGenerationEnabled: env.ENTITY_GENERATION_ENABLED,
@@ -1128,6 +1156,10 @@ function resolveDependencies(
   const entityService =
     dependencies.entityService ??
     new EntityService(entityRepository, new PostgresWorkRepository(db), resolveStyleReferenceCompiler());
+  const imageRuntimeProvenance = resolveOpenAIImageRuntimeProvenance(
+    env.OPENAI_IMAGE_MODEL,
+    env.OPENAI_IMAGE_SUNBURST_ENABLED,
+  );
   const entityReferenceService =
     dependencies.entityReferenceService ??
     new EntityReferenceService(
@@ -1145,6 +1177,7 @@ function resolveDependencies(
       entityGenerationRecoveryService,
       env.GENERATION_ENABLED && env.ENTITY_IMPORT_ANALYSIS_ENABLED,
       organizationService,
+      imageRuntimeProvenance,
     );
   const entityStateReferenceService =
     dependencies.entityStateReferenceService ??
@@ -1156,7 +1189,8 @@ function resolveDependencies(
       imageStorage: resolveEntityImageStorage(),
       storedImageLoader: resolveStoredPageImageLoader(),
       generationQueue: entityGenerationQueue,
-      imageModel: env.OPENAI_IMAGE_MODEL,
+      imageModel: imageRuntimeProvenance.imageModel,
+      providerModelId: imageRuntimeProvenance.providerModelId,
       generationEnabled:
         env.GENERATION_ENABLED
         && env.ENTITY_GENERATION_ENABLED
@@ -1196,6 +1230,7 @@ function resolveDependencies(
     resolver: new PostgresGenerationQuotePlanResolver({
       persistenceProfile,
       imageModel: env.OPENAI_IMAGE_MODEL,
+      sunburstEnabled: env.OPENAI_IMAGE_SUNBURST_ENABLED,
       generationEnabled: env.GENERATION_ENABLED,
       pageGenerationEnabled: env.PAGE_GENERATION_ENABLED,
       stateGenerationEnabled: env.ENTITY_STATE_REFERENCE_GENERATION_ENABLED,
@@ -1221,6 +1256,7 @@ function resolveDependencies(
       },
       env.GENERATION_ENABLED && env.PAGE_GENERATION_ENABLED,
       organizationService,
+      imageRuntimeProvenance,
     );
   const pageFinalizeService =
     dependencies.pageFinalizeService ??
@@ -1284,6 +1320,14 @@ function resolveDependencies(
       storyAiClient,
       storyEpisodeImprovementPlanner,
     );
+  const characterAutofillService = dependencies.characterAutofillService
+    ?? (hasPreVariantEntitySchema(persistenceProfile)
+      ? undefined
+      : new CharacterAutofillService(
+          new PostgresStoryRepository(db, db, persistenceProfile),
+          storyAiClient,
+          new PostgresCharacterAutofillRepository(db, persistenceProfile),
+        ));
   const pageSkeletonService =
     dependencies.pageSkeletonService ??
     new PageSkeletonService(new PostgresStoryRepository(db, db, persistenceProfile), storyAiClient);
@@ -1363,6 +1407,7 @@ function resolveDependencies(
     pageLayoutService,
     pagePanelStructureService,
     generationQuoteService,
+    generationBatchService,
     googleIdentityLinkService,
     pushTokenRegistryService,
     panelService,
@@ -1372,6 +1417,7 @@ function resolveDependencies(
     storyAiClient,
     storyEpisodeImprovementPlanner,
     storyCollaborationService,
+    characterAutofillService,
     stripeWebhookService,
     storyService,
     userProvisioningService,

@@ -48,6 +48,7 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
   public job: GenerationJob | null = buildJob();
   public completed: CompleteEntityGenerationInput | null = null;
   public failed: { jobId: string; userId: string; errorMessage: string } | null = null;
+  public completionResult = true;
   public failureResult = true;
   public progressTouches: Array<{ jobId: string; userId: string; message: string; updatedAt: string }> = [];
 
@@ -67,7 +68,7 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
 
   public async completeEntityGeneration(input: CompleteEntityGenerationInput): Promise<boolean> {
     this.completed = input;
-    return true;
+    return this.completionResult;
   }
 
   public async failEntityGeneration(input: {
@@ -82,6 +83,7 @@ class FakeExecutionRepository implements EntityGenerationExecutionRepository {
 
 class FakeEntityReferenceRepository implements EntityReferenceRepository {
   public lookups: Array<{ entityId: string; userId: string; organizationId: string | null }> = [];
+  public entityType: EntityReferenceContext['entityType'] = 'character';
 
   public async findReferenceContextByIdAndUserId(
     entityId: string,
@@ -93,7 +95,7 @@ class FakeEntityReferenceRepository implements EntityReferenceRepository {
       entityId: 'entity-1',
       workId: 'work-1',
       userId: 'user-1',
-      entityType: 'character',
+      entityType: this.entityType,
       name: 'Mizuki',
       freeDescription: 'Black long hair swordswoman',
       structuredFields: {
@@ -203,20 +205,30 @@ class FakePromptCompiler implements EntityReferencePromptCompilerPort {
 
 class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
   public input: GenerateEntityReferenceCandidatesInput | null = null;
+  public calls = 0;
   public shouldThrow = false;
+  public failuresRemaining = 0;
   public onGenerate: () => void = () => undefined;
   public candidates: Array<{ imageData: Buffer; mimeType: string }> = [
-    { imageData: Buffer.from('a'), mimeType: 'image/png' },
+    { imageData: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), mimeType: 'image/png' },
   ];
+  public imageModel: string | undefined;
+  public providerModelId: string | undefined;
+  public provider: string | undefined;
 
   public async generateCandidates(input: GenerateEntityReferenceCandidatesInput): Promise<{
     candidates: Array<{ imageData: Buffer; mimeType: string }>;
     openaiRequestId: string | null;
     costUsd: number | null;
   }> {
+    this.calls += 1;
     this.input = input;
     this.onGenerate();
 
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1;
+      throw new Error('generation temporarily failed');
+    }
     if (this.shouldThrow) {
       throw new Error('generation failed');
     }
@@ -225,6 +237,9 @@ class FakeReferenceGenerator implements EntityReferenceGeneratorPort {
       candidates: this.candidates,
       openaiRequestId: 'req-1',
       costUsd: null,
+      ...(this.imageModel === undefined ? {} : { imageModel: this.imageModel }),
+      ...(this.providerModelId === undefined ? {} : { providerModelId: this.providerModelId }),
+      ...(this.provider === undefined ? {} : { provider: this.provider }),
     };
   }
 }
@@ -563,6 +578,32 @@ describe('EntityGenerationWorkerService', () => {
     expect(referenceGenerator.input?.prompt).toContain('obey the current saved text');
   });
 
+  it('人外の添付画像プレビューでは人間向け variation を避けて既存の輪郭と部位を保つ', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.job = buildJob({
+      params: {
+        entity_id: 'entity-1',
+        entity_type: 'nonhuman',
+        previous_entity_status: 'draft',
+        source_s3_key: 'tmp/user-1/entities/imports/source.png',
+      },
+    });
+    const entityRepository = new FakeEntityReferenceRepository();
+    entityRepository.entityType = 'nonhuman';
+    const referenceGenerator = new FakeReferenceGenerator();
+    const service = buildService({ executionRepository, entityRepository, referenceGenerator });
+
+    const result = await service.processJob('job-1');
+
+    expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(referenceGenerator.input?.prompt).toContain(
+      'Keep the uploaded source image\'s established overall silhouette, anatomy, part count, connections, proportions, and markings',
+    );
+    expect(referenceGenerator.input?.prompt).toContain('Nonhuman presentation profile');
+    expect(referenceGenerator.input?.prompt).not.toContain('Slightly shift the body weight onto one leg');
+    expect(referenceGenerator.input?.prompt).not.toContain('both hands and both feet');
+  });
+
   it('source_s3_key が別ユーザー範囲なら読み込まず failed と refund にする', async () => {
     const executionRepository = new FakeExecutionRepository();
     executionRepository.job = buildJob({
@@ -694,6 +735,35 @@ describe('EntityGenerationWorkerService', () => {
       amount: 8,
       jobId: 'job-1',
     });
+    expect(referenceGenerator.calls).toBe(2);
+  });
+
+  it('最初の画像provider失敗だけを同じjob内で一度再試行して候補を一度だけ保存する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.failuresRemaining = 1;
+    const imageStorage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
+    const service = buildService({ executionRepository, referenceGenerator, imageStorage, creditService });
+
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'completed' });
+    expect(referenceGenerator.calls).toBe(2);
+    expect(imageStorage.generatedCandidateCalls).toHaveLength(1);
+    expect(executionRepository.failed).toBeNull();
+    expect(creditService.refunded).toBeNull();
+  });
+
+  it('画像取得成功後の完了保存失敗ではproviderを再実行しない', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    executionRepository.completionResult = false;
+    const referenceGenerator = new FakeReferenceGenerator();
+    const creditService = new FakeCreditService();
+    const service = buildService({ executionRepository, referenceGenerator, creditService });
+
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(referenceGenerator.calls).toBe(1);
+    expect(executionRepository.failed?.errorMessage).toBe('Failed to persist entity generation job result');
+    expect(creditService.refunded).toMatchObject({ jobId: 'job-1' });
   });
 
   it('configured image model を完了メタデータに記録する', async () => {
@@ -707,6 +777,23 @@ describe('EntityGenerationWorkerService', () => {
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'completed' });
     expect(executionRepository.completed?.imageModel).toBe('gpt-image-2-mini');
+  });
+
+  it('2.5 cutoverの旧Web entity jobは固定snapshot以外の候補を保存せず返金する', async () => {
+    const executionRepository = new FakeExecutionRepository();
+    const referenceGenerator = new FakeReferenceGenerator();
+    referenceGenerator.imageModel = 'gpt-image-2';
+    referenceGenerator.providerModelId = 'gpt-image-2';
+    referenceGenerator.provider = 'openai';
+    const imageStorage = new FakeEntityImageStorage();
+    const creditService = new FakeCreditService();
+    const service = buildService({
+      executionRepository, referenceGenerator, imageStorage, creditService,
+      imageModel: 'gpt-image-2.5-sunburst-2026-09-08',
+    });
+    expect(await service.processJob('job-1')).toEqual({ status: 'processed', jobStatus: 'failed' });
+    expect(imageStorage.generatedCandidateCalls).toEqual([]);
+    expect(creditService.refunded).toMatchObject({ jobId: 'job-1' });
   });
 
   it('job ごとに variation profile が変わる', async () => {
@@ -834,6 +921,7 @@ describe('EntityGenerationWorkerService', () => {
       amount: 8,
       jobId: 'job-1',
     });
+    expect(referenceGenerator.calls).toBe(2);
   });
 
   it('法人キャラ生成は組織スコープで読み込み、完了を組織利用履歴へ記録する', async () => {
@@ -928,6 +1016,7 @@ describe('EntityGenerationWorkerService', () => {
     const result = await service.processJob('job-1');
 
     expect(result).toEqual({ status: 'processed', jobStatus: 'cancelled' });
+    expect(referenceGenerator.calls).toBe(1);
     expect(imageStorage.generatedCandidateCalls).toEqual([]);
     expect(executionRepository.completed).toBeNull();
     expect(executionRepository.failed).toBeNull();

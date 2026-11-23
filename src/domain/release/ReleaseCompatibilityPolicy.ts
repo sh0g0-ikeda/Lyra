@@ -9,6 +9,7 @@ export interface ReleaseCompatibilityRuntime {
   entityReferenceDirectUploadEnabled: boolean;
   openAiApiKeyConfigured: boolean;
   openAiImageModel: string;
+  openAiImageSunburstEnabled: boolean;
   generationQueueConfigured: boolean;
   imageStorageConfigured: boolean;
   awsRegionConfigured: boolean;
@@ -57,6 +58,12 @@ export function evaluateReleaseCompatibility(input: ReleaseCompatibilityPolicyIn
     if (!condition) violations.push({ category, code });
   };
 
+  if (input.runtime.openAiImageSunburstEnabled) {
+    check(input.runtime.openAiImageModel === 'gpt-image-2', 'generation', 'IMAGE_CUTOVER_BASE_MODEL_UNSUPPORTED');
+    check(input.runtime.openAiApiKeyConfigured, 'generation', 'IMAGE_CUTOVER_PROVIDER_REQUIRED');
+    check(!input.runtime.localImageFallbackEnabled, 'generation', 'IMAGE_CUTOVER_LOCAL_FALLBACK_FORBIDDEN');
+  }
+
   if (input.profile === 'new-mobile') {
     check(input.runtime.generationQuotesEnabled, 'generation', 'MOBILE_QUOTES_REQUIRED');
     check(input.runtime.generationEnabled, 'generation', 'MOBILE_GENERATION_REQUIRED');
@@ -66,6 +73,7 @@ export function evaluateReleaseCompatibility(input: ReleaseCompatibilityPolicyIn
     check(input.runtime.entityReferenceDirectUploadEnabled, 'generation', 'MOBILE_ENTITY_UPLOAD_REQUIRED');
     check(input.runtime.openAiApiKeyConfigured, 'generation', 'MOBILE_PROVIDER_REQUIRED');
     check(input.runtime.openAiImageModel === 'gpt-image-2', 'generation', 'MOBILE_IMAGE_MODEL_UNSUPPORTED');
+    check(input.runtime.openAiImageSunburstEnabled, 'generation', 'MOBILE_IMAGE_SUNBURST_REQUIRED');
     check(input.runtime.generationQueueConfigured, 'generation', 'MOBILE_DURABLE_QUEUE_REQUIRED');
     check(input.runtime.imageStorageConfigured, 'generation', 'MOBILE_IMAGE_STORAGE_REQUIRED');
     check(input.runtime.awsRegionConfigured, 'generation', 'MOBILE_AWS_REGION_REQUIRED');

@@ -508,12 +508,17 @@
                   }
                 },
                 {
-                  "Sid": "AssumeExactStageStateV2RecoveryRole",
+                  "Sid": "AssumeExactStageStateV2Roles",
                   "Effect": "Allow",
                   "Action": "sts:AssumeRole",
-                  "Resource": {
-                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-recovery"
-                  }
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-image-create"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ResourcePrefix}-state-v2-recovery"
+                    }
+                  ]
                 }
               ]
             }

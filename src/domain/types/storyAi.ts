@@ -33,6 +33,7 @@ export interface StoryEpisodeDraftFields {
 }
 
 export interface StoryEpisodeImprovementInput {
+  includeProductionNotes?: boolean;
   episodeId: string;
   instruction: string;
   language: AppLanguage;
@@ -67,6 +68,7 @@ export interface StoryEpisodeImprovementContext {
 }
 
 export interface StoryEpisodeImprovementResult {
+  productionNotes?: string[];
   draft: StoryEpisodeDraftFields;
   compilerProvider: 'openai' | 'fallback';
   compilerModel: string | null;
@@ -133,6 +135,14 @@ export interface PageSkeletonPanelDraft {
 }
 
 export interface PageSkeletonPageDraft {
+  /** Server-built geometry for authored layout wishes; never provider coordinates. */
+  manuscriptFrames?: import('./panelFrame.js').UpsertPanelFrameInput[];
+  /** Server-owned source allocation, persisted in layout_config for later autofill. */
+  manuscriptSource?: {
+    version: 1;
+    source: string;
+    panels: Array<{ order: number; blockId: string }>;
+  };
   pageNumber: number;
   purpose: string;
   suggestedPanelCount: number;
@@ -141,6 +151,9 @@ export interface PageSkeletonPageDraft {
 }
 
 export interface EpisodePageSkeletonContext {
+  productionNotesEnabled?: boolean;
+  productionNotes?: string[];
+  storyFullDraft?: string | null;
   /** Opaque digest of legacy persisted graph; concurrency control, not prompt data. */
   graphFingerprint?: string;
   episodeId: string;

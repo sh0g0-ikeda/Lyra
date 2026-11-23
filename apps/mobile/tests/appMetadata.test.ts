@@ -60,7 +60,7 @@ const easConfig = JSON.parse(
     android?: { buildType?: string };
     ios?: { simulator?: boolean };
   }>;
-  submit?: { production?: { android?: { track?: string }; ios?: { ascAppId?: string; metadataPath?: string } } };
+  submit?: Record<string, { android?: { track?: string; releaseStatus?: string }; ios?: { ascAppId?: string; metadataPath?: string } }>;
 };
 const storeConfig = JSON.parse(
   readFileSync(resolve(mobileRoot, 'store.config.json'), 'utf8'),
@@ -69,10 +69,12 @@ const storeConfig = JSON.parse(
   apple?: {
     copyright?: string;
     advisory?: { ageRatingOverride?: string };
+    release?: { automaticRelease?: boolean; phasedRelease?: boolean };
     info?: Record<string, {
       title?: string;
       description?: string;
       keywords?: string[];
+      releaseNotes?: string;
       privacyPolicyUrl?: string;
       privacyChoicesUrl?: string;
       supportUrl?: string;
@@ -118,7 +120,7 @@ describe('production app metadata', () => {
   });
 
   it('runtime version と安全な OTA fallback policy を固定する', () => {
-    expect(config.expo.version).toBe('1.0.11');
+    expect(config.expo.version).toBe('1.0.12');
     expect(config.expo.ios?.bundleIdentifier).toBe('jp.lyra.mobile');
     expect(config.expo.android?.package).toBe('com.lyra.mobile');
     expect(config.expo.runtimeVersion?.policy).toBe('appVersion');
@@ -132,8 +134,15 @@ describe('production app metadata', () => {
     expect(easConfig.build?.preview).toMatchObject({
       autoIncrement: true,
     });
-    expect(easConfig.submit?.production?.android?.track).toBe('internal');
+    expect(easConfig.submit?.production?.android?.track).toBe('production');
     expect(easConfig.submit?.production?.ios).toBeDefined();
+  });
+
+  it('明示的に許可された公開submitはPlay production trackへ完了状態で送る', () => {
+    expect(easConfig.submit?.production?.android).toMatchObject({
+      track: 'production',
+      releaseStatus: 'completed',
+    });
   });
 
   it('staging APKは本番versionとOTA channelを共有せず、既存preview runtimeを使う', () => {
@@ -275,6 +284,7 @@ describe('production app metadata', () => {
     expect(storeConfig.configVersion).toBe(0);
     expect(storeConfig.apple?.copyright).toMatch(/^2026 /);
     expect(storeConfig.apple?.advisory?.ageRatingOverride).toBe('SEVENTEEN_PLUS');
+    expect(storeConfig.apple?.release).toEqual({ automaticRelease: true, phasedRelease: false });
     expect(storeConfig.apple?.info?.ja).toMatchObject({
       title: 'Lyra Mobile',
       privacyPolicyUrl: 'https://app.lyra-editor.com/privacy.html',
@@ -290,6 +300,7 @@ describe('production app metadata', () => {
     for (const language of ['ja', 'en-US']) {
       expect(storeConfig.apple?.info?.[language]?.description?.length).toBeGreaterThan(100);
       expect(storeConfig.apple?.info?.[language]?.keywords?.length).toBeGreaterThan(2);
+      expect(storeConfig.apple?.info?.[language]?.releaseNotes?.length).toBeGreaterThan(20);
     }
     expect(easConfig.submit?.production?.ios).toMatchObject({
       ascAppId: '6797564060',

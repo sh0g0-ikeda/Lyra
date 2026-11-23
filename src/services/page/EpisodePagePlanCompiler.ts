@@ -1,6 +1,7 @@
 import type { EpisodePagePlanSuggestion } from '../../domain/types/page.js';
 import type { AppLanguage } from '../../domain/types/language.js';
 import type { EpisodeSourceRequirements } from './EpisodeSourceRequirements.js';
+import type { EpisodeAutofillStateReference } from './EpisodeAutofillStateReferences.js';
 
 /**
  * Autofill-only provider references are fixed from the complete authorized
@@ -22,6 +23,8 @@ export interface CompileEpisodePagePlanInput {
   beforeRetry?: () => Promise<void>;
   /** Omission retains the existing internal compiler contract. */
   characterReferences?: readonly EpisodeAutofillCharacterReference[];
+  /** Omission retains the legacy UUID/null contract; an explicit empty catalog is null-only. */
+  stateReferences?: readonly EpisodeAutofillStateReference[];
 }
 
 export interface CompiledEpisodePagePlan {

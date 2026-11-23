@@ -5,7 +5,7 @@ import {afterAll,beforeAll,describe,expect,it} from 'vitest';
 import type {DatabaseClient,TransactionRunner} from '../../src/lib/db.js';
 import type {ReleaseCompatibilityRuntime} from '../../src/domain/release/ReleaseCompatibilityPolicy.js';
 import {runPendingMigrations,runProduction44Expansion} from '../../src/lib/migrations.js';
-import {GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS} from '../../src/lib/runtimeSchemaAttestation.js';
+import {GENERATION_BATCH_RUNTIME_MIGRATIONS} from '../../src/lib/runtimeSchemaAttestation.js';
 import {checkReleaseCompatibility} from '../../scripts/checkReleaseCompatibility.js';
 import {withPostgresTestMigrationLock} from './postgresTestMigrationLock.js';
 const url=process.env.DATABASE_URL;
@@ -14,7 +14,7 @@ function syntheticTarget():boolean {
   try{const target=new URL(url);return ['postgres:','postgresql:'].includes(target.protocol)&&['127.0.0.1','localhost','::1'].includes(target.hostname)&&target.pathname==='/lyra_test'&&target.search===''&&target.hash===''&&(['15432','15433','15435','15436'].includes(target.port)||(process.env.CI==='true'&&process.env.GITHUB_ACTIONS==='true'&&['5432','5433'].includes(target.port)));}catch{return false;}
 }
 const native=syntheticTarget()?describe:describe.skip;
-const runtime:ReleaseCompatibilityRuntime={generationQuotesEnabled:true,generationEnabled:true,pageGenerationEnabled:true,entityGenerationEnabled:true,entityImportAnalysisEnabled:true,entityReferenceDirectUploadEnabled:true,openAiApiKeyConfigured:true,openAiImageModel:'gpt-image-2',generationQueueConfigured:true,imageStorageConfigured:true,awsRegionConfigured:true,localImageFallbackEnabled:false,webImageDeliveryClientIds:[],stateReferenceCopyV2AdmissionEnabled:false,stateReferenceCopyV2StorageContractAttested:false};
+const runtime:ReleaseCompatibilityRuntime={generationQuotesEnabled:true,generationEnabled:true,pageGenerationEnabled:true,entityGenerationEnabled:true,entityImportAnalysisEnabled:true,entityReferenceDirectUploadEnabled:true,openAiApiKeyConfigured:true,openAiImageModel:'gpt-image-2',openAiImageSunburstEnabled:true,generationQueueConfigured:true,imageStorageConfigured:true,awsRegionConfigured:true,localImageFallbackEnabled:false,webImageDeliveryClientIds:[],stateReferenceCopyV2AdmissionEnabled:false,stateReferenceCopyV2StorageContractAttested:false};
 for(const profile of ['canonical','production44_expanded_pg18_v1'] as const){
   native('release preflight native '+profile,()=>{
     let admin:Pool,pool:Pool,database:DatabaseClient&TransactionRunner;
@@ -46,7 +46,7 @@ for(const profile of ['canonical','production44_expanded_pg18_v1'] as const){
       expect(initialReport).toMatchObject({ok:true,journalPresent:false,remoteStoragePolicyVerified:false,violations:[]});
       expect(initialReport.checkedCount).toBeGreaterThan(10);
       expect(postCheckMigrationCount).toBe(initialMigrationCount);
-      expect(initialMigrationCount).toBe(profile==='canonical'?GENERATION_WORKER_WARM_RUNTIME_MIGRATIONS.length:54);
+      expect(initialMigrationCount).toBe(profile==='canonical'?GENERATION_BATCH_RUNTIME_MIGRATIONS.length:54);
       expect(initialStatements.every(sql=>/^\s*(SELECT|WITH|SET)\b/u.test(sql))).toBe(true);
       expect(initialStatements).toEqual(expect.arrayContaining([expect.stringContaining('REPEATABLE READ, READ ONLY')]));
     });

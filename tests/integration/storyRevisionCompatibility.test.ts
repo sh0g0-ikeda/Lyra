@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { SignJWT } from 'jose';
+import { createApp } from '../../src/app.js';
 import { Pool, type QueryResult, type QueryResultRow } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
@@ -10,6 +12,7 @@ import { EntityService } from '../../src/services/entity/EntityService.js';
 import { PostgresPageRepository } from '../../src/repositories/PageRepository.js';
 import { decodeWorkListCursor, encodeWorkListCursor, decodeEntityListCursor, decodePageListCursor } from '../../src/domain/pagination.js';
 import { StoryService } from '../../src/services/story/StoryService.js';
+import { StoryCollaborationService } from '../../src/services/story/StoryCollaborationService.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
 import { rejectionOf } from './asyncPostgresAssertions.js';
 
@@ -44,6 +47,59 @@ describePostgres('story shipped revision compatibility', () => {
     await pool.query('INSERT INTO episodes (id,chapter_id,"order",introduction) VALUES ($1,$2,1,\'keep introduction\')', [episode,chapter]);
     return { user,work,chapter,episode };
   }
+
+  it('新版で付けた演出指示が旧版で本文を保存した後にも残り、個別に無効化できる', async () => {
+    const ids = await fixture();
+    const jwtSecret = randomUUID();
+    const actor = { id: ids.user, supabaseId: ids.user, email: ids.user + '@example.invalid', planCode: 'free' as const, displayName: null };
+    const app = createApp({ storyService: service, authProvider: 'supabase', jwtSecret,
+      userProvisioningService: { provisionFromSupabaseClaims: async () => ({ user: actor, isNewUser: false }) },
+    });
+    const token = await new SignJWT({ email: actor.email }).setProtectedHeader({ alg: 'HS256' })
+      .setSubject(ids.user).setIssuedAt().setExpirationTime('5m').sign(new TextEncoder().encode(jwtSecret));
+    const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+    const update = (query: string, body: object): Promise<Response> => Promise.resolve(
+      app.request('/api/episodes/' + ids.episode + query, { method: 'PUT', headers, body: JSON.stringify(body) }));
+    const list = (query: string): Promise<Response> => Promise.resolve(
+      app.request('/api/chapters/' + ids.chapter + '/episodes' + query, { headers }));
+    const notes = ['「扉が開く」と「ミオが笑う」は別のコマ'];
+    const original = '# 序章\n扉が開く。ミオが笑う。';
+    expect((await update('?version=2', { story_input_mode: 'full', story_full_draft: original,
+      production_notes_enabled: true, production_notes: notes })).status).toBe(200);
+    const legacy = await (await list('')).json() as { episodes: Record<string, unknown>[] };
+    expect(legacy.episodes[0]).toMatchObject({ story_full_draft: original });
+    expect(legacy.episodes[0]).not.toHaveProperty('production_notes');
+    expect(legacy.episodes[0]).not.toHaveProperty('production_notes_enabled');
+    const edited = '# 序章\n扉が閉じる。ミオが笑う。';
+    expect((await update('', { story_full_draft: edited })).status).toBe(200);
+    const revised = await (await list('?version=2')).json() as { episodes: Record<string, unknown>[] };
+    expect(revised.episodes[0]).toMatchObject({ story_full_draft: edited, production_notes: notes, production_notes_enabled: true });
+    expect((await update('?version=2', { production_notes_enabled: false })).status).toBe(200);
+    const stored = await repository.findEpisodeByIdAndUserId(ids.episode, ids.user);
+    expect(stored).toMatchObject({ storyFullDraft: edited, productionNotes: notes, productionNotesEnabled: false });
+  });
+
+  it('別の話で登録したキャラは今回の話に未選択でも既存扱いになり状態変化だけが候補になる', async () => {
+    const ids = await fixture();
+    const entities = new PostgresEntityRepository(new TestDatabase(pool));
+    const prior = await entities.create({ workId: ids.work, userId: ids.user, entityType: 'character', name: 'ミオ',
+      freeDescription: '第1話の登録済み設定', promptSupplement: null, structuredFields: {}, speechProfile: {} });
+    const quote = 'ミオの左腕に赤い模様が現れた。';
+    const episode = await service.updateEpisode(ids.user, ids.episode, { storyInputMode: 'full', storyFullDraft: quote });
+    const suggestions = new StoryCollaborationService(repository, {
+      streamCollaboration: () => { throw Error('unexpected collaboration'); },
+      generatePageSkeleton: () => { throw Error('unexpected page planning'); },
+      improveEpisodeDraft: () => { throw Error('unexpected improvement'); },
+      extractEpisodeCharacters: async () => [{
+        name: 'ミオ', name_quote: quote, entity_type: 'character', appearance: [{ field: 'features', value: '赤い模様', quote }],
+        changes: [{ label: '模様', description: '赤い模様が現れた', quote }],
+      }],
+    });
+    const result = await suggestions.suggestEpisodeCharacters(ids.user, ids.episode, episode.version, false);
+    expect(result.characters).toMatchObject([{ status: 'existing', entity_ids: [prior.id], appearance: [],
+      changes: [{ description: '赤い模様が現れた' }] }]);
+    expect((await entities.findByIdAndUserId(prior.id, ids.user))?.freeDescription).toBe('第1話の登録済み設定');
+  });
 
   it.each(['work','chapter','episode'] as const)('%s 同一revisionの競合保存は一件だけ成功し履歴を増やす', async (kind) => {
     const ids = await fixture();

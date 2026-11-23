@@ -19,7 +19,7 @@ import { ensureOwnedEntityReferenceImageKey } from '../storage/StoredImageKeyPol
 import { isReservedFencedStateReferenceNamespace } from '../../domain/state/FencedStateReferenceKey.js';
 import { findConfirmedQuotedStateReference } from '../../repositories/FencedStateReferenceReadGuard.js';
 import { ensureAllowedReferenceSourceKey } from '../entity/EntityReferenceSourceKeyPolicy.js';
-import { requireOpenAIEntityInputCompatible, requireOpenAIImageInputCompatible } from '../../domain/generation/ImageInputProviderPolicy.js';
+import { requireOpenAIEntityInputCompatible, requireOpenAIImageInputCompatible, resolveQuotedOpenAIImageModel } from '../../domain/generation/ImageInputProviderPolicy.js';
 import { resolveEntityImageProvenance } from '../entity/EntityImageProvenance.js';
 import { PostgresGenerationJobRepository } from '../../repositories/GenerationJobRepository.js';
 import { requireAssignedCharacterPrimariesCompatible } from '../page/PageCharacterPrimaryReferencePolicy.js';
@@ -125,12 +125,13 @@ export class QuotedGenerationInputs implements QuotedGenerationInputsPort {
 }
 export function hasGenerationQuote(job:GenerationJob):boolean{return Object.prototype.hasOwnProperty.call(job.params,'quote_id');}
 export function assertQuotedJobMatches(job:GenerationJob,quote:GenerationQuote,configuredModel:string):void{
+  const model = resolveQuotedOpenAIImageModel(job.params, configuredModel);
   const persistedOptions=Object.fromEntries(Object.keys(quote.plan.jobParams).map((key)=>[key,job.params[key]]));
   if(job.params.quote_id!==quote.id || quote.acceptedJobId!==job.id || quote.userId!==job.userId || quote.organizationId!==(job.organizationId ?? null)
     || fingerprintQuoteInput(persistedOptions)!==fingerprintQuoteInput(quote.plan.jobParams) || job.params.image_model!==quote.plan.imageModel
     || job.creditCost!==quote.plan.amountCredits || job.params.quoted_input_revision!==quote.plan.inputRevision
     || fingerprintQuoteInput(quote.plan.snapshot)!==quote.plan.inputRevision || job.params.provider_model_id!==quote.plan.providerModelId
-    || quote.plan.providerModelId!==configuredModel || job.params.pricing_version!==quote.plan.pricingVersion
+    || quote.plan.providerModelId!==model || job.params.pricing_version!==quote.plan.pricingVersion
     || quote.plan.pricingVersion!==GENERATION_QUOTE_PRICING_VERSION){
     throw new ConfigurationError('Accepted generation quote is stale or unavailable; no model fallback is allowed');
   }

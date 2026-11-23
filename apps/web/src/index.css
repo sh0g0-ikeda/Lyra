@@ -787,6 +787,43 @@ a {
   gap: 8px;
 }
 
+.batch-generation {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.batch-generation-actions > .secondary-button {
+  min-height: 38px;
+  white-space: normal;
+}
+
+.batch-generation .notice {
+  margin: 0;
+}
+
+.batch-generation-status,
+.batch-generation-error {
+  display: grid;
+  gap: 8px;
+}
+
+.batch-generation-status p,
+.batch-generation-error p {
+  margin: 0;
+}
+
+.batch-generation-item-error {
+  color: #ff9e96;
+}
+
+.page-estimate-field { display: flex; flex-direction: column; gap: 8px; }
+.page-estimate-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(64px, 100px); align-items: stretch; gap: 8px; }
+.page-estimate-controls > .secondary-button { min-width: 0; white-space: normal; line-height: 1.35; padding: 10px 8px; }
+.page-estimate-controls input { width: 100%; min-width: 0; }
+.page-estimate-error { color: #f39b91; line-height: 1.45; }
+.page-estimate-summary { color: #e5c76b; line-height: 1.45; }
+
 .mobile-bottom-nav {
   display: none;
 }
@@ -1857,6 +1894,46 @@ a {
 
 .page-grid {
   grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
+}
+
+.character-photo-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(136px, 100%), 1fr));
+}
+
+.character-photo-card {
+  position: relative;
+  min-width: 0;
+}
+
+.character-photo-card .page-card {
+  width: 100%;
+  height: 100%;
+  overflow-wrap: anywhere;
+}
+
+.character-photo-frame {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(229, 199, 107, 0.06);
+}
+
+.character-photo-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.character-photo-card .character-photo-zoom {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 44px;
+  height: 44px;
+  background: #171717;
 }
 
 .reference-grid {
@@ -4307,3 +4384,10 @@ details.stack summary {
 
 .page-section-planning .section-toggle-actions .toolbar { grid-template-columns: minmax(0, 1fr); width: 100%; }
 .page-section-planning .skeleton-plan-button { width: 100%; min-height: 48px; justify-content: center; }
+
+/* Keep page and batch actions together without squeezing their labels on phones. */
+.page-generation-actions > .batch-generation { width: 100%; grid-column: 1 / -1; margin-bottom: 0; }
+@media (max-width: 760px) {
+  .page-generation-actions,
+  .page-generation-actions .batch-generation-actions { grid-template-columns: minmax(0, 1fr); }
+}

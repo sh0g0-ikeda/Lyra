@@ -1,17 +1,20 @@
 import { EntityReferenceModelIncompatibleError, PageReferenceModelIncompatibleError } from '../errors/index.js';
 import { readImageProvenance, type ImageProvenance } from './ImageAccessPolicy.js';
+import { GPT_IMAGE_2, GPT_IMAGE_25_SUNBURST, GPT_IMAGE_25_SUNBURST_SNAPSHOT } from '../constants/openAIImageModel.js';
 
 /**
  * OpenAI image inputs may use legacy images without provenance or images whose
- * persisted provenance explicitly stays on the OpenAI GPT image family.
+ * persisted provenance explicitly stays on a known OpenAI GPT image model pair.
  */
 export function isOpenAIImageInputCompatible(image: ImageProvenance): boolean {
   if (image.imageModel == null) {
     return image.provider == null && image.providerModelId == null;
   }
-  if (image.imageModel !== 'gpt-image-1' && image.imageModel !== 'gpt-image-2') {
-    return false;
+  if (image.imageModel === GPT_IMAGE_25_SUNBURST) {
+    return image.provider === 'openai'
+      && image.providerModelId === GPT_IMAGE_25_SUNBURST_SNAPSHOT;
   }
+  if (image.imageModel !== 'gpt-image-1' && image.imageModel !== 'gpt-image-2') return false;
   return (image.provider == null || image.provider === 'openai')
     && (image.providerModelId == null || image.providerModelId === image.imageModel);
 }
@@ -70,10 +73,19 @@ function requireOpenAIJobCompatible(
   if (
     configuredModel !== undefined
     && (
-      (provenance.imageModel != null && provenance.imageModel !== configuredModel)
-      || (provenance.providerModelId != null && provenance.providerModelId !== configuredModel)
+      (provenance.providerModelId ?? provenance.imageModel) !== configuredModel
     )
   ) {
     throw createError();
   }
+}
+
+/** Only an accepted quote can select a different supported provider model. */
+export function resolveQuotedOpenAIImageModel(
+  params: Record<string, unknown>,
+  configuredModel: string | undefined,
+): string | undefined {
+  if (configuredModel === GPT_IMAGE_2 && typeof params.quote_id === 'string'
+    && params.provider_model_id === GPT_IMAGE_25_SUNBURST_SNAPSHOT) return GPT_IMAGE_25_SUNBURST_SNAPSHOT;
+  return configuredModel;
 }

@@ -36,6 +36,12 @@ const checkOnly = process.argv.slice(2).includes('--check');
 const contracts = [
   ['packages/api-contract/src/mobileApiSchemas.ts', 'apps/mobile/src/domain/apiSchemas.ts', `\n${compatibilityExport}`],
   ['packages/api-contract/src/episodePageLimits.ts', 'apps/mobile/src/domain/episodePageLimits.ts', ''],
+  ['packages/api-contract/src/storyPageEstimate.ts', 'apps/mobile/src/domain/storyPageEstimateContract.ts', ''],
+  ['packages/api-contract/src/storyManuscript.ts', 'apps/mobile/src/domain/storyManuscriptContract.ts', ''],
+  ['packages/api-contract/src/characterSuggestions.ts', 'apps/mobile/src/domain/characterSuggestionsContract.ts', ''],
+  ['packages/api-contract/src/characterAutofill.ts', 'apps/mobile/src/domain/characterAutofillContract.ts', ''],
+  ['packages/api-contract/src/characterAppearanceCatalog.ts', 'apps/mobile/src/domain/characterAppearanceCatalog.ts', ''],
+  ['packages/api-contract/src/generationBatch.ts', 'apps/mobile/src/domain/generationBatchContract.ts', ''],
 ];
 
 for (const [canonicalFile, generatedFile, suffix] of contracts) {

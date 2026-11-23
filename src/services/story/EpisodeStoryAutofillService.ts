@@ -34,6 +34,7 @@ export interface EnqueueEpisodeStoryAutofillResult {
 }
 
 export interface EpisodeStoryAutofillOptions {
+  productionNotesVersion?: 'v1';
   stateAutofillEnabled?: boolean;
   stateAutofillVersion?: 'v1';
   stateAssignmentPolicy?: 'preserve_existing' | 'overwrite_existing';
@@ -96,6 +97,7 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
       language,
       organizationId,
       stateAutofill,
+      options.productionNotesVersion,
     );
   }
 
@@ -112,12 +114,14 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
     const episodeId = readRequiredStringParam(sourceJob.params, 'episode_id');
     const language = readLanguageParam(sourceJob.params);
     const stateAutofill = readRetryStateAutofill(sourceJob.params, this.stateAutofillDefaultEnabled);
+    const productionNotesVersion = readRetryProductionNotesVersion(sourceJob.params);
     return this.enqueueNormalized(
       userId,
       episodeId,
       language,
       sourceJob.organizationId ?? null,
       stateAutofill,
+      productionNotesVersion,
     );
   }
 
@@ -127,6 +131,7 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
     language: AppLanguage,
     organizationId: string | null,
     stateAutofill: NormalizedStateAutofill | null,
+    productionNotesVersion?: 'v1',
   ): Promise<EnqueueEpisodeStoryAutofillResult> {
     if (stateAutofill !== null && !this.stateAutofillV1Enabled) {
       if (stateAutofill.enabled !== false) {
@@ -150,6 +155,7 @@ export class EpisodeStoryAutofillService implements EpisodeStoryAutofillServiceP
           episode_id: episodeId,
           language,
           organization_id: organizationId,
+          ...(productionNotesVersion === 'v1' ? { production_notes_version: 'v1' } : {}),
           ...(stateAutofill === null ? {} : stateAutofill.enabled === false ? {
             state_autofill_enabled: false,
             state_autofill_origin: stateAutofill.origin,
@@ -312,6 +318,13 @@ function readRequiredStringParam(params: Record<string, unknown>, key: string): 
     throw new ConflictError('Episode story autofill job is missing required params');
   }
   return value;
+}
+
+function readRetryProductionNotesVersion(params: Record<string, unknown>): 'v1' | undefined {
+  const version = params.production_notes_version;
+  if (version === undefined) return undefined;
+  if (version === 'v1') return version;
+  throw new ConflictError('Episode story autofill job has invalid production notes version');
 }
 
 function readLanguageParam(params: Record<string, unknown>): AppLanguage {

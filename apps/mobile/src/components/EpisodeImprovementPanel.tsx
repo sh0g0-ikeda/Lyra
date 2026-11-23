@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { FormField } from '@/components/FormField';
 import { PrimaryButton } from '@/components/PrimaryButton';
@@ -17,7 +17,10 @@ interface EpisodeImprovementPanelProps {
   onImprove: () => void;
   onImprovementChange: (value: string) => void;
   onInstructionChange: (value: string) => void;
+  productionNotes?: readonly string[];
   selectedEpisode: boolean;
+  selectedProductionNotes?: readonly string[];
+  onToggleProductionNote?: (note: string) => void;
 }
 
 export function EpisodeImprovementPanel({
@@ -30,7 +33,10 @@ export function EpisodeImprovementPanel({
   onImprove,
   onImprovementChange,
   onInstructionChange,
-  selectedEpisode
+  productionNotes = [],
+  selectedEpisode,
+  selectedProductionNotes = [],
+  onToggleProductionNote
 }: EpisodeImprovementPanelProps): React.JSX.Element {
   return (
     <View style={styles.root}>
@@ -76,6 +82,35 @@ export function EpisodeImprovementPanel({
             onPress={onApply}
             variant="secondary"
           />
+          {productionNotes.length === 0 || onToggleProductionNote === undefined ? null : (
+            <View style={styles.productionNotes}>
+              <Text style={styles.caption}>
+                {t(language, 'component.episodeImprovementPanel.productionNotes.title')}
+              </Text>
+              {productionNotes.map((note) => {
+                const selected = selectedProductionNotes.includes(note);
+                return (
+                  <Pressable
+                    accessibilityLabel={t(
+                      language,
+                      selected
+                        ? 'component.episodeImprovementPanel.productionNotes.remove'
+                        : 'component.episodeImprovementPanel.productionNotes.add',
+                      { note },
+                    )}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: selected, disabled: !canEdit }}
+                    disabled={!canEdit}
+                    key={note}
+                    onPress={() => onToggleProductionNote(note)}
+                    style={styles.productionNote}
+                  >
+                    <Text style={styles.productionNoteText}>{selected ? '☑' : '☐'} # {note}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
           <Text style={styles.caption}>
             {t(language, "generated.components.EpisodeImprovementPanel.after.applying.you.can.improve.the.curre.88d89597")}
           </Text>
@@ -98,6 +133,17 @@ const styles = StyleSheet.create({
   resultTitle: {
     ...textStyles.sectionTitle,
     color: colors.primary
+  },
+  productionNote: {
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  productionNoteText: {
+    ...textStyles.body,
+    color: colors.ink,
+  },
+  productionNotes: {
+    gap: spacing.xs,
   },
   root: {
     gap: spacing.md

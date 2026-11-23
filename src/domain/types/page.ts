@@ -1,5 +1,6 @@
 ﻿import type { ImageProvenance } from '../generation/ImageAccessPolicy.js';
 import type { PanelEntityAssignment } from './panelEntityAssignment.js';
+import type { EpisodeManuscriptPlan } from './storyManuscriptPlan.js';
 import type { PageGenerationMode } from './pageGeneration.js';
 import type { StyleReferenceMetadata } from './styleReference.js';
 import type {
@@ -16,6 +17,7 @@ import type {
   StateAssignmentPolicy,
 } from './episodeStateTransition.js';
 import type { EntityStateReferenceDescriptor } from './entityStateReference.js';
+import type { PersistedEpisodeStateChange } from './episodeStateChange.js';
 
 export type PageStatus = 'designing' | 'generating' | 'generated' | 'editing' | 'confirmed';
 export type PageDialogueMode = 'image_baked' | 'balloon_only' | 'mixed';
@@ -112,6 +114,7 @@ export interface PageAutofillPanelContext {
 }
 
 export interface PageAutofillContext {
+  productionNotesEnabled?: boolean;
   layoutConfig?: Record<string, unknown>;
   pageId: string;
   workId: string;
@@ -140,6 +143,19 @@ export interface PageAutofillContext {
 }
 
 export interface EpisodePagePlanContext {
+  manuscriptPlan?: EpisodeManuscriptPlan;
+  /** Internal physical-schema capability; absent in older internal callers. */
+  stateDraftPersistenceSupported?: boolean;
+  /** Trusted saved story sources used only by strict final-draft state extraction
+   * after production-note prose has been separated. Never persist or expose it. */
+  strictStateEvidenceSources?: {
+    storyFullDraft: string | null;
+    introduction: string | null;
+    middle: string | null;
+    climax: string | null;
+    endingHook: string | null;
+  };
+  productionDirectives?: EpisodeProductionDirective[];
   episodeId: string;
   workId: string;
   chapter: {
@@ -152,6 +168,8 @@ export interface EpisodePagePlanContext {
     keyBeats: string[];
   };
   episode: {
+    productionNotesEnabled?: boolean;
+    productionNotes?: string[];
     title: string | null;
     purpose: string | null;
     storyFullDraft?: string | null;
@@ -297,4 +315,7 @@ export interface EpisodePagePlanApplyResult {
   stateTransitions?: EpisodeStateTransition[];
   statePlanVersion?: 'episode_state_plan_v1';
   stateAssignmentPolicy?: StateAssignmentPolicy;
+  /** Internal provenance only; older strict job responses continue using their existing projection. */
+  savedStateChanges?: readonly PersistedEpisodeStateChange[];
 }
+import type { EpisodeProductionDirective } from '../episodeProductionNotes.js';

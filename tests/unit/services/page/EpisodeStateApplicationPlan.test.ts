@@ -5,6 +5,7 @@ import { EpisodeStatePlanError } from '../../../../src/services/page/EpisodeStat
 import {
   applyEpisodeStateVisualDirectives,
   resolveEpisodePlanStateAssignments,
+  stripEpisodeStateVisualDirectivesFromContext,
 } from '../../../../src/services/page/EpisodeStateApplicationPlan.js';
 
 const ACTOR = '11111111-1111-4111-8111-111111111111';
@@ -189,6 +190,93 @@ function visualSuggestion(): EpisodePagePlanSuggestion {
 }
 
 describe('applyEpisodeStateVisualDirectives', () => {
+  it('新modeでもauthorの連続した完全外見境界は後の指定で置換する', () => {
+    const authorFallbacks = [
+      {
+        entityId: ACTOR, candidateStateId: null, startsAtPanelId: FIRST,
+        suggestedName: '赤い服', suggestedDescription: '赤い服を着ている',
+        sourceSceneId: null, sourceField: 'story_full_draft' as const,
+        sourceQuote: '赤い服になる', reason: 'missing_reference' as const,
+      },
+      {
+        entityId: ACTOR, candidateStateId: null, startsAtPanelId: SECOND,
+        suggestedName: '青い服', suggestedDescription: '青い服を着ている',
+        sourceSceneId: null, sourceField: 'story_full_draft' as const,
+        sourceQuote: '青い服になる', reason: 'missing_reference' as const,
+      },
+    ];
+    const result = applyEpisodeStateVisualDirectives({
+      context: visualContext(), suggestion: visualSuggestion(), language: 'ja',
+      transitions: [], visualFallbacks: authorFallbacks,
+      accumulatingVisualFallbacks: [],
+    });
+
+    expect(result.pages[0]!.panels[0]!.situationText).toContain('赤い服を着ている');
+    expect(result.pages[0]!.panels[1]!.situationText).not.toContain('赤い服を着ている');
+    expect(result.pages[0]!.panels[1]!.situationText).toContain('青い服を着ている');
+  });
+
+  it('再実行前に閉じ括弧が切れた機械注記もmarker開始からだけ除去する', () => {
+    const context = visualContext();
+    context.pages[0]!.panels[0]!.situationText =
+      '本人が書いた描写。[物語上の外見: 主人公 — 発光: 髪が青白く発光';
+    context.pages[0]!.panels[0]!.composition.compositionPrompt =
+      '本人が書いた構図。[Story appearance: 主人公 — Glow: hair glows...';
+
+    const stripped = stripEpisodeStateVisualDirectivesFromContext(context);
+
+    expect(stripped.pages[0]!.panels[0]!.situationText).toBe('本人が書いた描写。');
+    expect(stripped.pages[0]!.panels[0]!.composition.compositionPrompt)
+      .toBe('本人が書いた構図。');
+  });
+
+  it('final draft deltaは累積し部分置換では対象だけを外して他の継続変化を保つ', () => {
+    const result = applyEpisodeStateVisualDirectives({
+      context: visualContext(), suggestion: visualSuggestion(), language: 'ja',
+      transitions: [{
+        entityId: ACTOR, stateId: null, startsAtPanelId: FOURTH,
+        sourceSceneId: null, sourceField: 'ending_hook', sourceQuote: '元の姿に戻る',
+      }],
+      visualFallbacks: [
+        {
+          entityId: ACTOR, candidateStateId: null, startsAtPanelId: FIRST,
+          suggestedName: '赤髪', suggestedDescription: '髪が赤くなる',
+          sourceSceneId: null, sourceField: 'story_full_draft',
+          sourceQuote: '左腕に傷ができ、髪が赤くなる',
+          panelEvidenceQuote: '髪が赤くなる', replacesDeltas: [], reason: 'missing_reference',
+        },
+        {
+          entityId: ACTOR, candidateStateId: null, startsAtPanelId: FIRST,
+          suggestedName: '負傷', suggestedDescription: '左腕に傷ができ',
+          sourceSceneId: null, sourceField: 'story_full_draft',
+          sourceQuote: '左腕に傷ができ、髪が赤くなる',
+          panelEvidenceQuote: '左腕に傷ができ', replacesDeltas: [], reason: 'missing_reference',
+        },
+        {
+          entityId: ACTOR, candidateStateId: null, startsAtPanelId: THIRD,
+          suggestedName: '黒髪', suggestedDescription: '髪が黒に戻る',
+          sourceSceneId: null, sourceField: 'story_full_draft', sourceQuote: '髪が黒に戻る',
+          panelEvidenceQuote: '髪が黒に戻る',
+          replacesDeltas: [{
+            sourceQuote: '左腕に傷ができ、髪が赤くなる', description: '髪が赤くなる',
+          }],
+          reason: 'missing_reference',
+        },
+      ],
+      accumulateVisualFallbacks: true,
+    });
+
+    expect(result.pages[0]!.panels[0]!.situationText).toContain('髪が赤くなる');
+    expect(result.pages[0]!.panels[0]!.situationText).toContain('左腕に傷ができ');
+    expect(result.pages[0]!.panels[1]!.situationText).toContain('髪が赤くなる');
+    expect(result.pages[0]!.panels[1]!.situationText).toContain('左腕に傷ができ');
+    expect(result.pages[1]!.panels[0]!.situationText).not.toContain('髪が赤くなる');
+    expect(result.pages[1]!.panels[0]!.situationText).toContain('髪が黒に戻る');
+    expect(result.pages[1]!.panels[0]!.situationText).toContain('左腕に傷ができ');
+    expect(result.pages[1]!.panels[1]!.situationText).not.toContain('髪が黒に戻る');
+    expect(result.pages[1]!.panels[1]!.situationText).not.toContain('左腕に傷ができ');
+  });
+
   it('READY参照でも状態名がnullまたは空白なら表示名を補わず拒否する', () => {
     for (const name of [null, '   ']) {
       const context = visualContext();

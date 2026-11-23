@@ -1,5 +1,11 @@
 export const componentTranslations = {
   ja: {
+    'component.characterThumbnailPicker.empty': '候補になる人物はいません',
+    'component.characterThumbnailPicker.select': '{name}を選択',
+    'component.characterThumbnailPicker.preview': '{name}を拡大表示',
+    'component.episodeImprovementPanel.productionNotes.title': '演出指示の提案（本文へ反映するものだけ選択）',
+    'component.episodeImprovementPanel.productionNotes.add': '演出指示「{note}」を追加',
+    'component.episodeImprovementPanel.productionNotes.remove': '演出指示「{note}」を外す',
     'component.confirmedPageSummary.pageNumber': '{pageNumber}ページ',
     'component.confirmedPageSummary.counts': 'コマ {panelCount} / 枠 {frameCount} / セリフ {balloonCount}',
     'component.excessPanelDeletionPlan.notice': 'このテンプレートは{targetPanelCount}コマです。下の候補を1件ずつ確認して削除してください。別のコマを削除する場合は、コマ一覧で末尾へ移動してから選びます。',
@@ -208,6 +214,12 @@ export const componentTranslations = {
     'component.pageSceneAutofill.confirmation': '参照シーンをもとに、ページとコマの内容を更新します。現在のページ編集は保存または破棄を確認してから置き換わります。'
   },
   en: {
+    'component.characterThumbnailPicker.empty': 'No character candidates',
+    'component.characterThumbnailPicker.select': 'Select {name}',
+    'component.characterThumbnailPicker.preview': 'Enlarge {name}',
+    'component.episodeImprovementPanel.productionNotes.title': 'Production note suggestions (select only what to apply)',
+    'component.episodeImprovementPanel.productionNotes.add': 'Add production note {note}',
+    'component.episodeImprovementPanel.productionNotes.remove': 'Remove production note {note}',
     'component.confirmedPageSummary.pageNumber': 'Page {pageNumber}',
     'component.confirmedPageSummary.counts': 'Panels {panelCount} / frames {frameCount} / dialogue {balloonCount}',
     'component.excessPanelDeletionPlan.notice': 'This template has {targetPanelCount} panels. Review and delete each candidate below. To remove another panel, move it to the end in the panel list first.',
