@@ -25,6 +25,33 @@ const validPageSkeletonPayload = {
 };
 
 describe('OpenAIStoryAiClient', () => {
+  it('コマ割り指示をLunaの厳格な構造出力でサイズと形に分けて返す', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const payload = { directions: [{ direction_index: 0,
+      targets: [{ page_number: 8, order: 2, size: 'largest', shape: 'wide' }] }] };
+    const client = { postJson: async (_path: string, body: Record<string, unknown>) => {
+      requests.push(body);
+      return { body: { output_text: JSON.stringify(payload) }, requestId: 'req-layout' };
+    } } as unknown as OpenAIClient;
+    expect(await new OpenAIStoryAiClient(client).planManuscriptLayouts({ systemPrompt: 'system', userPrompt: 'user' }))
+      .toEqual(payload);
+    expect(requests[0]).toMatchObject({ model: 'gpt-6-luna', reasoning: { effort: 'low' },
+      max_output_tokens: 12000, text: { format: { name: 'manuscript_frame_layout', strict: true } } });
+  });
+
+  it('コマ割り指示の不正なサイズや範囲外の対象をprovider境界で拒否する', async () => {
+    for (const target of [
+      { page_number: 1, order: 0, size: 'largest', shape: null },
+      { page_number: 1, order: 2, size: 'invented', shape: null },
+      { page_number: 1, order: 2, size: null, shape: 'square' },
+    ]) {
+      const client = { postJson: async () => ({ body: { output_text: JSON.stringify({
+        directions: [{ direction_index: 0, targets: [target] }],
+      }) }, requestId: 'req-invalid-layout' }) } as unknown as OpenAIClient;
+      await expect(new OpenAIStoryAiClient(client).planManuscriptLayouts({ systemPrompt: 'system', userPrompt: 'user' }))
+        .rejects.toThrow();
+    }
+  });
   it('指示保持本文改善をID付きstrict structured outputで返す', async () => {
     const requests: Array<Record<string, unknown>> = [];
     const client = {

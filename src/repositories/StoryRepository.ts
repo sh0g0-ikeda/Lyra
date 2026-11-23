@@ -2664,10 +2664,11 @@ export class PostgresStoryRepository
       let panelsCreated = 0;
 
       for (const page of pages) {
-        const frameDefinitions = buildPanelFrameTemplateInputs(page.suggestedLayout);
+        const frameDefinitions = page.manuscriptFrames ?? buildPanelFrameTemplateInputs(page.suggestedLayout);
         const layoutConfig = JSON.stringify({
-          type: 'template',
-          template_id: page.suggestedLayout,
+          ...(page.manuscriptFrames === undefined
+            ? { type: 'template', template_id: page.suggestedLayout }
+            : { type: 'custom', manuscript_frame_layout_version: 1 }),
           panel_count: page.suggestedPanelCount,
           frame_definitions: frameDefinitions,
           ...(page.manuscriptSource === undefined ? {} : { story_manuscript: page.manuscriptSource }),

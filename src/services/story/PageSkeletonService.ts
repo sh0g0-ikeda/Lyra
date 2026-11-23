@@ -24,6 +24,7 @@ import type { StoryAiClientPort } from './StoryAiClientPort.js';
 import { MAX_NEW_EPISODE_PAGES } from '../../../packages/api-contract/src/episodePageLimits.js';
 import { parseStoryManuscript, StoryManuscriptError, type StoryManuscript } from '../../../packages/api-contract/src/storyManuscript.js';
 import { buildStoryManuscriptSkeleton, resolveManuscriptPageGroups } from './StoryManuscriptSkeleton.js';
+import { applyStoryManuscriptLayouts } from './StoryManuscriptLayout.js';
 import {
   episodeStoryManuscriptSource,
   resolveStoryManuscriptCommandPolicy,
@@ -195,7 +196,11 @@ export class PageSkeletonService implements PageSkeletonServicePort {
           }) };
         },
       });
-      const pages = repairGeneratedPageSkeleton(commanded, allowedEntityIds);
+      // Resolve page-relative # wishes only after every source block has final
+      // slots. Custom frame geometry is part of the same atomic preparation.
+      const directed = await applyStoryManuscriptLayouts(commanded, manuscript,
+        this.storyAiClient.planManuscriptLayouts?.bind(this.storyAiClient));
+      const pages = repairGeneratedPageSkeleton(directed, allowedEntityIds);
       validatePageSkeleton(plannedPageCount, allowedEntityIds, pages);
       return { userId, episodeId, organizationId, overwriteExisting, preserveGeneratedImages,
         maxNewPageCount, pages, sourceFingerprint };

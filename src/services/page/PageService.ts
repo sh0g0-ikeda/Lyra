@@ -428,7 +428,8 @@ export class PageService implements PageServicePort {
         continue;
       }
 
-      const merge = mergePanelSuggestion(panel, suggestion);
+      const merge = mergePanelSuggestion(panel,
+        preserveManuscriptPanelSize(context.layoutConfig, panel, suggestion));
       if (merge.panelUpdate !== null) {
         const updated = await this.panelRepository.updatePanel(panel.id, userId, merge.panelUpdate, organizationId);
         if (updated === null) {
@@ -1983,7 +1984,8 @@ export class PageService implements PageServicePort {
                 fillMissingCreativeFields: false,
               },
             );
-        const merge = mergePanelSuggestion(panel, normalizedSuggestion, {
+        const merge = mergePanelSuggestion(panel,
+          preserveManuscriptPanelSize(page.layoutConfig, panel, normalizedSuggestion), {
           overwriteExisting: true,
         });
 
@@ -3107,6 +3109,17 @@ function preserveLegacyEpisodeStateAssignments(
     }
   }
   return assignmentsByPanelId;
+}
+
+// Frame geometry and its editor size hint were resolved together from # wishes.
+// A later detail pass may fill prose, but must not contradict that saved layout.
+function preserveManuscriptPanelSize(
+  layoutConfig: Record<string, unknown> | undefined,
+  panel: PageAutofillPanelContext,
+  suggestion: PageAutofillPanelSuggestion,
+): PageAutofillPanelSuggestion {
+  return layoutConfig?.type === 'custom' && layoutConfig.manuscript_frame_layout_version === 1
+    ? { ...suggestion, panelSize: panel.panelSize } : suggestion;
 }
 
 function mergePanelSuggestion(

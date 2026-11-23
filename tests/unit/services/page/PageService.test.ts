@@ -927,6 +927,27 @@ describe('PageService', () => {
     ]);
   });
 
+  it('scene autofill は原稿 custom frame の保存済み panel size を上書きしない', async () => {
+    const pageRepository = new FakePageRepository();
+    pageRepository.autofillContext = {
+      ...pageRepository.autofillContext!,
+      layoutConfig: { type: 'custom', manuscript_frame_layout_version: 1 },
+      panels: [{ ...buildAutofillPanelContext(), panelSize: 'small' }],
+    };
+    const panelRepository = new FakePanelRepository();
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+    );
+
+    await service.autofillFromScenes('user-1', 'page-1', 'ja');
+
+    expect(panelRepository.updatedPanels[0]?.input).not.toHaveProperty('panelSize');
+    expect(pageRepository.autofillContext.panels[0]?.panelSize).toBe('small');
+  });
+
   it('scene autofill compiler brief compacts long story context', async () => {
     const pageRepository = new FakePageRepository();
     const panelRepository = new FakePanelRepository();
@@ -1691,6 +1712,90 @@ describe('PageService', () => {
     expect(episodeCompiler.lastInput).not.toBeNull();
     expect(pageRepository.updatedInput?.layoutConfig).toMatchObject(originalLayoutConfig);
     expect(pageRepository.episodePlanningContext.pages[0]?.layoutConfig).toEqual(originalLayoutConfig);
+  });
+
+  it('episode story plan は原稿指示から作った custom frame 座標を後続 autofill で保持する', async () => {
+    const pageRepository = new FakePageRepository();
+    const frame = (readingOrder: number, x1: number, y1: number, x2: number, y2: number) => ({
+      panelId: null,
+      vertices: [{ x: x1, y: y1 }, { x: x2, y: y1 }, { x: x2, y: y2 }, { x: x1, y: y2 }],
+      borderStyle: 'solid',
+      borderWidth: 3,
+      borderColor: '#000000',
+      zIndex: 1,
+      readingOrder,
+    });
+    const sourceLayoutConfig = {
+      type: 'custom',
+      manuscript_frame_layout_version: 1,
+      panel_count: 4,
+      frame_definitions: [
+        frame(1, 0, 0, 1, 0.25),
+        frame(2, 0, 0.25, 1, 0.65),
+        frame(3, 0.5, 0.65, 1, 1),
+        frame(4, 0, 0.65, 0.5, 1),
+      ],
+      story_manuscript: {
+        version: 1,
+        source: '＃2コマ目を最も大きく＃',
+        panels: [1, 2, 3, 4].map((order) => ({ order, blockId: `segment-${order}` })),
+      },
+    };
+    pageRepository.page = {
+      ...buildPageSummary(),
+      panelCount: 4,
+      frameCount: 4,
+      layoutConfig: sourceLayoutConfig,
+    };
+    pageRepository.episodePlanningContext = {
+      ...buildEpisodePlanningContext(),
+      pages: [{
+        ...buildEpisodePlanningContext().pages[0]!,
+        frameCount: 4,
+        layoutConfig: sourceLayoutConfig,
+        panels: Array.from({ length: 4 }, (_value, index) => ({
+          ...buildAutofillPanelContext(),
+          id: `panel-${index + 1}`,
+          order: index + 1,
+          panelSize: index === 1 ? 'large' as const : 'standard' as const,
+        })),
+      }],
+    };
+    const panelRepository = new FakePanelRepository();
+    const episodeCompiler = new FakeEpisodePagePlanCompiler();
+    const compilePlan = episodeCompiler.compilePlan.bind(episodeCompiler);
+    episodeCompiler.compilePlan = async (input) => {
+      const compiled = await compilePlan(input);
+      const firstPage = compiled.suggestion.pages[0]!;
+      firstPage.panels.push({
+        ...firstPage.panels[0]!,
+        order: 2,
+        panelSize: 'standard',
+      });
+      return compiled;
+    };
+    const service = new PageService(
+      pageRepository,
+      panelRepository,
+      new FakePanelEntityAssignmentService(),
+      new FakePageAutofillCompiler(),
+      episodeCompiler,
+    );
+
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja');
+
+    expect(pageRepository.updatedInput?.layoutConfig).toMatchObject({
+      type: 'custom',
+      panel_count: 4,
+      story_manuscript: sourceLayoutConfig.story_manuscript,
+    });
+    expect(pageRepository.updatedInput?.layoutConfig?.frame_definitions)
+      .toEqual(sourceLayoutConfig.frame_definitions);
+    const panel2Update = panelRepository.updatedPanels.find(({ panelId }) => panelId === 'panel-2');
+    expect(panel2Update).toBeDefined();
+    expect(panel2Update?.input).not.toHaveProperty('panelSize');
+    expect(pageRepository.episodePlanningContext.pages[0]?.panels[1]?.panelSize).toBe('large');
+    expect(pageRepository.episodePlanningContext.pages[0]?.layoutConfig).toEqual(sourceLayoutConfig);
   });
 
   it('episode story plan は保存済みの同数 template 定義を次回 autofill でも保持する', async () => {

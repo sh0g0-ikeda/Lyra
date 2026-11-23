@@ -166,6 +166,12 @@ class FakeStoryRepository implements StoryRepository {
 }
 
 class FakeStoryAiClient implements StoryAiClientPort {
+  public layoutRequests: StoryAiModelRequest[] = [];
+  public async planManuscriptLayouts(request: StoryAiModelRequest): Promise<import('../../../../src/services/story/StoryManuscriptLayout.js').ManuscriptLayoutResponse> {
+    this.layoutRequests.push(request);
+    const input = JSON.parse(request.userPrompt) as { directions: Array<{ direction_index: number }> };
+    return { directions: input.directions.map(direction => ({ direction_index: direction.direction_index, targets: [] })) };
+  }
   public generatedPages: PageSkeletonPageDraft[] = [
     {
       pageNumber: 1,
@@ -262,6 +268,22 @@ class FakeStoryAiClient implements StoryAiClientPort {
 }
 
 describe('PageSkeletonService', () => {
+  it('固定コマだけの原稿でも指示をLunaへ渡しカスタム枠を保存準備に含める', async () => {
+    const repository = new FakeStoryRepository();
+    const source = '===\n＃2コマ目を最も大きく＃\n前。\n---\n覚醒。\n---\n反応。\n---\n次へ。\n===';
+    repository.skeletonContext = { ...repository.skeletonContext!, storyFullDraft: source, productionNotesEnabled: true };
+    const client = new FakeStoryAiClient();
+    const planner = vi.spyOn(client, 'planManuscriptLayouts').mockResolvedValue({ directions: [{ direction_index: 0,
+      targets: [{ page_number: 1, order: 2, size: 'largest', shape: null }] }] });
+    const preparation = await new PageSkeletonService(repository, client).prepareForEpisode(
+      'user-1', repository.skeletonContext.episodeId, { applyProductionNotes: true });
+    expect(client.lastRequest).toBeNull();
+    expect(planner).toHaveBeenCalledOnce();
+    expect(preparation.pages[0]?.manuscriptFrames).toHaveLength(4);
+    expect(preparation.pages[0]?.manuscriptSource?.source).toBe(source);
+    expect(preparation.pages[0]?.panels[1]?.suggestedSize).toBe('large');
+    expect(repository.createdPages).toEqual([]);
+  });
   it('新しい明示opt-inは保存flagが無効でも本文の明示commandに従う1ページを保存する', async () => {
     const repository = new FakeStoryRepository();
     const source = '===\nAki reaches the rooftop.\n---\nRin blocks the path.\n===';

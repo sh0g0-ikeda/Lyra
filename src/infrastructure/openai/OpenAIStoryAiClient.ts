@@ -16,6 +16,8 @@ import {
   STORY_PAGE_ESTIMATE_REASONING_EFFORT,
   STORY_EPISODE_MANUSCRIPT_IMPROVEMENT_MAX_TOKENS,
   STORY_EPISODE_MANUSCRIPT_MAX_FRAGMENTS,
+  STORY_MANUSCRIPT_LAYOUT_MODEL,
+  STORY_MANUSCRIPT_LAYOUT_MAX_TOKENS,
 } from '../../domain/constants/storyAi.js';
 import { ConfigurationError } from '../../domain/errors/index.js';
 import type { PageSkeletonPageDraft } from '../../domain/types/storyAi.js';
@@ -33,6 +35,7 @@ import type {
   StoryManuscriptFragmentOutput,
 } from '../../services/story/StoryAiClientPort.js';
 import { OpenAIClient } from './OpenAIClient.js';
+import { manuscriptLayoutResponseSchema, type ManuscriptLayoutResponse } from '../../services/story/StoryManuscriptLayout.js';
 import { requestOpenAIText, requestStructuredOpenAIResponse } from './StructuredOpenAIResponse.js';
 import { extractedCharactersSchema, type ExtractedCharacter } from '../../../packages/api-contract/src/characterSuggestions.js';
 import { characterAutofillExtractionSchema, type CharacterAutofillExtraction } from '../../services/story/CharacterAutofillFields.js';
@@ -43,6 +46,16 @@ import {
 
 export class OpenAIStoryAiClient implements StoryAiClientPort {
   public constructor(private readonly client: OpenAIClient) {}
+
+  public async planManuscriptLayouts(request: StoryAiModelRequest): Promise<ManuscriptLayoutResponse> {
+    const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(manuscriptLayoutResponseSchema);
+    return requestStructuredOpenAIResponse({
+      client: this.client, model: STORY_MANUSCRIPT_LAYOUT_MODEL, reasoningEffort: 'low',
+      maxOutputTokens: STORY_MANUSCRIPT_LAYOUT_MAX_TOKENS, schemaName: 'manuscript_frame_layout',
+      jsonSchema, responseSchema: manuscriptLayoutResponseSchema,
+      errorLabel: 'OpenAI manuscript frame layout planner', input: buildInput(request),
+    });
+  }
 
   public async estimateEpisodePanelCount(request: StoryAiModelRequest): Promise<StoryPanelCountEstimate[]> {
     const { $schema: _dialect, ...jsonSchema } = z.toJSONSchema(

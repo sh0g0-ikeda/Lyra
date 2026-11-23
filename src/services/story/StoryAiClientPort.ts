@@ -2,6 +2,7 @@ import type { PageSkeletonPageDraft, StoryEpisodeDraftFields } from '../../domai
 import type { ExtractedCharacter } from '../../../packages/api-contract/src/characterSuggestions.js';
 import type { CharacterAutofillExtraction } from './CharacterAutofillFields.js';
 import type { CharacterAppearanceCoverageResponse } from './CharacterAppearanceCoverage.js';
+import type { ManuscriptLayoutResponse } from './StoryManuscriptLayout.js';
 
 export interface StoryAiModelRequest {
   systemPrompt: string;
@@ -24,6 +25,7 @@ export interface StoryManuscriptFragmentOutput {
 }
 
 export interface StoryAiClientPort {
+  planManuscriptLayouts?(request: StoryAiModelRequest): Promise<ManuscriptLayoutResponse>;
   estimateEpisodePanelCount?(request: StoryAiModelRequest): Promise<StoryPanelCountEstimate[]>;
   streamCollaboration(request: StoryAiModelRequest): AsyncIterable<string>;
   generatePageSkeleton(request: StoryAiModelRequest): Promise<PageSkeletonPageDraft[]>;

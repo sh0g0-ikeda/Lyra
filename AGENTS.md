@@ -1636,6 +1636,11 @@ Discard an invalid audit repair as a whole; only a fully revalidated unchanged
 draft may survive. Never restore source anchors to bypass manuscript checks.
 Strict state extraction in production-note flows uses the original active source
 fields and separate literal evidence spans, never re-derived story sections (§6).
+
+Paired frame-size/shape directions are resolved against final manuscript slots by
+GPT-6 Luna. Build geometry on the server and save existing custom-frame format in
+the skeleton transaction; preserve counts, RTL order, source ownership, subsequent
+autofill geometry, and unversioned client behavior (Unified Spec §6).
 Closed leading character-profile preambles sharing a block with narrative are
 reference context, not mandatory panel narration. Repetition alone is not a split when the original
 assigned scene remains; preserve displaced-scene and quoted-dialogue checks and

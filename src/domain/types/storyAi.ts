@@ -135,6 +135,8 @@ export interface PageSkeletonPanelDraft {
 }
 
 export interface PageSkeletonPageDraft {
+  /** Server-built geometry for authored layout wishes; never provider coordinates. */
+  manuscriptFrames?: import('./panelFrame.js').UpsertPanelFrameInput[];
   /** Server-owned source allocation, persisted in layout_config for later autofill. */
   manuscriptSource?: {
     version: 1;

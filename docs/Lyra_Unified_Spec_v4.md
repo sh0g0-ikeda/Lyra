@@ -1562,6 +1562,24 @@ data so it can repair an invalid detail draft without adding another audit pass.
 Directions are editable composition notes, never dialogue, character base
 attributes, or evidence for automatically created states. Wrapped existing
 quoted state-timing commands use the established registered-state rules.
+After command-aware skeleton allocation, GPT-6 Luna classifies paired directions
+into page/panel frame-size and shape wishes against the final source-to-slot map.
+Page-relative ordinals target the named panel, not the first panel carrying the
+direction. Every direction is accounted for; camera shots and character changes
+do not imply frame geometry. Preserve panel/page counts, order, text and ownership.
+Size and aspect are independent (for example, a large horizontal third panel).
+Later authored directions refine the same property in source order; an omitted
+property retains the earlier instruction. This does not change anchor-conflict
+validation for the existing quoted grouping/state commands.
+Server-owned weighted RTL partitions produce normalized, nonoverlapping custom
+frames; never accept model coordinates. Store these frames and manuscript mapping
+with the skeleton in its existing transaction, using the existing custom layout
+format without a new template ID. Subsequent autofill and image layout controls
+preserve this geometry and its saved panel-size hints, identified by
+`manuscript_frame_layout_version: 1`. Pages without frame wishes retain their selected template;
+unversioned released-client jobs retain the prior skeleton behavior. Do not
+retroactively change saved pages merely by reading them. Incompatible aesthetic
+wishes use the best feasible partition without relaxing structural validation.
 Character and automatic-state evidence excludes command tokens and cannot join
 source fragments across an instruction. The raw manuscript remains the
 concurrency/fingerprint authority.
