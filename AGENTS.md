@@ -1636,6 +1636,10 @@ Discard an invalid audit repair as a whole; only a fully revalidated unchanged
 draft may survive. Never restore source anchors to bypass manuscript checks.
 Strict state extraction in production-note flows uses the original active source
 fields and separate literal evidence spans, never re-derived story sections (§6).
+Closed leading character-profile preambles sharing a block with narrative are
+reference context, not mandatory panel narration. Repetition alone is not a split when the original
+assigned scene remains; preserve displaced-scene and quoted-dialogue checks and
+the existing semantic audit for event duplication/state timing (§6).
 
 Page estimation gives authored === / ＝＝＝ sections precedence without a model
 call, including nonempty outer sections. The manual result displays page count

@@ -1542,6 +1542,21 @@ as a whole under the existing optional-repair policy. The unchanged original
 draft may be saved only after every context, manuscript and deterministic gate
 passes again. Never insert source anchors merely to make a repaired draft pass;
 invalid originals and stale source mappings remain hard failures.
+Anchor selection excludes a closed leading `【登場人物の基本設定】` (or
+`【登場人物の設定】`) through `【本文】` reference preamble when narrative follows
+in the same source block; its raw text remains
+available for character evidence and fingerprint checks. Require the narrative
+anchor, not a profile heading, in the assigned scene. Unclosed preambles and
+ordinary/in-story headings are not silently discarded.
+A separately allocated profile-only block still requires correcting/rebuilding
+the structure; do not silently remove its saved panel/page slots or invent an anchor.
+Literal prose repeated outside an assigned slot is not by itself proof of a
+split: continuing appearance can be described in multiple panels. A displaced
+anchor or unique sentence that disappears from its assigned slots still fails;
+explicit quoted dialogue remains exclusive unless authored in both blocks.
+Event duplication and the timing/truth of repeated appearance remain the existing
+semantic audit's responsibility; lexical checks do not classify every repeated
+sentence as an event. Preserve the single audit and all other validation gates.
 Pass deterministic manuscript violations to the existing single audit as source
 data so it can repair an invalid detail draft without adding another audit pass.
 Directions are editable composition notes, never dialogue, character base

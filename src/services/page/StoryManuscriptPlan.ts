@@ -126,6 +126,13 @@ export function prepareEpisodeManuscriptPlan(context: EpisodePagePlanContext): E
 }
 
 function uniqueAnchor(text: string, prose: string, allowAssignedDuplicate = false): string {
+  // A closed profile preamble before this block's narrative is reference material.
+  // Project only the anchor candidates; retain raw source, evidence and slots.
+  const originalText = text;
+  text = narrativeAnchorText(text);
+  if (text.length === 0 && originalText.length > 0) {
+    throw new ValidationError('人物設定だけの区間があります。【本文】の直後の区切りを外し、最初の場面を同じ区間に入れてページ構成を再生成してください。');
+  }
   const sentences = text.split(/(?<=[。！？!?\n])/u).map(value => value.trim()).filter(Boolean);
   for (const sentence of sentences) {
     for (const length of [80, 160, 300]) {
@@ -141,6 +148,15 @@ function uniqueAnchor(text: string, prose: string, allowAssignedDuplicate = fals
   throw new ValidationError('区切りや指示の対象に同じ文章が重複しています。対象を区別できる文章にしてください。');
 }
 
+function narrativeAnchorText(text: string): string {
+  return text.replace(/^【登場人物の(?:基本)?設定】[^\S\r\n]*\r?\n[\s\S]*?^【本文】[^\S\r\n]*(?:\r?\n|$)/mu,
+    (preamble: string, offset: number): string => offset === 0 ? '' : preamble).trim();
+}
+
+function containsExplicitQuote(text: string): boolean {
+  return /[「」『』"“”]/u.test(text);
+}
+
 export function manuscriptPlanPrompt(plan: EpisodeManuscriptPlan | undefined): string {
   if (plan === undefined) return '';
   return [
@@ -148,7 +164,9 @@ export function manuscriptPlanPrompt(plan: EpisodeManuscriptPlan | undefined): s
     'Each block belongs ONLY to its listed page_id/order slots. Never move its events or dialogue into another block. Keep event order.',
     'For a chunk request, produce ONLY the requested pages. Other blocks and slots are context for continuity, not extra output pages.',
     'A fixedPanel block is exactly ONE panel, even if it contains several actions or spoken lines. Depict the entire scene together there.',
-    'Copy each block anchor verbatim into exactly one assigned panel situation or its original dialogue. Do not repeat anchors elsewhere.',
+    'Copy each block anchor verbatim into one assigned panel situation or its original dialogue. Never displace an anchor from its assigned slots.',
+    'A leading closed 【登場人物の基本設定】 ... 【本文】 section is character reference context, not a scene or narration to copy into panels.',
+    'Events and dialogue belong exclusively to their assigned blocks. Continuing appearance may be described again where still true; repetition alone does not move the original scene. Audit event duplication and state timing against the story.',
     'Directions apply to the panel containing their anchor: implement framing/angle in composition fields. Do not invent story facts or put the direction itself in dialogue.',
     JSON.stringify(plan),
   ].join('\n');
@@ -172,7 +190,7 @@ export function collectManuscriptPlanViolations(
       && !plan.blocks.some(other => other.id !== block.id && other.text.includes(block.anchor)
         && other.slots.some(slot => slotKey(slot) === slotKey(panel))));
     const allowedMatches = matches.filter(panel => allowed.has(slotKey(panel)));
-    if (outsideAllowed.length > 0 || allowedMatches.length === 0) {
+    if (allowedMatches.length === 0 || (containsExplicitQuote(block.anchor) && outsideAllowed.length > 0)) {
       violations.push({
         constraintId: block.id,
         reason: outsideAllowed.length > 0
@@ -183,10 +201,15 @@ export function collectManuscriptPlanViolations(
       });
     }
     if (block.fixedPanel) {
-      const sentences = block.text.split(/(?<=[。！？!?\n])/u).map(sentence => sentence.trim())
+      // Literal repetition cannot distinguish a continuing appearance from a
+      // repeated event. Reject displacement, not repetition; the semantic audit
+      // checks event duplication/timing. Explicit dialogue remains exclusive.
+      const ownedPanels = panels.filter(panel => allowed.has(slotKey(panel)));
+      const sentences = narrativeAnchorText(block.text).split(/(?<=[。！？!?\n])/u).map(sentence => sentence.trim())
         .filter(sentence => sentence.length > 0 && plan.blocks.filter(other => other.text.includes(sentence)).length === 1);
       const splitPanels = panels.filter(panel => !allowed.has(slotKey(panel))
-        && sentences.some(sentence => panel.text.includes(sentence)));
+        && sentences.some(sentence => panel.text.includes(sentence)
+          && (containsExplicitQuote(sentence) || !ownedPanels.some(owner => owner.text.includes(sentence)))));
       if (splitPanels.length > 0) {
         violations.push({
           constraintId: block.id,

@@ -1,4 +1,5 @@
 ﻿import { describe, expect, it } from 'vitest';
+import { parseStoryManuscript } from '../../../../packages/api-contract/src/storyManuscript.js';
 import {
   ConfigurationError,
   ConflictError,
@@ -3264,6 +3265,45 @@ describe('PageService', () => {
       .toBe('Minerva advances the beat on page 2.');
     expect(panelRepository.updatedPanels.find((update) => update.panelId === 'panel-3')?.input.situationText)
       .toBe('Minerva advances the beat on page 3.');
+  });
+
+  it('人物設定の転記を要求せず継続外見を追加した監査修復を1回で保存する', async () => {
+    const context = buildManuscriptAuditContext();
+    const state = 'ルクスの胴体に鎖はない。';
+    const source = '===\n【登場人物の基本設定】\nMinerva：黒髪。\n【本文】\n'
+      + context.pages.map(page => `Minerva advances the beat on page ${page.pageNumber}.`
+        + (page.pageNumber === 2 ? state : '')).join('\n---\n===\n') + '\n---\n===';
+    context.episode.storyFullDraft = source;
+    const parsed = parseStoryManuscript(source, true);
+    context.pages.forEach((page, index) => {
+      page.layoutConfig = { ...page.layoutConfig, story_manuscript: { version: 1, source,
+        panels: [{ order: 1, blockId: parsed.pages[index]!.blocks[0]!.id }] } };
+    });
+    const pageRepository = new FakePageRepository();
+    pageRepository.episodePlanningContext = context;
+    const panelRepository = new FakePanelRepository();
+    const compiler = new ChunkAwareEpisodePagePlanCompiler();
+    const withState: EpisodePagePlanCompilerPort = { compilePlan: async input => {
+      const result = await compiler.compilePlan(input);
+      const origin = result.suggestion.pages.find(page => page.pageNumber === 2)?.panels[0];
+      if (origin !== undefined) origin.situationText += state;
+      return result;
+    } };
+    const audit = new FakeEpisodePlanAuditCompiler();
+    audit.audits = [{ accepted: false, issues: [{ code: 'ongoing_action_dropped', severity: 'error',
+      pageIds: ['page-3'], message: 'Continue the unchained appearance.', repairInstruction: 'Retain the appearance.' }],
+      panelRepairs: [{ pageId: 'page-3', panelOrder: 1, changedFields: ['situationText'],
+        patch: { situationText: 'Minerva advances the beat on page 3.' + state } }] }];
+    const service = new PageService(pageRepository, panelRepository, new FakePanelEntityAssignmentService(),
+      undefined, withState, undefined, new FakeEpisodeBeatPlanCompiler(), audit, true,
+      { adaptivePackingEnabled: true, inlineRepairEnabled: true });
+    await service.autofillEpisodeFromStory('user-1', 'episode-1', 'ja', undefined, null, undefined, undefined,
+      { applyProductionNotes: true });
+    expect(audit.inputs).toHaveLength(1);
+    expect(panelRepository.updatedPanels).toHaveLength(4);
+    expect(panelRepository.updatedPanels.find(update => update.panelId === 'panel-3')?.input.situationText)
+      .toBe('Minerva advances the beat on page 3.' + state);
+    expect(context.episode.storyFullDraft).toBe(source);
   });
 
   it('監査修復を捨てた後の元案も原稿anchorを欠く場合は保存しない', async () => {
