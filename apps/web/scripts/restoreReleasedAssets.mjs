@@ -3,8 +3,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 
-// A tab from the previous release can import these modules long after loading
-// its HTML. Keep its verified bytes alongside the new release's hashed files.
+// Design: the manifest is the compatibility boundary for every archived
+// production asset graph. A tab can lazy-load a module after one or more later
+// releases, so restore each verified graph without overwriting the new build.
 const build = process.argv[2] === '--for-build';
 if (build) {
   const origin = process.env.VITE_API_BASE_URL || 'https://app.lyra-editor.com';
