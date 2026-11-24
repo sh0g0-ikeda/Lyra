@@ -1417,6 +1417,26 @@ Only staging may omit the OpenAI key when all five generation gates are explicit
 false in the input environment and generation quotes remain disabled. Provider
 operations then fail closed; production still requires a real provider key.
 
+#### User-directed staging suspension
+
+On 2026-11-24 the user required staging running costs and unsolicited restarts to
+stop, and explicitly approved retiring `lyra-staging-20261003-db` while retaining
+a final recoverable snapshot. Staging remains suspended until a new explicit
+instruction to resume it. Ordinary implementation, testing, APK/TestFlight build,
+and production release requests do not authorize starting or restoring staging,
+raising ECS desired counts, recreating its ALB, enabling wake schedules, or
+re-enabling scaling. Prefer local and CI validation while staging is suspended;
+report any live-staging checks as unavailable rather than silently starting it.
+
+Preserve the existing snapshots, saved image objects, authentication resources,
+encryption keys, recovery configuration and production services. DB retirement
+must request a final snapshot and retain existing automated backups. If the
+stopped DB cannot be retired with its final snapshot, fail closed without starting
+it or skipping the snapshot. Completion requires the final encrypted snapshot to
+be available and the retired DB to be absent. RDS temporary stop and periodic
+re-stop schedules do not meet the no-restart requirement. Retained data storage
+can still incur fees; do not describe this suspension as eliminating every charge.
+
 ### Episode character suggestions and production notes
 
 The authenticated character suggestion endpoint reads a saved episode version

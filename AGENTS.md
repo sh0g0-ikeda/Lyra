@@ -1646,6 +1646,13 @@ editor destinations, the existing App Store identity and a separate validated
 beta marketing/runtime version. Preserve other build profiles and production OTA;
 uploading to TestFlight does not authorize submitting an App Review version.
 
+The user suspended staging for cost on 2026-11-24. Do not start or restore its DB,
+raise staging ECS desired counts, recreate its ALB, enable wake schedules, or
+re-enable staging scaling without a new explicit instruction to resume staging.
+An implementation, test, build, or production release request is not that
+instruction. Preserve staging snapshots, images, identity resources and all
+production resources; see the staging suspension contract in Unified Spec §6.
+
 Paired frame-size/shape directions are resolved against final manuscript slots by
 GPT-6 Luna. Build geometry on the server and save existing custom-frame format in
 the skeleton transaction; preserve counts, RTL order, source ownership, subsequent
