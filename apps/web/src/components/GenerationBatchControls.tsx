@@ -23,6 +23,16 @@ const activeStatuses = new Set<GenerationBatch['status']>(['running', 'paused', 
 const displayableStatuses = new Set<GenerationBatch['status']>([...activeStatuses, 'completed', 'cancelled']);
 const requestKeyStorageKey = (batchId: string): string => `lyra:web:generation-batch:${batchId}:request-key`;
 
+// A cancellation recovery can touch updated_at long after a batch started. The
+// visible batch therefore follows user admission time, with stable fallbacks.
+function compareBatchAdmission(left: GenerationBatch, right: GenerationBatch): number {
+  const leftAdmission = left.accepted_at ?? left.created_at;
+  const rightAdmission = right.accepted_at ?? right.created_at;
+  return rightAdmission.localeCompare(leftAdmission)
+    || right.created_at.localeCompare(left.created_at)
+    || right.batch_id.localeCompare(left.batch_id);
+}
+
 const japaneseBatchStatus: Record<GenerationBatch['status'], string> = {
   quoted: '見積確認待ち',
   running: '生成中',
@@ -80,7 +90,7 @@ export function GenerationBatchControls(props: Props): React.JSX.Element | null 
     .filter((candidate) => candidate.kind === props.kind
       && candidate.work_id === props.workId
       && displayableStatuses.has(candidate.status))
-    .sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0] ?? null, [batches.data, props.kind, props.workId]);
+    .sort(compareBatchAdmission)[0] ?? null, [batches.data, props.kind, props.workId]);
 
   useEffect(() => {
     scopeRef.current = scope;

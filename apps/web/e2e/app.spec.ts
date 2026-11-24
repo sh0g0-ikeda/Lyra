@@ -989,17 +989,17 @@ test('renders the console with mocked api responses', async ({ page }, testInfo)
   await page.screenshot({ path: testInfo.outputPath('page-generation-mobile.png') });
 });
 
-test('停止済みの一括生成でも最新の部分進捗を表示し、成功した画像を再取得する', async ({ page }) => {
+test('古い停止バッチが更新されても、新しい一括生成と停止後の部分進捗を表示する', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
   let returnCancelledBatch = false;
   let pageListRequests = 0;
-  const completedBatch = {
+  const oldCancelledBatch = {
     batch_id: '21111111-1111-4111-8111-111111111111',
     work_id: work.id,
     kind: 'pages',
     episode_id: '33333333-3333-4333-8333-333333333333',
-    status: 'completed',
+    status: 'cancelled',
     selection: 'missing_only',
     render_style: 'color',
     image_model: 'gpt-image-2.5-sunburst',
@@ -1009,14 +1009,16 @@ test('停止済みの一括生成でも最新の部分進捗を表示し、成�
     expires_at: '2026-11-22T00:10:00.000Z',
     accepted_at: '2026-11-22T00:01:00.000Z',
     created_at: '2026-11-22T00:00:00.000Z',
-    updated_at: '2026-11-22T00:01:00.000Z',
+    updated_at: '2026-11-22T00:10:00.000Z',
     progress: { total: 0, completed: 0, skipped: 0, failed: 0, active: 0, pending: 0 },
     items: [], blockers: [], active_job_ids: [],
   };
   const partialBatch = {
-    ...completedBatch,
+    ...oldCancelledBatch,
     batch_id: '31111111-1111-4111-8111-111111111111',
     status: 'running',
+    accepted_at: '2026-11-22T00:02:00.000Z',
+    created_at: '2026-11-22T00:02:00.000Z',
     updated_at: '2026-11-22T00:02:00.000Z',
     progress: { total: 2, completed: 0, skipped: 0, failed: 0, active: 1, pending: 1 },
   };
@@ -1031,7 +1033,7 @@ test('停止済みの一括生成でも最新の部分進捗を表示し、成�
     }
     if (pathname === '/api/generation-batches' && request.method() === 'GET') {
       return route.fulfill({ json: { batches: [
-        completedBatch,
+        oldCancelledBatch,
         returnCancelledBatch
           ? { ...partialBatch, status: 'cancelled', progress: { total: 2, completed: 1, skipped: 0, failed: 0, active: 0, pending: 0 } }
           : partialBatch,
@@ -1045,6 +1047,7 @@ test('停止済みの一括生成でも最新の部分進捗を表示し、成�
   await openMangaStep(page, '3. Pages');
   const pageGeneration = page.locator('.page-section-generate');
   await expect(pageGeneration.getByTestId('generation-batch-pages')).toContainText('Batch: running · 0/2');
+  await expect(pageGeneration.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   await expect.poll(() => pageListRequests).toBeGreaterThan(0);
   const requestsBeforePartialSuccess = pageListRequests;
 
