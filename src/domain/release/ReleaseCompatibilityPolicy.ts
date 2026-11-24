@@ -2,6 +2,8 @@ export type ReleaseProfile = 'backend-only' | 'new-mobile';
 
 export interface ReleaseCompatibilityRuntime {
   generationQuotesEnabled: boolean;
+  generationBatchesEnabled?: boolean;
+  generationJobCancellationEnabled?: boolean;
   generationEnabled: boolean;
   pageGenerationEnabled: boolean;
   entityGenerationEnabled: boolean;
@@ -57,6 +59,12 @@ export function evaluateReleaseCompatibility(input: ReleaseCompatibilityPolicyIn
     checkedCount += 1;
     if (!condition) violations.push({ category, code });
   };
+
+  // A batch promises a working stop/refund path. Flag-OFF rollbacks remain
+  // compatible with schemas predating generation batches.
+  if (input.runtime.generationBatchesEnabled) {
+    check(input.runtime.generationJobCancellationEnabled === true, 'generation', 'BATCH_CANCELLATION_REQUIRED');
+  }
 
   if (input.runtime.openAiImageSunburstEnabled) {
     check(input.runtime.openAiImageModel === 'gpt-image-2', 'generation', 'IMAGE_CUTOVER_BASE_MODEL_UNSUPPORTED');

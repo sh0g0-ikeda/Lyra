@@ -986,7 +986,9 @@ function resolveDependencies(
         },
       ),
     }),
-    dispatcher: generationQueue === null ? undefined : new GenerationQuoteDispatcher(db, generationQueue),
+    dispatcher: generationQueue === null ? undefined : new GenerationQuoteDispatcher(db, generationQueue, {
+      batchCancellationFenceEnabled: env.GENERATION_BATCHES_ENABLED,
+    }),
     capacityLimits: { perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT, global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT },
   });
   const inlineWorkerDependencies =
@@ -1237,7 +1239,9 @@ function resolveDependencies(
       importEnabled: false,
     }),
     capacityLimits: { perUser: env.GENERATION_USER_ACTIVE_JOB_LIMIT, global: env.GENERATION_GLOBAL_ACTIVE_JOB_LIMIT },
-    dispatcher: generationQueue === null ? undefined : new GenerationQuoteDispatcher(db, generationQueue),
+    dispatcher: generationQueue === null ? undefined : new GenerationQuoteDispatcher(db, generationQueue, {
+      batchCancellationFenceEnabled: env.GENERATION_BATCHES_ENABLED,
+    }),
     styleCompiler: resolveStyleReferenceCompiler(),
   });
   const pageGenerationService =

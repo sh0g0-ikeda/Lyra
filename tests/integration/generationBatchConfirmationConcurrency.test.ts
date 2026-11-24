@@ -5,6 +5,7 @@ import type { DatabaseClient, TransactionRunner } from '../../src/lib/db.js';
 import { runPendingMigrations } from '../../src/lib/migrations.js';
 import { PostgresGenerationBatchConfirmationRepository } from '../../src/repositories/GenerationBatchConfirmationRepository.js';
 import { PostgresGenerationBatchRepository } from '../../src/repositories/GenerationBatchRepository.js';
+import { PostgresGenerationQuoteRepository, type QuoteDispatchLease } from '../../src/repositories/GenerationQuoteRepository.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
 
 const url=process.env.DATABASE_URL;
@@ -84,6 +85,35 @@ suite('generation batch confirmation concurrency',()=>{
     await database.query("UPDATE generation_batches SET updated_at=NOW()-INTERVAL '1 hour' WHERE id=ANY($1::uuid[])",[[first.batchId,second.batchId]]);
     const ids=await new PostgresGenerationBatchRepository().findRunnableBatchIds(database,2);
     expect(ids).toContain(actionable.batchId);
+  });
+
+  it('cancelled親に残ったactive子だけをdurable取消回収候補へ返す',async()=>{
+    const fixture=await seed('entity_base');const repository=new PostgresGenerationBatchRepository();
+    await database.query("UPDATE generation_batches SET status='cancelled',cancel_requested_at=NOW() WHERE id=$1::uuid",[fixture.batchId]);
+    expect(await repository.findCancelledBatchIdsWithActiveChildren(database,10)).toContain(fixture.batchId);
+    await database.query("UPDATE generation_batch_items SET status='failed',completed_at=NOW() WHERE id=$1::uuid",[fixture.itemId]);
+    expect(await repository.findCancelledBatchIdsWithActiveChildren(database,10)).not.toContain(fixture.batchId);
+  });
+
+  it('batch子のqueue送信中は親cancelを直列化し送信後に既存job取消fenceへ渡す',async()=>{
+    const fixture=await seed('entity_base');const quoteId=randomUUID(),leaseToken=randomUUID();
+    await database.query("UPDATE generation_jobs SET status='queued',result=NULL,started_at=NULL,completed_at=NULL WHERE id=$1::uuid",[fixture.jobId]);
+    await database.query(`INSERT INTO generation_quotes(id,token_hash,user_id,operation,target_id,request,plan,expires_at,accepted_job_id,request_key,accepted_at,
+      dispatch_state,dispatch_lease_token,dispatch_lease_until,dispatch_attempts)
+      VALUES($1,$2,$3,'entity_preview',$4,'{}'::jsonb,$5::jsonb,NOW()+INTERVAL '5 minutes',$6,$7,NOW(),'dispatching',$8,NOW()+INTERVAL '1 minute',1)`,
+      [quoteId,'a'.repeat(64),fixture.userId,fixture.entityId,JSON.stringify({operation:'entity_preview',targetId:fixture.entityId,workId:fixture.workId}),fixture.jobId,randomUUID(),leaseToken]);
+    await database.query('UPDATE generation_batch_items SET child_quote_id=$2::uuid WHERE id=$1::uuid',[fixture.itemId,quoteId]);
+    const lease:QuoteDispatchLease={id:quoteId,job_id:fixture.jobId,job_type:'entity_generate',lease_token:leaseToken};
+    let releaseSend!:()=>void;const release=new Promise<void>(resolve=>{releaseSend=resolve;});
+    let sendStarted!:()=>void;const started=new Promise<void>(resolve=>{sendStarted=resolve;});const order:string[]=[];
+    const dispatch=new PostgresGenerationQuoteRepository(database).dispatchWithBatchFence(lease,async()=>{
+      order.push('send-start');sendStarted();await release;order.push('send-finish');return{messageId:'message-1'};
+    });
+    await started;let cancelFinished=false;
+    const cancel=new PostgresGenerationBatchRepository().requestCancel(database,fixture.batchId).then(()=>{cancelFinished=true;order.push('cancel');});
+    await new Promise(resolve=>setTimeout(resolve,50));expect(cancelFinished).toBe(false);
+    releaseSend();await Promise.all([dispatch,cancel]);
+    expect(order).toEqual(['send-start','send-finish','cancel']);
   });
 
   async function seed(kind:'entity_base'|'entity_state'):Promise<{userId:string;workId:string;entityId:string;batchId:string;itemId:string;jobId:string}>{

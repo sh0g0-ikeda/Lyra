@@ -1,22 +1,22 @@
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
-import { AppError, UnauthorizedError } from '../../../src/domain/errors/index.js';
+import { AppError, ConflictError, UnauthorizedError } from '../../../src/domain/errors/index.js';
 import type { GenerationBatchResponse } from '../../../src/domain/types/generationBatch.js';
 import { createGenerationBatchRoutes, type GenerationBatchServicePort } from '../../../src/routes/generationBatches.js';
 import type { AppEnv } from '../../../src/types/app.js';
 
 const id='11111111-1111-4111-8111-111111111111';
 const workId='22222222-2222-4222-8222-222222222222';
-function fixture():{app:Hono<AppEnv>;calls:string[]}{
-  const calls:string[]=[];const response=batchResponse();
+function fixture(failChildCancellationOnce=false):{app:Hono<AppEnv>;calls:string[]}{
+  const calls:string[]=[];const response=batchResponse();let childCancelled=false;let shouldFail=failChildCancellationOnce;
   const service:GenerationBatchServicePort={capabilities:()=>({enabled:true,image_model:'gpt-image-2.5-sunburst',selections:['missing_only'],render_styles:['color','monochrome'],max_items:100,quote_ttl_seconds:300}),
     issue:async(_user,body)=>{calls.push(`issue:${body.kind}`);return response;},accept:async()=>{calls.push('accept');return{...response,status:'running'};},
     resume:async()=>{calls.push('resume');return{...response,status:'running'};},get:async()=>{calls.push('get');return response;},
-    list:async()=>{calls.push('list');return{batches:[response]};},cancel:async()=>{calls.push('cancel');return{batch:{...response,status:'cancelled'},active_job_ids:[id]};}};
+    list:async()=>{calls.push('list');return{batches:[response]};},cancel:async()=>{calls.push('cancel');return{batch:{...response,status:'cancelled'},active_job_ids:childCancelled?[]:[id]};}};
   const app=new Hono<AppEnv>();app.onError((error,c)=>error instanceof AppError?c.json({error:{code:error.code}},error.statusCode):c.json({error:{code:'INTERNAL'}},500));
   app.route('/api',createGenerationBatchRoutes({service,authMiddleware:async(c,next)=>{if(c.req.header('Authorization')!=='Bearer test')throw new UnauthorizedError();
     c.set('user',{id,supabaseId:'test',email:'test@example.invalid',displayName:null,planCode:'free'});await next();},rateLimitMiddleware:async(_c,next)=>next(),
-    jobCancellation:{cancelJob:async()=>{calls.push('cancel-job');}}}));return{app,calls};
+    jobCancellation:{cancelJob:async()=>{calls.push('cancel-job');if(shouldFail){shouldFail=false;throw new ConflictError('temporary cancellation conflict');}childCancelled=true;}}}));return{app,calls};
 }
 function post(body:unknown):RequestInit{return{method:'POST',headers:{Authorization:'Bearer test','Content-Type':'application/json'},body:JSON.stringify(body)};}
 
@@ -40,7 +40,14 @@ describe('generation batch routes',()=>{
     expect((await app.request(`/api/generation-batches?work_id=${workId}`,{headers})).status).toBe(200);
     expect(calls).toEqual(['get','list']);
     expect((await app.request(`/api/generation-batches/${id}/cancel`,{method:'POST',headers})).status).toBe(200);
-    expect(calls).toEqual(['get','list','cancel','cancel-job']);
+    expect(calls).toEqual(['get','list','cancel','cancel-job','cancel']);
+  });
+  it('子停止が一度失敗しても親の停止意思を保ち同じcancel POSTで回収する',async()=>{
+    const{app,calls}=fixture(true);const headers={Authorization:'Bearer test'};
+    expect((await app.request(`/api/generation-batches/${id}/cancel`,{method:'POST',headers})).status).toBe(409);
+    expect(calls).toEqual(['cancel','cancel-job']);
+    expect((await app.request(`/api/generation-batches/${id}/cancel`,{method:'POST',headers})).status).toBe(200);
+    expect(calls).toEqual(['cancel','cancel-job','cancel','cancel-job','cancel']);
   });
 });
 function batchResponse():GenerationBatchResponse{return{batch_id:id,work_id:workId,kind:'character_references',episode_id:null,status:'quoted',selection:'missing_only',render_style:'color',image_model:'gpt-image-2.5-sunburst',pricing_version:'v1',maximum_credits:1,auto_confirm:false,

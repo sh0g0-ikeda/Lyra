@@ -95,13 +95,23 @@ export class PostgresGenerationQuoteRepository {
     );
     return result.rows.length;
   }
-  public async claimDispatch(quoteId: string | null = null): Promise<QuoteDispatchLease | null> {
+  public async claimDispatch(quoteId: string | null = null, batchCancellationFenceEnabled = false): Promise<QuoteDispatchLease | null> {
+    // Keep this SQL entirely absent while the feature is off so a pre-055
+    // rollback binary can still dispatch ordinary quotes without batch tables.
+    const batchCancellationFence = batchCancellationFenceEnabled
+      ? `AND NOT EXISTS (
+           SELECT 1 FROM generation_batch_items batch_item
+           JOIN generation_batches batch ON batch.id=batch_item.batch_id
+           WHERE batch_item.child_quote_id=q.id AND batch.status='cancelled'
+         )`
+      : '';
     const result=await this.database.query<QuoteDispatchLease & QueryResultRow>(
       `WITH candidate AS (
          SELECT q.id FROM generation_quotes q JOIN generation_jobs j ON j.id=q.accepted_job_id
          WHERE j.status='queued' AND j.cancel_requested_at IS NULL
            AND (q.dispatch_state='pending' OR (q.dispatch_state='dispatching' AND q.dispatch_lease_until<NOW()))
            AND q.dispatch_next_attempt_at<=NOW() AND ($1::uuid IS NULL OR q.id=$1::uuid)
+           ${batchCancellationFence}
          ORDER BY q.created_at LIMIT 1 FOR UPDATE OF q SKIP LOCKED
        ), claimed AS (
          UPDATE generation_quotes q SET dispatch_state='dispatching', dispatch_lease_token=gen_random_uuid(),
@@ -111,6 +121,46 @@ export class PostgresGenerationQuoteRepository {
          FROM claimed JOIN generation_jobs j ON j.id=claimed.accepted_job_id`,[quoteId],
     );
     return result.rows[0] ?? null;
+  }
+  public async isDispatchAllowed(lease: QuoteDispatchLease, batchCancellationFenceEnabled = false): Promise<boolean> {
+    const batchCancellationFence = batchCancellationFenceEnabled
+      ? `AND NOT EXISTS (
+           SELECT 1 FROM generation_batch_items batch_item
+           JOIN generation_batches batch ON batch.id=batch_item.batch_id
+           WHERE batch_item.child_quote_id=q.id AND batch.status='cancelled'
+         )`
+      : '';
+    const result=await this.database.query<{allowed:boolean} & QueryResultRow>(
+      `SELECT EXISTS(
+         SELECT 1 FROM generation_quotes q JOIN generation_jobs j ON j.id=q.accepted_job_id
+         WHERE q.id=$1::uuid AND q.dispatch_state='dispatching' AND q.dispatch_lease_token=$2::uuid
+           AND j.status='queued' AND j.cancel_requested_at IS NULL
+           ${batchCancellationFence}
+       ) AS allowed`,[lease.id,lease.lease_token],
+    );
+    return result.rows[0]?.allowed===true;
+  }
+  public async dispatchWithBatchFence<T>(lease:QuoteDispatchLease,dispatch:()=>Promise<T>):Promise<T|null>{
+    return this.database.transaction(async(client)=>{
+      // FOR SHARE conflicts with the batch cancellation path's FOR UPDATE.
+      // Keeping it through the queue call makes send-before-cancel or
+      // cancel-before-send an explicit order instead of a check/send race.
+      const parents=await client.query<{status:string} & QueryResultRow>(
+        `SELECT batch.status FROM generation_batch_items batch_item
+         JOIN generation_batches batch ON batch.id=batch_item.batch_id
+         WHERE batch_item.child_quote_id=$1::uuid FOR SHARE OF batch`,[lease.id],
+      );
+      if(parents.rows.some(parent=>parent.status==='cancelled'))return null;
+      const allowed=await client.query<{allowed:boolean} & QueryResultRow>(
+        `SELECT EXISTS(
+           SELECT 1 FROM generation_quotes q JOIN generation_jobs j ON j.id=q.accepted_job_id
+           WHERE q.id=$1::uuid AND q.dispatch_state='dispatching' AND q.dispatch_lease_token=$2::uuid
+             AND j.status='queued' AND j.cancel_requested_at IS NULL
+         ) AS allowed`,[lease.id,lease.lease_token],
+      );
+      if(allowed.rows[0]?.allowed!==true)return null;
+      return dispatch();
+    });
   }
   public async finishDispatch(lease: QuoteDispatchLease, success: boolean, messageId?: string | null): Promise<void> {
     await this.database.transaction(async (client) => {

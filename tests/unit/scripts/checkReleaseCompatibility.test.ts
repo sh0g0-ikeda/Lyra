@@ -39,6 +39,29 @@ function codes(input: Parameters<typeof evaluateReleaseCompatibility>[0]): strin
 }
 
 describe('release compatibility policy', () => {
+  it('一括生成が有効で停止が無効なら公開前検査で拒否する', () => {
+    const environment = parseEnv({
+      APP_ENV: 'test', DATABASE_URL: 'postgres://localhost/lyra',
+      GENERATION_BATCHES_ENABLED: 'true', GENERATION_JOB_CANCELLATION_ENABLED: 'false',
+    });
+    expect(codes({
+      profile: 'backend-only', journalPresent: false, mobileClientIds: [],
+      runtime: runtimeFromEnv(environment),
+    })).toContain('BATCH_CANCELLATION_REQUIRED');
+  });
+
+  it('一括生成OFFの互換配備と停止ONの一括生成配備を許可する', () => {
+    for (const flags of [
+      { GENERATION_BATCHES_ENABLED: 'false', GENERATION_JOB_CANCELLATION_ENABLED: 'false' },
+      { GENERATION_BATCHES_ENABLED: 'true', GENERATION_JOB_CANCELLATION_ENABLED: 'true' },
+    ]) {
+      expect(codes({
+        profile: 'backend-only', journalPresent: false, mobileClientIds: [],
+        runtime: runtimeFromEnv(parseEnv({ APP_ENV: 'test', DATABASE_URL: 'postgres://localhost/lyra', ...flags })),
+      })).not.toContain('BATCH_CANCELLATION_REQUIRED');
+    }
+  });
+
   it('backend-onlyではquote OFFとv2 journal導入前の未設定を許可する', () => {
     expect(evaluateReleaseCompatibility({
       profile: 'backend-only',

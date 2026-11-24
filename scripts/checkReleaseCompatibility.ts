@@ -159,6 +159,8 @@ export function parseReleaseCompatibilityArgs(args: readonly string[]): ReleaseC
 export function runtimeFromEnv(environment: Env): ReleaseCompatibilityRuntime {
   return {
     generationQuotesEnabled: environment.GENERATION_QUOTES_ENABLED,
+    generationBatchesEnabled: environment.GENERATION_BATCHES_ENABLED,
+    generationJobCancellationEnabled: environment.GENERATION_JOB_CANCELLATION_ENABLED,
     generationEnabled: environment.GENERATION_ENABLED,
     pageGenerationEnabled: environment.PAGE_GENERATION_ENABLED,
     entityGenerationEnabled: environment.ENTITY_GENERATION_ENABLED,

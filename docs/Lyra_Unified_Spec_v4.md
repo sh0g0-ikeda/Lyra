@@ -324,6 +324,16 @@ lost responses are recovered by reading the same batch. Progress survives screen
 and process restarts. Input or price changes require review; credit/capacity
 pauses require explicit resume. Cancellation stops further admission and uses
 the existing active-job cancellation flow. Reads never admit or charge a child.
+Batch enablement requires `GENERATION_JOB_CANCELLATION_ENABLED=true` in both API
+and generation worker. A cancelled parent fences undispatched child quotes;
+worker recovery completes pending child cancellation and settlement after a
+process restart. Completed images remain unchanged and refunds remain idempotent.
+Queue retry reuses the same accepted quote/job without another admission or charge.
+Queue failures log only fixed failure codes and stages, never authored content.
+Serialize a batch child's final queue send with parent cancellation. Bound the
+SQS request by an abort signal and perform worker warming after releasing the
+database lock. Recovery prioritizes actionable cancelled children without letting
+an already-stopping child indefinitely block later batches.
 The worker advances bounded batches under its existing task protection, keeps
 the shared twenty-minute warm lease, and distributes progress across concurrent
 batches. Confirmation claims are fenced against duplicate coordinators and
@@ -348,6 +358,13 @@ distinguish an absent object (404) from inaccessible storage (403); this grants
 metadata inspection and does not expand object read/write/delete permissions.
 The same permission preflight is a production release gate, not authorization
 to change production infrastructure from a staging rollout.
+Also verify `sqs:SendMessage` for the exact generation-worker task role and
+generation queue: API-role permission alone cannot dispatch later children.
+`ops/release/generation-batch-dispatch.mjs` validates the resolved API/worker
+flags and IAM simulation evidence and builds an exact-queue-only policy.
+Batch-specific dispatch SQL remains absent with the feature OFF for pre-055
+rollback compatibility. Web retains the latest cancelled batch and refreshes
+completed child images during partial progress without discarding resume keys.
 
 Mobile page quote preparation and acceptance acknowledge the exact editor revision
 whose save completed. A delayed React commit cannot require a second tap; edits or

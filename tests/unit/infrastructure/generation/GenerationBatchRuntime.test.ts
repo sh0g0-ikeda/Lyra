@@ -26,12 +26,27 @@ describe('GenerationBatchRuntime', () => {
   ])('有効化の必要条件が欠ける場合に起動時点で拒否する: %j', (override) => {
     const environment = parseEnv({
       APP_ENV: 'test', GENERATION_BATCHES_ENABLED: 'true', GENERATION_QUOTES_ENABLED: 'true',
+      GENERATION_JOB_CANCELLATION_ENABLED: 'true',
       OPENAI_IMAGE_SUNBURST_ENABLED: 'true', S3_BUCKET_IMAGES: 'batch-runtime-test',
       SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/test',
       LOCAL_IMAGE_FALLBACK_ENABLED: 'false', ...override,
     });
     expect(() => createGenerationBatchRuntime(environment, database, 'canonical'))
       .toThrow('Generation batches require GPT Image 2.5 quotes, durable queue and image storage');
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('batch停止で子jobを確実に返金できない設定は起動前に拒否する', () => {
+    const environment = parseEnv({
+      APP_ENV: 'test', GENERATION_BATCHES_ENABLED: 'true', GENERATION_QUOTES_ENABLED: 'true',
+      GENERATION_JOB_CANCELLATION_ENABLED: 'false', OPENAI_IMAGE_SUNBURST_ENABLED: 'true',
+      S3_BUCKET_IMAGES: 'batch-runtime-test',
+      SQS_QUEUE_URL_GENERATION: 'https://sqs.ap-northeast-1.amazonaws.com/123/test',
+      LOCAL_IMAGE_FALLBACK_ENABLED: 'false',
+    });
+
+    expect(() => createGenerationBatchRuntime(environment, database, 'canonical'))
+      .toThrow('Generation batches require generation job cancellation');
     expect(query).not.toHaveBeenCalled();
   });
 });
