@@ -25,6 +25,8 @@ export interface GenerationBatchJobSnapshot {
   status: string;
   params: Record<string, unknown>;
   result: Record<string, unknown>;
+  cancelRequestedAt?: Date | null;
+  commitStartedAt?: Date | null;
 }
 
 export interface GenerationBatchRepositoryPort {
@@ -45,6 +47,8 @@ export interface GenerationBatchRepositoryPort {
   }): Promise<void>;
   findJob(client: DatabaseClient, jobId: string): Promise<GenerationBatchJobSnapshot | null>;
   findRunnableBatchIds(client: DatabaseClient, limit: number): Promise<string[]>;
+  findCancelledBatchIdsWithActiveChildren(client: DatabaseClient, limit: number): Promise<string[]>;
+  touchBatch(client: DatabaseClient, batchId: string): Promise<void>;
 }
 
 interface BatchRow extends QueryResultRow {
@@ -157,10 +161,11 @@ export class PostgresGenerationBatchRepository implements GenerationBatchReposit
   }
 
   public async findJob(client: DatabaseClient, jobId: string): Promise<GenerationBatchJobSnapshot | null> {
-    const result=await client.query<{id:string;status:string;params:Record<string,unknown>;result:Record<string,unknown>} & QueryResultRow>(
-      'SELECT id,status,params,result FROM generation_jobs WHERE id=$1::uuid',[jobId],
+    const result=await client.query<{id:string;status:string;params:Record<string,unknown>;result:Record<string,unknown>;cancel_requested_at:Date|null;commit_started_at:Date|null} & QueryResultRow>(
+      'SELECT id,status,params,result,cancel_requested_at,commit_started_at FROM generation_jobs WHERE id=$1::uuid',[jobId],
     );
-    return result.rows[0] ?? null;
+    const row=result.rows[0];return row===undefined?null:{id:row.id,status:row.status,params:row.params,result:row.result,
+      cancelRequestedAt:row.cancel_requested_at,commitStartedAt:row.commit_started_at};
   }
 
   public async findRunnableBatchIds(client:DatabaseClient,limit:number):Promise<string[]>{
@@ -176,6 +181,24 @@ export class PostgresGenerationBatchRepository implements GenerationBatchReposit
        THEN 0 ELSE 1 END, b.updated_at,b.id LIMIT $1`,[Math.max(1,Math.min(25,limit))],
     );
     return result.rows.map(row=>row.id);
+  }
+
+  public async findCancelledBatchIdsWithActiveChildren(client:DatabaseClient,limit:number):Promise<string[]>{
+    const result=await client.query<{id:string} & QueryResultRow>(
+      `SELECT b.id FROM generation_batches b
+       JOIN generation_batch_items i ON i.batch_id=b.id
+       LEFT JOIN generation_jobs j ON j.id=i.job_id
+       WHERE b.status='cancelled' AND i.status='active' AND i.job_id IS NOT NULL
+       GROUP BY b.id,b.updated_at
+       ORDER BY MIN(CASE WHEN j.id IS NULL OR j.status IN ('queued','completed','failed','cancelled')
+         OR (j.status='processing' AND j.cancel_requested_at IS NULL AND j.commit_started_at IS NULL)
+         THEN 0 ELSE 1 END),b.updated_at,b.id LIMIT $1`,[Math.max(1,Math.min(25,limit))],
+    );
+    return result.rows.map(row=>row.id);
+  }
+
+  public async touchBatch(client:DatabaseClient,batchId:string):Promise<void>{
+    await client.query("UPDATE generation_batches SET updated_at=NOW() WHERE id=$1::uuid AND status='cancelled'",[batchId]);
   }
 
   private async discoverCharacters(client: DatabaseClient, input: {userId:string;organizationId:string|null;workId:string}): Promise<GenerationBatchTarget[]> {

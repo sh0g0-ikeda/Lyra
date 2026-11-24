@@ -32,7 +32,7 @@ export interface GenerationBatchJobCancellationPort {cancelJob(userId:string,job
 export function createGenerationBatchRoutes(dependencies:{
   authMiddleware:MiddlewareHandler<AppEnv>;rateLimitMiddleware:MiddlewareHandler<AppEnv>;
   service:GenerationBatchServicePort;organizationService?:OrganizationServicePort;
-  jobCancellation?:GenerationBatchJobCancellationPort;
+  jobCancellation:GenerationBatchJobCancellationPort;
 }):Hono<AppEnv>{
   const app=new Hono<AppEnv>();app.use('*',dependencies.authMiddleware);app.use('*',dependencies.rateLimitMiddleware);
   app.get('/generation-batch-capabilities',async(c)=>{
@@ -65,9 +65,11 @@ export function createGenerationBatchRoutes(dependencies:{
   });
   app.post('/generation-batches/:id/cancel',async(c)=>{
     const organizationId=parseOptionalOrganizationId(c);await requireOrganizationCapability(c,dependencies,organizationId,'generate');
-    const result=await dependencies.service.cancel(c.get('user').id,id(c.req.param('id')),organizationId);
-    for(const jobId of result.active_job_ids)await dependencies.jobCancellation?.cancelJob(c.get('user').id,jobId,organizationId);
-    return c.json(assertMobileResponseContract(generationBatchCancelResponseSchema,result));
+    const userId=c.get('user').id;const batchId=id(c.req.param('id'));
+    const result=await dependencies.service.cancel(userId,batchId,organizationId);
+    for(const jobId of result.active_job_ids)await dependencies.jobCancellation.cancelJob(c.get('user').id,jobId,organizationId);
+    const reconciled=result.active_job_ids.length===0?result:await dependencies.service.cancel(userId,batchId,organizationId);
+    return c.json(assertMobileResponseContract(generationBatchCancelResponseSchema,reconciled));
   });
   return app;
 }

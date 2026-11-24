@@ -160,7 +160,7 @@ class GenerationWorkerRecoveryRunner {
         await new GenerationQuoteDispatcher(db, new SqsGenerationQueue(
           new SQSClient(env.AWS_REGION === undefined ? {} : { region: env.AWS_REGION }),
           env.SQS_QUEUE_URL_GENERATION,
-        )).dispatchPending();
+        ), { batchCancellationFenceEnabled: env.GENERATION_BATCHES_ENABLED }).dispatchPending();
       }
       if (quoteSchema.rows[0]?.available === true) {
         await new PostgresQuotedImportExecutionRepository(db,this.runtime.repositoryProfile).recoverExpired();

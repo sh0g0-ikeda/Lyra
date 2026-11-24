@@ -939,7 +939,7 @@ test('renders the console with mocked api responses', async ({ page }, testInfo)
     if (pathname === '/api/generation-batches' && request.method() === 'GET') {
       return route.fulfill({ json: { batches: [{
         batch_id: '11111111-1111-4111-8111-111111111111',
-        work_id: '22222222-2222-4222-8222-222222222222',
+        work_id: work.id,
         kind: 'pages', episode_id: '33333333-3333-4333-8333-333333333333', status: 'running',
         selection: 'missing_only', render_style: 'color', image_model: 'gpt-image-2.5-sunburst',
         pricing_version: 'v1', maximum_credits: 7.5, auto_confirm: true,
@@ -987,6 +987,74 @@ test('renders the console with mocked api responses', async ({ page }, testInfo)
   await page.setViewportSize({ width: 390, height: 844 });
   await pageGeneration.evaluate((element) => window.scrollBy(0, element.getBoundingClientRect().top - 230));
   await page.screenshot({ path: testInfo.outputPath('page-generation-mobile.png') });
+});
+
+test('古い停止バッチが更新されても、新しい一括生成と停止後の部分進捗を表示する', async ({ page }) => {
+  await seedEnglishUi(page);
+  await seedAuthenticatedSession(page);
+  let returnCancelledBatch = false;
+  let pageListRequests = 0;
+  const oldCancelledBatch = {
+    batch_id: '21111111-1111-4111-8111-111111111111',
+    work_id: work.id,
+    kind: 'pages',
+    episode_id: '33333333-3333-4333-8333-333333333333',
+    status: 'cancelled',
+    selection: 'missing_only',
+    render_style: 'color',
+    image_model: 'gpt-image-2.5-sunburst',
+    pricing_version: 'v1',
+    maximum_credits: 0,
+    auto_confirm: true,
+    expires_at: '2026-11-22T00:10:00.000Z',
+    accepted_at: '2026-11-22T00:01:00.000Z',
+    created_at: '2026-11-22T00:00:00.000Z',
+    updated_at: '2026-11-22T00:10:00.000Z',
+    progress: { total: 0, completed: 0, skipped: 0, failed: 0, active: 0, pending: 0 },
+    items: [], blockers: [], active_job_ids: [],
+  };
+  const partialBatch = {
+    ...oldCancelledBatch,
+    batch_id: '31111111-1111-4111-8111-111111111111',
+    status: 'running',
+    accepted_at: '2026-11-22T00:02:00.000Z',
+    created_at: '2026-11-22T00:02:00.000Z',
+    updated_at: '2026-11-22T00:02:00.000Z',
+    progress: { total: 2, completed: 0, skipped: 0, failed: 0, active: 1, pending: 1 },
+  };
+  await page.route('**/api/**', async route => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/generation-batch-capabilities') {
+      return route.fulfill({ json: {
+        enabled: true, image_model: 'gpt-image-2.5-sunburst', selections: ['missing_only'],
+        render_styles: ['color', 'monochrome'], max_items: 20, quote_ttl_seconds: 600,
+      } });
+    }
+    if (pathname === '/api/generation-batches' && request.method() === 'GET') {
+      return route.fulfill({ json: { batches: [
+        oldCancelledBatch,
+        returnCancelledBatch
+          ? { ...partialBatch, status: 'cancelled', progress: { total: 2, completed: 1, skipped: 0, failed: 0, active: 0, pending: 0 } }
+          : partialBatch,
+      ] } });
+    }
+    if (pathname === `/api/episodes/${episode.id}/pages` && request.method() === 'GET') pageListRequests += 1;
+    return mockApi(route);
+  });
+
+  await page.goto('/');
+  await openMangaStep(page, '3. Pages');
+  const pageGeneration = page.locator('.page-section-generate');
+  await expect(pageGeneration.getByTestId('generation-batch-pages')).toContainText('Batch: running · 0/2');
+  await expect(pageGeneration.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  await expect.poll(() => pageListRequests).toBeGreaterThan(0);
+  const requestsBeforePartialSuccess = pageListRequests;
+
+  returnCancelledBatch = true;
+
+  await expect(pageGeneration.getByTestId('generation-batch-pages')).toContainText('Batch: cancelled · 1/2');
+  await expect.poll(() => pageListRequests).toBeGreaterThan(requestsBeforePartialSuccess);
 });
 
 test('回収保留の場合に有料画像生成を止めて無料の話編集を維持する', async ({ page }) => {

@@ -20,7 +20,18 @@ interface Props {
 }
 
 const activeStatuses = new Set<GenerationBatch['status']>(['running', 'paused', 'needs_review']);
+const displayableStatuses = new Set<GenerationBatch['status']>([...activeStatuses, 'completed', 'cancelled']);
 const requestKeyStorageKey = (batchId: string): string => `lyra:web:generation-batch:${batchId}:request-key`;
+
+// A cancellation recovery can touch updated_at long after a batch started. The
+// visible batch therefore follows user admission time, with stable fallbacks.
+function compareBatchAdmission(left: GenerationBatch, right: GenerationBatch): number {
+  const leftAdmission = left.accepted_at ?? left.created_at;
+  const rightAdmission = right.accepted_at ?? right.created_at;
+  return rightAdmission.localeCompare(leftAdmission)
+    || right.created_at.localeCompare(left.created_at)
+    || right.batch_id.localeCompare(left.batch_id);
+}
 
 const japaneseBatchStatus: Record<GenerationBatch['status'], string> = {
   quoted: '見積確認待ち',
@@ -52,13 +63,17 @@ function itemStatusLabel(status: GenerationBatch['items'][number]['status'], lan
 
 export function GenerationBatchControls(props: Props): React.JSX.Element | null {
   const queryClient = useQueryClient();
+  const { onCompleted } = props;
   const [quoted, setQuoted] = useState<{ batch: GenerationBatch; requestKey: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const scope = `${props.sessionKey}:${props.organizationId ?? 'personal'}:${props.workId ?? 'none'}:${props.episodeId ?? 'none'}:${props.kind}`;
   const scopeRef = useRef(scope);
-  const completedRef = useRef(new Set<string>());
+  const completedProgressRef = useRef(new Map<string, number>());
+  const completionInFlightRef = useRef(new Set<string>());
+  const [completionFailureKey, setCompletionFailureKey] = useState<string | null>(null);
+  const [completionRetry, setCompletionRetry] = useState(0);
   const capability = useQuery({
     queryKey: ['generation-batch-capability', props.sessionKey, props.organizationId],
     queryFn: () => props.api.getGenerationBatchCapabilities(props.organizationId),
@@ -72,21 +87,53 @@ export function GenerationBatchControls(props: Props): React.JSX.Element | null 
     refetchInterval: (query) => (query.state.data ?? []).some((candidate) => candidate.status === 'running') ? 2_000 : false,
   });
   const batch = useMemo(() => [...(batches.data ?? [])]
-    .filter((candidate) => candidate.kind === props.kind && (activeStatuses.has(candidate.status) || candidate.status === 'completed'))
-    .sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0] ?? null, [batches.data, props.kind]);
+    .filter((candidate) => candidate.kind === props.kind
+      && candidate.work_id === props.workId
+      && displayableStatuses.has(candidate.status))
+    .sort(compareBatchAdmission)[0] ?? null, [batches.data, props.kind, props.workId]);
 
   useEffect(() => {
     scopeRef.current = scope;
     // A workspace switch invalidates a quote and its visible error atomically.
+    completedProgressRef.current.clear();
+    completionInFlightRef.current.clear();
+    setCompletionFailureKey(null);
     setQuoted(null);
     setError(null);
   }, [scope]);
   useEffect(() => {
-    if (batch?.status !== 'completed' || completedRef.current.has(batch.batch_id)) return;
-    completedRef.current.add(batch.batch_id);
-    window.localStorage.removeItem(requestKeyStorageKey(batch.batch_id));
-    void props.onCompleted();
-  }, [batch, props]);
+    if (batch === null || batch.progress.completed === 0) return;
+    const notificationKey = `${scope}:${batch.batch_id}`;
+    const notifiedCompleted = completedProgressRef.current.get(notificationKey) ?? 0;
+    if (batch.progress.completed <= notifiedCompleted
+      || completionInFlightRef.current.has(notificationKey)
+      || completionFailureKey === notificationKey) return;
+
+    // Design: the newest terminal batch remains visible, and every newly completed
+    // child refreshes images once. A failed refresh is deliberately unacknowledged
+    // so the user can retry it without creating a new batch or charging again.
+    const origin = scope;
+    const completed = batch.progress.completed;
+    completionInFlightRef.current.add(notificationKey);
+    void Promise.resolve()
+      .then(() => onCompleted())
+      .then(() => {
+        if (scopeRef.current !== origin) return;
+        completedProgressRef.current.set(notificationKey, completed);
+        setCompletionFailureKey(null);
+        if (batch.status === 'completed' || batch.status === 'cancelled') {
+          window.localStorage.removeItem(requestKeyStorageKey(batch.batch_id));
+        }
+      })
+      .catch((cause: unknown) => {
+        if (scopeRef.current !== origin) return;
+        setCompletionFailureKey(notificationKey);
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        completionInFlightRef.current.delete(notificationKey);
+      });
+  }, [batch, completionFailureKey, completionRetry, onCompleted, scope]);
 
   if (capability.data?.enabled !== true || props.workId === null) return null;
 
@@ -191,6 +238,13 @@ export function GenerationBatchControls(props: Props): React.JSX.Element | null 
       {quoted === null ? null : <button className="secondary-button" type="button" disabled={busy} onClick={() => { void accept(quoted, scope); }}>
         {props.language === 'ja' ? '開始結果を再確認' : 'Check start result again'}
       </button>}
+      {quoted === null && completionFailureKey !== null ? <button className="secondary-button" type="button" disabled={busy} onClick={() => {
+        setCompletionFailureKey(null);
+        setError(null);
+        setCompletionRetry((value) => value + 1);
+      }}>
+        {props.language === 'ja' ? '生成済み画像を再読込' : 'Refresh generated images'}
+      </button> : null}
     </div>}
   </div>;
 }

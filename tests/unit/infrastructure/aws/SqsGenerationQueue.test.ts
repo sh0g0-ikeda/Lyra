@@ -83,4 +83,20 @@ describe('SqsGenerationQueue', () => {
       message: expect.stringContaining(fakeApiKey),
     });
   });
+
+  it('SQS応答が停止してもbounded abortでqueue leaseを解放できる',async()=>{
+    const client={send:async(_command:SendMessageCommand,options?:{abortSignal?:AbortSignal}):Promise<{MessageId?:string}>=>new Promise((_,reject)=>{
+      options?.abortSignal?.addEventListener('abort',()=>reject(options.abortSignal?.reason),{once:true});
+    })};
+    const queue=new SqsGenerationQueue(client,'https://sqs.example.test/queue',null,10);
+    await expect(queue.enqueueJob({jobId:'job-1',jobType:'entity_generate'})).rejects.toMatchObject({code:'CONFIGURATION_ERROR'});
+  });
+
+  it('batch fenceはSQS送信だけを行いwarm requestをlock解放後へ遅延できる',async()=>{
+    const client=new FakeSqsClient();let wakes=0;
+    const queue=new SqsGenerationQueue(client,'https://sqs.example.test/queue',{requestWarm:async()=>{wakes+=1;}});
+    await queue.enqueueJob({jobId:'job-1',jobType:'entity_generate'},{deferWake:true});
+    expect(wakes).toBe(0);
+    await queue.wakeWorker();expect(wakes).toBe(1);
+  });
 });

@@ -1586,6 +1586,10 @@ after schema attestation. Keep compatible flag-OFF rollback code. Bulk acceptanc
 preserves existing images and explicitly authorizes base/state auto-confirmation;
 each child retains existing quote, authorization, cancellation and credit fences.
 Page scene audit and image rendering share a maximum of two worker attempts.
+Before enabling batches, require generic job cancellation in API and worker and
+verify the exact worker task role can SendMessage to the generation queue.
+Cancelled parents fence pending dispatch; worker recovery settles children
+idempotently while preserving completed images. Keep flag-OFF pre-055 SQL compatible.
 
 Personal subscription monthly grants follow Unified Spec §7: Standard 100 credits
 for JPY 1,000 and Premium 350 credits for JPY 3,500, with historical grants and

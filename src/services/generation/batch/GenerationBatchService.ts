@@ -51,6 +51,7 @@ export interface GenerationBatchServiceDependencies {
   capacityLimits?:GenerationCapacityLimits;
   persistenceProfile?:RepositorySchemaProfile;
   childQuoteServiceFactory?:(database:DatabaseClient & TransactionRunner)=>Pick<GenerationQuoteService,'issue'|'accept'>;
+  jobCancellation?:{cancelJob(userId:string,jobId:string,organizationId?:string|null):Promise<{status:string}>};
   wake?:()=>Promise<void>;
 }
 export interface GenerationBatchReconcileInput {batchId?:string;limit?:number}
@@ -133,8 +134,18 @@ export class GenerationBatchService {
   }
   public async cancel(userId:string,batchId:string,organizationId:string|null=null):Promise<GenerationBatchCancelResponse>{
     this.ensureEnabled();const active=await this.dependencies.database.transaction(async(client)=>{
-      const found=await this.repository.find(client,userId,organizationId,batchId,true);const jobIds=found.items.filter(item=>item.status==='active'&&item.jobId!==null).map(item=>item.jobId!);
-      await this.repository.requestCancel(client,batchId);return jobIds;
+      const found=await this.repository.find(client,userId,organizationId,batchId,true);
+      await this.repository.requestCancel(client,batchId);
+      const jobIds:string[]=[];
+      for(const item of found.items.filter(candidate=>candidate.status==='active'&&candidate.jobId!==null)){
+        const job=await this.repository.findJob(client,item.jobId!);
+        if(job?.status==='cancelled'){
+          await this.repository.updateItem(client,item.id,{status:'cancelled'});
+        }else if(job?.status==='queued'||job?.status==='processing'){
+          jobIds.push(item.jobId!);
+        }
+      }
+      return jobIds;
     });
     const batch=await this.get(userId,batchId,organizationId);return{batch,active_job_ids:active};
   }
@@ -145,9 +156,54 @@ export class GenerationBatchService {
   public async reconcile(input:GenerationBatchReconcileInput={}):Promise<number>{
     if(!this.dependencies.enabled)return 0;
     const limit=Math.max(1,Math.min(25,input.limit??10));
-    const ids=input.batchId===undefined?await this.repository.findRunnableBatchIds(this.dependencies.database,limit):[input.batchId];
     let transitions=0;
-    for(const id of ids){if(transitions>=limit)break;transitions+=await this.reconcileBatch(id,limit-transitions);}
+    if(input.batchId===undefined){
+      // Give durable stop/refund recovery one protected slot on every poll,
+      // without starving ordinary running batches from the remaining budget.
+      const cancelled=await this.repository.findCancelledBatchIdsWithActiveChildren(this.dependencies.database,1);
+      for(const id of cancelled){if(transitions>=limit)break;transitions+=await this.reconcileCancelledBatch(id,limit-transitions);}
+      if(transitions<limit){
+        const running=await this.repository.findRunnableBatchIds(this.dependencies.database,limit-transitions);
+        for(const id of running){if(transitions>=limit)break;transitions+=await this.reconcileBatch(id,limit-transitions);}
+      }
+    }else{
+      transitions+=await this.reconcileBatch(input.batchId,limit);
+    }
+    return transitions;
+  }
+
+  private async reconcileCancelledBatch(batchId:string,limit:number):Promise<number>{
+    const found=await this.findBatchOperational(batchId);if(found===null||found.batch.status!=='cancelled')return 0;
+    let transitions=0;
+    for(const item of found.items.filter(candidate=>candidate.status==='active'&&candidate.jobId!==null)){
+      if(transitions>=limit)break;
+      let job=await this.repository.findJob(this.dependencies.database,item.jobId!);
+      if(job?.status==='queued'||(job?.status==='processing'&&job.cancelRequestedAt==null&&job.commitStartedAt==null)){
+        if(this.dependencies.jobCancellation===undefined)continue;
+        try{
+          await this.dependencies.jobCancellation.cancelJob(found.batch.userId,item.jobId!,found.batch.organizationId);
+          job=await this.repository.findJob(this.dependencies.database,item.jobId!);
+        }catch{
+          console.warn('[generation-batch] stage=cancel code=CHILD_CANCEL_DEFERRED');
+          await this.repository.touchBatch(this.dependencies.database,batchId);
+          continue;
+        }
+      }
+      if(job===null||job.status==='cancelled'){
+        await this.repository.updateItem(this.dependencies.database,item.id,{status:'cancelled'});transitions+=1;
+      }else if(job.status==='completed'){
+        // A finished provider result is retained, but a cancelled character batch
+        // must not auto-confirm a reference after the user's stop request.
+        await this.repository.updateItem(this.dependencies.database,item.id,{status:item.kind==='page'?'completed':'cancelled'});transitions+=1;
+      }else if(job.status==='failed'){
+        await this.repository.updateItem(this.dependencies.database,item.id,{status:'failed'});transitions+=1;
+      }else if(job.status==='processing'){
+        // Processing cancellation is cooperative; the next protected poll
+        // observes the existing commit/cancellation fence before settling it.
+        await this.repository.touchBatch(this.dependencies.database,batchId);
+        continue;
+      }
+    }
     return transitions;
   }
 
@@ -177,7 +233,11 @@ export class GenerationBatchService {
       if(item.jobId===null){await this.failItem(found.batch,item,'CHILD_FAILED','Batch item lost its generation receipt',false);transitions+=1;continue;}
       const job=await this.repository.findJob(this.dependencies.database,item.jobId);
       if(job===null){await this.failItem(found.batch,item,'CHILD_FAILED','Generation job is unavailable',false);transitions+=1;continue;}
-      if(job.status==='queued'||job.status==='processing')break;
+      if(job.status==='queued'){
+        if(item.childQuoteId!==null)await this.dependencies.dispatcher?.dispatchQuote(item.childQuoteId);
+        break;
+      }
+      if(job.status==='processing')break;
       if(job.status!=='completed'){
         await this.failItem(found.batch,item,'CHILD_FAILED',`Generation job ended as ${job.status}`,false);transitions+=1;continue;
       }
