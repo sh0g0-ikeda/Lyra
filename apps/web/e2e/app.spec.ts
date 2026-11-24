@@ -939,7 +939,7 @@ test('renders the console with mocked api responses', async ({ page }, testInfo)
     if (pathname === '/api/generation-batches' && request.method() === 'GET') {
       return route.fulfill({ json: { batches: [{
         batch_id: '11111111-1111-4111-8111-111111111111',
-        work_id: '22222222-2222-4222-8222-222222222222',
+        work_id: work.id,
         kind: 'pages', episode_id: '33333333-3333-4333-8333-333333333333', status: 'running',
         selection: 'missing_only', render_style: 'color', image_model: 'gpt-image-2.5-sunburst',
         pricing_version: 'v1', maximum_credits: 7.5, auto_confirm: true,
