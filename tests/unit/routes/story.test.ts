@@ -1,5 +1,6 @@
 ﻿import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
+import type { CharacterAutofillResult } from '../../../packages/api-contract/src/characterAutofill.js';
 import { createApp } from '../../../src/app.js';
 import { ConflictError, ResourceStaleError, ValidationError } from '../../../src/domain/errors/index.js';
 import { decodeWorkListCursor } from '../../../src/domain/pagination.js';
@@ -310,6 +311,7 @@ class FakeStoryCollaborationService implements StoryCollaborationServicePort {
 
 class FakeCharacterAutofillService implements CharacterAutofillServicePort {
   public calls: Array<{ userId: string; episodeId: string; version: number; organizationId: string | null }> = [];
+  public appearanceReview: NonNullable<CharacterAutofillResult['appearance_review']> = { unresolved: [], suggestions: [] };
 
   public async autofillEpisodeCharacters(
     userId: string,
@@ -322,7 +324,7 @@ class FakeCharacterAutofillService implements CharacterAutofillServicePort {
       version,
       characters: [{ entity_id: workId, name: 'ミオ', created: true, states_added: 1 }],
       skipped_names: ['正体不明'],
-      appearance_review: { unresolved: [], suggestions: [] },
+      appearance_review: this.appearanceReview,
     };
   }
 }
@@ -902,6 +904,26 @@ describe('story routes', () => {
     const response = await app.request(`/api/chapters/${chapterId}/episodes`);
 
     expect(response.status).toBe(401);
+  });
+
+  it('既存モバイル向けの形式と反映候補を保ったまま要確認の引用を返さない', async () => {
+    const characterAutofillService = new FakeCharacterAutofillService();
+    characterAutofillService.appearanceReview = {
+      unresolved: [{ reason: 'ambiguous_character', quote: '窓際に学ランの少年。' }],
+      suggestions: [{ entity_id: workId, name: 'ミオ', field: 'hair.color', value: 'black', quote: 'ミオは黒髪。', expected_updated_at: now.toISOString() }],
+    };
+    const app = createTestApp({ characterAutofillService });
+    const token = await createToken();
+    const response = await app.request(`/api/episodes/${episodeId}/character-autofill?appearance_review=1`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: 2 }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      version: 2, characters: [{ name: 'ミオ', created: true }], skipped_names: ['正体不明'],
+      appearance_review: { unresolved: [], suggestions: characterAutofillService.appearanceReview.suggestions },
+    });
+    expect(characterAutofillService.appearanceReview.unresolved).toHaveLength(1);
   });
 
   it('キャラクター自動入力の能力を公開し、strictなversionで保存サービスを呼ぶ', async () => {

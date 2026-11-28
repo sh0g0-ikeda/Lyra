@@ -1668,7 +1668,12 @@ only; its legacy panel_count is the authored lower bound. Without page boundarie
 Luna counts readable compositions rather than each action or dialogue turn (§6).
 
 Editor action placement follows Unified Spec §6: character autofill uses the
-ordinary portrait list, with review evidence in initially collapsed details.
+ordinary portrait list, with actionable appearance suggestions in initially collapsed details.
+Unresolved diagnostic quotations stay internal; the released API returns an empty
+unresolved array so existing Mobile clients need no frontend update. Web ignores
+these diagnostics even in older responses. Preserve all grounding and save guards.
+Literal screenplay speaker labels ground names even when spoken dialogue contains
+negation; this never relaxes appearance evidence or hypothetical-narration checks.
 Single-page and missing-image batch generation belong together in the selected
 page generation area, never in the page thumbnail list; preserve both admission
 and recovery contracts when moving controls.

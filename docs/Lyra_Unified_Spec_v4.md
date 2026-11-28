@@ -1488,7 +1488,7 @@ and separately request an image preview under the existing credit contract.
 The autofill description reads "入力されたストーリーから新規キャラクターを抽出します".
 Saved characters appear in the ordinary selectable character list only; autofill
 must not add a second result-card list. Keep operation failures visible. Skipped
-names, source-backed appearance suggestions and unresolved quotations remain
+names and actionable source-backed appearance suggestions remain
 available in an explicitly openable review-details area, collapsed initially and
 shown only when there is information to review. Explicit field acceptance and
 revision checks remain required for existing characters.
@@ -1498,7 +1498,8 @@ and a second reconciliation against the full original manuscript. Keep literal
 evidence separate from editor option IDs and validate both before persistence.
 Resolve omitted subjects only when the surrounding text identifies one character.
 Merge grounded appearance details from repeated mentions of the same character.
-Report ambiguous ownership or conflicting descriptions for review.
+Track ambiguous ownership or conflicting descriptions internally without displaying
+unresolved diagnostic quotations to users.
 The model's proposed option ID is advisory. Validate the response structure,
 then derive stored choices from grounded literal evidence on the server.
 An inconsistent proposed ID must not abort saving the other grounded traits.
@@ -1508,7 +1509,8 @@ subjects may inherit the nearest unambiguous named character. Stop at another
 subject, ordinary actions, uncertainty or an appearance change. Never repair a
 fabricated quotation by inventing source text. Reconciliation compares the
 manuscript with grounded first-pass evidence; rejected details are not complete.
-If later passes cannot resolve a source-backed trait, report it for review.
+If later passes cannot resolve a source-backed trait, retain it in the internal
+unresolved diagnostics without weakening the evidence checks.
 Map synonymous garment names such as 甲冑 and 鎧 to the armor choice, and retain
 unsupported garment colors/materials with their garment in literal free text.
 An explicit named profile heading and its immediately nested 容姿 property also
@@ -1522,9 +1524,18 @@ body-part descriptions alone do not switch the subject. State-scoped headings
 must not turn a changed appearance into a base trait. Source-grounded changes
 remain eligible for the separate state-change list.
 
+An original screenplay speaker label such as `ハル「驚かないんだ」` is literal
+evidence of that named speaker. Negation within their speech must not reject the
+character's identity. Hypothetical or existence-negating narration and mentions
+inside another character's dialogue remain insufficient. This exception applies
+only to name admission; appearance ownership and negation checks stay strict.
+
 Clients opt into appearance review with `?appearance_review=1`. The response
-adds source-backed empty-field suggestions for existing human characters and
-unresolved source quotations. Each accepted suggestion uses
+adds source-backed empty-field suggestions for existing human characters.
+The released `unresolved` response field remains an empty array, so existing
+Mobile clients stop displaying diagnostic quotations without an app update.
+Web also ignores unresolved diagnostics retained in older responses or local state.
+Keep internal coverage, grounding and persistence checks unchanged. Each accepted suggestion uses
 `POST /api/entities/:id/appearance-review` with a known field, option value and
 `expected_updated_at`. Recheck scope, the empty field and the entity revision
 when saving. Preserve populated fields, historical custom values and siblings.

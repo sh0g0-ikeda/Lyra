@@ -622,6 +622,25 @@ function profileNameGrounded(source: readonly string[], quote: string, character
   });
 }
 
+/**
+ * A literal screenplay speaker label proves the named cast member is present,
+ * even when their dialogue contains negation. This is used only for admitting
+ * the name; appearance evidence keeps its stricter ownership and negation checks.
+ */
+function speakerNameGrounded(source: readonly string[], quote: string, characterName: string): boolean {
+  const trimmedQuote = quote.replace(/^[ \t　]+/u, '');
+  if (!trimmedQuote.startsWith(characterName)) return false;
+  const afterName = trimmedQuote.slice(characterName.length);
+  if (!/^[ \t　]*[「『]/u.test(afterName)) return false;
+
+  return source.some(text => quoteOccurrences(text, quote).some(occurrence => {
+    const previousLf = text.lastIndexOf('\n', occurrence.start - 1);
+    const previousCr = text.lastIndexOf('\r', occurrence.start - 1);
+    const lineStart = Math.max(previousLf, previousCr) + 1;
+    return /^[ \t　]*$/u.test(text.slice(lineStart, occurrence.start));
+  }));
+}
+
 function quoteContexts(source: readonly string[], quote: string): string[] {
   if (!quote) return [];
   const boundary = /[。！？!?\n.]/u;
@@ -780,6 +799,7 @@ export function isCharacterAppearanceEvidenceGrounded(input: {
 export function buildCharacterAutofillCandidates(source: readonly string[], cast: CharacterAutofillExtraction): CharacterAutofillCandidate[] {
   const named = cast.filter(c => mentionsName(c.name_quote, c.name) && !unnamedRole.test(c.name)
     && (profileNameGrounded(source, c.name_quote, c.name)
+      || speakerNameGrounded(source, c.name_quote, c.name)
       || quoteContexts(source, c.name_quote).some(sentence => !uncertain.test(sentence))));
   const candidates = named.map(person => {
     const belongs = (quote: string, value: string, allowStateChange = false): boolean => {
