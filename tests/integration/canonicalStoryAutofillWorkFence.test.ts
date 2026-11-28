@@ -30,7 +30,7 @@ describePostgres('canonical story autofill migration 050 work fence', () => {
       max: 8,
     });
     const applied = await withPostgresTestMigrationLock(admin, () => runPendingMigrations(testDatabase(pool)));
-    expect(applied.slice(-2)).toEqual(['054_add_episode_production_note_list.sql', '055_add_generation_batches.sql']);
+    expect(applied.slice(-5)).toEqual(['054_add_episode_production_note_list.sql', '055_add_generation_batches.sql', '056_add_work_creation_metadata.sql', '057_add_work_bootstrap_request_ledger.sql', '058_preserve_work_bootstrap_request_scope.sql']);
   }, 120_000);
 
   afterAll(async () => {

@@ -39,9 +39,20 @@ for (const profile of ['canonical', 'expanded'] as const) suite(`Google recovery
             if (profile === 'canonical') await database.transaction(async client => {
                 await client.query('ALTER TABLE episodes DROP COLUMN production_notes, DROP COLUMN production_notes_enabled');
                 await client.query('DROP TABLE generation_worker_warm_controls');
+                // Later additive artifacts and their receipts must be removed
+                // together or strict attestation correctly rejects the fixture.
+                await client.query('DROP TABLE work_creation_metadata, work_bootstrap_request_ledger');
                 await client.query('DROP TABLE generation_batch_items, generation_batches');
                 await client.query('DELETE FROM schema_migrations WHERE filename = ANY($1::text[])', [
-                    ['052_add_generation_worker_warm_control.sql', '053_add_episode_production_notes.sql', '054_add_episode_production_note_list.sql', '055_add_generation_batches.sql'],
+                    [
+                        '052_add_generation_worker_warm_control.sql',
+                        '053_add_episode_production_notes.sql',
+                        '054_add_episode_production_note_list.sql',
+                        '055_add_generation_batches.sql',
+                        '056_add_work_creation_metadata.sql',
+                        '057_add_work_bootstrap_request_ledger.sql',
+                        '058_preserve_work_bootstrap_request_scope.sql',
+                    ],
                 ]);
             });
             if (profile === 'expanded') {

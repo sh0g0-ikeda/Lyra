@@ -137,6 +137,7 @@ for (const mode of ['one_shot', 'series'] as const) {
     if (mode === 'one_shot') {
       await expect(sidebar.getByRole('button', { name: createdWork.title, exact: true }).locator('..').locator('..').locator('.story-hierarchy-children')).toHaveCount(0);
       await expect(page.locator('.episode-draft-section').getByRole('textbox', { name: 'Title', exact: true })).toHaveCount(0);
+      await expect(page.locator('.episode-draft-section button.danger')).toHaveCount(0);
     }
     await expect(page.locator('.splash-overlay')).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath(`${mode}-editor-desktop.png`) });

@@ -13,6 +13,11 @@ const migration = '052_add_generation_worker_warm_control.sql';
 const notesMigration = '053_add_episode_production_notes.sql';
 const noteListMigration = '054_add_episode_production_note_list.sql';
 const batchMigration = '055_add_generation_batches.sql';
+const workBootstrapMigrations = [
+  '056_add_work_creation_metadata.sql',
+  '057_add_work_bootstrap_request_ledger.sql',
+  '058_preserve_work_bootstrap_request_scope.sql',
+] as const;
 function isSyntheticTarget(): boolean {
   if (process.env.APP_ENV !== 'test' || url === undefined) return false;
   const address = new URL(url);
@@ -78,8 +83,13 @@ for (const profile of ['canonical', 'expanded'] as const) suites[profile](`gener
       await runPendingMigrations(database, profile === 'canonical' ? undefined : { migrationsDir: join(process.cwd(), 'tests/fixtures/production44-pg18') });
       if (profile === 'canonical') {
         await database.transaction(async client => {
+          // Recreate the historical 054 boundary completely. Keeping any
+          // later bootstrap artifact without 055 must fail closed.
+          await client.query('DROP TABLE work_creation_metadata, work_bootstrap_request_ledger');
           await client.query('DROP TABLE generation_batch_items, generation_batches');
-          await client.query('DELETE FROM schema_migrations WHERE filename=$1', [batchMigration]);
+          await client.query('DELETE FROM schema_migrations WHERE filename = ANY($1::text[])', [
+            [batchMigration, ...workBootstrapMigrations],
+          ]);
         });
       }
       if (profile === 'expanded') {

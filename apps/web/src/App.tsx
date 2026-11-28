@@ -5506,13 +5506,11 @@ function StudioShell(props: {
             const contextUnchanged = JSON.stringify({story: storyDraftContextRef.current, editors: currentPageEditorRef.current}) === JSON.stringify(submittedContext);
             setNewWorkDraft((current) => JSON.stringify(current) === submittedDraft ? createEmptyWorkDraft() : current);
             if (contextUnchanged) {
-              // Prime all three selections before switching; stale list effects
-              // must not restore the work the user was editing before creation.
+              // Prime the parent selections before switching. Load the episode
+              // through its versioned GET so a replay cannot erase mobile-only
+              // fields with an older bootstrap response.
               queryClient.setQueryData<{ works: WorkRecord[] }>(scopedQueryKey(['works']), (current) => ({ works: [...(current?.works ?? []).filter((work) => work.id !== result.work.id), result.work] }));
               queryClient.setQueryData(scopedQueryKey(['chapters', result.work.id]), { chapters: [result.chapter] });
-              for (const suffix of [[], ['v1'], ['v2']] as const) {
-                queryClient.setQueryData(scopedQueryKey(['episodes', result.chapter.id, ...suffix]), { episodes: [result.episode] });
-              }
               discardStoryDrafts(true, true, true);
               setSelectedWorkId(result.work.id);
               setSelectedChapterId(result.chapter.id);
@@ -6456,7 +6454,7 @@ function StudioShell(props: {
                           {busyAction === 'Save episode' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}
                           {translateUiString(uiLanguage, 'Save')}
                         </button>
-                        <button
+                        {!isOneShot ? <button
                           className="ghost-button danger"
                           onClick={() => {
                             const episodeTitle = selectedEpisode.title?.trim() || translateUiString(uiLanguage, 'Untitled episode');
@@ -6476,7 +6474,7 @@ function StudioShell(props: {
                           type="button"
                         >
                           <Trash2 size={16} />
-                        </button>
+                        </button> : null}
                       </div>
                     }
                   >
