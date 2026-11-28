@@ -208,6 +208,7 @@ test('話の名前付きキャラを一括保存し、保存済み選択肢を�
   let autofillRequests = 0;
   const appearanceReviewRequests: Array<Record<string, unknown>> = [];
   let appearanceReviewConflict = true;
+  let unresolvedOnly = false;
   const imageGenerationRequests: string[] = [];
   await page.route('**/api/**', async route => {
     const requestUrl = new URL(route.request().url());
@@ -224,9 +225,9 @@ test('話の名前付きキャラを一括保存し、保存済み選択肢を�
           { entity_id: rin.id, name: rin.name, created: true, states_added: 0 },
           { entity_id: entity.id, name: entity.name, created: false, states_added: 1 },
         ],
-        skipped_names: ['Unknown twin'],
+        skipped_names: unresolvedOnly ? [] : ['Unknown twin'],
         appearance_review: {
-          suggestions: [
+          suggestions: unresolvedOnly ? [] : [
             { entity_id: rin.id, name: rin.name, field: 'hair.color', value: 'black', quote: 'Rin had black hair.', expected_updated_at: rin.updated_at },
             { entity_id: rin.id, name: rin.name, field: 'hair.color', value: 'black', quote: 'Her raven hair shone.', expected_updated_at: rin.updated_at },
             { entity_id: rin.id, name: rin.name, field: 'eyes.color', value: 'blue', quote: 'Her eyes were blue.', expected_updated_at: rin.updated_at },
@@ -301,7 +302,8 @@ test('話の名前付きキャラを一括保存し、保存済み選択肢を�
   await expect(page.getByText('Unknown twin', { exact: true })).toBeVisible();
   await expect(page.getByText('Hair color', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Rin had black hair.', { exact: false })).toBeVisible();
-  await expect(page.getByText('This could not be verified as a character trait.', { exact: true })).toBeVisible();
+  await expect(page.getByText('This could not be verified as a character trait.', { exact: true })).not.toBeVisible();
+  await expect(page.getByText('A red light moved in the shadows.', { exact: false })).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Apply this field', exact: true })).toHaveCount(3);
   await page.getByRole('button', { name: 'Rin Character', exact: true }).click();
   await expect(page.getByLabel('Name', { exact: true }).first()).toHaveValue('Rin');
@@ -329,6 +331,14 @@ test('話の名前付きキャラを一括保存し、保存済み選択肢を�
   await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('black');
   await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Hair color', exact: true })).toHaveValue('black');
+  unresolvedOnly = true;
+  await page.getByRole('button', { name: 'Autofill and save character details', exact: true }).click();
+  await expect.poll(() => autofillRequests).toBe(2);
+  await expect(page.getByText('2 saved characters are available in the character portraits above.', { exact: true })).toBeVisible();
+  await expect(reviewDetails).toHaveCount(0);
+  await expect(page.getByText('A red light moved in the shadows.', { exact: false })).not.toBeVisible();
+  await page.getByRole('button', { name: 'Rin Character', exact: true }).click();
+  await expect(page.getByLabel('Name', { exact: true }).first()).toHaveValue('Rin');
 });
 
 test('話から抽出した外見をキャラ欄で確認でき、既存キャラには編集した状態だけを保存する', async ({ page }) => {

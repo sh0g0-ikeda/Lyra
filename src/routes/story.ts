@@ -128,7 +128,16 @@ export function createStoryRoutes(dependencies: StoryRouteDependencies): Hono<Ap
         skipped: result.skipped_names.length,
       },
     );
-    if (includeReview) return c.json(assertMobileResponseContract(characterAutofillWithReviewResultSchema, result));
+    if (includeReview) {
+      // Presentation boundary: retain internal grounding checks and actionable
+      // suggestions, but suppress unresolved diagnostics for released clients.
+      // Keeping the empty array preserves Mobile's strict response contract.
+      const response = result.appearance_review === undefined ? result : {
+        ...result,
+        appearance_review: { ...result.appearance_review, unresolved: [] },
+      };
+      return c.json(assertMobileResponseContract(characterAutofillWithReviewResultSchema, response));
+    }
     const { version, characters, skipped_names } = result;
     return c.json(assertMobileResponseContract(characterAutofillResultSchema, { version, characters, skipped_names }));
   });

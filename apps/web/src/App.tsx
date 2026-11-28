@@ -1479,15 +1479,6 @@ function appearanceReviewValueLabel(language: UiLanguage, field: string, value: 
   return choice === undefined ? value.replace(/_/g, ' ') : language === 'ja' ? choice.labelJa : choice.labelEn;
 }
 
-function appearanceReviewReasonLabel(language: UiLanguage, reason: 'ambiguous_character' | 'conflicting_traits' | 'unverified_trait'): string {
-  const labels = {
-    ambiguous_character: ['The character could not be identified.', '人物を特定できない記述です。'],
-    conflicting_traits: ['The source contains conflicting traits.', '特徴が矛盾している記述です。'],
-    unverified_trait: ['This could not be verified as a character trait.', '人物の特徴と確認できない記述です。'],
-  } as const;
-  return pickUiText(language, labels[reason][0], labels[reason][1]);
-}
-
 function isResourceStaleApiError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'RESOURCE_STALE';
 }
@@ -6852,10 +6843,9 @@ function StudioShell(props: {
                           `${characterAutofillResult.result.characters.length} saved character${characterAutofillResult.result.characters.length === 1 ? '' : 's'} are available in the character portraits above.`,
                           `${characterAutofillResult.result.characters.length}件の保存済みキャラクターを上のキャラクター一覧から選択できます。`)}
                       </div> : null}
-                      {/* Design: saved characters remain in the portrait picker; only actionable source-backed review evidence is disclosed here. */}
+                      {/* Design: retain saved-character selection and actionable suggestions, but never render unresolved model evidence from cached or older API results. */}
                       {(characterAutofillResult.result.skipped_names.length > 0
-                        || (characterAutofillResult.result.appearance_review?.suggestions.length ?? 0) > 0
-                        || (characterAutofillResult.result.appearance_review?.unresolved.length ?? 0) > 0) ? <details className="advanced-disclosure">
+                        || (characterAutofillResult.result.appearance_review?.suggestions.length ?? 0) > 0) ? <details className="advanced-disclosure">
                         <summary>{pickUiText(uiLanguage, 'Review saved-character details', '保存内容と要確認の根拠を確認')}</summary>
                         {characterAutofillResult.result.skipped_names.length > 0 ? <div className="notice notice-info">
                           {pickUiText(uiLanguage, 'Skipped because the name was ambiguous or did not match:', '名前が曖昧、または一致しなかったため保存しなかった項目:')}
@@ -6869,12 +6859,6 @@ function StudioShell(props: {
                             <button className="secondary-button" disabled={busyAction !== null} onClick={() => void runAction('Apply character appearance', () => approveCharacterAppearance(suggestion))} type="button">
                               <Check size={16} />{pickUiText(uiLanguage, 'Apply this field', 'この項目を反映')}
                             </button>
-                          </div>
-                        ))}
-                        {characterAutofillResult.result.appearance_review?.unresolved.map((issue, index) => (
-                          <div className="notice notice-info" key={`${issue.reason}:${index}`}>
-                            <strong>{appearanceReviewReasonLabel(uiLanguage, issue.reason)}</strong>
-                            <p className="muted small">{pickUiText(uiLanguage, 'Source', '本文')}: 「{issue.quote}」</p>
                           </div>
                         ))}
                       </details> : null}
