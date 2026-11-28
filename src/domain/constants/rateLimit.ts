@@ -61,4 +61,4 @@ export const BILLING_ACTION_ROUTE_PATTERNS = [
   /^\/api\/organizations\/[^/]+\/billing\/customer-portal$/,
   /^\/api\/organizations\/[^/]+\/billing\/customer-portal-session$/,
 ] as const;
-export const STORY_ROUTE_PREFIXES = ['/api/story', '/api/works', '/api/chapters', '/api/episodes', '/api/scenes'] as const;
+export const STORY_ROUTE_PREFIXES = ['/api/story', '/api/works', '/api/work-bootstraps', '/api/work-creation-metadata', '/api/chapters', '/api/episodes', '/api/scenes'] as const;

@@ -17,6 +17,7 @@ import {
   type GenerationBatchResumeRequest,
 } from '../../../../packages/api-contract/src/generationBatch.ts';
 import { normalizeGenerationJobRecord, type GenerationJobWireRecord } from '../domain/jobCompatibility';
+import type { WorkCreationMetadata, WorkCreationMode } from './workCreation';
 import { pageImageDeliveryPath, entityReferenceImageDeliveryPath, entityReferenceCandidateDeliveryPath, type ImageDeliveryMetadata } from '../domain/imageDelivery';
 import type {
   BalloonRecord,
@@ -316,6 +317,25 @@ export class LyraApiClient {
 
   public getWorks(organizationId?: string | null): Promise<{ works: WorkRecord[] }> {
     return this.request(`/api/works${organizationQuery(organizationId)}`);
+  }
+
+  public bootstrapWork(
+    body: { title: string; mode: WorkCreationMode; request_id: string },
+    organizationId?: string | null,
+  ): Promise<{ work: WorkRecord; chapter: ChapterRecord; episode: EpisodeRecord; mode: WorkCreationMode }> {
+    return this.request(`/api/work-bootstraps${organizationQuery(organizationId)}`, { method: 'POST', body });
+  }
+
+  public async getWorkCreationMetadata(workIds: readonly string[], organizationId?: string | null): Promise<{ metadata: WorkCreationMetadata[] }> {
+    const metadata: WorkCreationMetadata[] = [];
+    const maxIdsPerRequest = 100;
+    for (let index = 0; index < workIds.length; index += maxIdsPerRequest) {
+      const query = new URLSearchParams({ work_ids: workIds.slice(index, index + maxIdsPerRequest).join(',') });
+      if (organizationId) query.set('organization_id', organizationId);
+      const response = await this.request<{ metadata: WorkCreationMetadata[] }>(`/api/work-creation-metadata?${query.toString()}`);
+      metadata.push(...(response.metadata ?? []));
+    }
+    return { metadata };
   }
 
   public createWork(body: Record<string, unknown>, organizationId?: string | null): Promise<WorkRecord> {

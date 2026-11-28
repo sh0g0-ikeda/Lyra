@@ -12,6 +12,7 @@ import {
   describeRuntimeSchema,
   prepareCanonicalRuntimeSchema,
   readRuntimeSchemaCatalog,
+  WORK_BOOTSTRAP_RUNTIME_MIGRATIONS,
 } from '../../src/lib/runtimeSchemaAttestation.js';
 import { assertAttestedRuntimeCapabilities } from '../../src/lib/runtimeGuards.js';
 import { withPostgresTestMigrationLock } from './postgresTestMigrationLock.js';
@@ -62,6 +63,49 @@ describePostgres('runtime schema attestation PostgreSQL boundary', () => {
       await pool.query('DROP INDEX generation_batches_request_key');
       await expect(attestRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
     } finally { await rm(directory, { recursive: true, force: true }); }
+  }, 120_000);
+
+  it('056から058までの完全な追加footprintだけを読み切りbootstrap capabilityとして認定する', async () => {
+    const { database, pool } = await isolatedDatabase('work_bootstrap_58');
+    const directory = await mkdtemp(join(tmpdir(), 'lyra-pre-work-bootstrap-'));
+    try {
+      for (const filename of await readdir(join(process.cwd(), 'migrations'))) {
+        if (/^0(?:0[1-9]|[1-4][0-9]|5[0-5])_.+\.sql$/u.test(filename)) {
+          await copyFile(join(process.cwd(), 'migrations', filename), join(directory, filename));
+        }
+      }
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      const before = await attestRuntimeSchema(database);
+      expect(before.capabilities.workBootstrap).toBeUndefined();
+
+      await copyFile(
+        join(process.cwd(), 'migrations', '056_add_work_creation_metadata.sql'),
+        join(directory, '056_add_work_creation_metadata.sql'),
+      );
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      await expect(attestRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+
+      await copyFile(
+        join(process.cwd(), 'migrations', '057_add_work_bootstrap_request_ledger.sql'),
+        join(directory, '057_add_work_bootstrap_request_ledger.sql'),
+      );
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      await expect(attestRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+
+      await copyFile(
+        join(process.cwd(), 'migrations', '058_preserve_work_bootstrap_request_scope.sql'),
+        join(directory, '058_preserve_work_bootstrap_request_scope.sql'),
+      );
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      const after = await attestRuntimeSchema(database);
+      expect(after.capabilities.workBootstrap).toBe(true);
+      expect(WORK_BOOTSTRAP_RUNTIME_MIGRATIONS.at(-1)).toBe('058_preserve_work_bootstrap_request_scope.sql');
+
+      await pool.query('DROP INDEX idx_work_creation_metadata_scope');
+      await expect(attestRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }, 120_000);
 
   it('fresh canonical schemaはactive jobが存在しても許可し物理story metadata列を要求しない', async () => {
@@ -115,6 +159,27 @@ describePostgres('runtime schema attestation PostgreSQL boundary', () => {
       expect(after.capabilities.generationBatches).toBe(true);
       expect(() => assertAttestedRuntimeCapabilities(after, {})).not.toThrow();
       expect(() => assertAttestedRuntimeCapabilities(after, { GENERATION_BATCHES_ENABLED: true })).not.toThrow();
+
+      await copyFile(
+        join(process.cwd(), 'migrations', '056_add_work_creation_metadata.sql'),
+        join(directory, '056_add_work_creation_metadata.sql'),
+      );
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      await expect(attestRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+      await copyFile(
+        join(process.cwd(), 'migrations', '057_add_work_bootstrap_request_ledger.sql'),
+        join(directory, '057_add_work_bootstrap_request_ledger.sql'),
+      );
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      await expect(attestRuntimeSchema(database)).rejects.toThrow('SCHEMA_UNSUPPORTED');
+      await copyFile(
+        join(process.cwd(), 'migrations', '058_preserve_work_bootstrap_request_scope.sql'),
+        join(directory, '058_preserve_work_bootstrap_request_scope.sql'),
+      );
+      await withPostgresTestMigrationLock(admin, () => runPendingMigrations(database, { migrationsDir: directory }));
+      const afterWorkBootstrap = await attestRuntimeSchema(database);
+      expect(afterWorkBootstrap.repositoryProfile).toBe(before.repositoryProfile);
+      expect(afterWorkBootstrap.capabilities.workBootstrap).toBe(true);
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 120_000);
 
