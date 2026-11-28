@@ -83,6 +83,71 @@ const workspaceViewStorageKey = 'lyra:web:workspace-view:email:session';
 const mangaTutorialStorageKey = 'lyra:web:manga-tutorial:v1:email:session';
 const legacyTrackedJobsStorageKey = 'lyra:web:tracked-jobs:email:session';
 
+// Unified Spec §2/§10: additive bootstrap creates the complete editing target;
+// retries reuse the request ID and one-shots hide only their validated graph.
+for (const mode of ['one_shot', 'series'] as const) {
+  test(`${mode}を作成した場合に最初の本文編集へ直接進み再訪しても形式を保つ`, async ({ page }, testInfo) => {
+    await seedEnglishUi(page);
+    await seedAuthenticatedSession(page);
+    const createdWork = { ...work, id: '22222222-2222-4222-8222-222222222222', title: 'New short story' };
+    const createdChapter = { ...chapter, id: 'new-chapter', work_id: createdWork.id, title: 'Chapter 1' };
+    const createdEpisode = { ...episode, id: 'new-episode', chapter_id: createdChapter.id, title: 'Episode 1',
+      introduction: '', middle: '', climax: '', ending_hook: '', page_skeleton_generated: false };
+    let created = false;
+    const requests: Record<string, unknown>[] = [];
+    await page.route('**/api/**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === '/api/work-bootstraps') {
+        requests.push(route.request().postDataJSON() as Record<string, unknown>);
+        if (requests.length === 1) return route.fulfill({ status: 503, json: { error: { code: 'TEMPORARY', message: 'Try again' } } });
+        created = true;
+        return route.fulfill({ json: { work: createdWork, chapter: createdChapter, episode: createdEpisode, mode } });
+      }
+      if (path === '/api/work-creation-metadata') return route.fulfill({ json: { metadata: created ? [{
+        work_id: createdWork.id, mode, entry_chapter_id: createdChapter.id, entry_episode_id: createdEpisode.id,
+      }] : [] } });
+      if (path === '/api/works' && route.request().method() === 'GET') return route.fulfill({ json: { works: mode === 'one_shot' ? (created ? [createdWork] : []) : (created ? [work, createdWork] : [work]) } });
+      if (path === `/api/works/${createdWork.id}/chapters`) return route.fulfill({ json: { chapters: [createdChapter] } });
+      if (path === `/api/chapters/${createdChapter.id}/episodes`) return route.fulfill({ json: { episodes: [createdEpisode] } });
+      if (path === `/api/works/${createdWork.id}/entities`) return route.fulfill({ json: { entities: [] } });
+      if (path === `/api/episodes/${createdEpisode.id}/pages`) return route.fulfill({ json: { pages: [] } });
+      if (path === `/api/episodes/${createdEpisode.id}/scenes`) return route.fulfill({ json: { scenes: [] } });
+      return mockApi(route);
+    });
+    await page.goto('/');
+    const sidebar = page.locator('aside.sidebar');
+    await sidebar.getByRole('button', { name: mode === 'one_shot' ? 'Create one-shot' : 'Create series', exact: true }).click();
+    await sidebar.getByRole('textbox', { name: 'Title', exact: true }).fill(createdWork.title);
+    const create = sidebar.getByRole('button', { name: 'Create', exact: true });
+    await create.click();
+    await expect(create).toBeEnabled();
+    await expect.poll(() => requests.length).toBe(1);
+    await create.click();
+    await expect.poll(() => requests.length).toBe(2);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[1]).toMatchObject({ title: createdWork.title, mode, request_id: expect.any(String) });
+    await expect(page.getByRole('textbox', { name: 'Whole story draft', exact: true })).toHaveValue('');
+    await expect(page.locator('.creation-context')).toContainText(createdWork.title);
+    await expect(page.locator('.manga-library')).toHaveCount(0);
+    const createdNode = sidebar.getByRole('button', { name: createdWork.title, exact: true }).locator('..').locator('..');
+    if (mode === 'one_shot') await expect(createdNode.locator('.story-hierarchy-children')).toHaveCount(0);
+    await page.reload();
+    await expect(page.locator('.creation-context')).toContainText(createdWork.title);
+    await expect(page.getByRole('textbox', { name: 'Whole story draft', exact: true })).toBeVisible();
+    if (mode === 'one_shot') {
+      await expect(sidebar.getByRole('button', { name: createdWork.title, exact: true }).locator('..').locator('..').locator('.story-hierarchy-children')).toHaveCount(0);
+      await expect(page.locator('.episode-draft-section').getByRole('textbox', { name: 'Title', exact: true })).toHaveCount(0);
+    }
+    await expect(page.locator('.splash-overlay')).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath(`${mode}-editor-desktop.png`) });
+    if (mode === 'one_shot') {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(page.getByRole('textbox', { name: 'Whole story draft', exact: true })).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath('one_shot-editor-mobile.png') });
+    }
+  });
+}
+
 test('キャラ画面を開くと写真と空枠が並び、拡大と人物選択を別々に操作できる', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
@@ -784,7 +849,7 @@ async function openMangaStep(page: Page, label: '1. Story' | '2. Characters' | '
       ? desktopEdit
       : mobileNavigation.getByRole('button', { name: 'Edit', exact: true });
     await edit.click();
-    await page.getByRole('button', { name: label.replace('. ', ' '), exact: true }).click();
+    await step.click();
     return;
   }
   await step.click();
@@ -1434,21 +1499,22 @@ test('作品作成待機中に話を編集した場合は新しい作品を自�
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
-    if (pathname === '/api/works' && request.method() === 'POST') {
+    if (pathname === '/api/work-bootstraps' && request.method() === 'POST') {
       await createPending;
       fixtures.works.push(createdWork);
       fixtures.chapters[createdWork.id] = [];
-      await route.fulfill({ json: createdWork });
+      await route.fulfill({ json: { work: createdWork, chapter, episode, mode: 'series' } });
       return;
     }
     await mockStoryNavigationApi(route, fixtures);
   });
   await page.goto('/');
 
-  const createForm = page.locator('.sidebar-create-disclosure form');
+  await page.locator('aside.sidebar').getByRole('button', { name: 'Create series', exact: true }).click();
+  const createForm = page.locator('.sidebar-create-work form');
   await createForm.getByRole('textbox', { name: 'Title', exact: true }).fill(createdWork.title);
-  const createRequest = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === '/api/works');
-  const createResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/works');
+  const createRequest = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === '/api/work-bootstraps');
+  const createResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/work-bootstraps');
   await createForm.getByRole('button', { name: 'Create', exact: true }).click();
   await createRequest;
   const draft = page.getByRole('textbox', { name: 'Whole story draft', exact: true });
@@ -2693,7 +2759,7 @@ test('白黒で生成は保存後に白黒指定のページjobを送る', async
   expect(request.postDataJSON()).toEqual({ render_style: 'monochrome' });
 });
 
-test('creates works from the sidebar without rendering a work overview editor', async ({ page }) => {
+test('サイドバーからシリーズを作る場合に作品設定画面を経由しない', async ({ page }) => {
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
 
@@ -2701,12 +2767,12 @@ test('creates works from the sidebar without rendering a work overview editor', 
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
-    if (pathname === '/api/works' && request.method() === 'POST') {
+    if (pathname === '/api/work-bootstraps' && request.method() === 'POST') {
       createPayload = request.postDataJSON() as Record<string, unknown>;
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(work),
+        body: JSON.stringify({ work, chapter, episode, mode: 'series' }),
       });
     }
     return mockApi(route);
@@ -2715,7 +2781,7 @@ test('creates works from the sidebar without rendering a work overview editor', 
   await page.goto('/');
 
   const sidebar = page.locator('aside.sidebar');
-  await expect(sidebar.getByText('New work', { exact: true })).toBeVisible();
+  await sidebar.getByRole('button', { name: 'Create series', exact: true }).click();
   const newWorkTitle = sidebar.getByRole('textbox', { name: 'Title', exact: true });
   await expect(newWorkTitle).toBeVisible();
   await expect(sidebar.getByRole('textbox', { name: 'Genre', exact: true })).toHaveCount(0);
@@ -2723,14 +2789,14 @@ test('creates works from the sidebar without rendering a work overview editor', 
 
   await newWorkTitle.fill('Sidebar work');
   await sidebar.getByRole('button', { name: 'Create', exact: true }).click();
-  await expect.poll(() => createPayload).toMatchObject({ title: 'Sidebar work', genre: null });
+  await expect.poll(() => createPayload).toMatchObject({ title: 'Sidebar work', mode: 'series' });
 
   await expect(page.locator('main').getByText('Work overview', { exact: true })).toHaveCount(0);
   await expect(page.locator('.work-overview-section')).toHaveCount(0);
   await expect(page.getByRole('textbox', { name: 'Genre', exact: true })).toHaveCount(0);
 });
 
-test('スマホWebの初回表示は4ナビと漫画一覧から安全に始まる', async ({ page }) => {
+test('スマホWebの初回表示は4ナビとストーリー編集から安全に始まる', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page, { fresh: true });
@@ -2750,8 +2816,8 @@ test('スマホWebの初回表示は4ナビと漫画一覧から安全に始ま�
   await expect(mobileNavigation.getByRole('button', { name: 'Assets', exact: true })).toBeVisible();
   await expect(mobileNavigation.getByRole('button', { name: 'My Page', exact: true })).toBeVisible();
   await expect(mobileNavigation.getByRole('button', { name: 'Guide', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Manga library', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Continue selected episode', exact: true })).toBeVisible();
+  await expect(page.locator('.manga-library')).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Whole story draft', exact: true })).toBeVisible();
   const tutorial = page.getByRole('dialog', { name: 'Welcome to Lyra', exact: true });
   await expect(tutorial).toBeVisible();
   await expect(tutorial.getByRole('heading', { name: '1. Story', exact: true })).toBeFocused();
@@ -2852,7 +2918,7 @@ test('アセットに生成済み画像がない場合は空状態からペー�
   await expect(mangaCreationSteps(page).getByRole('button', { name: '3. Pages', exact: true })).toHaveAttribute('aria-current', 'step');
 });
 
-test('320px幅でも主要4ナビと漫画一覧が横にはみ出さない', async ({ page }) => {
+test('320px幅でも主要4ナビとストーリー編集が横にはみ出さない', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 720 });
   await seedEnglishUi(page);
   await seedAuthenticatedSession(page);
@@ -2860,7 +2926,7 @@ test('320px幅でも主要4ナビと漫画一覧が横にはみ出さない', as
 
   await page.goto('/');
   await page.getByRole('navigation', { name: 'Mobile navigation' }).getByRole('button', { name: 'Edit', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Manga library', exact: true })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Whole story draft', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
@@ -2949,7 +3015,8 @@ test('keeps the story hierarchy usable on a mobile viewport', async ({ page }) =
   await openSelection.click();
   const hierarchyDialog = page.getByRole('dialog', { name: 'Select work, chapter and episode', exact: true });
   await expect(hierarchyDialog).toBeVisible();
-  await expect(hierarchyDialog.getByText('New work', { exact: true })).toBeVisible();
+  await expect(hierarchyDialog.getByRole('button', { name: 'Create series', exact: true })).toBeVisible();
+  await hierarchyDialog.getByRole('button', { name: 'Create series', exact: true }).click();
   await expect(hierarchyDialog.getByRole('textbox', { name: 'Title', exact: true })).toBeVisible();
   const expandWorks = hierarchyDialog.getByRole('button', { name: 'Expand works', exact: true });
   if (await expandWorks.isVisible()) await expandWorks.click();

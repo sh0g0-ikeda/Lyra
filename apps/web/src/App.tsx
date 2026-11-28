@@ -43,7 +43,8 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { StoryHierarchyTree } from './components/StoryHierarchyTree';
 import { WebMangaTutorial } from './components/WebMangaTutorial';
-import { readWorkspaceView, resumeMangaStep, type WebWorkspaceView } from './lib/mangaWorkflow';
+import { readWorkspaceView, type WebWorkspaceView } from './lib/mangaWorkflow';
+import { resolveOneShotEntry, type WorkCreationMode } from './lib/workCreation';
 import { pageDesignNextAction, type PageDesignIntent } from './lib/pageDesignWorkflow';
 import {
   createPageGenerationWarmupGate,
@@ -86,6 +87,7 @@ import {
   type CognitoSession,
 } from './lib/cognitoAuth';
 import type {
+  WorkRecord,
   ChapterRecord,
   EntityRecord,
   EpisodeRecord,
@@ -2451,7 +2453,9 @@ function StudioShell(props: {
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [newWorkDraft, setNewWorkDraft] = useState<WorkDraft>(createEmptyWorkDraft());
-  const [newWorkComposerOpen, setNewWorkComposerOpen] = useState(true);
+  const [newWorkComposerOpen, setNewWorkComposerOpen] = useState(false);
+  const [newWorkMode, setNewWorkMode] = useState<WorkCreationMode>('series');
+  const workBootstrapRequestRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
   const [chapterDraft, setChapterDraft] = useState<ChapterDraft>(createEmptyChapterDraft());
   const [newChapterDraft, setNewChapterDraft] = useState<ChapterDraft>(createEmptyChapterDraft());
   const [episodeDraft, setEpisodeDraft] = useState<EpisodeDraft>(createEmptyEpisodeDraft());
@@ -2665,7 +2669,12 @@ function StudioShell(props: {
     }
   }, [selectedOrganizationId, setSelectedOrganizationId]);
 
+  const selectionWorkspaceRef = useRef(JSON.stringify([props.authSessionKey, activeOrganizationId]));
   useEffect(() => {
+    const nextWorkspace = JSON.stringify([props.authSessionKey, activeOrganizationId]);
+    // Retain the saved editing target on reload; clear it only across tenants.
+    if (selectionWorkspaceRef.current === nextWorkspace) return;
+    selectionWorkspaceRef.current = nextWorkspace;
     savedChapterDraftRef.current = null;
     savedEpisodeDraftRef.current = null;
     hydratedChapterVersionRef.current = null;
@@ -2682,6 +2691,7 @@ function StudioShell(props: {
     setEntityEditorMode('edit');
   }, [
     activeOrganizationId,
+    props.authSessionKey,
     setSelectedWorkId,
     setSelectedChapterId,
     setSelectedEpisodeId,
@@ -2900,6 +2910,13 @@ function StudioShell(props: {
     enabled: canViewActiveOrganizationWorks,
   });
   const works = useMemo(() => worksQuery.data?.works ?? [], [worksQuery.data?.works]);
+  const workCreationMetadataQuery = useQuery({
+    queryKey: scopedQueryKey(['work-creation-metadata', works.map((work) => work.id)]),
+    queryFn: () => api.getWorkCreationMetadata(works.map((work) => work.id), activeOrganizationId),
+    enabled: canViewActiveOrganizationWorks && works.length > 0,
+    retry: false,
+  });
+  const workCreationMetadata = workCreationMetadataQuery.data?.metadata ?? [];
   const showWorksLoading = works.length === 0 && worksQuery.isLoading;
   const showWorksError = works.length === 0 && worksQuery.isError;
   const showWorksEmpty = works.length === 0 && worksQuery.isSuccess;
@@ -2935,6 +2952,7 @@ function StudioShell(props: {
   });
   const episodes = useMemo(() => episodesQuery.data?.episodes ?? [], [episodesQuery.data?.episodes]);
   const selectedEpisode = useRetainedSelection(episodes, selectedEpisodeId, JSON.stringify([activeOrganizationId, selectedWorkId, selectedChapterId]));
+  const isOneShot = resolveOneShotEntry(workCreationMetadata.find((item) => item.work_id === selectedWork?.id), chapters, episodes) !== null;
 
   const entitiesQuery = useQuery({
     queryKey: scopedQueryKey(['entities', selectedWorkScopedId]),
@@ -4051,6 +4069,8 @@ function StudioShell(props: {
     setSelectedWorkId(workId);
     setSelectedChapterId(chapterId);
     setSelectedEpisodeId(episodeId);
+    setActiveTab('story');
+    hierarchyDialogRef.current?.close();
   };
 
   const selectWorkspace = (organizationId: string): void => {
@@ -5455,36 +5475,54 @@ function StudioShell(props: {
       </span>
     </div>
   ) : (
-    <details
-      className="sidebar-disclosure sidebar-create-disclosure"
-      onToggle={(event) => setNewWorkComposerOpen(event.currentTarget.open)}
-      open={newWorkComposerOpen}
-    >
-      <summary>
-        <span className="sidebar-create-summary-label">
-          <Plus size={15} />
-          {translateUiString(uiLanguage, 'New work')}
-        </span>
-        <ChevronDown className="sidebar-disclosure-chevron" size={15} />
-      </summary>
+    <div className="sidebar-create-work">
+      <div className="sidebar-create-actions">
+        {(['one_shot', 'series'] as const).map((mode) => (
+          <button aria-pressed={newWorkComposerOpen && newWorkMode === mode} className="ghost-button" disabled={busyAction !== null} key={mode} onClick={() => { setNewWorkMode(mode); setNewWorkComposerOpen(true); }} type="button">
+            <Plus size={15} />{mode === 'one_shot' ? pickUiText(uiLanguage, 'Create one-shot', '読み切りを作成') : pickUiText(uiLanguage, 'Create series', 'シリーズを作成')}
+          </button>
+        ))}
+      </div>
+      {newWorkComposerOpen ? (
       <form
         className="story-create-form"
         onSubmit={(event) => {
           event.preventDefault();
+          const title = newWorkDraft.title.trim();
+          if (title.length === 0 || title.length > 200) return;
           if (!confirmStoryNavigation(true, true, true)) {
             return;
           }
+          const submittedDraft = JSON.stringify(newWorkDraft);
           const submittedContext = structuredClone({story: storyDraftContextRef.current, editors: currentPageEditorRef.current});
+          const fingerprint = JSON.stringify([activeOrganizationId, newWorkMode, title]);
+          if (workBootstrapRequestRef.current?.fingerprint !== fingerprint) {
+            workBootstrapRequestRef.current = { fingerprint, requestId: crypto.randomUUID() };
+          }
+          const requestId = workBootstrapRequestRef.current.requestId;
           void runAction('Create work', async () => {
-            const createdWork = await api.createWork(toCreateWorkPayload(newWorkDraft), activeOrganizationId);
+            const result = await api.bootstrapWork({ title, mode: newWorkMode, request_id: requestId }, activeOrganizationId);
+            workBootstrapRequestRef.current = null;
             const contextUnchanged = JSON.stringify({story: storyDraftContextRef.current, editors: currentPageEditorRef.current}) === JSON.stringify(submittedContext);
-            setNewWorkDraft((current) => JSON.stringify(current) === JSON.stringify(newWorkDraft) ? createEmptyWorkDraft() : current);
+            setNewWorkDraft((current) => JSON.stringify(current) === submittedDraft ? createEmptyWorkDraft() : current);
             if (contextUnchanged) {
+              // Prime all three selections before switching; stale list effects
+              // must not restore the work the user was editing before creation.
+              queryClient.setQueryData<{ works: WorkRecord[] }>(scopedQueryKey(['works']), (current) => ({ works: [...(current?.works ?? []).filter((work) => work.id !== result.work.id), result.work] }));
+              queryClient.setQueryData(scopedQueryKey(['chapters', result.work.id]), { chapters: [result.chapter] });
+              for (const suffix of [[], ['v1'], ['v2']] as const) {
+                queryClient.setQueryData(scopedQueryKey(['episodes', result.chapter.id, ...suffix]), { episodes: [result.episode] });
+              }
               discardStoryDrafts(true, true, true);
-              setSelectedWorkId(createdWork.id);
+              setSelectedWorkId(result.work.id);
+              setSelectedChapterId(result.chapter.id);
+              setSelectedEpisodeId(result.episode.id);
               setActiveTab('story');
+              setNewWorkComposerOpen(false);
+              hierarchyDialogRef.current?.close();
             }
             await invalidateScopedQuery(['works']);
+            await invalidateScopedQuery(['work-creation-metadata']);
             if (!contextUnchanged) {
               return pickUiText(uiLanguage, 'Work created. Your current edits are kept; select the new work from the list.',
                 '作品を作成しました。現在の編集中の内容は保持しています。新しい作品は作品一覧から選んでください。');
@@ -5496,13 +5534,16 @@ function StudioShell(props: {
           label="Title"
           value={newWorkDraft.title}
           onChange={(value) => setNewWorkDraft({ ...newWorkDraft, title: value })}
+          maxLength={200}
+          autoFocus
         />
-        <button className="primary-button" disabled={busyAction === 'Create work'} type="submit">
+        <button className="primary-button" disabled={busyAction !== null || newWorkDraft.title.trim().length === 0 || newWorkDraft.title.trim().length > 200} type="submit">
           {busyAction === 'Create work' ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
           {translateUiString(uiLanguage, 'Create')}
         </button>
       </form>
-    </details>
+      ) : null}
+    </div>
   );
 
   const personalBillingPanel =
@@ -5802,8 +5843,6 @@ function StudioShell(props: {
     { view: 'pages', en: 'Pages', ja: 'ページ', disabled: selectedEpisode === null },
   ] as const;
   const currentStepIndex = creationSteps.findIndex((step) => step.view === activeTab);
-  const savedStory = selectedEpisode === null ? '' : [selectedEpisode.introduction, selectedEpisode.middle, selectedEpisode.climax, selectedEpisode.ending_hook].filter(Boolean).join(' ');
-  const resumeStep = resumeMangaStep({ hasEpisode: selectedEpisode !== null, hasPages: pages.length > 0 || selectedEpisode?.page_skeleton_generated === true, savedStory });
   // Conservative display-only dirty check; authoritative navigation guards still
   // use saved revision baselines when the user changes a selected resource.
   const hasUnsavedEditors =
@@ -5822,40 +5861,29 @@ function StudioShell(props: {
   };
   const primaryItems = [
     ...(canViewActiveOrganizationWorks ? [
-      { view: 'library' as const, en: 'Edit', ja: '編集', icon: <PenLine size={21} strokeWidth={2.2} /> },
+      { view: 'story' as const, en: 'Edit', ja: '編集', icon: <PenLine size={21} strokeWidth={2.2} /> },
       { view: 'assets' as const, en: 'Assets', ja: 'アセット', icon: <BookOpenText size={21} strokeWidth={2.2} /> },
     ] : []),
     { view: 'account' as const, en: 'My Page', ja: 'マイページ', icon: <Settings size={21} strokeWidth={2.2} /> },
     { view: 'tutorial' as const, en: 'Guide', ja: 'ガイド', icon: <CircleHelp size={21} strokeWidth={2.2} /> },
   ];
   const primaryButtons = (desktop: boolean): ReactNode => primaryItems.map((item) => {
-    const active = activeTab === item.view || (item.view === 'library' && isCreationView);
+    const active = activeTab === item.view || (item.view === 'story' && isCreationView);
     return <button aria-current={active ? 'page' : undefined} className={`${desktop ? 'tab-button ' : ''}${active ? 'active' : ''}`} key={item.view} onClick={() => setActiveTab(item.view)} type="button">
       {item.icon}<span>{pickUiText(uiLanguage, item.en, item.ja)}</span>
     </button>;
   });
-  const selectionButton = <button className="ghost-button workspace-selection-button" onClick={openHierarchy} type="button"><LayoutGrid size={16} />{pickUiText(uiLanguage, 'Select work, chapter and episode', '作品・章・話を選ぶ')}</button>;
+  const selectionButton = isMobileViewport ? <button className="ghost-button workspace-selection-button" onClick={openHierarchy} type="button"><LayoutGrid size={16} />{pickUiText(uiLanguage, 'Select work, chapter and episode', '作品・章・話を選ぶ')}</button> : null;
   const workflowHeader = <div className="creation-workflow-header">
-    <div className="creation-context"><button className="ghost-button" onClick={() => setActiveTab('library')} type="button">{pickUiText(uiLanguage, 'Manga library', '漫画一覧')}</button><span>{selectedWork?.title}{selectedEpisode ? ` / ${selectedEpisode.title}` : ''}</span>{selectionButton}</div>
+    <div className="creation-context"><span>{selectedWork?.title}{selectedEpisode && !isOneShot ? ` / ${selectedEpisode.title}` : ''}</span>{selectionButton}</div>
     <nav aria-label={pickUiText(uiLanguage, 'Manga creation steps', '漫画の制作工程')} className="creation-steps">
       {creationSteps.map((step, index) => <button aria-current={activeTab === step.view ? 'step' : undefined} className={activeTab === step.view ? 'active' : ''} disabled={step.disabled} key={step.view} onClick={() => setActiveTab(step.view)} type="button">{index + 1}. {pickUiText(uiLanguage, step.en, step.ja)}</button>)}
     </nav>
   </div>;
   const workflowFooter = <div className="creation-workflow-actions">
-    <button className="ghost-button" onClick={() => setActiveTab(currentStepIndex <= 0 ? 'library' : creationSteps[currentStepIndex - 1].view)} type="button">{pickUiText(uiLanguage, 'Previous step', '前の工程へ')}</button>
+    {currentStepIndex > 0 ? <button className="ghost-button" onClick={() => setActiveTab(creationSteps[currentStepIndex - 1].view)} type="button">{pickUiText(uiLanguage, 'Previous step', '前の工程へ')}</button> : null}
     {currentStepIndex < 2 ? <button className="primary-button" disabled={creationSteps[currentStepIndex + 1]?.disabled} onClick={() => setActiveTab(creationSteps[currentStepIndex + 1].view)} type="button">{pickUiText(uiLanguage, currentStepIndex === 0 ? 'Next: Characters' : 'Next: Pages', currentStepIndex === 0 ? '次へ：キャラクター' : '次へ：ページ')}</button> : null}
   </div>;
-  const libraryPanel = <section className="manga-library">
-    <header className="manga-library-heading"><div><p className="eyebrow">Lyra</p><h1>{pickUiText(uiLanguage, 'Manga library', '漫画一覧')}</h1><p>{pickUiText(uiLanguage, 'Choose a work, then create your manga in three steps.', '作品を選び、3つの工程で漫画をつくりましょう。')}</p></div><button className="primary-button" disabled={!canCreateActiveOrganizationWorks} onClick={() => { setNewWorkComposerOpen(true); openHierarchy(); }} type="button"><Plus size={18} />{pickUiText(uiLanguage, 'Create manga', '漫画を新規作成')}</button></header>
-    {selectionButton}
-    {selectedEpisode ? <section className="manga-resume-card"><p className="eyebrow">{pickUiText(uiLanguage, 'Selected episode', '選択中の話')}</p><h2>{selectedWork?.title} / {selectedEpisode.title}</h2><p>{pickUiText(uiLanguage, `Resume from ${creationSteps.find((step) => step.view === resumeStep)?.en}.`, `「${creationSteps.find((step) => step.view === resumeStep)?.ja}」から再開できます。`)}</p><button className="primary-button" onClick={() => setActiveTab(resumeStep)} type="button">{pickUiText(uiLanguage, 'Continue selected episode', '選択中の話を続ける')}</button></section> : null}
-    <div className="manga-library-steps">{creationSteps.map((step, index) => <button disabled={step.disabled} key={step.view} onClick={() => setActiveTab(step.view)} type="button"><span>{index + 1}</span><strong>{pickUiText(uiLanguage, step.en, step.ja)}</strong></button>)}</div>
-    <h2>{pickUiText(uiLanguage, 'Works', '作品')}</h2>
-    {showWorksLoading ? <p role="status">{pickUiText(uiLanguage, 'Loading works…', '作品を読込中…')}</p> : null}
-    {showWorksError ? <div role="alert"><p>{worksErrorMessage}</p><button className="ghost-button" onClick={() => void worksQuery.refetch()} type="button">{pickUiText(uiLanguage, 'Retry', '再読込')}</button></div> : null}
-    {showWorksEmpty ? <p>{pickUiText(uiLanguage, 'Create your first manga to get started.', '漫画を新規作成して、制作を始めましょう。')}</p> : null}
-    <div className="manga-work-cards">{works.map((work) => <button className={`manga-work-card ${selectedWorkId === work.id ? 'active' : ''}`} key={work.id} onClick={() => { selectStory(work.id, work.id === selectedWorkId ? selectedChapterId : '', work.id === selectedWorkId ? selectedEpisodeId : ''); openHierarchy(); }} type="button"><BookOpen size={26} /><strong>{work.title}</strong><span>{work.genre}</span><span>{pickUiText(uiLanguage, 'Choose chapter / episode', '章・話を選ぶ')}</span></button>)}</div>
-  </section>;
   const readerPages = pages.filter((page) => page.generated_image !== null).sort((left, right) => left.page_number - right.page_number);
   const readerPageIndex = Math.min(readerPage, Math.max(0, readerPages.length - 1));
   const readablePage = readerPages[readerPageIndex];
@@ -5968,6 +5996,7 @@ function StudioShell(props: {
                     }
                   }}
                   onSelectEpisode={selectStory}
+                  creationMetadata={workCreationMetadata}
                   onChapterMetadataChanged={(updatedChapter) => {
                     if (updatedChapter.id !== selectedChapterId) {
                       return;
@@ -5999,6 +6028,9 @@ function StudioShell(props: {
                   onSelectWork={(workId) => {
                     if (workId !== selectedWorkId) {
                       selectStory(workId, '', '');
+                    } else {
+                      setActiveTab('story');
+                      hierarchyDialogRef.current?.close();
                     }
                   }}
                   organizationId={activeOrganizationId}
@@ -6159,8 +6191,8 @@ function StudioShell(props: {
         {notice !== null ? <NoticeBanner notice={notice} /> : null}
 
         {isCreationView && canViewActiveOrganizationWorks ? workflowHeader : null}
-        <div className="tutorial-entry" hidden={activeTab !== 'library' && activeTab !== 'tutorial'}>
-          <WebMangaTutorial autoOpen={canViewActiveOrganizationWorks && activeTab === 'library'} canAutoOpen={() => !hasUnsavedEditors && busyAction === null && !storyBusy && !importingImage} credits={activeCreditBalance} language={uiLanguage} storageScope={props.authSessionKey} />
+        <div className="tutorial-entry" hidden={activeTab !== 'story' && activeTab !== 'tutorial'}>
+          <WebMangaTutorial autoOpen={canViewActiveOrganizationWorks && activeTab === 'story'} canAutoOpen={() => !hasUnsavedEditors && busyAction === null && !storyBusy && !importingImage} credits={activeCreditBalance} language={uiLanguage} storageScope={props.authSessionKey} />
         </div>
         {(activeTab === 'account' || (!canViewActiveOrganizationWorks && activeTab !== 'tutorial')) ? (
           <div className="workspace-grid mobile-account-workspace">
@@ -6170,13 +6202,17 @@ function StudioShell(props: {
           <div className="workspace-grid mobile-account-workspace">
             <section className="main-column mobile-account-column">{tutorialPanel}</section>
           </div>
-        ) : activeTab === 'library' ? libraryPanel
-          : activeTab === 'assets' ? readerPanel
+        ) : activeTab === 'assets' ? readerPanel
           : selectedWork === null ? (
           <section className="empty-state">
             <LayoutGrid size={28} />
             <h2>{translateUiString(uiLanguage, 'No work selected')}</h2>
-            <p>{pickUiText(uiLanguage, 'Choose or create a work with Select work, chapter and episode.', '「作品・章・話を選ぶ」から作品を選択または作成してください。')}</p>
+            <p>{pickUiText(uiLanguage, 'Create a one-shot or series to start writing.', '読み切り、またはシリーズを作成して、ストーリーを書き始めましょう。')}</p>
+            <div className="toolbar">
+              {(['one_shot', 'series'] as const).map((mode) => <button className="primary-button" disabled={!canCreateActiveOrganizationWorks} key={mode} onClick={() => { setNewWorkMode(mode); setNewWorkComposerOpen(true); openHierarchy(); }} type="button">
+                <Plus size={16} />{mode === 'one_shot' ? pickUiText(uiLanguage, 'Create one-shot', '読み切りを作成') : pickUiText(uiLanguage, 'Create series', 'シリーズを作成')}
+              </button>)}
+            </div>
           </section>
         ) : (
           <div className="workspace-grid">
@@ -6407,7 +6443,7 @@ function StudioShell(props: {
               {activeTab === 'story' && selectedEpisode !== null ? (
                 <>
                   <PanelSection
-                    title="Episode draft"
+                    title={isOneShot ? pickUiText(uiLanguage, 'Story draft', 'ストーリー原稿') : 'Episode draft'}
                     className="episode-draft-section"
                     actions={
                       <div className="toolbar">
@@ -6445,7 +6481,7 @@ function StudioShell(props: {
                     }
                   >
                     <div className="form-grid two">
-                      <InputField label="Title" value={episodeDraft.title} onChange={(value) => setEpisodeDraft({ ...episodeDraft, title: value })} />
+                      {!isOneShot ? <InputField label="Title" value={episodeDraft.title} onChange={(value) => setEpisodeDraft({ ...episodeDraft, title: value })} /> : null}
                       <div className="field page-estimate-field">
                         <span>{pickUiText(uiLanguage, 'Estimated pages', '想定ページ数')}</span>
                         <div className="page-estimate-controls">
@@ -8867,6 +8903,8 @@ function InputField(props: {
   min?: number;
   max?: number;
   step?: number | string;
+  maxLength?: number;
+  autoFocus?: boolean;
 }) {
   const language = useContext(UiLanguageContext);
   return (
@@ -8879,6 +8917,8 @@ function InputField(props: {
         min={props.min}
         max={props.max}
         step={props.step}
+        maxLength={props.maxLength}
+        autoFocus={props.autoFocus}
       />
     </label>
   );
@@ -9779,19 +9819,6 @@ function toFramePreviewDefinition(draft: PanelFrameDraft): FramePreviewDefinitio
 
 function clampFramePreviewCoordinate(value: number): number {
   return Math.max(0, Math.min(1, value));
-}
-
-function toCreateWorkPayload(draft: WorkDraft): Record<string, unknown> {
-  return {
-    title: draft.title,
-    genre: nullableString(draft.genre),
-    world_setting: nullableString(draft.world_setting),
-    theme: nullableString(draft.theme),
-    main_entity_ids: splitCsv(draft.main_entity_ids),
-    starting_point: nullableString(draft.starting_point),
-    ending_point: nullableString(draft.ending_point),
-    overall_flow: nullableString(draft.overall_flow),
-  };
 }
 
 function toChapterPayload(

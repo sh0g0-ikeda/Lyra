@@ -37,6 +37,10 @@ import {
   sortStoryItems,
   type StoryMoveDirection,
 } from '../lib/storyHierarchy';
+import {
+  resolveOneShotEntry,
+  type WorkCreationMetadata,
+} from '../lib/workCreation';
 import type { ChapterRecord, EpisodeRecord, WorkRecord } from '../types/api';
 
 type UiLanguage = 'ja' | 'en';
@@ -45,6 +49,7 @@ type RunAction = (label: string, action: () => Promise<string | void>) => Promis
 interface StoryHierarchyTreeProps {
   api: LyraApiClient;
   works: WorkRecord[];
+  creationMetadata?: readonly WorkCreationMetadata[];
   language: UiLanguage;
   organizationId: string | null;
   storageScope: string;
@@ -201,17 +206,43 @@ function StoryWorkNode(props: WorkNodeProps) {
   const [renameTitle, setRenameTitle] = useState(props.work.title);
   const [addingChapter, setAddingChapter] = useState(false);
   const [newChapterTitle, setNewChapterTitle] = useState('');
+  const creationMetadata = useMemo(
+    () => props.creationMetadata?.find((metadata) => metadata.work_id === props.work.id),
+    [props.creationMetadata, props.work.id],
+  );
+  const oneShotEntryChapterId = creationMetadata?.mode === 'one_shot'
+    ? creationMetadata.entry_chapter_id
+    : null;
+  const oneShotEntryEpisodeId = creationMetadata?.mode === 'one_shot'
+    ? creationMetadata.entry_episode_id
+    : null;
+  const hasOneShotEntryCandidate = oneShotEntryChapterId !== null && oneShotEntryEpisodeId !== null;
   const chapterQueryKey = props.scopedQueryKey(['chapters', props.work.id]);
   const chaptersQuery = useQuery({
     queryKey: chapterQueryKey,
     queryFn: () => props.api.getChapters(props.work.id, props.organizationId),
-    enabled: props.expanded || props.selectedWorkId === props.work.id,
+    enabled: props.expanded || props.selectedWorkId === props.work.id || hasOneShotEntryCandidate,
     placeholderData: (previousData) => previousData,
   });
   const chapters = useMemo(
     () => sortStoryItems(chaptersQuery.data?.chapters ?? []),
     [chaptersQuery.data?.chapters],
   );
+  const oneShotChapter = chaptersQuery.isSuccess
+    && chapters.length === 1
+    && chapters[0].id === oneShotEntryChapterId
+    && chapters[0].work_id === props.work.id
+    ? chapters[0]
+    : null;
+  const oneShotEpisodesQuery = useQuery({
+    queryKey: props.scopedQueryKey(['episodes', oneShotChapter?.id ?? oneShotEntryChapterId ?? props.work.id]),
+    queryFn: () => props.api.getEpisodes(oneShotChapter?.id ?? oneShotEntryChapterId ?? props.work.id, props.organizationId),
+    enabled: hasOneShotEntryCandidate && oneShotChapter !== null,
+    placeholderData: (previousData) => previousData,
+  });
+  const oneShotEntry = oneShotEpisodesQuery.isSuccess
+    ? resolveOneShotEntry(creationMetadata, chapters, oneShotEpisodesQuery.data.episodes)
+    : null;
   const busy = props.busyAction !== null;
 
   useEffect(() => {
@@ -261,16 +292,22 @@ function StoryWorkNode(props: WorkNodeProps) {
   };
 
   return (
-    <div className="story-hierarchy-node story-hierarchy-work" role="treeitem" aria-expanded={props.expanded}>
+    <div
+      aria-expanded={oneShotEntry === null ? props.expanded : undefined}
+      className="story-hierarchy-node story-hierarchy-work"
+      role="treeitem"
+    >
       <div className={`story-hierarchy-row story-hierarchy-work-row ${props.selectedWorkId === props.work.id ? 'active' : ''}`}>
-        <button
-          aria-label={text(props.language, props.expanded ? 'Collapse work' : 'Expand work', props.expanded ? '作品を閉じる' : '作品を開く')}
-          className="story-hierarchy-toggle"
-          onClick={() => props.onToggleWork(props.work.id)}
-          type="button"
-        >
-          {props.expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-        </button>
+        {oneShotEntry === null ? (
+          <button
+            aria-label={text(props.language, props.expanded ? 'Collapse work' : 'Expand work', props.expanded ? '作品を閉じる' : '作品を開く')}
+            className="story-hierarchy-toggle"
+            onClick={() => props.onToggleWork(props.work.id)}
+            type="button"
+          >
+            {props.expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          </button>
+        ) : <span className="story-hierarchy-toggle-spacer" />}
         <BookOpen className="story-hierarchy-kind-icon" size={15} />
         {renaming ? (
           <InlineTitleEditor
@@ -287,7 +324,13 @@ function StoryWorkNode(props: WorkNodeProps) {
         ) : (
           <button
             className="story-hierarchy-title"
-            onClick={() => props.onSelectWork(props.work.id)}
+            onClick={() => {
+              if (oneShotEntry === null) {
+                props.onSelectWork(props.work.id);
+                return;
+              }
+              props.onSelectEpisode(props.work.id, oneShotEntry.chapterId, oneShotEntry.episodeId);
+            }}
             title={props.work.title}
             type="button"
           >
@@ -302,7 +345,7 @@ function StoryWorkNode(props: WorkNodeProps) {
                 label: text(props.language, 'Rename work', '作品名を変更'),
                 onSelect: () => setRenaming(true),
               },
-              {
+              ...(oneShotEntry === null ? [{
                 icon: <Plus size={16} />,
                 label: text(props.language, 'Add chapter', '章を追加'),
                 onSelect: () => {
@@ -311,7 +354,7 @@ function StoryWorkNode(props: WorkNodeProps) {
                   }
                   setAddingChapter(true);
                 },
-              },
+              }] : []),
             ]}
             disabled={busy}
             label={text(
@@ -323,7 +366,7 @@ function StoryWorkNode(props: WorkNodeProps) {
         ) : null}
       </div>
 
-      {props.expanded ? (
+      {props.expanded && oneShotEntry === null ? (
         <div className="story-hierarchy-children" role="group">
           {addingChapter ? (
             <form className="story-hierarchy-inline-create story-hierarchy-chapter-indent" onSubmit={(event) => void createChapter(event)}>

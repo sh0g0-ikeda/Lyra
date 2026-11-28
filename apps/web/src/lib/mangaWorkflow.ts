@@ -1,5 +1,4 @@
 export type WebWorkspaceView =
-  | 'library'
   | 'story'
   | 'entities'
   | 'pages'
@@ -8,7 +7,6 @@ export type WebWorkspaceView =
   | 'tutorial';
 
 const workspaceViews = new Set<WebWorkspaceView>([
-  'library',
   'story',
   'entities',
   'pages',
@@ -25,9 +23,9 @@ export function readWorkspaceView(
     const candidate = storage.getItem(key);
     return candidate !== null && workspaceViews.has(candidate as WebWorkspaceView)
       ? candidate as WebWorkspaceView
-      : 'library';
+      : 'story';
   } catch {
-    return 'library';
+    return 'story';
   }
 }
 

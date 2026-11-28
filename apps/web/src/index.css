@@ -252,6 +252,14 @@ a {
   padding: 7px 8px;
 }
 
+.sidebar-create-work { min-width: 0; padding: 8px 0; }
+.sidebar-create-actions { display: grid; gap: 7px; }
+.sidebar-create-actions button { justify-content: flex-start; width: 100%; min-width: 0; }
+.sidebar-create-actions button[aria-pressed="true"] { border-color: #e5c76b; color: #e5c76b; }
+.sidebar-create-work .story-create-form { margin-top: 10px; }
+.sidebar-create-work .primary-button { width: 100%; }
+.story-hierarchy-toggle-spacer { width: 20px; flex: 0 0 20px; }
+
 .section-header {
   display: flex;
   align-items: flex-start;

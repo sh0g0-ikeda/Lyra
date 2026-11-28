@@ -13,13 +13,15 @@ describe('Web manga workflow navigation', () => {
     expect(resumeMangaStep({ hasEpisode: true, hasPages: true, savedStory: '' })).toBe('pages');
   });
 
-  it('sessionStorage view は既知の値だけを復元し、破損または失敗時は library に戻す', () => {
+  it('旧一覧画面と不明な保存値の場合にストーリー編集から始まる', () => {
     const values = new Map<string, string>([['workspace', 'pages']]);
     const storage = { getItem: (key: string): string | null => values.get(key) ?? null };
 
     expect(readWorkspaceView(storage, 'workspace')).toBe('pages');
     values.set('workspace', 'unknown');
-    expect(readWorkspaceView(storage, 'workspace')).toBe('library');
-    expect(readWorkspaceView({ getItem: (): string | null => { throw new Error('blocked'); } }, 'workspace')).toBe('library');
+    expect(readWorkspaceView(storage, 'workspace')).toBe('story');
+    values.set('workspace', 'library');
+    expect(readWorkspaceView(storage, 'workspace')).toBe('story');
+    expect(readWorkspaceView({ getItem: (): string | null => { throw new Error('blocked'); } }, 'workspace')).toBe('story');
   });
 });

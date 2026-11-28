@@ -33,6 +33,31 @@ The primary user flows are:
 6. Generate a page image from the current saved inputs.
 7. Export selected pages as images, PDF, or ZIP.
 
+### Web work creation and mobile compatibility
+
+Web offers separate series and one-shot creation actions. Both create a work and
+its first chapter and episode atomically, then open the story editor. The former
+library selection screen is replaced by the editor and the existing sidebar.
+One-shot chapters and episodes are hidden only while the saved entry IDs still
+identify the work's sole chapter and sole episode. Changes made by older clients
+that break this condition restore the ordinary hierarchy without blocking them.
+
+Creation uses additive, authenticated Web bootstrap and metadata endpoints and a
+separate metadata table. Existing Work/Chapter/Episode APIs, response contracts,
+mobile behavior, ownership, credits and generation jobs remain unchanged. A
+scoped request ID makes retries idempotent; different inputs with the same ID
+conflict. Partial creation must roll back. Verify legacy response contracts,
+authorization, concurrent retries, rollback and legacy child deletion against
+PostgreSQL, plus Web creation/navigation and unsaved-draft browser regressions.
+
+Migrations 056–058 preserve the original request scope even after organization
+deletion, and retain a request tombstone after work deletion. Enable the new API
+only with the verified `workBootstrap` runtime capability. Release compatible API
+and worker code against the old schema first, apply all three additive migrations
+through the explicit migration task, then refresh API runtime proofs and release
+Web. A partial footprint is unsupported; do not expose Web creation before the
+new API is enabled. Existing works are not rewritten.
+
 ## 3. Architecture
 
 - `src/routes`: HTTP input, authentication middleware, validation, response mapping.

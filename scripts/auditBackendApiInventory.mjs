@@ -27,6 +27,7 @@ const routeMethods = new Set([
 const routeMountPrefixes = new Map([
   ['accountDeletion.ts', '/api'],
   ['workDeletion.ts', '/api'],
+  ['workBootstraps.ts', '/api'],
   ['pushTokens.ts', '/api'],
   ['googleIdentityLinks.ts', '/api/auth'],
   ['adminOrganizations.ts', '/api'],
@@ -59,6 +60,8 @@ const routeMountPrefixes = new Map([
 ]);
 
 const explicitResponseClassifications = new Map([
+  ['POST /api/work-bootstraps', { response: 'Operational JSON', detail: 'Web-only atomic series/one-shot creation; scoped idempotent request ID, legacy story responses unchanged' }],
+  ['GET /api/work-creation-metadata', { response: 'Operational JSON', detail: 'Web-only scoped creation mode and entry IDs for up to 100 works' }],
   ['GET /api/generation-quote-capabilities', { response: 'Operational JSON', detail: 'Authenticated preferred image model for compatible clients' }],
   ['GET /api/story/character-suggestion-capabilities', { response: 'Operational JSON', detail: 'Authenticated character suggestion availability' }],
   ['GET /api/story/character-autofill-capabilities', { response: 'Operational JSON', detail: 'Authenticated character autofill persistence availability' }],

@@ -163,6 +163,9 @@ import { createOrganizationSafetyReportRoutes } from './routes/organizationSafet
 import { createOrganizationRoutes } from './routes/organizations.js';
 import { createSceneRoutes } from './routes/scenes.js';
 import { createStoryRoutes } from './routes/story.js';
+import { createWorkBootstrapRoutes } from './routes/workBootstraps.js';
+import { WorkBootstrapService, type WorkBootstrapServicePort } from './services/story/WorkBootstrapService.js';
+import { PostgresWorkBootstrapRepository } from './repositories/WorkBootstrapRepository.js';
 import { createRootWebhookCompatibilityRoutes, createWebhookRoutes } from './routes/webhooks.js';
 import { assertMobileResponseContract } from './routes/mobileResponseContract.js';
 import { type UserProvisioningPort } from './services/auth/UserProvisioningService.js';
@@ -407,6 +410,7 @@ export interface AppDependencies {
   characterAutofillService?: CharacterAutofillServicePort;
   stripeWebhookService?: StripeWebhookServicePort;
   storyService?: StoryServicePort;
+  workBootstrapService?: WorkBootstrapServicePort;
   userProvisioningService?: UserProvisioningPort;
   rateLimitStore?: RateLimitStore;
   authProvider?: AuthProvider;
@@ -738,6 +742,19 @@ export function createApp(dependencies: AppDependencies = {}): Hono<AppEnv> {
       organizationService: resolvedDependencies.organizationService,
     }),
   );
+  if (dependencies.workBootstrapService !== undefined
+    || dependencies.attestedRuntime?.capabilities.workBootstrap === true
+    || process.env.NODE_ENV === 'test') {
+    app.route(
+      '/api',
+      createWorkBootstrapRoutes({
+        authMiddleware,
+        rateLimitMiddleware,
+        organizationService: resolvedDependencies.organizationService,
+        workBootstrapService: resolvedDependencies.workBootstrapService,
+      }),
+    );
+  }
   app.route(
     '/api',
     createStoryRoutes({
@@ -1340,6 +1357,8 @@ function resolveDependencies(
       new PostgresStoryRepository(db, db, persistenceProfile),
       entityRepository,
     );
+  const workBootstrapService = dependencies.workBootstrapService
+    ?? new WorkBootstrapService(new PostgresWorkBootstrapRepository(db));
   const panelService =
     dependencies.panelService ??
     new PanelService(
@@ -1424,6 +1443,7 @@ function resolveDependencies(
     characterAutofillService,
     stripeWebhookService,
     storyService,
+    workBootstrapService,
     userProvisioningService,
     rateLimitStore,
   };
