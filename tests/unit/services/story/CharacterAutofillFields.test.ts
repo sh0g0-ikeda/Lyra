@@ -6,6 +6,32 @@ import {
 } from '../../../../src/services/story/CharacterAutofillFields.js';
 
 describe('ストーリーからキャラクター編集欄へ自動入力', () => {
+  // A literal screenplay speaker label proves that the named cast member is
+  // present; negation inside that character's dialogue must not negate the name.
+  it.each([
+    'ハル「驚かないんだ」',
+    'ハル「約束。今度は顔に出さないでね」',
+  ])('否定表現を含む発話でも行頭の話者「%s」をキャラクターとして保持する', nameQuote => {
+    const rows = buildCharacterAutofillCandidates([nameQuote], [{
+      name: 'ハル', name_quote: nameQuote, entity_type: 'character', appearance: [], changes: [],
+    }]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.name).toBe('ハル');
+  });
+
+  it.each([
+    ['仮定の地の文', 'もしハルが教室にいたら、驚かないだろう。'],
+    ['存在を否定する地の文', 'ハルはいない。'],
+    ['別人物の台詞内の言及', 'シオリ「ハルはいないよ」'],
+  ])('%sだけではハルをキャラクターとして追加しない', (_caseName, nameQuote) => {
+    const rows = buildCharacterAutofillCandidates([nameQuote], [{
+      name: 'ハル', name_quote: nameQuote, entity_type: 'character', appearance: [], changes: [],
+    }]);
+
+    expect(rows).toEqual([]);
+  });
+
   it('人外分類の否定表現を含む独立プロフィールでも肯定的な容姿を保持する', () => {
     const profile = [
       ' * 黒影の魔物（人型ではない存在）',
